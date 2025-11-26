@@ -64,7 +64,6 @@ class WebhookController {
       let user = await userService.getUserByPhone(phone);
       const userState = await userService.getUserState(phone);
 
-      // Handle registration flow
       if (userState && userState.state === 'REGISTRATION_NAME') {
         await this.handleRegistrationName(phone, message);
         return;
@@ -107,6 +106,7 @@ Test your knowledge and win amazing prizes! 🏆
 
 Let's get you registered! What's your full name?`
     );
+
     await userService.setUserState(phone, 'REGISTRATION_NAME');
   }
 
@@ -168,12 +168,22 @@ Ready to play? Reply:
   async handleGameInput(user, session, message) {
     const input = message.trim().toUpperCase();
 
+    if (input.includes('50') || input.includes('5050')) {
+      await gameService.useLifeline(session, user, 'fifty_fifty');
+      return;
+    }
+
+    if (input.includes('SKIP')) {
+      await gameService.useLifeline(session, user, 'skip');
+      return;
+    }
+
     if (['A', 'B', 'C', 'D'].includes(input)) {
       await gameService.processAnswer(session, user, input);
     } else {
       await whatsappService.sendMessage(
         user.phone_number,
-        '⚠️ Please reply with A, B, C, or D'
+        '⚠️ Please reply with A, B, C, or D\n\nOr use a lifeline:\n- Type "50:50"\n- Type "Skip"'
       );
     }
   }
@@ -189,7 +199,7 @@ What would you like to do?
 2️⃣ How to Play
 3️⃣ View Leaderboard
 
-Reply with the number.`
+Reply with the number of your choice.`
     );
   }
 
@@ -199,8 +209,10 @@ Reply with the number.`
       `📖 HOW TO PLAY 📖
 
 🎯 Answer 15 questions about Akwa Ibom
-⏱️ 30 seconds per question
-💎 3 lifelines available
+⏱️ 12 seconds per question
+💎 2 lifelines available:
+   • 50:50 - Remove 2 wrong answers
+   • Skip - Move to next question
 
 🏆 PRIZE LADDER:
 Q15: ₦50,000 🥇
@@ -211,7 +223,7 @@ Q5: ₦1,000 (SAFE)
 
 Safe amounts are guaranteed!
 
-Ready? Reply "PLAY NOW"`
+Ready to play? Reply "PLAY NOW"`
     );
   }
 

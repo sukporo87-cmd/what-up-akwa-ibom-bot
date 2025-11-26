@@ -40,7 +40,9 @@ class GameService {
 
       const session = result.rows[0];
 
-      await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
+      await redis.set(`session:${sessionKey}`, JSON.stringify(session), {
+        ex: 3600
+      });
 
       await whatsappService.sendMessage(
         user.phone_number,
@@ -48,12 +50,11 @@ class GameService {
 
 📋 RULES:
 - 15 questions about Akwa Ibom
-- 30 seconds per question
+- 12 seconds per question
 - Win up to ₦50,000!
 
 💎 LIFELINES:
 5️⃣0️⃣ 50:50 - Remove 2 wrong answers
-👥 Community - See what others chose
 ⏭️ Skip - Jump to next question
 
 Safe points: Q5 (₦1,000) & Q10 (₦10,000)
@@ -95,11 +96,10 @@ Ready? Here we go! 🚀`
       message += `B) ${question.option_b}\n`;
       message += `C) ${question.option_c}\n`;
       message += `D) ${question.option_d}\n\n`;
-      message += `⏱️ 30 seconds...\n\n`;
+      message += `⏱️ 12 seconds...\n\n`;
 
       const lifelines = [];
       if (!session.lifeline_5050_used) lifelines.push('50:50');
-      if (!session.lifeline_community_used) lifelines.push('Community');
       if (!session.lifeline_skip_used) lifelines.push('Skip');
 
       if (lifelines.length > 0) {
@@ -108,11 +108,15 @@ Ready? Here we go! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
-      await redis.setex(
+      await redis.set(
         `timeout:${session.session_key}`,
-        35,
-        Date.now() + 30000
+        Date.now() + 12000,
+        { ex: 15 }
       );
+
+      setTimeout(async () => {
+        await this.checkTimeout(session, user);
+      }, 12000);
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -287,6 +291,112 @@ Prize processed in 24-48 hours.
     }
   }
 
+  async useLifeline(session, user, lifeline) {
+    try {
+      const currentSession = await this.getActiveSession(user.id);
+      if (!currentSession) {
+        await whatsappService.sendMessage(user.phone_number, '❌ No active game found.');
+        return;
+      }
+
+      const question = await questionService.getQuestionById(currentSession.current_question_id);
+      if (!question) {
+        throw new Error('Question not found');
+      }
+
+      if (lifeline === 'fifty_fifty') {
+        if (currentSession.lifeline_5050_used) {
+          await whatsappService.sendMessage(user.phone_number, '❌ You already used 50:50!');
+          return;
+        }
+
+        await pool.query(
+          'UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1',
+          [currentSession.id]
+        );
+
+        const correctAnswer = question.correct_answer;
+        const allOptions = ['A', 'B', 'C', 'D'];
+        const wrongOptions = allOptions.filter(opt => opt !== correctAnswer);
+        
+        const keepWrong = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+        const remainingOptions = [correctAnswer, keepWrong].sort();
+
+        const questionNumber = currentSession.current_question;
+        const prizeAmount = PRIZE_LADDER[questionNumber];
+        const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
+
+        let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n\n`;
+        message += `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
+        if (isSafe) message += ' (SAFE) 🔒';
+        message += `\n\n${question.question_text}\n\n`;
+
+        remainingOptions.forEach(opt => {
+          message += `${opt}) ${question['option_' + opt.toLowerCase()]}\n`;
+        });
+
+        message += `\n⏱️ 12 seconds...\n\n`;
+
+        const lifelines = [];
+        if (!currentSession.lifeline_skip_used) lifelines.push('Skip');
+        if (lifelines.length > 0) {
+          message += `💎 Lifelines: ${lifelines.join(' | ')}`;
+        }
+
+        await whatsappService.sendMessage(user.phone_number, message);
+
+      } else if (lifeline === 'skip') {
+        if (currentSession.lifeline_skip_used) {
+          await whatsappService.sendMessage(user.phone_number, '❌ You already used Skip!');
+          return;
+        }
+
+        await pool.query(
+          'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
+          [currentSession.id]
+        );
+
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `⏭️ SKIP USED! ⏭️\n\nMoving to next question...\n\nCorrect answer was: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}`
+        );
+
+        currentSession.current_question = currentSession.current_question + 1;
+        currentSession.current_score = PRIZE_LADDER[currentSession.current_question - 1];
+
+        if (currentSession.current_question > 15) {
+          await this.completeGame(currentSession, user, true);
+        } else {
+          await this.updateSession(currentSession);
+          
+          setTimeout(async () => {
+            await this.sendQuestion(currentSession, user);
+          }, 3000);
+        }
+      }
+
+    } catch (error) {
+      logger.error('Error using lifeline:', error);
+      throw error;
+    }
+  }
+
+  async checkTimeout(session, user) {
+    try {
+      const timeoutKey = `timeout:${session.session_key}`;
+      const timeout = await redis.get(timeoutKey);
+      
+      if (!timeout) {
+        return;
+      }
+
+      await redis.del(timeoutKey);
+      await this.handleTimeout(session, user);
+    } catch (error) {
+      logger.error('Error checking timeout:', error);
+    }
+  }
+
   async getActiveSession(userId) {
     const result = await pool.query(
       `SELECT * FROM game_sessions 
@@ -295,6 +405,7 @@ Prize processed in 24-48 hours.
        LIMIT 1`,
       [userId]
     );
+
     return result.rows[0] || null;
   }
 
@@ -306,7 +417,9 @@ Prize processed in 24-48 hours.
       [session.current_question, session.current_score, session.current_question_id, session.id]
     );
 
-    await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
+    await redis.set(`session:${session.session_key}`, JSON.stringify(session), {
+      ex: 3600
+    });
   }
 
   async getLeaderboard(limit = 10) {
@@ -320,6 +433,7 @@ Prize processed in 24-48 hours.
        LIMIT $1`,
       [limit]
     );
+
     return result.rows;
   }
 }
