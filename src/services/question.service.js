@@ -2,7 +2,7 @@ const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
 class QuestionService {
-  async getQuestionByDifficulty(difficulty) {
+  async getQuestionByDifficulty(difficulty, excludeIds = []) {
     try {
       let minDifficulty, maxDifficulty;
       
@@ -27,23 +27,36 @@ class QuestionService {
         maxDifficulty = 15;
       }
 
-      const result = await pool.query(
-        `SELECT * FROM questions 
-         WHERE difficulty BETWEEN $1 AND $2 AND is_active = true
-         ORDER BY RANDOM()
-         LIMIT 1`,
-        [minDifficulty, maxDifficulty]
-      );
+      // Build query with exclusion of already-asked questions
+      let query = `SELECT * FROM questions 
+                   WHERE difficulty BETWEEN $1 AND $2 
+                   AND is_active = true`;
+      let params = [minDifficulty, maxDifficulty];
+      
+      if (excludeIds.length > 0) {
+        query += ` AND id NOT IN (${excludeIds.map((_, i) => `${i + 3}`).join(',')})`;
+        params.push(...excludeIds);
+      }
+      
+      query += ` ORDER BY RANDOM() LIMIT 1`;
+
+      const result = await pool.query(query, params);
 
       // If no question found in the difficulty range, try any active question as fallback
       if (!result.rows[0]) {
         logger.warn(`No questions found for difficulty range ${minDifficulty}-${maxDifficulty}, trying fallback`);
-        const fallbackResult = await pool.query(
-          `SELECT * FROM questions 
-           WHERE is_active = true
-           ORDER BY RANDOM()
-           LIMIT 1`
-        );
+        
+        let fallbackQuery = `SELECT * FROM questions WHERE is_active = true`;
+        let fallbackParams = [];
+        
+        if (excludeIds.length > 0) {
+          fallbackQuery += ` AND id NOT IN (${excludeIds.map((_, i) => `${i + 1}`).join(',')})`;
+          fallbackParams.push(...excludeIds);
+        }
+        
+        fallbackQuery += ` ORDER BY RANDOM() LIMIT 1`;
+        
+        const fallbackResult = await pool.query(fallbackQuery, fallbackParams);
         return fallbackResult.rows[0] || null;
       }
 

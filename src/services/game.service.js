@@ -42,6 +42,7 @@ class GameService {
 
       await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
+      // Send instructions and wait for START command
       await whatsappService.sendMessage(
         user.phone_number,
         `🎮 GAME INSTRUCTIONS 🎮
@@ -60,6 +61,7 @@ Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 When you're ready, reply START to begin! 🚀`
       );
 
+      // Set game state to waiting for START
       await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
 
     } catch (error) {
@@ -74,11 +76,20 @@ When you're ready, reply START to begin! 🚀`
       const prizeAmount = PRIZE_LADDER[questionNumber];
       const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
 
-      const question = await questionService.getQuestionByDifficulty(questionNumber);
+      // Get list of already asked questions in this session
+      const askedQuestionsKey = `asked_questions:${session.session_key}`;
+      const askedQuestionsJson = await redis.get(askedQuestionsKey);
+      const askedQuestions = askedQuestionsJson ? JSON.parse(askedQuestionsJson) : [];
+
+      const question = await questionService.getQuestionByDifficulty(questionNumber, askedQuestions);
 
       if (!question) {
         throw new Error('No question found');
       }
+
+      // Add this question to the asked list
+      askedQuestions.push(question.id);
+      await redis.setex(askedQuestionsKey, 3600, JSON.stringify(askedQuestions));
 
       session.current_question_id = question.id;
       await this.updateSession(session);
@@ -104,11 +115,15 @@ When you're ready, reply START to begin! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
+      // Set timeout in Redis for this specific question
       await redis.setex(
         `timeout:${session.session_key}:q${questionNumber}`,
         15,
         (Date.now() + 12000).toString()
       );
+
+      // Timer will be checked when answer is submitted
+      // No setTimeout here - this was causing the bug!
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -127,6 +142,7 @@ When you're ready, reply START to begin! 🚀`
         return;
       }
 
+      // Clear the timeout for this question
       await redis.del(timeoutKey);
 
       if (!session.current_question_id) {
@@ -269,6 +285,7 @@ When you're ready, reply START to begin! 🚀`
       }
 
       await redis.del(`session:${session.session_key}`);
+      await redis.del(`asked_questions:${session.session_key}`);
 
       if (wonGrandPrize) {
         await whatsappService.sendMessage(
@@ -442,7 +459,7 @@ Prize processed in 24-48 hours.
           dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
           break;
         case 'all':
-          dateCondition = "'1970-01-01'";
+          dateCondition = "'1970-01-01'"; // All time
           break;
         default:
           dateCondition = 'CURRENT_DATE';
