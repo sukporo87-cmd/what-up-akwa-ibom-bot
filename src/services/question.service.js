@@ -3,7 +3,6 @@ const { logger } = require('../utils/logger');
 
 class QuestionService {
 
-  // Fetch a single question by ID
   async getQuestionById(id) {
     try {
       const result = await pool.query(
@@ -17,7 +16,6 @@ class QuestionService {
     }
   }
 
-  // Fetch a question by difficulty (for legacy use, optional)
   async getQuestionByDifficulty(difficulty) {
     try {
       const result = await pool.query(
@@ -34,23 +32,6 @@ class QuestionService {
     }
   }
 
-  // Fetch N random questions
-  async getRandomQuestions(limit = 15) {
-    try {
-      const result = await pool.query(
-        `SELECT * FROM questions 
-         ORDER BY RANDOM()
-         LIMIT $1`,
-        [limit]
-      );
-      return result.rows;
-    } catch (error) {
-      logger.error('Error fetching random questions:', error);
-      throw error;
-    }
-  }
-
-  // Update question stats (correct/wrong answer count)
   async updateQuestionStats(questionId, isCorrect) {
     try {
       if (isCorrect) {

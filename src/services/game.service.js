@@ -16,12 +16,11 @@ const PRIZE_LADDER = {
 const SAFE_CHECKPOINTS = [5, 10];
 
 class GameService {
-
-  // Start a new game for user
+  
   async startNewGame(user) {
     try {
       const existingSession = await this.getActiveSession(user.id);
-
+      
       if (existingSession) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -32,9 +31,6 @@ class GameService {
 
       const sessionKey = `game_${user.id}_${Date.now()}`;
 
-      // Fetch 15 random questions from DB
-      const questions = await questionService.getRandomQuestions(15);
-
       const result = await pool.query(
         `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
          VALUES ($1, $2, 1, 0)
@@ -44,11 +40,8 @@ class GameService {
 
       const session = result.rows[0];
 
-      // Store session in Redis including the questions array
-      session.questions = questions.map(q => q.id);
       await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
-      // Send game instructions
       await whatsappService.sendMessage(
         user.phone_number,
         `🎮 GAME INSTRUCTIONS 🎮
@@ -67,7 +60,6 @@ Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 When you're ready, reply START to begin! 🚀`
       );
 
-      // Set temporary key for waiting for START
       await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
 
     } catch (error) {
@@ -76,23 +68,25 @@ When you're ready, reply START to begin! 🚀`
     }
   }
 
-  // Send the current question to the user
   async sendQuestion(session, user) {
     try {
       const questionNumber = session.current_question;
       const prizeAmount = PRIZE_LADDER[questionNumber];
       const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
 
-      const questionId = session.questions[questionNumber - 1];
-      const question = await questionService.getQuestionById(questionId);
+      const question = await questionService.getQuestionByDifficulty(questionNumber);
 
-      if (!question) throw new Error('No question found');
+      if (!question) {
+        throw new Error('No question found');
+      }
 
       session.current_question_id = question.id;
       await this.updateSession(session);
 
       let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
+      
       if (isSafe) message += ' (SAFE) 🔒';
+
       message += `\n\n${question.question_text}\n\n`;
       message += `A) ${question.option_a}\n`;
       message += `B) ${question.option_b}\n`;
@@ -110,7 +104,6 @@ When you're ready, reply START to begin! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
-      // Set timeout in Redis for this question
       await redis.setex(
         `timeout:${session.session_key}:q${questionNumber}`,
         15,
@@ -128,7 +121,7 @@ When you're ready, reply START to begin! 🚀`
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       const timeout = await redis.get(timeoutKey);
-
+      
       if (timeout && Date.now() > Number(timeout)) {
         await this.handleTimeout(session, user);
         return;
@@ -164,6 +157,7 @@ When you're ready, reply START to begin! 🚀`
         if (question.fun_fact) message += `${question.fun_fact}\n\n`;
         message += `💰 You've won: ₦${prizeAmount.toLocaleString()}\n`;
         message += `💪 Question: ${questionNumber} of 15\n`;
+
         if (SAFE_CHECKPOINTS.includes(questionNumber)) {
           message += `\n🔒 SAFE! ₦${prizeAmount.toLocaleString()} guaranteed!\n`;
         }
@@ -193,6 +187,7 @@ When you're ready, reply START to begin! 🚀`
 
   async handleWrongAnswer(session, user, question) {
     const questionNumber = session.current_question;
+    
     let guaranteedAmount = 0;
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (questionNumber > checkpoint) {
@@ -203,7 +198,9 @@ When you're ready, reply START to begin! 🚀`
 
     let message = `❌ WRONG ANSWER 😢\n\n`;
     message += `Correct: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}\n\n`;
+    
     if (question.fun_fact) message += `${question.fun_fact}\n\n`;
+
     message += `🎮 GAME OVER 🎮\n\n`;
 
     if (guaranteedAmount > 0) {
@@ -215,7 +212,9 @@ When you're ready, reply START to begin! 🚀`
       session.current_score = 0;
     }
 
-    message += `Well played, ${user.full_name}! 👏\n\n1️⃣ Play Again\n2️⃣ Leaderboard\n`;
+    message += `Well played, ${user.full_name}! 👏\n\n`;
+    message += `1️⃣ Play Again\n2️⃣ Leaderboard\n`;
+    
     if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
 
     await whatsappService.sendMessage(user.phone_number, message);
@@ -227,7 +226,7 @@ When you're ready, reply START to begin! 🚀`
       user.phone_number,
       `⏰ TIME'S UP! 😢\n\nYou didn't answer in time.\n\nGame Over!`
     );
-
+    
     let guaranteedAmount = 0;
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (session.current_question > checkpoint) {
@@ -235,7 +234,7 @@ When you're ready, reply START to begin! 🚀`
         break;
       }
     }
-
+    
     session.current_score = guaranteedAmount;
     await this.completeGame(session, user, false);
   }
@@ -274,13 +273,134 @@ When you're ready, reply START to begin! 🚀`
       if (wonGrandPrize) {
         await whatsappService.sendMessage(
           user.phone_number,
-          `🎊 INCREDIBLE! 🎊\n\n🏆 CHAMPION! 🏆\n\nALL 15 QUESTIONS CORRECT!\n\n💰 ₦50,000 WON! 💰\n\n${user.full_name.toUpperCase()}, you're in the HALL OF FAME!\n\nPrize processed in 24-48 hours.\n\n1️⃣ Play Again\n2️⃣ Leaderboard\n3️⃣ Claim Prize`
+          `🎊 INCREDIBLE! 🎊
+
+🏆 CHAMPION! 🏆
+
+ALL 15 QUESTIONS CORRECT!
+
+💰 ₦50,000 WON! 💰
+
+${user.full_name.toUpperCase()}, you're in the HALL OF FAME!
+
+Prize processed in 24-48 hours.
+
+1️⃣ Play Again
+2️⃣ Leaderboard
+3️⃣ Claim Prize`
         );
       }
 
     } catch (error) {
       logger.error('Error completing game:', error);
       throw error;
+    }
+  }
+
+  async useLifeline(session, user, lifeline) {
+    try {
+      const currentSession = await this.getActiveSession(user.id);
+      if (!currentSession) {
+        await whatsappService.sendMessage(user.phone_number, '❌ No active game found.');
+        return;
+      }
+
+      const question = await questionService.getQuestionById(currentSession.current_question_id);
+      if (!question) {
+        throw new Error('Question not found');
+      }
+
+      if (lifeline === 'fifty_fifty') {
+        if (currentSession.lifeline_5050_used) {
+          await whatsappService.sendMessage(user.phone_number, '❌ You already used 50:50!');
+          return;
+        }
+
+        await pool.query(
+          'UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1',
+          [currentSession.id]
+        );
+
+        const correctAnswer = question.correct_answer;
+        const allOptions = ['A', 'B', 'C', 'D'];
+        const wrongOptions = allOptions.filter(opt => opt !== correctAnswer);
+        
+        const keepWrong = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+        const remainingOptions = [correctAnswer, keepWrong].sort();
+
+        const questionNumber = currentSession.current_question;
+        const prizeAmount = PRIZE_LADDER[questionNumber];
+        const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
+
+        let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n\n`;
+        message += `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
+        if (isSafe) message += ' (SAFE) 🔒';
+        message += `\n\n${question.question_text}\n\n`;
+
+        remainingOptions.forEach(opt => {
+          message += `${opt}) ${question['option_' + opt.toLowerCase()]}\n`;
+        });
+
+        message += `\n⏱️ 12 seconds...\n\n`;
+
+        const lifelines = [];
+        if (!currentSession.lifeline_skip_used) lifelines.push('Skip');
+        if (lifelines.length > 0) {
+          message += `💎 Lifelines: ${lifelines.join(' | ')}`;
+        }
+
+        await whatsappService.sendMessage(user.phone_number, message);
+
+      } else if (lifeline === 'skip') {
+        if (currentSession.lifeline_skip_used) {
+          await whatsappService.sendMessage(user.phone_number, '❌ You already used Skip!');
+          return;
+        }
+
+        await pool.query(
+          'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
+          [currentSession.id]
+        );
+
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `⏭️ SKIP USED! ⏭️\n\nMoving to next question...\n\nCorrect answer was: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}`
+        );
+
+        currentSession.current_question = currentSession.current_question + 1;
+        currentSession.current_score = PRIZE_LADDER[currentSession.current_question - 1];
+
+        if (currentSession.current_question > 15) {
+          await this.completeGame(currentSession, user, true);
+        } else {
+          await this.updateSession(currentSession);
+          
+          setTimeout(async () => {
+            await this.sendQuestion(currentSession, user);
+          }, 3000);
+        }
+      }
+
+    } catch (error) {
+      logger.error('Error using lifeline:', error);
+      throw error;
+    }
+  }
+
+  async checkTimeout(session, user) {
+    try {
+      const questionNumber = session.current_question;
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+      const timeout = await redis.get(timeoutKey);
+      
+      if (!timeout) {
+        return;
+      }
+
+      await redis.del(timeoutKey);
+      await this.handleTimeout(session, user);
+    } catch (error) {
+      logger.error('Error checking timeout:', error);
     }
   }
 
@@ -307,6 +427,44 @@ When you're ready, reply START to begin! 🚀`
     await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
   }
 
+  async getLeaderboard(period = 'daily', limit = 10) {
+    try {
+      let dateCondition;
+      
+      switch(period.toLowerCase()) {
+        case 'daily':
+          dateCondition = 'CURRENT_DATE';
+          break;
+        case 'weekly':
+          dateCondition = "CURRENT_DATE - INTERVAL '7 days'";
+          break;
+        case 'monthly':
+          dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
+          break;
+        case 'all':
+          dateCondition = "'1970-01-01'";
+          break;
+        default:
+          dateCondition = 'CURRENT_DATE';
+      }
+
+      const result = await pool.query(
+        `SELECT u.full_name, u.lga, t.amount as score
+         FROM transactions t
+         JOIN users u ON t.user_id = u.id
+         WHERE t.created_at >= ${dateCondition}
+         AND t.transaction_type = 'prize'
+         ORDER BY t.amount DESC, t.created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+
+      return result.rows;
+    } catch (error) {
+      logger.error('Error fetching leaderboard:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = GameService;
