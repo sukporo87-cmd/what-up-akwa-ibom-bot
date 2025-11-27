@@ -28,35 +28,51 @@ class QuestionService {
       }
 
       // Build query with exclusion of already-asked questions
-      let query = `SELECT * FROM questions 
-                   WHERE difficulty BETWEEN $1 AND $2 
-                   AND is_active = true`;
-      let params = [minDifficulty, maxDifficulty];
+      let result;
       
       if (excludeIds.length > 0) {
-        query += ` AND id NOT IN (${excludeIds.map((_, i) => `${i + 3}`).join(',')})`;
-        params.push(...excludeIds);
+        // Query with exclusions
+        const placeholders = excludeIds.map((_, i) => `$${i + 3}`).join(',');
+        const query = `SELECT * FROM questions 
+                       WHERE difficulty BETWEEN $1 AND $2 
+                       AND is_active = true
+                       AND id NOT IN (${placeholders})
+                       ORDER BY RANDOM() 
+                       LIMIT 1`;
+        const params = [minDifficulty, maxDifficulty, ...excludeIds];
+        result = await pool.query(query, params);
+      } else {
+        // Query without exclusions (first question)
+        const query = `SELECT * FROM questions 
+                       WHERE difficulty BETWEEN $1 AND $2 
+                       AND is_active = true
+                       ORDER BY RANDOM() 
+                       LIMIT 1`;
+        result = await pool.query(query, [minDifficulty, maxDifficulty]);
       }
-      
-      query += ` ORDER BY RANDOM() LIMIT 1`;
-
-      const result = await pool.query(query, params);
 
       // If no question found in the difficulty range, try any active question as fallback
       if (!result.rows[0]) {
         logger.warn(`No questions found for difficulty range ${minDifficulty}-${maxDifficulty}, trying fallback`);
         
-        let fallbackQuery = `SELECT * FROM questions WHERE is_active = true`;
-        let fallbackParams = [];
+        let fallbackResult;
         
         if (excludeIds.length > 0) {
-          fallbackQuery += ` AND id NOT IN (${excludeIds.map((_, i) => `${i + 1}`).join(',')})`;
-          fallbackParams.push(...excludeIds);
+          const placeholders = excludeIds.map((_, i) => `$${i + 1}`).join(',');
+          const fallbackQuery = `SELECT * FROM questions 
+                                 WHERE is_active = true
+                                 AND id NOT IN (${placeholders})
+                                 ORDER BY RANDOM() 
+                                 LIMIT 1`;
+          fallbackResult = await pool.query(fallbackQuery, excludeIds);
+        } else {
+          const fallbackQuery = `SELECT * FROM questions 
+                                 WHERE is_active = true
+                                 ORDER BY RANDOM() 
+                                 LIMIT 1`;
+          fallbackResult = await pool.query(fallbackQuery);
         }
         
-        fallbackQuery += ` ORDER BY RANDOM() LIMIT 1`;
-        
-        const fallbackResult = await pool.query(fallbackQuery, fallbackParams);
         return fallbackResult.rows[0] || null;
       }
 
