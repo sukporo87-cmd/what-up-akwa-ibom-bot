@@ -1,3 +1,4 @@
+const pool = require('../config/database');
 const WhatsAppService = require('../services/whatsapp.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
@@ -61,6 +62,19 @@ class WebhookController {
 
   async routeMessage(phone, message) {
     try {
+      const input = message.trim().toUpperCase();
+
+      // Check for RESET command first
+      if (input === 'RESET' || input === 'RESTART') {
+        let user = await userService.getUserByPhone(phone);
+        if (user) {
+          await this.handleReset(user);
+        } else {
+          await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
+        }
+        return;
+      }
+
       let user = await userService.getUserByPhone(phone);
       const userState = await userService.getUserState(phone);
 
@@ -90,7 +104,7 @@ class WebhookController {
       logger.error('Error routing message:', error);
       await whatsappService.sendMessage(
         phone,
-        '❌ Sorry, something went wrong. Please try again.'
+        '❌ Sorry, something went wrong. Type RESET to start over.'
       );
     }
   }
@@ -102,12 +116,13 @@ class WebhookController {
 
 The ultimate trivia game about our great state!
 
+Test your knowledge and win amazing prizes! 🏆
+
 Developed in partnership with the Department of Brand Management & Marketing, Office of the Governor.
 
 Brought to you by the Akwa Ibom State Government.
 
-Test your knowledge and win amazing prizes! 🏆
-          🎄 Merry Christmas! 🎄
+🎄 Merry Christmas! 🎄
 
 Let's get you registered! What's your full name?`
     );
@@ -140,7 +155,7 @@ Let's get you registered! What's your full name?`
     }
 
     const lga = LGA_LIST[lgaIndex];
-    const user = await userService.createUser(phone, name, lga);
+    await userService.createUser(phone, name, lga);
     await userService.clearUserState(phone);
 
     await whatsappService.sendMessage(
@@ -165,8 +180,40 @@ Ready to play? Reply:
       await this.sendHowToPlay(user.phone_number);
     } else if (input === '3' || input.includes('LEADERBOARD')) {
       await this.sendLeaderboard(user.phone_number);
+    } else if (input === 'RESET' || input === 'RESTART') {
+      await this.handleReset(user);
     } else {
       await this.sendMainMenu(user.phone_number);
+    }
+  }
+
+  async handleReset(user) {
+    try {
+      await pool.query(
+        `UPDATE game_sessions SET status = 'cancelled' WHERE user_id = $1 AND status = 'active'`,
+        [user.id]
+      );
+
+      await userService.clearUserState(user.phone_number);
+
+      await whatsappService.sendMessage(
+        user.phone_number,
+        `🔄 Game Reset! 🔄
+
+All active games have been cancelled.
+
+Ready to start fresh?
+
+1️⃣ Play Now
+2️⃣ How to Play
+3️⃣ Leaderboard`
+      );
+    } catch (error) {
+      logger.error('Error resetting game:', error);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        'Reset complete! Type 1 to start a new game.'
+      );
     }
   }
 
@@ -188,7 +235,7 @@ Ready to play? Reply:
     } else {
       await whatsappService.sendMessage(
         user.phone_number,
-        '⚠️ Please reply with A, B, C, or D\n\nOr use a lifeline:\n- Type "50:50"\n- Type "Skip"'
+        '⚠️ Please reply with A, B, C, or D\n\nOr use a lifeline:\n- Type "50:50"\n- Type "Skip"\n- Type "RESET" to start over'
       );
     }
   }
@@ -204,7 +251,9 @@ What would you like to do?
 2️⃣ How to Play
 3️⃣ View Leaderboard
 
-Reply with the number of your choice.`
+Having issues? Type RESET to start fresh.
+
+Reply with your choice.`
     );
   }
 

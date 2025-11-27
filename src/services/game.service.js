@@ -134,8 +134,22 @@ Ready? Here we go! 🚀`
 
       await redis.del(timeoutKey);
 
-      const question = await questionService.getQuestionById(session.current_question_id);
-      if (!question) throw new Error('Question not found');
+      if (!session.current_question_id) {
+  await whatsappService.sendMessage(
+    user.phone_number,
+    '❌ Session error. Type RESET to start a new game.'
+  );
+  return;
+}
+
+const question = await questionService.getQuestionById(session.current_question_id);
+if (!question) {
+  await whatsappService.sendMessage(
+    user.phone_number,
+    '❌ Question error. Type RESET to start a new game.'
+  );
+  return;
+}
 
       const isCorrect = answer === question.correct_answer;
       const questionNumber = session.current_question;
