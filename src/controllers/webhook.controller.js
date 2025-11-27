@@ -102,7 +102,12 @@ class WebhookController {
 
 The ultimate trivia game about our great state!
 
+Developed in partnership with the Department of Brand Management & Marketing, Office of the Governor.
+
+Brought to you by the Akwa Ibom State Government.
+
 Test your knowledge and win amazing prizes! 🏆
+          🎄 Merry Christmas! 🎄
 
 Let's get you registered! What's your full name?`
     );

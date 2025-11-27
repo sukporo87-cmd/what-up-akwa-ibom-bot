@@ -40,9 +40,7 @@ class GameService {
 
       const session = result.rows[0];
 
-      await redis.set(`session:${sessionKey}`, JSON.stringify(session), {
-        ex: 3600
-      });
+      await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
       await whatsappService.sendMessage(
         user.phone_number,
@@ -108,10 +106,10 @@ Ready? Here we go! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
-      await redis.set(
+      await redis.setex(
         `timeout:${session.session_key}`,
-        Date.now() + 12000,
-        { ex: 15 }
+        15,
+        (Date.now() + 12000).toString()
       );
 
       setTimeout(async () => {
@@ -417,9 +415,7 @@ Prize processed in 24-48 hours.
       [session.current_question, session.current_score, session.current_question_id, session.id]
     );
 
-    await redis.set(`session:${session.session_key}`, JSON.stringify(session), {
-      ex: 3600
-    });
+    await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
   }
 
   async getLeaderboard(limit = 10) {
