@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const redis = require('../config/redis');
 const WhatsAppService = require('../services/whatsapp.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
@@ -88,6 +89,12 @@ class WebhookController {
         return;
       }
 
+      // Handle leaderboard period selection
+      if (userState && userState.state === 'SELECT_LEADERBOARD') {
+        await this.handleLeaderboardSelection(phone, message);
+        return;
+      }
+
       if (!user) {
         await this.handleNewUser(phone);
         return;
@@ -174,12 +181,47 @@ Ready to play? Reply:
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
 
+    // Check if this is first interaction after coming back (more than 5 minutes)
+    const lastActiveMinutesAgo = user.last_active ? 
+      (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
+
+    // Show welcome back message if returning after 5+ minutes and not immediately playing
+    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3') {
+      await whatsappService.sendMessage(
+        user.phone_number,
+        `Hello again ${user.full_name} from ${user.lga}! 👋
+
+Welcome back to What's Up Akwa Ibom! 🎉
+
+The ultimate trivia game about our great state!
+
+Developed in partnership with the Department of Brand Management & Marketing, Office of the Governor.
+
+Brought to you by the Akwa Ibom State Government.
+
+🎄 Merry Christmas! 🎄
+
+What would you like to do?
+
+1️⃣ Play Now
+2️⃣ How to Play
+3️⃣ View Leaderboard`
+      );
+      
+      // Update last_active to prevent showing this message repeatedly
+      await pool.query(
+        'UPDATE users SET last_active = NOW() WHERE id = $1',
+        [user.id]
+      );
+      return;
+    }
+
     if (input === '1' || input.includes('PLAY')) {
       await gameService.startNewGame(user);
     } else if (input === '2' || input.includes('HOW')) {
       await this.sendHowToPlay(user.phone_number);
     } else if (input === '3' || input.includes('LEADERBOARD')) {
-      await this.sendLeaderboard(user.phone_number);
+      await this.sendLeaderboardMenu(user.phone_number);
     } else if (input === 'RESET' || input === 'RESTART') {
       await this.handleReset(user);
     } else {
@@ -220,6 +262,29 @@ Ready to start fresh?
   async handleGameInput(user, session, message) {
     const input = message.trim().toUpperCase();
 
+    // Check if waiting for START command
+    const gameReady = await redis.get(`game_ready:${user.id}`);
+    if (gameReady && input === 'START') {
+      await redis.del(`game_ready:${user.id}`);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '🎮 LET\'S GO! 🎮\n\nStarting in 3... 2... 1...'
+      );
+      setTimeout(async () => {
+        await gameService.sendQuestion(session, user);
+      }, 2000);
+      return;
+    }
+
+    if (gameReady) {
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '⚠️ Reply START to begin the game!'
+      );
+      return;
+    }
+
+    // Handle lifelines and answers
     if (input.includes('50') || input.includes('5050')) {
       await gameService.useLifeline(session, user, 'fifty_fifty');
       return;
@@ -281,13 +346,65 @@ Ready to play? Reply "PLAY NOW"`
     );
   }
 
-  async sendLeaderboard(phone) {
-    const leaderboard = await gameService.getLeaderboard();
+  async sendLeaderboardMenu(phone) {
+    await userService.setUserState(phone, 'SELECT_LEADERBOARD');
     
-    let message = '🏅 TODAY\'S LEADERBOARD 🏅\n\n';
+    await whatsappService.sendMessage(
+      phone,
+      `📊 SELECT LEADERBOARD 📊
+
+Which leaderboard would you like to see?
+
+1️⃣ Today's Winners
+2️⃣ This Week
+3️⃣ This Month
+4️⃣ All Time
+
+Reply with your choice:`
+    );
+  }
+
+  async handleLeaderboardSelection(phone, message) {
+    const input = message.trim();
+    let period = 'daily';
+    let periodName = 'TODAY';
+
+    switch(input) {
+      case '1':
+        period = 'daily';
+        periodName = 'TODAY';
+        break;
+      case '2':
+        period = 'weekly';
+        periodName = 'THIS WEEK';
+        break;
+      case '3':
+        period = 'monthly';
+        periodName = 'THIS MONTH';
+        break;
+      case '4':
+        period = 'all';
+        periodName = 'ALL TIME';
+        break;
+      default:
+        await whatsappService.sendMessage(
+          phone,
+          '⚠️ Please reply with 1, 2, 3, or 4'
+        );
+        return;
+    }
+
+    await userService.clearUserState(phone);
+    await this.sendLeaderboardData(phone, period, periodName);
+  }
+
+  async sendLeaderboardData(phone, period, periodName) {
+    const leaderboard = await gameService.getLeaderboard(period);
+    
+    let message = `🏅 ${periodName}'S LEADERBOARD 🏅\n\n`;
     
     if (leaderboard.length === 0) {
-      message += 'No winners yet today! Be the first! 🎯';
+      message += 'No winners yet! Be the first! 🎯';
     } else {
       leaderboard.forEach((player, index) => {
         const medal = index === 0 ? '🏆' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
@@ -298,6 +415,11 @@ Ready to play? Reply "PLAY NOW"`
     message += '\n\nReply "PLAY NOW" to compete!';
 
     await whatsappService.sendMessage(phone, message);
+  }
+
+  // Legacy method - kept for backward compatibility
+  async sendLeaderboard(phone) {
+    await this.sendLeaderboardMenu(phone);
   }
 }
 

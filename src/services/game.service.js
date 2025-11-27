@@ -42,9 +42,10 @@ class GameService {
 
       await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
+      // Send instructions and wait for START command
       await whatsappService.sendMessage(
         user.phone_number,
-        `🎮 GAME STARTING! 🎮
+        `🎮 GAME INSTRUCTIONS 🎮
 
 📋 RULES:
 - 15 questions about Akwa Ibom
@@ -57,12 +58,11 @@ class GameService {
 
 Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 
-Ready? Here we go! 🚀`
+When you're ready, reply START to begin! 🚀`
       );
 
-      setTimeout(async () => {
-        await this.sendQuestion(session, user);
-      }, 3000);
+      // Set game state to waiting for START
+      await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
 
     } catch (error) {
       logger.error('Error starting game:', error);
@@ -106,15 +106,15 @@ Ready? Here we go! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
+      // Set timeout in Redis for this specific question
       await redis.setex(
-        `timeout:${session.session_key}`,
+        `timeout:${session.session_key}:q${questionNumber}`,
         15,
         (Date.now() + 12000).toString()
       );
 
-      setTimeout(async () => {
-        await this.checkTimeout(session, user);
-      }, 12000);
+      // Timer will be checked when answer is submitted
+      // No setTimeout here - this was causing the bug!
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -124,7 +124,8 @@ Ready? Here we go! 🚀`
 
   async processAnswer(session, user, answer) {
     try {
-      const timeoutKey = `timeout:${session.session_key}`;
+      const questionNumber = session.current_question;
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       const timeout = await redis.get(timeoutKey);
       
       if (timeout && Date.now() > Number(timeout)) {
@@ -132,27 +133,27 @@ Ready? Here we go! 🚀`
         return;
       }
 
+      // Clear the timeout for this question
       await redis.del(timeoutKey);
 
       if (!session.current_question_id) {
-  await whatsappService.sendMessage(
-    user.phone_number,
-    '❌ Session error. Type RESET to start a new game.'
-  );
-  return;
-}
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ Session error. Type RESET to start a new game.'
+        );
+        return;
+      }
 
-const question = await questionService.getQuestionById(session.current_question_id);
-if (!question) {
-  await whatsappService.sendMessage(
-    user.phone_number,
-    '❌ Question error. Type RESET to start a new game.'
-  );
-  return;
-}
+      const question = await questionService.getQuestionById(session.current_question_id);
+      if (!question) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ Question error. Type RESET to start a new game.'
+        );
+        return;
+      }
 
       const isCorrect = answer === question.correct_answer;
-      const questionNumber = session.current_question;
       const prizeAmount = PRIZE_LADDER[questionNumber];
 
       if (isCorrect) {
@@ -395,7 +396,8 @@ Prize processed in 24-48 hours.
 
   async checkTimeout(session, user) {
     try {
-      const timeoutKey = `timeout:${session.session_key}`;
+      const questionNumber = session.current_question;
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       const timeout = await redis.get(timeoutKey);
       
       if (!timeout) {
@@ -432,19 +434,43 @@ Prize processed in 24-48 hours.
     await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
   }
 
-  async getLeaderboard(limit = 10) {
-    const result = await pool.query(
-      `SELECT u.full_name, u.lga, t.amount as score
-       FROM transactions t
-       JOIN users u ON t.user_id = u.id
-       WHERE t.created_at >= CURRENT_DATE
-       AND t.transaction_type = 'prize'
-       ORDER BY t.amount DESC
-       LIMIT $1`,
-      [limit]
-    );
+  async getLeaderboard(period = 'daily', limit = 10) {
+    try {
+      let dateCondition;
+      
+      switch(period.toLowerCase()) {
+        case 'daily':
+          dateCondition = 'CURRENT_DATE';
+          break;
+        case 'weekly':
+          dateCondition = "CURRENT_DATE - INTERVAL '7 days'";
+          break;
+        case 'monthly':
+          dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
+          break;
+        case 'all':
+          dateCondition = "'1970-01-01'"; // All time
+          break;
+        default:
+          dateCondition = 'CURRENT_DATE';
+      }
 
-    return result.rows;
+      const result = await pool.query(
+        `SELECT u.full_name, u.lga, t.amount as score
+         FROM transactions t
+         JOIN users u ON t.user_id = u.id
+         WHERE t.created_at >= ${dateCondition}
+         AND t.transaction_type = 'prize'
+         ORDER BY t.amount DESC, t.created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+
+      return result.rows;
+    } catch (error) {
+      logger.error('Error fetching leaderboard:', error);
+      throw error;
+    }
   }
 }
 
