@@ -216,6 +216,33 @@ What would you like to do?
       return;
     }
 
+    // Handle post-game menu selections (Check if user just finished a game)
+    const recentGame = await pool.query(
+      `SELECT * FROM game_sessions 
+       WHERE user_id = $1 AND status = 'completed' 
+       AND completed_at > NOW() - INTERVAL '2 minutes'
+       ORDER BY completed_at DESC LIMIT 1`,
+      [user.id]
+    );
+
+    if (recentGame.rows.length > 0) {
+      // User just finished a game, handle post-game options
+      if (input === '1' || input.includes('PLAY')) {
+        await gameService.startNewGame(user);
+        return;
+      } else if (input === '2' || input.includes('LEADERBOARD')) {
+        await this.sendLeaderboardMenu(user.phone_number);
+        return;
+      } else if (input === '3' || input.includes('CLAIM')) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '🎁 PRIZE CLAIM 🎁\n\nYour prize will be processed within 24-48 hours.\n\nYou will receive payment details via WhatsApp.\n\nThank you for playing!'
+        );
+        return;
+      }
+    }
+
+    // Regular menu handling
     if (input === '1' || input.includes('PLAY')) {
       await gameService.startNewGame(user);
     } else if (input === '2' || input.includes('HOW')) {

@@ -122,8 +122,17 @@ When you're ready, reply START to begin! 🚀`
         (Date.now() + 12000).toString()
       );
 
-      // Timer will be checked when answer is submitted
-      // No setTimeout here - this was causing the bug!
+      // Set automatic timeout handler
+      setTimeout(async () => {
+        const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+        const timeout = await redis.get(timeoutKey);
+        
+        // Only trigger timeout if the question hasn't been answered yet
+        if (timeout) {
+          await redis.del(timeoutKey);
+          await this.handleTimeout(session, user);
+        }
+      }, 12000);
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -303,7 +312,7 @@ ${user.full_name.toUpperCase()}, you're in the HALL OF FAME!
 Prize processed in 24-48 hours.
 
 1️⃣ Play Again
-2️⃣ Leaderboard
+2️⃣ View Leaderboard
 3️⃣ Claim Prize`
         );
       }
