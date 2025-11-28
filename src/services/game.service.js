@@ -115,24 +115,31 @@ When you're ready, reply START to begin! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
-      // Set timeout in Redis for this specific question
-      await redis.setex(
-        `timeout:${session.session_key}:q${questionNumber}`,
-        15,
-        (Date.now() + 12000).toString()
-      );
+      // Set timeout timestamp in Redis for this specific question
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+      await redis.setex(timeoutKey, 15, (Date.now() + 12000).toString());
 
-      // Set automatic timeout handler
-      setTimeout(async () => {
-        const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-        const timeout = await redis.get(timeoutKey);
-        
-        // Only trigger timeout if the question hasn't been answered yet
-        if (timeout) {
-          await redis.del(timeoutKey);
-          await this.handleTimeout(session, user);
+      // Set automatic timeout handler with unique ID stored in Redis
+      const timeoutId = setTimeout(async () => {
+        try {
+          // Check if timeout is still valid (not cleared by answer or lifeline)
+          const timeout = await redis.get(timeoutKey);
+          
+          if (timeout) {
+            // Double-check that session is still active
+            const currentSession = await this.getActiveSession(user.id);
+            if (currentSession && currentSession.current_question === questionNumber) {
+              await redis.del(timeoutKey);
+              await this.handleTimeout(currentSession, user);
+            }
+          }
+        } catch (error) {
+          logger.error('Error in timeout handler:', error);
         }
       }, 12000);
+
+      // Store timeout ID in Redis so we can clear it if needed
+      await redis.setex(`timeout_id:${session.session_key}:q${questionNumber}`, 15, timeoutId.toString());
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -194,7 +201,11 @@ When you're ready, reply START to begin! 🚀`
         } else {
           await this.updateSession(session);
           setTimeout(async () => {
-            await this.sendQuestion(session, user);
+            // Verify session still active before sending next question
+            const activeSession = await this.getActiveSession(user.id);
+            if (activeSession && activeSession.id === session.id) {
+              await this.sendQuestion(session, user);
+            }
           }, 3000);
         }
 
@@ -383,6 +394,11 @@ Prize processed in 24-48 hours.
           return;
         }
 
+        // Clear the timeout for current question
+        const questionNumber = currentSession.current_question;
+        const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
+        await redis.del(timeoutKey);
+
         await pool.query(
           'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
           [currentSession.id]
@@ -402,7 +418,11 @@ Prize processed in 24-48 hours.
           await this.updateSession(currentSession);
           
           setTimeout(async () => {
-            await this.sendQuestion(currentSession, user);
+            // Verify session still active before sending next question
+            const activeSession = await this.getActiveSession(user.id);
+            if (activeSession && activeSession.id === currentSession.id) {
+              await this.sendQuestion(currentSession, user);
+            }
           }, 3000);
         }
       }
