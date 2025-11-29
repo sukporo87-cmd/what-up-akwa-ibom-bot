@@ -49,7 +49,7 @@ class GameService {
 
 📋 RULES:
 - 15 questions about Akwa Ibom
-- 12 seconds per question
+- 15 seconds per question
 - Win up to ₦50,000!
 
 💎 LIFELINES:
@@ -103,7 +103,7 @@ When you're ready, reply START to begin! 🚀`
       message += `B) ${question.option_b}\n`;
       message += `C) ${question.option_c}\n`;
       message += `D) ${question.option_d}\n\n`;
-      message += `⏱️ 12 seconds...\n\n`;
+      message += `⏱️ 15 seconds...\n\n`;
 
       const lifelines = [];
       if (!session.lifeline_5050_used) lifelines.push('50:50');
@@ -117,7 +117,7 @@ When you're ready, reply START to begin! 🚀`
 
       // Set timeout timestamp in Redis for this specific question
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-      await redis.setex(timeoutKey, 15, (Date.now() + 12000).toString());
+      await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
 
       // Set automatic timeout handler with unique ID stored in Redis
       const timeoutId = setTimeout(async () => {
@@ -136,10 +136,10 @@ When you're ready, reply START to begin! 🚀`
         } catch (error) {
           logger.error('Error in timeout handler:', error);
         }
-      }, 12000);
+      }, 15000);
 
       // Store timeout ID in Redis so we can clear it if needed
-      await redis.setex(`timeout_id:${session.session_key}:q${questionNumber}`, 15, timeoutId.toString());
+      await redis.setex(`timeout_id:${session.session_key}:q${questionNumber}`, 18, timeoutId.toString());
 
     } catch (error) {
       logger.error('Error sending question:', error);
@@ -249,7 +249,7 @@ When you're ready, reply START to begin! 🚀`
     }
 
     message += `Well played, ${user.full_name}! 👏\n\n`;
-    message += `1️⃣ Play Again\n2️⃣ Leaderboard\n`;
+    message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
     
     if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
 
@@ -322,10 +322,31 @@ ${user.full_name.toUpperCase()}, you're in the HALL OF FAME!
 
 Prize processed in 24-48 hours.
 
+Would you like to share your win? Reply YES to get your victory card! 🎉
+
 1️⃣ Play Again
 2️⃣ View Leaderboard
 3️⃣ Claim Prize`
         );
+      } else if (finalScore > 0) {
+        // Offer sharing for any win
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `Congratulations ${user.full_name}! 🎉
+
+You won ₦${finalScore.toLocaleString()}!
+
+Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸`
+        );
+      }
+
+      // Set flag for win sharing
+      if (finalScore > 0) {
+        await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
+          amount: finalScore,
+          questionsAnswered: session.current_question - 1,
+          totalQuestions: 15
+        }));
       }
 
     } catch (error) {
@@ -378,7 +399,7 @@ Prize processed in 24-48 hours.
           message += `${opt}) ${question['option_' + opt.toLowerCase()]}\n`;
         });
 
-        message += `\n⏱️ 12 seconds...\n\n`;
+        message += `\n⏱️ 15 seconds...\n\n`;
 
         const lifelines = [];
         if (!currentSession.lifeline_skip_used) lifelines.push('Skip');
