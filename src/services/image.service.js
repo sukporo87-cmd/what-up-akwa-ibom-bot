@@ -1,4 +1,4 @@
-const { createCanvas, loadImage } = require('canvas');
+const { createCanvas, loadImage, registerFont } = require('canvas');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
@@ -47,12 +47,12 @@ class ImageService {
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    // CONFETTI PARTICLES (rendered as colorful shapes)
+    // CONFETTI PARTICLES - MORE (70 particles)
     this.drawConfetti(ctx, width, height, [
       '#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3', 
       '#F38181', '#AA96DA', '#FCBAD3', '#FFFFD2', 
-      '#A8E6CF', '#FFB3BA'
-    ]);
+      '#A8E6CF', '#FFB3BA', '#C7CEEA', '#FFDAC1'
+    ], 70);
 
     // QR CODE - Top Right Corner
     const qrSize = 180;
@@ -89,81 +89,80 @@ class ImageService {
     ctx.fillText('Scan to Play!', width - qrPadding - qrBgSize/2, qrPadding + qrBgSize + 35);
     ctx.shadowBlur = 0;
 
-    // TROPHY
-    this.drawTrophy(ctx, width / 2, 330, 140, '#FFD700');
+    // TROPHY EMOJI - Large at top
+    ctx.font = '150px Arial';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 10;
+    ctx.fillText('🏆', width / 2, 280);
+    ctx.shadowBlur = 0;
 
-    // WINNER BADGE
-    const badgeY = 480;
+    // "WINNER!!!" BADGE
+    const winnerY = 350;
     ctx.fillStyle = 'white';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
     ctx.shadowBlur = 15;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 4;
-    this.roundRect(ctx, width/2 - 120, badgeY, 240, 50, 25);
+    this.roundRect(ctx, width/2 - 150, winnerY, 300, 60, 30);
     ctx.fill();
     ctx.shadowBlur = 0;
     
     ctx.fillStyle = '#FF6B35';
-    ctx.font = 'bold 28px Arial, sans-serif';
+    ctx.font = 'bold 36px Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('WINNER!', width / 2, badgeY + 35);
+    ctx.fillText('WINNER!!!', width / 2, winnerY + 43);
 
-    // AMOUNT
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 96px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 6;
-    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, 630);
-    ctx.shadowBlur = 0;
-
-    // MESSAGE - "I just won"
-    ctx.font = 'bold 42px Arial, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.fillText('I just won', width / 2, 710);
-
-    // PLAYER NAME
-    ctx.font = 'bold 38px Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.fillText(this.truncateText(ctx, name, width - 200), width / 2, 770);
-
-    // LOCATION
-    ctx.font = '32px Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.fillText(lga, width / 2, 820);
-
-    // STATS BOX
-    const statsY = 870;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
-    ctx.shadowBlur = 10;
-    this.roundRect(ctx, width/2 - 220, statsY, 440, 70, 15);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    // NEW TEXT LAYOUT - LARGE AND BOLD
+    let currentY = 480;
     
-    ctx.font = 'bold 32px Arial, sans-serif';
+    // "I JUST WON"
     ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${questionsAnswered}/${totalQuestions} Questions Correct`, width / 2, statsY + 45);
-
-    // GAME BRANDING - MUCH BIGGER AND BOLDER
-    ctx.font = 'bold 48px Arial, sans-serif';
-    ctx.fillStyle = 'white';
+    ctx.font = 'bold 72px Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
     ctx.shadowBlur = 8;
-    ctx.fillText("What's Up Akwa Ibom", width / 2, 990);
-    
-    ctx.font = 'bold 28px Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.fillText('The Ultimate Trivia Game', width / 2, 1030);
-    ctx.shadowBlur = 0;
+    ctx.fillText('I JUST WON', width / 2, currentY);
+    currentY += 100;
 
-    // GOVERNMENT CREDIT
-    ctx.font = 'italic 20px Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.fillText('Akwa Ibom State Government', width / 2, 1065);
+    // AMOUNT - Even bigger
+    ctx.font = 'bold 110px Arial, sans-serif';
+    ctx.shadowBlur = 10;
+    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, currentY);
+    currentY += 100;
+
+    // "ON"
+    ctx.font = 'bold 68px Arial, sans-serif';
+    ctx.shadowBlur = 8;
+    ctx.fillText('ON', width / 2, currentY);
+    currentY += 100;
+
+    // "WHAT'S UP AKWA IBOM"
+    ctx.font = 'bold 76px Arial, sans-serif';
+    ctx.shadowBlur = 10;
+    ctx.fillText("WHAT'S UP AKWA IBOM", width / 2, currentY);
+    currentY += 85;
+
+    // "THE ULTIMATE TRIVIA GAME"
+    ctx.font = 'bold 52px Arial, sans-serif';
+    ctx.shadowBlur = 8;
+    ctx.fillText('THE ULTIMATE TRIVIA GAME', width / 2, currentY);
+    ctx.shadowBlur = 0;
+    currentY += 80;
+
+    // Questions Correct
+    ctx.font = 'bold 38px Arial, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillText(`${questionsAnswered}/${totalQuestions} Questions Correct`, width / 2, currentY);
+    currentY += 70;
+
+    // BOTTOM - Company Credit
+    ctx.font = 'bold 32px Arial, sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 6;
+    ctx.fillText('SummerIsland Systems', width / 2, 1040);
+    ctx.shadowBlur = 0;
 
     // Save to temp file as PNG
     const filename = `win_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
@@ -191,11 +190,11 @@ class ImageService {
     // SUBTLE PATTERN OVERLAY
     this.drawPatternOverlay(ctx, width, height);
 
-    // GOLD CONFETTI PARTICLES
+    // GOLD CONFETTI PARTICLES - MORE (60 particles)
     this.drawConfetti(ctx, width, height, [
       '#FFD700', '#FFA500', '#FFFF00', '#FFD700', 
       '#FFA500', '#FFFF00', '#FFD700', '#FFA500'
-    ], true); // Gold theme
+    ], 60, true);
 
     // QR CODE - Top Right Corner (Gold theme)
     const qrSize = 180;
@@ -237,89 +236,86 @@ class ImageService {
     ctx.shadowBlur = 0;
 
     // GRAND PRIZE BANNER
-    const bannerY = 150;
-    const bannerGradient = ctx.createLinearGradient(width/2 - 300, bannerY, width/2 + 300, bannerY);
+    const bannerY = 120;
+    const bannerGradient = ctx.createLinearGradient(width/2 - 350, bannerY, width/2 + 350, bannerY);
     bannerGradient.addColorStop(0, '#FFD700');
     bannerGradient.addColorStop(1, '#FFA500');
     ctx.fillStyle = bannerGradient;
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
-    ctx.shadowBlur = 20;
-    this.roundRect(ctx, width/2 - 340, bannerY, 680, 65, 32);
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
+    ctx.shadowBlur = 25;
+    this.roundRect(ctx, width/2 - 380, bannerY, 760, 70, 35);
     ctx.fill();
     ctx.shadowBlur = 0;
     
     ctx.fillStyle = '#1a1a2e';
-    ctx.font = 'bold 34px Arial, sans-serif';
+    ctx.font = 'bold 38px Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('🌟 GRAND PRIZE WINNER! 🌟', width / 2, bannerY + 44);
+    ctx.fillText('🌟 GRAND PRIZE WINNER!!! 🌟', width / 2, bannerY + 48);
 
-    // MEGA TROPHY
-    this.drawTrophy(ctx, width / 2, 370, 180, '#FFD700', true);
+    // MEGA TROPHY EMOJI
+    ctx.font = '180px Arial';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
+    ctx.shadowBlur = 30;
+    ctx.fillText('🏆', width / 2, 350);
+    ctx.shadowBlur = 0;
 
-    // AMOUNT DISPLAY
+    // NEW TEXT LAYOUT - LARGE AND BOLD
+    let currentY = 480;
+    
+    // "I JUST WON"
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 72px Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('₦', width / 2, 580);
-    
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
+    ctx.shadowBlur = 15;
+    ctx.fillText('I JUST WON', width / 2, currentY);
+    currentY += 100;
+
+    // AMOUNT - Even bigger with glow
     ctx.fillStyle = 'white';
     ctx.font = 'bold 120px Arial, sans-serif';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
-    ctx.shadowBlur = 30;
-    ctx.fillText(amount.toLocaleString(), width / 2, 700);
-    ctx.shadowBlur = 0;
-
-    // MESSAGE - "I just won"
-    ctx.font = 'bold 44px Arial, sans-serif';
-    ctx.fillStyle = '#FFD700';
-    ctx.textAlign = 'center';
-    ctx.fillText('I just won', width / 2, 770);
-
-    // WINNER CARD
-    const cardY = 810;
-    const cardHeight = 160;
-    
-    // Card background with gold border
-    const cardGradient = ctx.createLinearGradient(0, cardY, 0, cardY + cardHeight);
-    cardGradient.addColorStop(0, 'rgba(255, 215, 0, 0.15)');
-    cardGradient.addColorStop(1, 'rgba(255, 165, 0, 0.15)');
-    ctx.fillStyle = cardGradient;
-    ctx.strokeStyle = 'rgba(255, 215, 0, 0.4)';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.2)';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.9)';
     ctx.shadowBlur = 20;
-    this.roundRect(ctx, width/2 - 400, cardY, 800, cardHeight, 15);
-    ctx.fill();
-    ctx.stroke();
+    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, currentY);
+    currentY += 100;
+
+    // "ON"
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 68px Arial, sans-serif';
+    ctx.shadowBlur = 15;
+    ctx.fillText('ON', width / 2, currentY);
+    currentY += 100;
+
+    // "WHAT'S UP AKWA IBOM"
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 76px Arial, sans-serif';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
+    ctx.shadowBlur = 18;
+    ctx.fillText("WHAT'S UP AKWA IBOM", width / 2, currentY);
+    currentY += 85;
+
+    // "THE ULTIMATE TRIVIA GAME"
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 52px Arial, sans-serif';
+    ctx.shadowBlur = 15;
+    ctx.fillText('THE ULTIMATE TRIVIA GAME', width / 2, currentY);
+    ctx.shadowBlur = 0;
+    currentY += 80;
+
+    // Questions Correct
+    ctx.font = 'bold 40px Arial, sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+    ctx.shadowBlur = 10;
+    ctx.fillText('15/15 PERFECT! ⭐', width / 2, currentY);
     ctx.shadowBlur = 0;
 
-    // PLAYER NAME
-    ctx.font = 'bold 42px Arial, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.fillText(this.truncateText(ctx, name, 750), width / 2, cardY + 55);
-
-    // LOCATION
-    ctx.font = 'bold 30px Arial, sans-serif';
+    // BOTTOM - Company Credit
+    ctx.font = 'bold 34px Arial, sans-serif';
     ctx.fillStyle = '#FFD700';
-    ctx.fillText(lga, width / 2, cardY + 100);
-
-    // ACHIEVEMENT BADGE
-    ctx.font = 'bold 26px Arial, sans-serif';
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText('15/15 PERFECT! ⭐', width / 2, cardY + 140);
-
-    // FOOTER - Game Branding
-    ctx.font = 'bold 50px Arial, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
-    ctx.shadowBlur = 15;
-    ctx.fillText("What's Up Akwa Ibom", width / 2, 1020);
-    
-    ctx.font = 'bold 28px Arial, sans-serif';
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText('The Ultimate Trivia Game', width / 2, 1060);
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
+    ctx.shadowBlur = 12;
+    ctx.fillText('SummerIsland Systems', width / 2, 1040);
     ctx.shadowBlur = 0;
 
     // Save to temp file as PNG
@@ -332,72 +328,44 @@ class ImageService {
     return filepath;
   }
 
-  drawTrophy(ctx, x, y, size, color, hasGlow = false) {
-    ctx.save();
-    
-    if (hasGlow) {
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 40;
-    }
-    
-    // Trophy cup body
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, size * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Trophy base
-    ctx.fillRect(x - size * 0.3, y + size * 0.4, size * 0.6, size * 0.2);
-    
-    // Trophy handles
-    ctx.beginPath();
-    ctx.arc(x - size * 0.55, y, size * 0.25, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(x + size * 0.55, y, size * 0.25, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Trophy shine
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.beginPath();
-    ctx.arc(x - size * 0.2, y - size * 0.2, size * 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.restore();
-  }
-
-  drawConfetti(ctx, width, height, colors, isGold = false) {
-    const confettiCount = isGold ? 35 : 50;
-    
-    for (let i = 0; i < confettiCount; i++) {
+  drawConfetti(ctx, width, height, colors, count = 50, isGold = false) {
+    for (let i = 0; i < count; i++) {
       ctx.save();
       
       const x = Math.random() * width;
       const y = Math.random() * height;
-      const size = isGold ? (Math.random() * 10 + 8) : (Math.random() * 12 + 6);
+      const size = isGold ? (Math.random() * 12 + 8) : (Math.random() * 14 + 6);
       const rotation = Math.random() * Math.PI * 2;
       const color = colors[Math.floor(Math.random() * colors.length)];
       
       ctx.translate(x, y);
       ctx.rotate(rotation);
       
-      // Draw confetti particle
-      if (Math.random() > 0.5) {
+      ctx.fillStyle = color;
+      
+      if (isGold) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12;
+      }
+      
+      // Draw different confetti shapes
+      const shape = Math.random();
+      if (shape > 0.66) {
         // Circle
-        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
         ctx.fill();
-      } else {
+      } else if (shape > 0.33) {
         // Rectangle
-        ctx.fillStyle = color;
         ctx.fillRect(-size / 2, -size / 2, size, size * 1.5);
-      }
-      
-      // Add glow for gold confetti
-      if (isGold) {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 10;
+      } else {
+        // Triangle
+        ctx.beginPath();
+        ctx.moveTo(0, -size / 2);
+        ctx.lineTo(size / 2, size / 2);
+        ctx.lineTo(-size / 2, size / 2);
+        ctx.closePath();
+        ctx.fill();
       }
       
       ctx.restore();
