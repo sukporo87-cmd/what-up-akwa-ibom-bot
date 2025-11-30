@@ -94,6 +94,15 @@ class WhatsAppService {
     try {
       const url = `${this.apiUrl}/${this.phoneNumberId}/media`;
       
+      // Check file size
+      const stats = fs.statSync(filepath);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      logger.info(`Uploading file: ${fileSizeMB.toFixed(2)}MB`);
+      
+      if (fileSizeMB > 16) {
+        throw new Error(`File too large: ${fileSizeMB.toFixed(2)}MB (max 16MB)`);
+      }
+      
       // Determine correct MIME type and filename
       const mimeType = isGif ? 'image/gif' : 'image/png';
       const filename = isGif ? 'victory_animation.gif' : 'victory_card.png';
@@ -111,7 +120,8 @@ class WhatsAppService {
           ...formData.getHeaders()
         },
         maxContentLength: Infinity,
-        maxBodyLength: Infinity
+        maxBodyLength: Infinity,
+        timeout: 60000 // 60 second timeout
       });
 
       logger.info(`Media uploaded: ${response.data.id} (${isGif ? 'GIF->Video' : 'PNG'})`);

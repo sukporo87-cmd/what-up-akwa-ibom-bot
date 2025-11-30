@@ -34,9 +34,9 @@ class ImageService {
   async generateRegularWinGif(winData) {
     const { name, lga, amount, questionsAnswered, totalQuestions } = winData;
     
-    const width = 1080;
-    const height = 1080;
-    const frames = 30; // 30 frames for smooth animation
+    const width = 800; // Reduced from 1080
+    const height = 800; // Reduced from 1080
+    const frames = 20; // Reduced from 30 for smaller file
     
     // Create GIF encoder
     const encoder = new GIFEncoder(width, height);
@@ -46,8 +46,8 @@ class ImageService {
     encoder.createReadStream().pipe(fs.createWriteStream(filepath));
     encoder.start();
     encoder.setRepeat(0); // Loop forever
-    encoder.setDelay(100); // 100ms between frames = ~10fps
-    encoder.setQuality(10); // 10 is best quality
+    encoder.setDelay(150); // 150ms between frames for smaller file
+    encoder.setQuality(15); // Slightly lower quality for smaller file size
     
     // Generate QR code once
     const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
@@ -187,9 +187,9 @@ class ImageService {
   async generateGrandPrizeGif(winData) {
     const { name, lga, amount, questionsAnswered, totalQuestions } = winData;
     
-    const width = 1080;
-    const height = 1080;
-    const frames = 30;
+    const width = 800; // Reduced from 1080
+    const height = 800; // Reduced from 1080
+    const frames = 20; // Reduced from 30
     
     // Create GIF encoder
     const encoder = new GIFEncoder(width, height);
@@ -199,8 +199,8 @@ class ImageService {
     encoder.createReadStream().pipe(fs.createWriteStream(filepath));
     encoder.start();
     encoder.setRepeat(0);
-    encoder.setDelay(100);
-    encoder.setQuality(10);
+    encoder.setDelay(150);
+    encoder.setQuality(15);
     
     // Generate QR code
     const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
