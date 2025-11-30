@@ -89,13 +89,26 @@ class ImageService {
     ctx.fillText('Scan to Play!', width - qrPadding - qrBgSize/2, qrPadding + qrBgSize + 35);
     ctx.shadowBlur = 0;
 
-    // TROPHY EMOJI - Large at top
-    ctx.font = '150px Arial';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 10;
-    ctx.fillText('🏆', width / 2, 280);
-    ctx.shadowBlur = 0;
+    // TROPHY IMAGE - Large at top
+    try {
+      const trophyUrl = 'https://png.pngtree.com/png-clipart/20230401/original/pngtree-golden-trophy-3d-png-image_9015143.png';
+      const trophyImage = await loadImage(trophyUrl);
+      const trophySize = 220;
+      const trophyX = width / 2 - trophySize / 2;
+      const trophyY = 120;
+      
+      // Add shadow for trophy
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+      ctx.shadowBlur = 20;
+      ctx.shadowOffsetY = 10;
+      ctx.drawImage(trophyImage, trophyX, trophyY, trophySize, trophySize);
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+    } catch (error) {
+      // Fallback to drawn trophy if image fails to load
+      logger.warn('Trophy image failed to load, using drawn trophy');
+      this.drawTrophy(ctx, width / 2, 230, 160, '#FFD700', false);
+    }
 
     // "WINNER!!!" BADGE
     const winnerY = 350;
@@ -252,12 +265,25 @@ class ImageService {
     ctx.textAlign = 'center';
     ctx.fillText('🌟 GRAND PRIZE WINNER!!! 🌟', width / 2, bannerY + 48);
 
-    // MEGA TROPHY EMOJI
-    ctx.font = '180px Arial';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
-    ctx.shadowBlur = 30;
-    ctx.fillText('🏆', width / 2, 350);
-    ctx.shadowBlur = 0;
+    // MEGA TROPHY IMAGE - Grand Prize
+    try {
+      const trophyUrl = 'https://png.pngtree.com/png-clipart/20230401/original/pngtree-golden-trophy-3d-png-image_9015143.png';
+      const trophyImage = await loadImage(trophyUrl);
+      const trophySize = 260;
+      const trophyX = width / 2 - trophySize / 2;
+      const trophyY = 150;
+      
+      // Add golden glow for trophy
+      ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
+      ctx.shadowBlur = 40;
+      ctx.shadowOffsetY = 0;
+      ctx.drawImage(trophyImage, trophyX, trophyY, trophySize, trophySize);
+      ctx.shadowBlur = 0;
+    } catch (error) {
+      // Fallback to drawn trophy if image fails to load
+      logger.warn('Trophy image failed to load, using drawn trophy');
+      this.drawTrophy(ctx, width / 2, 280, 200, '#FFD700', true);
+    }
 
     // NEW TEXT LAYOUT - LARGE AND BOLD
     let currentY = 480;
