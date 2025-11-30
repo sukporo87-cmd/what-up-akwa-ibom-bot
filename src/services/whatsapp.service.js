@@ -41,13 +41,30 @@ class WhatsAppService {
 
   async sendImage(phoneNumber, imagePath, caption = '') {
     try {
-      // Step 1: Upload media to WhatsApp
-      const mediaId = await this.uploadMedia(imagePath);
+      // Detect file type
+      const isGif = imagePath.toLowerCase().endsWith('.gif');
+      
+      if (isGif) {
+        logger.info('Detected GIF file, will be auto-converted to video by WhatsApp');
+      }
 
-      // Step 2: Send image message with media ID
+      // Step 1: Upload media to WhatsApp (works for both PNG and GIF)
+      // WhatsApp Cloud API automatically converts GIF to MP4 video
+      const mediaId = await this.uploadMedia(imagePath, isGif);
+
+      // Step 2: Send message with media ID
+      // For GIF (converted to video), use 'video' type instead of 'image'
       const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
       
-      const payload = {
+      const payload = isGif ? {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'video',
+        video: {
+          id: mediaId,
+          caption: caption
+        }
+      } : {
         messaging_product: 'whatsapp',
         to: phoneNumber,
         type: 'image',
@@ -64,38 +81,44 @@ class WhatsAppService {
         }
       });
 
-      logger.info(`Image sent to ${phoneNumber}`);
+      logger.info(`${isGif ? 'Video (from GIF)' : 'Image'} sent to ${phoneNumber}`);
       return response.data;
 
     } catch (error) {
-      logger.error('Error sending image:', error);
+      logger.error('Error sending image:', error.response?.data || error.message);
       throw error;
     }
   }
 
-  async uploadMedia(filepath) {
+  async uploadMedia(filepath, isGif = false) {
     try {
       const url = `${this.apiUrl}/${this.phoneNumberId}/media`;
+      
+      // Determine correct MIME type and filename
+      const mimeType = isGif ? 'image/gif' : 'image/png';
+      const filename = isGif ? 'victory_animation.gif' : 'victory_card.png';
       
       const formData = new FormData();
       formData.append('messaging_product', 'whatsapp');
       formData.append('file', fs.createReadStream(filepath), {
-        filename: 'win_image.png',
-        contentType: 'image/png'
+        filename: filename,
+        contentType: mimeType
       });
 
       const response = await axios.post(url, formData, {
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
           ...formData.getHeaders()
-        }
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
       });
 
-      logger.info(`Media uploaded: ${response.data.id}`);
+      logger.info(`Media uploaded: ${response.data.id} (${isGif ? 'GIF->Video' : 'PNG'})`);
       return response.data.id;
 
     } catch (error) {
-      logger.error('Error uploading media:', error);
+      logger.error('Error uploading media:', error.response?.data || error.message);
       throw error;
     }
   }
