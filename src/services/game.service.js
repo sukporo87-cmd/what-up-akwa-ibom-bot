@@ -54,7 +54,7 @@ class GameService {
 
 💎 LIFELINES:
 5️⃣0️⃣ 50:50 - Remove 2 wrong answers
-⏭️ Skip - Jump to next question
+⏭️ Skip - Replace with new question (same level)
 
 Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 
@@ -420,6 +420,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
         const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
         await redis.del(timeoutKey);
 
+        // Mark lifeline as used
         await pool.query(
           'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
           [currentSession.id]
@@ -427,25 +428,22 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
 
         await whatsappService.sendMessage(
           user.phone_number,
-          `⏭️ SKIP USED! ⏭️\n\nMoving to next question...\n\nCorrect answer was: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}`
+          `⏭️ SKIP USED! ⏭️\n\nGetting a new question at the same level...`
         );
 
-        currentSession.current_question = currentSession.current_question + 1;
-        currentSession.current_score = PRIZE_LADDER[currentSession.current_question - 1];
-
-        if (currentSession.current_question > 15) {
-          await this.completeGame(currentSession, user, true);
-        } else {
-          await this.updateSession(currentSession);
-          
-          setTimeout(async () => {
-            // Verify session still active before sending next question
-            const activeSession = await this.getActiveSession(user.id);
-            if (activeSession && activeSession.id === currentSession.id) {
-              await this.sendQuestion(currentSession, user);
-            }
-          }, 3000);
-        }
+        // IMPORTANT: Don't increment question number or score
+        // Just send a new question at the SAME level
+        currentSession.lifeline_skip_used = true;
+        await this.updateSession(currentSession);
+        
+        setTimeout(async () => {
+          // Verify session still active before sending replacement question
+          const activeSession = await this.getActiveSession(user.id);
+          if (activeSession && activeSession.id === currentSession.id) {
+            // Send new question at SAME question number (not +1)
+            await this.sendQuestion(currentSession, user);
+          }
+        }, 3000);
       }
 
     } catch (error) {
@@ -486,9 +484,11 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
   async updateSession(session) {
     await pool.query(
       `UPDATE game_sessions 
-       SET current_question = $1, current_score = $2, current_question_id = $3
-       WHERE id = $4`,
-      [session.current_question, session.current_score, session.current_question_id, session.id]
+       SET current_question = $1, current_score = $2, current_question_id = $3, 
+           lifeline_5050_used = $4, lifeline_skip_used = $5
+       WHERE id = $6`,
+      [session.current_question, session.current_score, session.current_question_id, 
+       session.lifeline_5050_used, session.lifeline_skip_used, session.id]
     );
 
     await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
