@@ -89,10 +89,11 @@ class ImageService {
     ctx.fillText('Scan to Play!', width - qrPadding - qrBgSize/2, qrPadding + qrBgSize + 35);
     ctx.shadowBlur = 0;
 
-    // TROPHY IMAGE - Large at top
+    // TROPHY IMAGE - Large at top (using local file)
+    const trophyPath = path.join(__dirname, '../assets/trophy.png');
+    
     try {
-      const trophyUrl = 'https://png.pngtree.com/png-clipart/20230401/original/pngtree-golden-trophy-3d-png-image_9015143.png';
-      const trophyImage = await loadImage(trophyUrl);
+      const trophyImage = await loadImage(trophyPath);
       const trophySize = 220;
       const trophyX = width / 2 - trophySize / 2;
       const trophyY = 120;
@@ -106,7 +107,7 @@ class ImageService {
       ctx.shadowOffsetY = 0;
     } catch (error) {
       // Fallback to drawn trophy if image fails to load
-      logger.warn('Trophy image failed to load, using drawn trophy');
+      logger.warn('Trophy image not found at ' + trophyPath + ', using drawn trophy');
       this.drawTrophy(ctx, width / 2, 230, 160, '#FFD700', false);
     }
 
@@ -265,10 +266,11 @@ class ImageService {
     ctx.textAlign = 'center';
     ctx.fillText('🌟 GRAND PRIZE WINNER!!! 🌟', width / 2, bannerY + 48);
 
-    // MEGA TROPHY IMAGE - Grand Prize
+    // MEGA TROPHY IMAGE - Grand Prize (using local file)
+    const trophyPath = path.join(__dirname, '../assets/trophy.png');
+    
     try {
-      const trophyUrl = 'https://png.pngtree.com/png-clipart/20230401/original/pngtree-golden-trophy-3d-png-image_9015143.png';
-      const trophyImage = await loadImage(trophyUrl);
+      const trophyImage = await loadImage(trophyPath);
       const trophySize = 260;
       const trophyX = width / 2 - trophySize / 2;
       const trophyY = 150;
@@ -281,7 +283,7 @@ class ImageService {
       ctx.shadowBlur = 0;
     } catch (error) {
       // Fallback to drawn trophy if image fails to load
-      logger.warn('Trophy image failed to load, using drawn trophy');
+      logger.warn('Trophy image not found at ' + trophyPath + ', using drawn trophy');
       this.drawTrophy(ctx, width / 2, 280, 200, '#FFD700', true);
     }
 
@@ -352,6 +354,82 @@ class ImageService {
 
     logger.info(`Grand prize PNG generated: ${filename}`);
     return filepath;
+  }
+
+  drawTrophy(ctx, x, y, size, color, hasGlow = false) {
+    ctx.save();
+    
+    if (hasGlow) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 40;
+    } else {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+      ctx.shadowBlur = 15;
+    }
+    
+    ctx.fillStyle = color;
+    
+    // Trophy cup (main body)
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Trophy stem
+    ctx.fillRect(x - size * 0.12, y + size * 0.35, size * 0.24, size * 0.25);
+    
+    // Trophy base
+    ctx.fillRect(x - size * 0.35, y + size * 0.55, size * 0.7, size * 0.15);
+    
+    // Left handle
+    ctx.beginPath();
+    ctx.arc(x - size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Right handle
+    ctx.beginPath();
+    ctx.arc(x + size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Trophy rim (top)
+    ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size * 0.12);
+    
+    // Shine/highlight
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.beginPath();
+    ctx.arc(x - size * 0.2, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Star on trophy (for extra flair)
+    this.drawStar(ctx, x, y - size * 0.65, size * 0.18, 'white');
+    
+    ctx.restore();
+  }
+
+  drawStar(ctx, cx, cy, radius, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    
+    for (let i = 0; i < 5; i++) {
+      const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+      
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+      
+      const innerAngle = angle + Math.PI / 5;
+      const innerX = cx + Math.cos(innerAngle) * (radius * 0.4);
+      const innerY = cy + Math.sin(innerAngle) * (radius * 0.4);
+      ctx.lineTo(innerX, innerY);
+    }
+    
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   drawConfetti(ctx, width, height, colors, count = 50, isGold = false) {
