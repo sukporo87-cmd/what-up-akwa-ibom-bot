@@ -16,11 +16,11 @@ const PRIZE_LADDER = {
 const SAFE_CHECKPOINTS = [5, 10];
 
 class GameService {
-  
+
   async startNewGame(user) {
     try {
       const existingSession = await this.getActiveSession(user.id);
-      
+
       if (existingSession) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -152,7 +152,7 @@ When you're ready, reply START to begin! 🚀`
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       const timeout = await redis.get(timeoutKey);
-      
+
       if (timeout && Date.now() > Number(timeout)) {
         await this.handleTimeout(session, user);
         return;
@@ -223,7 +223,7 @@ When you're ready, reply START to begin! 🚀`
 
   async handleWrongAnswer(session, user, question) {
     const questionNumber = session.current_question;
-    
+
     let guaranteedAmount = 0;
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (questionNumber > checkpoint) {
@@ -234,7 +234,7 @@ When you're ready, reply START to begin! 🚀`
 
     let message = `❌ WRONG ANSWER 😢\n\n`;
     message += `Correct: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}\n\n`;
-    
+
     if (question.fun_fact) message += `${question.fun_fact}\n\n`;
 
     message += `🎮 GAME OVER 🎮\n\n`;
@@ -250,7 +250,7 @@ When you're ready, reply START to begin! 🚀`
 
     message += `Well played, ${user.full_name}! 👏\n\n`;
     message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-    
+
     if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
 
     await whatsappService.sendMessage(user.phone_number, message);
@@ -262,7 +262,7 @@ When you're ready, reply START to begin! 🚀`
       user.phone_number,
       `⏰ TIME'S UP! 😢\n\nYou didn't answer in time.\n\nGame Over!`
     );
-    
+
     let guaranteedAmount = 0;
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (session.current_question > checkpoint) {
@@ -270,7 +270,7 @@ When you're ready, reply START to begin! 🚀`
         break;
       }
     }
-    
+
     session.current_score = guaranteedAmount;
     await this.completeGame(session, user, false);
   }
@@ -326,8 +326,7 @@ Would you like to share your win? Reply YES to get your victory card! 🎉
 
 1️⃣ Play Again
 2️⃣ View Leaderboard
-3️⃣ Claim Prize`
-        );
+3️⃣ Claim Prize`);
       } else if (finalScore > 0) {
         // Offer sharing for any win
         await whatsappService.sendMessage(
@@ -415,10 +414,14 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           return;
         }
 
-        // Clear the timeout for current question
+        // Clear the timeout for current question - this stops the old 15-second timer
         const questionNumber = currentSession.current_question;
         const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
+        const timeoutIdKey = `timeout_id:${currentSession.session_key}:q${questionNumber}`;
+        
+        // Delete both the timeout tracking and the stored timeout ID
         await redis.del(timeoutKey);
+        await redis.del(timeoutIdKey);
 
         // Mark lifeline as used
         await pool.query(
@@ -441,6 +444,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           const activeSession = await this.getActiveSession(user.id);
           if (activeSession && activeSession.id === currentSession.id) {
             // Send new question at SAME question number (not +1)
+            // The sendQuestion method will automatically start a fresh 15-second timer
             await this.sendQuestion(currentSession, user);
           }
         }, 3000);
@@ -457,7 +461,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       const timeout = await redis.get(timeoutKey);
-      
+
       if (!timeout) {
         return;
       }
@@ -472,8 +476,8 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
   async getActiveSession(userId) {
     const result = await pool.query(
       `SELECT * FROM game_sessions 
-       WHERE user_id = $1 AND status = 'active'
-       ORDER BY started_at DESC
+       WHERE user_id = $1 AND status = 'active' 
+       ORDER BY started_at DESC 
        LIMIT 1`,
       [userId]
     );
@@ -485,9 +489,9 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     await pool.query(
       `UPDATE game_sessions 
        SET current_question = $1, current_score = $2, current_question_id = $3, 
-           lifeline_5050_used = $4, lifeline_skip_used = $5
+           lifeline_5050_used = $4, lifeline_skip_used = $5 
        WHERE id = $6`,
-      [session.current_question, session.current_score, session.current_question_id, 
+      [session.current_question, session.current_score, session.current_question_id,
        session.lifeline_5050_used, session.lifeline_skip_used, session.id]
     );
 
@@ -497,7 +501,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
   async getLeaderboard(period = 'daily', limit = 10) {
     try {
       let dateCondition;
-      
+
       switch(period.toLowerCase()) {
         case 'daily':
           dateCondition = 'CURRENT_DATE';
