@@ -15,6 +15,9 @@ const PRIZE_LADDER = {
 
 const SAFE_CHECKPOINTS = [5, 10];
 
+// Store active timeouts in memory so we can clear them
+const activeTimeouts = new Map();
+
 class GameService {
 
   async startNewGame(user) {
@@ -76,6 +79,10 @@ When you're ready, reply START to begin! 🚀`
       const prizeAmount = PRIZE_LADDER[questionNumber];
       const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
 
+      // Clear any existing timeout for this question first
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+      this.clearQuestionTimeout(timeoutKey);
+
       // Get list of already asked questions in this session
       const askedQuestionsKey = `asked_questions:${session.session_key}`;
       const askedQuestionsJson = await redis.get(askedQuestionsKey);
@@ -116,10 +123,9 @@ When you're ready, reply START to begin! 🚀`
       await whatsappService.sendMessage(user.phone_number, message);
 
       // Set timeout timestamp in Redis for this specific question
-      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
 
-      // Set automatic timeout handler with unique ID stored in Redis
+      // Set automatic timeout handler and store it in memory
       const timeoutId = setTimeout(async () => {
         try {
           // Check if timeout is still valid (not cleared by answer or lifeline)
@@ -130,6 +136,7 @@ When you're ready, reply START to begin! 🚀`
             const currentSession = await this.getActiveSession(user.id);
             if (currentSession && currentSession.current_question === questionNumber) {
               await redis.del(timeoutKey);
+              activeTimeouts.delete(timeoutKey);
               await this.handleTimeout(currentSession, user);
             }
           }
@@ -138,12 +145,22 @@ When you're ready, reply START to begin! 🚀`
         }
       }, 15000);
 
-      // Store timeout ID in Redis so we can clear it if needed
-      await redis.setex(`timeout_id:${session.session_key}:q${questionNumber}`, 18, timeoutId.toString());
+      // Store timeout ID in memory so we can clear it if needed
+      activeTimeouts.set(timeoutKey, timeoutId);
 
     } catch (error) {
       logger.error('Error sending question:', error);
       throw error;
+    }
+  }
+
+  // Helper method to clear a question's timeout
+  clearQuestionTimeout(timeoutKey) {
+    const timeoutId = activeTimeouts.get(timeoutKey);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      activeTimeouts.delete(timeoutKey);
+      logger.info(`Cleared timeout for ${timeoutKey}`);
     }
   }
 
@@ -158,8 +175,9 @@ When you're ready, reply START to begin! 🚀`
         return;
       }
 
-      // Clear the timeout for this question
+      // Clear both Redis key and the actual JavaScript timeout
       await redis.del(timeoutKey);
+      this.clearQuestionTimeout(timeoutKey);
 
       if (!session.current_question_id) {
         await whatsappService.sendMessage(
@@ -278,6 +296,11 @@ When you're ready, reply START to begin! 🚀`
   async completeGame(session, user, wonGrandPrize) {
     try {
       const finalScore = session.current_score;
+
+      // Clear any remaining timeouts for this session
+      const questionNumber = session.current_question;
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+      this.clearQuestionTimeout(timeoutKey);
 
       await pool.query(
         `UPDATE game_sessions 
@@ -414,14 +437,15 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           return;
         }
 
-        // Clear the timeout for current question - this stops the old 15-second timer
+        // CRITICAL: Clear the actual JavaScript timeout AND Redis keys
         const questionNumber = currentSession.current_question;
         const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
-        const timeoutIdKey = `timeout_id:${currentSession.session_key}:q${questionNumber}`;
         
-        // Delete both the timeout tracking and the stored timeout ID
+        // Clear the JavaScript timeout from memory
+        this.clearQuestionTimeout(timeoutKey);
+        
+        // Delete Redis tracking
         await redis.del(timeoutKey);
-        await redis.del(timeoutIdKey);
 
         // Mark lifeline as used
         await pool.query(
@@ -434,11 +458,11 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           `⏭️ SKIP USED! ⏭️\n\nGetting a new question at the same level...`
         );
 
-        // IMPORTANT: Don't increment question number or score
-        // Just send a new question at the SAME level
+        // Update session
         currentSession.lifeline_skip_used = true;
         await this.updateSession(currentSession);
         
+        // Reduced delay from 3 seconds to 1.5 seconds
         setTimeout(async () => {
           // Verify session still active before sending replacement question
           const activeSession = await this.getActiveSession(user.id);
@@ -447,7 +471,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
             // The sendQuestion method will automatically start a fresh 15-second timer
             await this.sendQuestion(currentSession, user);
           }
-        }, 3000);
+        }, 1500);
       }
 
     } catch (error) {
@@ -467,6 +491,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
       }
 
       await redis.del(timeoutKey);
+      this.clearQuestionTimeout(timeoutKey);
       await this.handleTimeout(session, user);
     } catch (error) {
       logger.error('Error checking timeout:', error);
