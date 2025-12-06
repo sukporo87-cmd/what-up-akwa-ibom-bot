@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const webhookRoutes = require('./routes/webhook.routes');
+const paymentRoutes = require('./routes/payment.routes');
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/webhook', webhookRoutes);
+app.use('/payment', paymentRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -34,6 +36,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
+  console.log(`Payment Mode: ${process.env.PAYMENT_MODE || 'free'}`);
 });
 
 module.exports = app;

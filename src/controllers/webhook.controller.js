@@ -3,11 +3,13 @@ const redis = require('../config/redis');
 const WhatsAppService = require('../services/whatsapp.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
+const PaymentService = require('../services/payment.service');
 const { logger } = require('../utils/logger');
 
 const whatsappService = new WhatsAppService();
 const gameService = new GameService();
 const userService = new UserService();
+const paymentService = new PaymentService();
 
 const LGA_LIST = [
   'Abak', 'Eastern Obolo', 'Eket', 'Esit Eket', 'Essien Udim',
@@ -65,7 +67,6 @@ class WebhookController {
     try {
       const input = message.trim().toUpperCase();
 
-      // Check for RESET command first
       if (input === 'RESET' || input === 'RESTART') {
         let user = await userService.getUserByPhone(phone);
         if (user) {
@@ -89,7 +90,11 @@ class WebhookController {
         return;
       }
 
-      // Handle leaderboard period selection
+      if (userState && userState.state === 'SELECT_PACKAGE') {
+        await this.handlePackageSelection(user, message, userState.data);
+        return;
+      }
+
       if (userState && userState.state === 'SELECT_LEADERBOARD') {
         await this.handleLeaderboardSelection(phone, message);
         return;
@@ -146,6 +151,7 @@ Let's get you registered! What's your full name?`
     await userService.setUserState(phone, 'REGISTRATION_LGA', { name: name.trim() });
 
     let lgaMessage = `Nice to meet you, ${name}! 👋\n\nWhich Local Government Area are you from?\n\nReply with the number:\n\n`;
+
     LGA_LIST.forEach((lga, idx) => {
       lgaMessage += `${idx + 1}. ${lga}\n`;
     });
@@ -162,6 +168,7 @@ Let's get you registered! What's your full name?`
     }
 
     const lga = LGA_LIST[lgaIndex];
+
     await userService.createUser(phone, name, lga);
     await userService.clearUserState(phone);
 
@@ -172,16 +179,83 @@ Let's get you registered! What's your full name?`
 You're all set, ${name} from ${lga}!
 
 Ready to play? Reply:
+
 1️⃣ Play Now
 2️⃣ How to Play
 3️⃣ Leaderboard`
     );
   }
 
+  async handleBuyGames(user) {
+    try {
+      if (!paymentService.isEnabled()) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '🎉 Good news! The game is currently FREE!\n\nType PLAY to start a game.'
+        );
+        return;
+      }
+
+      const packages = await paymentService.getPackages();
+      const message = paymentService.formatPaymentMessage(packages);
+
+      await whatsappService.sendMessage(user.phone_number, message);
+      await userService.setUserState(user.phone_number, 'SELECT_PACKAGE', { packages });
+    } catch (error) {
+      logger.error('Error handling buy games:', error);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '❌ Error loading packages. Please try again later.'
+      );
+    }
+  }
+
+  async handlePackageSelection(user, message, stateData) {
+    try {
+      const packageIndex = parseInt(message.trim()) - 1;
+      const packages = stateData.packages;
+
+      if (packageIndex < 0 || packageIndex >= packages.length) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ Invalid selection. Please reply with 1, 2, or 3.'
+        );
+        return;
+      }
+
+      const selectedPackage = packages[packageIndex];
+      const payment = await paymentService.initializePayment(user, selectedPackage.id);
+
+      await userService.clearUserState(user.phone_number);
+
+      await whatsappService.sendMessage(
+        user.phone_number,
+        `💳 PAYMENT LINK 💳\n\n` +
+        `Package: ${selectedPackage.name}\n` +
+        `Amount: ₦${payment.amount.toLocaleString()}\n` +
+        `Games: ${payment.games}\n\n` +
+        `Click link to pay:\n${payment.authorization_url}\n\n` +
+        `Payment Reference: ${payment.reference}\n\n` +
+        `⚠️ Link expires in 30 minutes`
+      );
+
+    } catch (error) {
+      logger.error('Error handling package selection:', error);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '❌ Error processing payment. Please try again.'
+      );
+    }
+  }
+
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
 
-    // Check for win sharing response
+    if (input.includes('BUY') || input === '4') {
+      await this.handleBuyGames(user);
+      return;
+    }
+
     const winSharePending = await redis.get(`win_share_pending:${user.id}`);
     if (winSharePending && (input === 'YES' || input === 'Y')) {
       await this.handleWinShare(user, JSON.parse(winSharePending));
@@ -189,11 +263,23 @@ Ready to play? Reply:
       return;
     }
 
-    // Check if this is first interaction after coming back (more than 5 minutes)
-    const lastActiveMinutesAgo = user.last_active ? 
+    if (paymentService.isEnabled()) {
+      const hasGames = await paymentService.hasGamesRemaining(user.id);
+      
+      if (!hasGames && (input === '1' || input.includes('PLAY'))) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ You have no games remaining!\n\n' +
+          'Buy games to continue playing.\n\n' +
+          'Type BUY to see packages.'
+        );
+        return;
+      }
+    }
+
+    const lastActiveMinutesAgo = user.last_active ?
       (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
 
-    // Show welcome back message if returning after 5+ minutes and not immediately playing
     if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3') {
       await whatsappService.sendMessage(
         user.phone_number,
@@ -215,8 +301,7 @@ What would you like to do?
 2️⃣ How to Play
 3️⃣ View Leaderboard`
       );
-      
-      // Update last_active to prevent showing this message repeatedly
+
       await pool.query(
         'UPDATE users SET last_active = NOW() WHERE id = $1',
         [user.id]
@@ -224,17 +309,15 @@ What would you like to do?
       return;
     }
 
-    // Handle post-game menu selections (Check if user just finished a game)
     const recentGame = await pool.query(
-      `SELECT * FROM game_sessions 
-       WHERE user_id = $1 AND status = 'completed' 
+      `SELECT * FROM game_sessions
+       WHERE user_id = $1 AND status = 'completed'
        AND completed_at > NOW() - INTERVAL '2 minutes'
        ORDER BY completed_at DESC LIMIT 1`,
       [user.id]
     );
 
     if (recentGame.rows.length > 0) {
-      // User just finished a game, handle post-game options
       if (input === '1' || input.includes('PLAY')) {
         await gameService.startNewGame(user);
         return;
@@ -250,7 +333,6 @@ What would you like to do?
       }
     }
 
-    // Regular menu handling
     if (input === '1' || input.includes('PLAY')) {
       await gameService.startNewGame(user);
     } else if (input === '2' || input.includes('HOW')) {
@@ -297,7 +379,6 @@ Ready to start fresh?
   async handleGameInput(user, session, message) {
     const input = message.trim().toUpperCase();
 
-    // Check if waiting for START command
     const gameReady = await redis.get(`game_ready:${user.id}`);
     if (gameReady && input === 'START') {
       await redis.del(`game_ready:${user.id}`);
@@ -305,6 +386,7 @@ Ready to start fresh?
         user.phone_number,
         '🎮 LET\'S GO! 🎮\n\nStarting in 3... 2... 1...'
       );
+
       setTimeout(async () => {
         await gameService.sendQuestion(session, user);
       }, 2000);
@@ -319,7 +401,6 @@ Ready to start fresh?
       return;
     }
 
-    // Handle lifelines and answers
     if (input.includes('50') || input.includes('5050')) {
       await gameService.useLifeline(session, user, 'fifty_fifty');
       return;
@@ -341,20 +422,20 @@ Ready to start fresh?
   }
 
   async sendMainMenu(phone) {
-    await whatsappService.sendMessage(
-      phone,
-      `🏠 MAIN MENU 🏠
+    const isPaymentEnabled = paymentService.isEnabled();
+    
+    let message = '🏠 MAIN MENU 🏠\n\nWhat would you like to do?\n\n';
+    message += '1️⃣ Play Now\n';
+    message += '2️⃣ How to Play\n';
+    message += '3️⃣ View Leaderboard\n';
+    
+    if (isPaymentEnabled) {
+      message += '4️⃣ Buy Games\n';
+    }
+    
+    message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
 
-What would you like to do?
-
-1️⃣ Play Now
-2️⃣ How to Play
-3️⃣ View Leaderboard
-
-Having issues? Type RESET to start fresh.
-
-Reply with your choice.`
-    );
+    await whatsappService.sendMessage(phone, message);
   }
 
   async sendHowToPlay(phone) {
@@ -363,7 +444,7 @@ Reply with your choice.`
       `📖 HOW TO PLAY 📖
 
 🎯 Answer 15 questions about Akwa Ibom
-⏱️ 12 seconds per question
+⏱️ 15 seconds per question
 💎 2 lifelines available:
    • 50:50 - Remove 2 wrong answers
    • Skip - Move to next question
@@ -383,7 +464,7 @@ Ready to play? Reply "PLAY NOW"`
 
   async sendLeaderboardMenu(phone) {
     await userService.setUserState(phone, 'SELECT_LEADERBOARD');
-    
+
     await whatsappService.sendMessage(
       phone,
       `📊 SELECT LEADERBOARD 📊
@@ -401,6 +482,7 @@ Reply with your choice:`
 
   async handleLeaderboardSelection(phone, message) {
     const input = message.trim();
+
     let period = 'daily';
     let periodName = 'TODAY';
 
@@ -435,9 +517,9 @@ Reply with your choice:`
 
   async sendLeaderboardData(phone, period, periodName) {
     const leaderboard = await gameService.getLeaderboard(period);
-    
+
     let message = `🏅 ${periodName}'S LEADERBOARD 🏅\n\n`;
-    
+
     if (leaderboard.length === 0) {
       message += 'No winners yet! Be the first! 🎯';
     } else {
@@ -452,11 +534,6 @@ Reply with your choice:`
     await whatsappService.sendMessage(phone, message);
   }
 
-  // Legacy method - kept for backward compatibility
-  async sendLeaderboard(phone) {
-    await this.sendLeaderboardMenu(phone);
-  }
-
   async handleWinShare(user, winData) {
     const ImageService = require('../services/image.service');
     const imageService = new ImageService();
@@ -468,7 +545,6 @@ Reply with your choice:`
         '🎨 Creating your victory card... Please wait a moment! ✨'
       );
 
-      // Generate win image
       const imagePath = await imageService.generateWinImage({
         name: user.full_name,
         lga: user.lga,
@@ -477,7 +553,6 @@ Reply with your choice:`
         totalQuestions: winData.totalQuestions
       });
 
-      // Send image via WhatsApp
       await whatsappService.sendImage(
         user.phone_number,
         imagePath,
@@ -494,12 +569,8 @@ Save it and share on your WhatsApp Status to inspire others!
 2️⃣ View Leaderboard`
       );
 
-      // Clean up temp file
       fs.unlinkSync(imagePath);
-
-      // Clean up old temp files
       imageService.cleanupTempFiles();
-
     } catch (error) {
       logger.error('Error handling win share:', error);
       await whatsappService.sendMessage(

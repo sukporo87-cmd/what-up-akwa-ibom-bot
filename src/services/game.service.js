@@ -2,10 +2,12 @@ const pool = require('../config/database');
 const redis = require('../config/redis');
 const WhatsAppService = require('./whatsapp.service');
 const QuestionService = require('./question.service');
+const PaymentService = require('./payment.service');
 const { logger } = require('../utils/logger');
 
 const whatsappService = new WhatsAppService();
 const questionService = new QuestionService();
+const paymentService = new PaymentService();
 
 const PRIZE_LADDER = {
   1: 200, 2: 250, 3: 300, 4: 500, 5: 1000,
@@ -15,15 +17,31 @@ const PRIZE_LADDER = {
 
 const SAFE_CHECKPOINTS = [5, 10];
 
-// Store active timeouts in memory so we can clear them
 const activeTimeouts = new Map();
 
 class GameService {
-
   async startNewGame(user) {
     try {
-      const existingSession = await this.getActiveSession(user.id);
+      // Check if payment is enabled and user has games
+      if (paymentService.isEnabled()) {
+        const hasGames = await paymentService.hasGamesRemaining(user.id);
+        
+        if (!hasGames) {
+          await whatsappService.sendMessage(
+            user.phone_number,
+            '❌ You have no games remaining!\n\n' +
+            'Type BUY to purchase more games.'
+          );
+          return;
+        }
 
+        // Deduct one game from user's balance
+        await paymentService.deductGame(user.id);
+        
+        logger.info(`Game started for user ${user.id} - 1 game deducted`);
+      }
+
+      const existingSession = await this.getActiveSession(user.id);
       if (existingSession) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -33,7 +51,6 @@ class GameService {
       }
 
       const sessionKey = `game_${user.id}_${Date.now()}`;
-
       const result = await pool.query(
         `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
          VALUES ($1, $2, 1, 0)
@@ -42,10 +59,8 @@ class GameService {
       );
 
       const session = result.rows[0];
-
       await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
-      // Send instructions and wait for START command
       await whatsappService.sendMessage(
         user.phone_number,
         `🎮 GAME INSTRUCTIONS 🎮
@@ -64,7 +79,6 @@ Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 When you're ready, reply START to begin! 🚀`
       );
 
-      // Set game state to waiting for START
       await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
 
     } catch (error) {
@@ -79,11 +93,9 @@ When you're ready, reply START to begin! 🚀`
       const prizeAmount = PRIZE_LADDER[questionNumber];
       const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
 
-      // Clear any existing timeout for this question first
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       this.clearQuestionTimeout(timeoutKey);
 
-      // Get list of already asked questions in this session
       const askedQuestionsKey = `asked_questions:${session.session_key}`;
       const askedQuestionsJson = await redis.get(askedQuestionsKey);
       const askedQuestions = askedQuestionsJson ? JSON.parse(askedQuestionsJson) : [];
@@ -94,7 +106,6 @@ When you're ready, reply START to begin! 🚀`
         throw new Error('No question found');
       }
 
-      // Add this question to the asked list
       askedQuestions.push(question.id);
       await redis.setex(askedQuestionsKey, 3600, JSON.stringify(askedQuestions));
 
@@ -102,9 +113,7 @@ When you're ready, reply START to begin! 🚀`
       await this.updateSession(session);
 
       let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
-      
       if (isSafe) message += ' (SAFE) 🔒';
-
       message += `\n\n${question.question_text}\n\n`;
       message += `A) ${question.option_a}\n`;
       message += `B) ${question.option_b}\n`;
@@ -122,17 +131,12 @@ When you're ready, reply START to begin! 🚀`
 
       await whatsappService.sendMessage(user.phone_number, message);
 
-      // Set timeout timestamp in Redis for this specific question
       await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
 
-      // Set automatic timeout handler and store it in memory
       const timeoutId = setTimeout(async () => {
         try {
-          // Check if timeout is still valid (not cleared by answer or lifeline)
           const timeout = await redis.get(timeoutKey);
-          
           if (timeout) {
-            // Double-check that session is still active
             const currentSession = await this.getActiveSession(user.id);
             if (currentSession && currentSession.current_question === questionNumber) {
               await redis.del(timeoutKey);
@@ -145,7 +149,6 @@ When you're ready, reply START to begin! 🚀`
         }
       }, 15000);
 
-      // Store timeout ID in memory so we can clear it if needed
       activeTimeouts.set(timeoutKey, timeoutId);
 
     } catch (error) {
@@ -154,7 +157,6 @@ When you're ready, reply START to begin! 🚀`
     }
   }
 
-  // Helper method to clear a question's timeout
   clearQuestionTimeout(timeoutKey) {
     const timeoutId = activeTimeouts.get(timeoutKey);
     if (timeoutId) {
@@ -168,14 +170,13 @@ When you're ready, reply START to begin! 🚀`
     try {
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-      const timeout = await redis.get(timeoutKey);
 
+      const timeout = await redis.get(timeoutKey);
       if (timeout && Date.now() > Number(timeout)) {
         await this.handleTimeout(session, user);
         return;
       }
 
-      // Clear both Redis key and the actual JavaScript timeout
       await redis.del(timeoutKey);
       this.clearQuestionTimeout(timeoutKey);
 
@@ -188,6 +189,7 @@ When you're ready, reply START to begin! 🚀`
       }
 
       const question = await questionService.getQuestionById(session.current_question_id);
+
       if (!question) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -218,15 +220,14 @@ When you're ready, reply START to begin! 🚀`
           await this.completeGame(session, user, true);
         } else {
           await this.updateSession(session);
+
           setTimeout(async () => {
-            // Verify session still active before sending next question
             const activeSession = await this.getActiveSession(user.id);
             if (activeSession && activeSession.id === session.id) {
               await this.sendQuestion(session, user);
             }
           }, 3000);
         }
-
       } else {
         await this.handleWrongAnswer(session, user, question);
       }
@@ -252,9 +253,7 @@ When you're ready, reply START to begin! 🚀`
 
     let message = `❌ WRONG ANSWER 😢\n\n`;
     message += `Correct: ${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}\n\n`;
-
     if (question.fun_fact) message += `${question.fun_fact}\n\n`;
-
     message += `🎮 GAME OVER 🎮\n\n`;
 
     if (guaranteedAmount > 0) {
@@ -268,10 +267,10 @@ When you're ready, reply START to begin! 🚀`
 
     message += `Well played, ${user.full_name}! 👏\n\n`;
     message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-
     if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
 
     await whatsappService.sendMessage(user.phone_number, message);
+
     await this.completeGame(session, user, false);
   }
 
@@ -297,20 +296,19 @@ When you're ready, reply START to begin! 🚀`
     try {
       const finalScore = session.current_score;
 
-      // Clear any remaining timeouts for this session
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
       this.clearQuestionTimeout(timeoutKey);
 
       await pool.query(
-        `UPDATE game_sessions 
+        `UPDATE game_sessions
          SET status = 'completed', completed_at = NOW(), final_score = $1
          WHERE id = $2`,
         [finalScore, session.id]
       );
 
       await pool.query(
-        `UPDATE users 
+        `UPDATE users
          SET total_games_played = total_games_played + 1,
              total_winnings = total_winnings + $1,
              highest_question_reached = GREATEST(highest_question_reached, $2),
@@ -334,7 +332,6 @@ When you're ready, reply START to begin! 🚀`
         await whatsappService.sendMessage(
           user.phone_number,
           `🎊 INCREDIBLE! 🎊
-
 🏆 CHAMPION! 🏆
 
 ALL 15 QUESTIONS CORRECT!
@@ -351,7 +348,6 @@ Would you like to share your win? Reply YES to get your victory card! 🎉
 2️⃣ View Leaderboard
 3️⃣ Claim Prize`);
       } else if (finalScore > 0) {
-        // Offer sharing for any win
         await whatsappService.sendMessage(
           user.phone_number,
           `Congratulations ${user.full_name}! 🎉
@@ -362,7 +358,6 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
         );
       }
 
-      // Set flag for win sharing
       if (finalScore > 0) {
         await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
           amount: finalScore,
@@ -386,6 +381,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
       }
 
       const question = await questionService.getQuestionById(currentSession.current_question_id);
+
       if (!question) {
         throw new Error('Question not found');
       }
@@ -404,7 +400,6 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
         const correctAnswer = question.correct_answer;
         const allOptions = ['A', 'B', 'C', 'D'];
         const wrongOptions = allOptions.filter(opt => opt !== correctAnswer);
-        
         const keepWrong = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
         const remainingOptions = [correctAnswer, keepWrong].sort();
 
@@ -425,6 +420,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
 
         const lifelines = [];
         if (!currentSession.lifeline_skip_used) lifelines.push('Skip');
+
         if (lifelines.length > 0) {
           message += `💎 Lifelines: ${lifelines.join(' | ')}`;
         }
@@ -437,17 +433,12 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           return;
         }
 
-        // CRITICAL: Clear the actual JavaScript timeout AND Redis keys
         const questionNumber = currentSession.current_question;
         const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
-        
-        // Clear the JavaScript timeout from memory
+
         this.clearQuestionTimeout(timeoutKey);
-        
-        // Delete Redis tracking
         await redis.del(timeoutKey);
 
-        // Mark lifeline as used
         await pool.query(
           'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
           [currentSession.id]
@@ -458,17 +449,12 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           `⏭️ SKIP USED! ⏭️\n\nGetting a new question at the same level...`
         );
 
-        // Update session
         currentSession.lifeline_skip_used = true;
         await this.updateSession(currentSession);
-        
-        // Reduced delay from 3 seconds to 1.5 seconds
+
         setTimeout(async () => {
-          // Verify session still active before sending replacement question
           const activeSession = await this.getActiveSession(user.id);
           if (activeSession && activeSession.id === currentSession.id) {
-            // Send new question at SAME question number (not +1)
-            // The sendQuestion method will automatically start a fresh 15-second timer
             await this.sendQuestion(currentSession, user);
           }
         }, 1500);
@@ -480,29 +466,11 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     }
   }
 
-  async checkTimeout(session, user) {
-    try {
-      const questionNumber = session.current_question;
-      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-      const timeout = await redis.get(timeoutKey);
-
-      if (!timeout) {
-        return;
-      }
-
-      await redis.del(timeoutKey);
-      this.clearQuestionTimeout(timeoutKey);
-      await this.handleTimeout(session, user);
-    } catch (error) {
-      logger.error('Error checking timeout:', error);
-    }
-  }
-
   async getActiveSession(userId) {
     const result = await pool.query(
-      `SELECT * FROM game_sessions 
-       WHERE user_id = $1 AND status = 'active' 
-       ORDER BY started_at DESC 
+      `SELECT * FROM game_sessions
+       WHERE user_id = $1 AND status = 'active'
+       ORDER BY started_at DESC
        LIMIT 1`,
       [userId]
     );
@@ -512,9 +480,9 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
 
   async updateSession(session) {
     await pool.query(
-      `UPDATE game_sessions 
-       SET current_question = $1, current_score = $2, current_question_id = $3, 
-           lifeline_5050_used = $4, lifeline_skip_used = $5 
+      `UPDATE game_sessions
+       SET current_question = $1, current_score = $2, current_question_id = $3,
+           lifeline_5050_used = $4, lifeline_skip_used = $5
        WHERE id = $6`,
       [session.current_question, session.current_score, session.current_question_id,
        session.lifeline_5050_used, session.lifeline_skip_used, session.id]
@@ -538,7 +506,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
           break;
         case 'all':
-          dateCondition = "'1970-01-01'"; // All time
+          dateCondition = "'1970-01-01'";
           break;
         default:
           dateCondition = 'CURRENT_DATE';
