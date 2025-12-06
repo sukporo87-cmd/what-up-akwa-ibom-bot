@@ -160,31 +160,38 @@ Let's get you registered! What's your full name?`
   }
 
   async handleRegistrationLGA(phone, message, name) {
-    const lgaIndex = parseInt(message.trim()) - 1;
+  const lgaIndex = parseInt(message.trim()) - 1;
 
-    if (lgaIndex < 0 || lgaIndex >= LGA_LIST.length) {
-      await whatsappService.sendMessage(phone, 'Please reply with a valid number from the list.');
-      return;
-    }
-
-    const lga = LGA_LIST[lgaIndex];
-
-    await userService.createUser(phone, name, lga);
-    await userService.clearUserState(phone);
-
-    await whatsappService.sendMessage(
-      phone,
-      `✅ Registration complete!
-
-You're all set, ${name} from ${lga}!
-
-Ready to play? Reply:
-
-1️⃣ Play Now
-2️⃣ How to Play
-3️⃣ Leaderboard`
-    );
+  if (lgaIndex < 0 || lgaIndex >= LGA_LIST.length) {
+    await whatsappService.sendMessage(phone, 'Please reply with a valid number from the list.');
+    return;
   }
+
+  const lga = LGA_LIST[lgaIndex];
+
+  await userService.createUser(phone, name, lga);
+  await userService.clearUserState(phone);
+
+  const isPaymentEnabled = paymentService.isEnabled();
+  
+  let welcomeMsg = `✅ Registration complete!\n\n`;
+  welcomeMsg += `You're all set, ${name} from ${lga}!\n\n`;
+  
+  if (isPaymentEnabled) {
+    welcomeMsg += `💎 Games Remaining: 0\n\n`;
+    welcomeMsg += `Ready to play? Reply:\n\n`;
+    welcomeMsg += `1️⃣ Buy Games\n`;
+    welcomeMsg += `2️⃣ How to Play\n`;
+    welcomeMsg += `3️⃣ Leaderboard`;
+  } else {
+    welcomeMsg += `Ready to play? Reply:\n\n`;
+    welcomeMsg += `1️⃣ Play Now\n`;
+    welcomeMsg += `2️⃣ How to Play\n`;
+    welcomeMsg += `3️⃣ Leaderboard`;
+  }
+
+  await whatsappService.sendMessage(phone, welcomeMsg);
+}
 
   async handleBuyGames(user) {
     try {
@@ -249,102 +256,110 @@ Ready to play? Reply:
   }
 
   async handleMenuInput(user, message) {
-    const input = message.trim().toUpperCase();
+  const input = message.trim().toUpperCase();
 
-    if (input.includes('BUY') || input === '4') {
-      await this.handleBuyGames(user);
-      return;
-    }
+  // Handle BUY command
+  if (input.includes('BUY') || input === '4') {
+    await this.handleBuyGames(user);
+    return;
+  }
 
-    const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-    if (winSharePending && (input === 'YES' || input === 'Y')) {
-      await this.handleWinShare(user, JSON.parse(winSharePending));
-      await redis.del(`win_share_pending:${user.id}`);
-      return;
-    }
+  // Check for win sharing response
+  const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+  if (winSharePending && (input === 'YES' || input === 'Y')) {
+    await this.handleWinShare(user, JSON.parse(winSharePending));
+    await redis.del(`win_share_pending:${user.id}`);
+    return;
+  }
 
-    if (paymentService.isEnabled()) {
-      const hasGames = await paymentService.hasGamesRemaining(user.id);
-      
-      if (!hasGames && (input === '1' || input.includes('PLAY'))) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          '❌ You have no games remaining!\n\n' +
-          'Buy games to continue playing.\n\n' +
-          'Type BUY to see packages.'
-        );
-        return;
-      }
-    }
-
-    const lastActiveMinutesAgo = user.last_active ?
-      (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
-
-    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3') {
+  // Check if payment is enabled and user has games
+  if (paymentService.isEnabled()) {
+    const hasGames = await paymentService.hasGamesRemaining(user.id);
+    
+    if (!hasGames && (input === '1' || input.includes('PLAY'))) {
       await whatsappService.sendMessage(
         user.phone_number,
-        `Hello again ${user.full_name} from ${user.lga}! 👋
-
-Welcome back to What's Up Akwa Ibom! 🎉
-
-The ultimate trivia game about our great state!
-
-Developed in partnership with the Department of Brand Management & Marketing, Office of the Governor.
-
-Brought to you by the Akwa Ibom State Government.
-
-🎄 Merry Christmas! 🎄
-
-What would you like to do?
-
-1️⃣ Play Now
-2️⃣ How to Play
-3️⃣ View Leaderboard`
-      );
-
-      await pool.query(
-        'UPDATE users SET last_active = NOW() WHERE id = $1',
-        [user.id]
+        '❌ You have no games remaining!\n\n' +
+        'Buy games to continue playing.\n\n' +
+        'Type BUY to see packages.'
       );
       return;
     }
+  }
 
-    const recentGame = await pool.query(
-      `SELECT * FROM game_sessions
-       WHERE user_id = $1 AND status = 'completed'
-       AND completed_at > NOW() - INTERVAL '2 minutes'
-       ORDER BY completed_at DESC LIMIT 1`,
+  // Check if this is first interaction after coming back
+  const lastActiveMinutesAgo = user.last_active ?
+    (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
+
+  if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4') {
+    // Show games remaining in welcome back message
+    let welcomeMessage = `Hello again ${user.full_name} from ${user.lga}! 👋\n\nWelcome back to What's Up Akwa Ibom! 🎉\n\n`;
+    
+    if (paymentService.isEnabled()) {
+      const gamesRemaining = await paymentService.getGamesRemaining(user.id);
+      welcomeMessage += `💎 Games Remaining: ${gamesRemaining}\n\n`;
+    }
+    
+    welcomeMessage += `The ultimate trivia game about our great state!\n\n`;
+    welcomeMessage += `Developed in partnership with the Department of Brand Management & Marketing, Office of the Governor.\n\n`;
+    welcomeMessage += `Brought to you by the Akwa Ibom State Government.\n\n`;
+    welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
+    welcomeMessage += `What would you like to do?\n\n`;
+    welcomeMessage += `1️⃣ Play Now\n`;
+    welcomeMessage += `2️⃣ How to Play\n`;
+    welcomeMessage += `3️⃣ View Leaderboard`;
+    
+    if (paymentService.isEnabled()) {
+      welcomeMessage += `\n4️⃣ Buy Games`;
+    }
+
+    await whatsappService.sendMessage(user.phone_number, welcomeMessage);
+
+    await pool.query(
+      'UPDATE users SET last_active = NOW() WHERE id = $1',
       [user.id]
     );
+    return;
+  }
 
-    if (recentGame.rows.length > 0) {
-      if (input === '1' || input.includes('PLAY')) {
-        await gameService.startNewGame(user);
-        return;
-      } else if (input === '2' || input.includes('LEADERBOARD')) {
-        await this.sendLeaderboardMenu(user.phone_number);
-        return;
-      } else if (input === '3' || input.includes('CLAIM')) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          '🎁 PRIZE CLAIM 🎁\n\nYour prize will be processed within 24-48 hours.\n\nYou will receive payment details via WhatsApp.\n\nThank you for playing!'
-        );
-        return;
-      }
-    }
+  // Handle post-game menu selections
+  const recentGame = await pool.query(
+    `SELECT * FROM game_sessions
+     WHERE user_id = $1 AND status = 'completed'
+     AND completed_at > NOW() - INTERVAL '2 minutes'
+     ORDER BY completed_at DESC LIMIT 1`,
+    [user.id]
+  );
 
+  if (recentGame.rows.length > 0) {
     if (input === '1' || input.includes('PLAY')) {
       await gameService.startNewGame(user);
-    } else if (input === '2' || input.includes('HOW')) {
-      await this.sendHowToPlay(user.phone_number);
-    } else if (input === '3' || input.includes('LEADERBOARD')) {
+      return;
+    } else if (input === '2' || input.includes('LEADERBOARD')) {
       await this.sendLeaderboardMenu(user.phone_number);
-    } else if (input === 'RESET' || input === 'RESTART') {
-      await this.handleReset(user);
-    } else {
-      await this.sendMainMenu(user.phone_number);
+      return;
+    } else if (input === '3' || input.includes('CLAIM')) {
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '🎁 PRIZE CLAIM 🎁\n\nYour prize will be processed within 24-48 hours.\n\nYou will receive payment details via WhatsApp.\n\nThank you for playing!'
+      );
+      return;
     }
   }
+
+  // Regular menu handling
+  if (input === '1' || input.includes('PLAY')) {
+    await gameService.startNewGame(user);
+  } else if (input === '2' || input.includes('HOW')) {
+    await this.sendHowToPlay(user.phone_number);
+  } else if (input === '3' || input.includes('LEADERBOARD')) {
+    await this.sendLeaderboardMenu(user.phone_number);
+  } else if (input === 'RESET' || input === 'RESTART') {
+    await this.handleReset(user);
+  } else {
+    await this.sendMainMenu(user.phone_number);
+  }
+}
 
   async handleReset(user) {
     try {
@@ -426,14 +441,14 @@ Ready to start fresh?
 async sendMainMenu(phone) {
   const isPaymentEnabled = paymentService.isEnabled();
   
-  // Get user to show games remaining
-  const user = await userService.getUserByPhone(phone);
-  
   let message = '🏠 MAIN MENU 🏠\n\n';
   
   // Show games remaining if payment is enabled
-  if (isPaymentEnabled && user) {
-    message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+  if (isPaymentEnabled) {
+    const user = await userService.getUserByPhone(phone);
+    if (user) {
+      message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+    }
   }
   
   message += 'What would you like to do?\n\n';

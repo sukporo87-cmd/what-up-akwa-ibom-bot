@@ -9,12 +9,8 @@ const { logger } = require('../utils/logger');
 const paymentService = new PaymentService();
 const whatsappService = new WhatsAppService();
 
-// Paystack webhook endpoint
-// REPLACE the webhook endpoint in src/routes/payment.routes.js
-
 router.post('/webhook', async (req, res) => {
   try {
-    // Verify Paystack signature
     const hash = crypto
       .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
@@ -27,14 +23,12 @@ router.post('/webhook', async (req, res) => {
 
     const event = req.body;
 
-    // Handle successful payment
     if (event.event === 'charge.success') {
       const { reference, metadata } = event.data;
 
       try {
         const verification = await paymentService.verifyPayment(reference);
         
-        // IMPORTANT: Fetch fresh user data AFTER verification updates it
         const userResult = await pool.query(
           'SELECT * FROM users WHERE id = $1',
           [metadata.user_id]
@@ -46,10 +40,8 @@ router.post('/webhook', async (req, res) => {
         
         const user = userResult.rows[0];
 
-        // Log for debugging
         logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
 
-        // Notify user via WhatsApp
         await whatsappService.sendMessage(
           user.phone_number,
           `✅ PAYMENT SUCCESSFUL! ✅\n\n` +
@@ -72,9 +64,6 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// Callback URL (for web payment redirects)
-// REPLACE the callback route in src/routes/payment.routes.js
-
 router.get('/callback', async (req, res) => {
   const { reference } = req.query;
 
@@ -85,7 +74,6 @@ router.get('/callback', async (req, res) => {
   try {
     await paymentService.verifyPayment(reference);
     
-    // Success page with working redirect
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -95,11 +83,7 @@ router.get('/callback', async (req, res) => {
         <meta http-equiv="refresh" content="4;url=https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">
         <title>Payment Successful</title>
         <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -127,23 +111,9 @@ router.get('/callback', async (req, res) => {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-20px); }
           }
-          h1 { 
-            color: #4CAF50; 
-            margin: 20px 0;
-            font-size: 2rem;
-          }
-          p { 
-            color: #666; 
-            line-height: 1.8;
-            font-size: 1.1rem;
-            margin: 15px 0;
-          }
-          .countdown {
-            color: #FF6B35;
-            font-weight: bold;
-            font-size: 3rem;
-            margin: 30px 0;
-          }
+          h1 { color: #4CAF50; margin: 20px 0; font-size: 2rem; }
+          p { color: #666; line-height: 1.8; font-size: 1.1rem; margin: 15px 0; }
+          .countdown { color: #FF6B35; font-weight: bold; font-size: 3rem; margin: 30px 0; }
           .btn {
             display: inline-block;
             margin-top: 30px;
@@ -197,81 +167,44 @@ router.get('/callback', async (req, res) => {
     `);
   } catch (error) {
     logger.error('Payment callback error:', error);
-    
-    // Failure page
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Payment Failed</title>
         <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
           body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: #f5f5f5;
           }
           .container {
             background: white;
             max-width: 500px;
-            width: 100%;
-            padding: 50px 30px;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
+            margin: 0 auto;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
           }
-          .emoji { 
-            font-size: 80px;
-            margin-bottom: 20px;
-          }
-          h1 { 
-            color: #f44336; 
-            margin: 20px 0;
-            font-size: 2rem;
-          }
-          p { 
-            color: #666; 
-            line-height: 1.8;
-            font-size: 1.1rem;
-            margin: 15px 0;
-          }
-          .btn {
+          h1 { color: #f44336; }
+          a {
             display: inline-block;
-            margin-top: 30px;
-            padding: 18px 50px;
+            margin-top: 20px;
+            padding: 15px 30px;
             background: #25D366;
             color: white;
             text-decoration: none;
-            border-radius: 50px;
-            font-weight: bold;
-            font-size: 1.2rem;
-            transition: all 0.3s;
-            box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);
-          }
-          .btn:hover {
-            background: #128C7E;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(37, 211, 102, 0.6);
+            border-radius: 5px;
           }
         </style>
       </head>
       <body>
         <div class="container">
-          <div class="emoji">❌</div>
-          <h1>Payment Failed</h1>
-          <p>Something went wrong with your payment.</p>
-          <p>Please try again or contact support.</p>
-          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Return to WhatsApp</a>
+          <h1>❌ Payment Failed</h1>
+          <p>Something went wrong. Please try again.</p>
+          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">Return to WhatsApp</a>
         </div>
       </body>
       </html>

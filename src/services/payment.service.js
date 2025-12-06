@@ -95,71 +95,67 @@ class PaymentService {
     }
   }
 
-  // REPLACE the verifyPayment method in src/services/payment.service.js
-// with this fixed version:
-
-async verifyPayment(reference) {
-  try {
-    // Use axios directly instead of paystack library for verification
-    const axios = require('axios');
-    
-    const response = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+  async verifyPayment(reference) {
+    try {
+      const axios = require('axios');
+      
+      const response = await axios.get(
+        `https://api.paystack.co/transaction/verify/${reference}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          }
         }
+      );
+      
+      if (response.data.status !== true || response.data.data.status !== 'success') {
+        throw new Error('Payment verification failed');
       }
-    );
-    
-    if (response.data.status !== true || response.data.data.status !== 'success') {
-      throw new Error('Payment verification failed');
+
+      const paymentData = response.data.data;
+      const { metadata, amount, paid_at, channel } = paymentData;
+
+      await pool.query(
+        `UPDATE payment_transactions 
+         SET status = 'success', 
+             paystack_reference = $1,
+             payment_channel = $2,
+             paid_at = $3
+         WHERE reference = $4`,
+        [paymentData.reference, channel, paid_at, reference]
+      );
+
+      await pool.query(
+        `UPDATE users 
+         SET games_remaining = games_remaining + $1,
+             total_games_purchased = total_games_purchased + $1,
+             last_purchase_date = NOW()
+         WHERE id = $2`,
+        [metadata.games_count, metadata.user_id]
+      );
+
+      logger.info(`Payment verified: ${reference} - ${metadata.games_count} games credited to user ${metadata.user_id}`);
+
+      return {
+        success: true,
+        amount: amount / 100,
+        games: metadata.games_count,
+        userId: metadata.user_id
+      };
+
+    } catch (error) {
+      logger.error('Error verifying payment:', error);
+      
+      await pool.query(
+        `UPDATE payment_transactions 
+         SET status = 'failed' 
+         WHERE reference = $1`,
+        [reference]
+      );
+
+      throw error;
     }
-
-    const paymentData = response.data.data;
-    const { metadata, amount, paid_at, channel } = paymentData;
-
-    await pool.query(
-      `UPDATE payment_transactions 
-       SET status = 'success', 
-           paystack_reference = $1,
-           payment_channel = $2,
-           paid_at = $3
-       WHERE reference = $4`,
-      [paymentData.reference, channel, paid_at, reference]
-    );
-
-    await pool.query(
-      `UPDATE users 
-       SET games_remaining = games_remaining + $1,
-           total_games_purchased = total_games_purchased + $1,
-           last_purchase_date = NOW()
-       WHERE id = $2`,
-      [metadata.games_count, metadata.user_id]
-    );
-
-    logger.info(`Payment verified: ${reference} - ${metadata.games_count} games credited to user ${metadata.user_id}`);
-
-    return {
-      success: true,
-      amount: amount / 100,
-      games: metadata.games_count,
-      userId: metadata.user_id
-    };
-
-  } catch (error) {
-    logger.error('Error verifying payment:', error);
-    
-    await pool.query(
-      `UPDATE payment_transactions 
-       SET status = 'failed' 
-       WHERE reference = $1`,
-      [reference]
-    );
-
-    throw error;
   }
-}
 
   async hasGamesRemaining(userId) {
     try {
@@ -177,16 +173,36 @@ async verifyPayment(reference) {
     }
   }
 
-  async deductGame(userId) {
+  async getGamesRemaining(userId) {
     try {
-      await pool.query(
-        `UPDATE users 
-         SET games_remaining = GREATEST(games_remaining - 1, 0)
-         WHERE id = $1`,
+      const result = await pool.query(
+        'SELECT games_remaining FROM users WHERE id = $1',
         [userId]
       );
 
-      logger.info(`Game deducted from user ${userId}`);
+      if (result.rows.length === 0) return 0;
+      
+      return result.rows[0].games_remaining;
+    } catch (error) {
+      logger.error('Error getting games remaining:', error);
+      return 0;
+    }
+  }
+
+  async deductGame(userId) {
+    try {
+      const result = await pool.query(
+        `UPDATE users 
+         SET games_remaining = GREATEST(games_remaining - 1, 0)
+         WHERE id = $1
+         RETURNING games_remaining`,
+        [userId]
+      );
+
+      const gamesLeft = result.rows[0]?.games_remaining || 0;
+      logger.info(`Game deducted from user ${userId}. Games remaining: ${gamesLeft}`);
+      
+      return gamesLeft;
     } catch (error) {
       logger.error('Error deducting game:', error);
       throw error;

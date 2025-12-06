@@ -21,49 +21,50 @@ const activeTimeouts = new Map();
 
 class GameService {
   async startNewGame(user) {
-    try {
-      // Check if payment is enabled and user has games
-      if (paymentService.isEnabled()) {
-        const hasGames = await paymentService.hasGamesRemaining(user.id);
-        
-        if (!hasGames) {
-          await whatsappService.sendMessage(
-            user.phone_number,
-            '❌ You have no games remaining!\n\n' +
-            'Type BUY to purchase more games.'
-          );
-          return;
-        }
-
-        // Deduct one game from user's balance
-        await paymentService.deductGame(user.id);
-        
-        logger.info(`Game started for user ${user.id} - 1 game deducted`);
-      }
-
-      const existingSession = await this.getActiveSession(user.id);
-      if (existingSession) {
+  try {
+    // Check if payment is enabled and user has games
+    if (paymentService.isEnabled()) {
+      const hasGames = await paymentService.hasGamesRemaining(user.id);
+      
+      if (!hasGames) {
         await whatsappService.sendMessage(
           user.phone_number,
-          '⚠️ You already have an active game! Complete it first.'
+          '❌ You have no games remaining!\n\n' +
+          'Type BUY to purchase more games.'
         );
         return;
       }
 
-      const sessionKey = `game_${user.id}_${Date.now()}`;
-      const result = await pool.query(
-        `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
-         VALUES ($1, $2, 1, 0)
-         RETURNING *`,
-        [user.id, sessionKey]
-      );
+      // Deduct one game and get remaining count
+      const gamesLeft = await paymentService.deductGame(user.id);
+      
+      logger.info(`Game started for user ${user.id} - Games remaining: ${gamesLeft}`);
+    }
 
-      const session = result.rows[0];
-      await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
-
+    // Check for existing active session
+    const existingSession = await this.getActiveSession(user.id);
+    if (existingSession) {
       await whatsappService.sendMessage(
         user.phone_number,
-        `🎮 GAME INSTRUCTIONS 🎮
+        '⚠️ You already have an active game! Complete it first.'
+      );
+      return;
+    }
+
+    const sessionKey = `game_${user.id}_${Date.now()}`;
+    const result = await pool.query(
+      `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
+       VALUES ($1, $2, 1, 0)
+       RETURNING *`,
+      [user.id, sessionKey]
+    );
+
+    const session = result.rows[0];
+    await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
+
+    await whatsappService.sendMessage(
+      user.phone_number,
+      `🎮 GAME INSTRUCTIONS 🎮
 
 📋 RULES:
 - 15 questions about Akwa Ibom
@@ -77,15 +78,15 @@ class GameService {
 Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 
 When you're ready, reply START to begin! 🚀`
-      );
+    );
 
-      await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
+    await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
 
-    } catch (error) {
-      logger.error('Error starting game:', error);
-      throw error;
-    }
+  } catch (error) {
+    logger.error('Error starting game:', error);
+    throw error;
   }
+}
 
   async sendQuestion(session, user) {
     try {
