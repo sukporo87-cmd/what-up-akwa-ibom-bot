@@ -73,6 +73,8 @@ router.get('/callback', async (req, res) => {
 
   try {
     await paymentService.verifyPayment(reference);
+    
+    // Redirect to WhatsApp after 3 seconds
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -84,20 +86,63 @@ router.get('/callback', async (req, res) => {
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             text-align: center;
-            padding: 50px;
-            background: #f5f5f5;
+            padding: 50px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
           }
           .container {
             background: white;
             max-width: 500px;
-            margin: 0 auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            padding: 40px 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
           }
-          h1 { color: #4CAF50; }
-          p { color: #666; line-height: 1.6; }
-          .emoji { font-size: 4rem; }
+          .emoji { 
+            font-size: 5rem; 
+            margin-bottom: 20px;
+            animation: bounce 1s ease infinite;
+          }
+          @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+          }
+          h1 { 
+            color: #4CAF50; 
+            margin: 20px 0;
+            font-size: 2rem;
+          }
+          p { 
+            color: #666; 
+            line-height: 1.8;
+            font-size: 1.1rem;
+            margin: 15px 0;
+          }
+          .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 15px 40px;
+            background: #25D366;
+            color: white;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+          }
+          .btn:hover {
+            background: #128C7E;
+            transform: scale(1.05);
+          }
+          .countdown {
+            color: #FF6B35;
+            font-weight: bold;
+            font-size: 1.2rem;
+          }
         </style>
       </head>
       <body>
@@ -105,12 +150,26 @@ router.get('/callback', async (req, res) => {
           <div class="emoji">✅</div>
           <h1>Payment Successful!</h1>
           <p>Your games have been credited to your account.</p>
-          <p><strong>Return to WhatsApp to start playing!</strong></p>
+          <p><strong>Redirecting to WhatsApp in <span class="countdown" id="countdown">3</span> seconds...</strong></p>
+          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Return to WhatsApp Now</a>
         </div>
+        <script>
+          let seconds = 3;
+          const countdownEl = document.getElementById('countdown');
+          const interval = setInterval(() => {
+            seconds--;
+            countdownEl.textContent = seconds;
+            if (seconds === 0) {
+              clearInterval(interval);
+              window.location.href = 'https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}';
+            }
+          }, 1000);
+        </script>
       </body>
       </html>
     `);
   } catch (error) {
+    logger.error('Payment callback error:', error);
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -122,20 +181,53 @@ router.get('/callback', async (req, res) => {
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             text-align: center;
-            padding: 50px;
-            background: #f5f5f5;
+            padding: 50px 20px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
           }
           .container {
             background: white;
             max-width: 500px;
-            margin: 0 auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            padding: 40px 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
           }
-          h1 { color: #f44336; }
-          p { color: #666; line-height: 1.6; }
-          .emoji { font-size: 4rem; }
+          .emoji { 
+            font-size: 5rem;
+            margin-bottom: 20px;
+          }
+          h1 { 
+            color: #f44336; 
+            margin: 20px 0;
+            font-size: 2rem;
+          }
+          p { 
+            color: #666; 
+            line-height: 1.8;
+            font-size: 1.1rem;
+            margin: 15px 0;
+          }
+          .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 15px 40px;
+            background: #25D366;
+            color: white;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+          }
+          .btn:hover {
+            background: #128C7E;
+            transform: scale(1.05);
+          }
         </style>
       </head>
       <body>
@@ -143,7 +235,8 @@ router.get('/callback', async (req, res) => {
           <div class="emoji">❌</div>
           <h1>Payment Failed</h1>
           <p>Something went wrong with your payment.</p>
-          <p>Please contact support or try again.</p>
+          <p>Please try again or contact support.</p>
+          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Return to WhatsApp</a>
         </div>
       </body>
       </html>
