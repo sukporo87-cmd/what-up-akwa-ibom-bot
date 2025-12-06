@@ -10,6 +10,8 @@ const paymentService = new PaymentService();
 const whatsappService = new WhatsAppService();
 
 // Paystack webhook endpoint
+// REPLACE the webhook endpoint in src/routes/payment.routes.js
+
 router.post('/webhook', async (req, res) => {
   try {
     // Verify Paystack signature
@@ -32,13 +34,20 @@ router.post('/webhook', async (req, res) => {
       try {
         const verification = await paymentService.verifyPayment(reference);
         
-        // Get updated user data
+        // IMPORTANT: Fetch fresh user data AFTER verification updates it
         const userResult = await pool.query(
           'SELECT * FROM users WHERE id = $1',
           [metadata.user_id]
         );
         
+        if (userResult.rows.length === 0) {
+          throw new Error('User not found');
+        }
+        
         const user = userResult.rows[0];
+
+        // Log for debugging
+        logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
 
         // Notify user via WhatsApp
         await whatsappService.sendMessage(
@@ -64,6 +73,8 @@ router.post('/webhook', async (req, res) => {
 });
 
 // Callback URL (for web payment redirects)
+// REPLACE the callback route in src/routes/payment.routes.js
+
 router.get('/callback', async (req, res) => {
   const { reference } = req.query;
 
@@ -74,36 +85,41 @@ router.get('/callback', async (req, res) => {
   try {
     await paymentService.verifyPayment(reference);
     
-    // Redirect to WhatsApp after 3 seconds
+    // Success page with working redirect
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="refresh" content="4;url=https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">
         <title>Payment Successful</title>
         <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            text-align: center;
-            padding: 50px 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            margin: 0;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 20px;
           }
           .container {
             background: white;
             max-width: 500px;
             width: 100%;
-            padding: 40px 30px;
+            padding: 50px 30px;
             border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
           }
           .emoji { 
-            font-size: 5rem; 
+            font-size: 80px;
             margin-bottom: 20px;
             animation: bounce 1s ease infinite;
           }
@@ -122,26 +138,29 @@ router.get('/callback', async (req, res) => {
             font-size: 1.1rem;
             margin: 15px 0;
           }
-          .btn {
-            display: inline-block;
-            margin-top: 20px;
-            padding: 15px 40px;
-            background: #25D366;
-            color: white;
-            text-decoration: none;
-            border-radius: 30px;
-            font-weight: bold;
-            font-size: 1.1rem;
-            transition: all 0.3s;
-          }
-          .btn:hover {
-            background: #128C7E;
-            transform: scale(1.05);
-          }
           .countdown {
             color: #FF6B35;
             font-weight: bold;
+            font-size: 3rem;
+            margin: 30px 0;
+          }
+          .btn {
+            display: inline-block;
+            margin-top: 30px;
+            padding: 18px 50px;
+            background: #25D366;
+            color: white;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: bold;
             font-size: 1.2rem;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);
+          }
+          .btn:hover {
+            background: #128C7E;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(37, 211, 102, 0.6);
           }
         </style>
       </head>
@@ -149,27 +168,37 @@ router.get('/callback', async (req, res) => {
         <div class="container">
           <div class="emoji">✅</div>
           <h1>Payment Successful!</h1>
-          <p>Your games have been credited to your account.</p>
-          <p><strong>Redirecting to WhatsApp in <span class="countdown" id="countdown">3</span> seconds...</strong></p>
-          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Return to WhatsApp Now</a>
+          <p>Your games have been credited.</p>
+          <div class="countdown" id="countdown">3</div>
+          <p><strong>Redirecting to WhatsApp...</strong></p>
+          <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Go to WhatsApp Now</a>
         </div>
+        
         <script>
-          let seconds = 3;
-          const countdownEl = document.getElementById('countdown');
-          const interval = setInterval(() => {
-            seconds--;
-            countdownEl.textContent = seconds;
-            if (seconds === 0) {
-              clearInterval(interval);
-              window.location.href = 'https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}';
-            }
-          }, 1000);
+          (function() {
+            let seconds = 3;
+            const countdownEl = document.getElementById('countdown');
+            
+            const interval = setInterval(function() {
+              seconds--;
+              if (countdownEl) {
+                countdownEl.textContent = seconds;
+              }
+              
+              if (seconds <= 0) {
+                clearInterval(interval);
+                window.location.href = 'https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}';
+              }
+            }, 1000);
+          })();
         </script>
       </body>
       </html>
     `);
   } catch (error) {
     logger.error('Payment callback error:', error);
+    
+    // Failure page
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -178,27 +207,31 @@ router.get('/callback', async (req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Payment Failed</title>
         <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            text-align: center;
-            padding: 50px 20px;
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
             min-height: 100vh;
-            margin: 0;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 20px;
           }
           .container {
             background: white;
             max-width: 500px;
             width: 100%;
-            padding: 40px 30px;
+            padding: 50px 30px;
             border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
           }
           .emoji { 
-            font-size: 5rem;
+            font-size: 80px;
             margin-bottom: 20px;
           }
           h1 { 
@@ -214,19 +247,21 @@ router.get('/callback', async (req, res) => {
           }
           .btn {
             display: inline-block;
-            margin-top: 20px;
-            padding: 15px 40px;
+            margin-top: 30px;
+            padding: 18px 50px;
             background: #25D366;
             color: white;
             text-decoration: none;
-            border-radius: 30px;
+            border-radius: 50px;
             font-weight: bold;
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);
           }
           .btn:hover {
             background: #128C7E;
-            transform: scale(1.05);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(37, 211, 102, 0.6);
           }
         </style>
       </head>

@@ -421,22 +421,34 @@ Ready to start fresh?
     }
   }
 
-  async sendMainMenu(phone) {
-    const isPaymentEnabled = paymentService.isEnabled();
-    
-    let message = '🏠 MAIN MENU 🏠\n\nWhat would you like to do?\n\n';
-    message += '1️⃣ Play Now\n';
-    message += '2️⃣ How to Play\n';
-    message += '3️⃣ View Leaderboard\n';
-    
-    if (isPaymentEnabled) {
-      message += '4️⃣ Buy Games\n';
-    }
-    
-    message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
+  // UPDATE the sendMainMenu method in webhook.controller.js to show games remaining
 
-    await whatsappService.sendMessage(phone, message);
+async sendMainMenu(phone) {
+  const isPaymentEnabled = paymentService.isEnabled();
+  
+  // Get user to show games remaining
+  const user = await userService.getUserByPhone(phone);
+  
+  let message = '🏠 MAIN MENU 🏠\n\n';
+  
+  // Show games remaining if payment is enabled
+  if (isPaymentEnabled && user) {
+    message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
   }
+  
+  message += 'What would you like to do?\n\n';
+  message += '1️⃣ Play Now\n';
+  message += '2️⃣ How to Play\n';
+  message += '3️⃣ View Leaderboard\n';
+  
+  if (isPaymentEnabled) {
+    message += '4️⃣ Buy Games\n';
+  }
+  
+  message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
+
+  await whatsappService.sendMessage(phone, message);
+}
 
   async sendHowToPlay(phone) {
     await whatsappService.sendMessage(
