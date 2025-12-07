@@ -95,67 +95,101 @@ class PaymentService {
     }
   }
 
-  async verifyPayment(reference) {
-    try {
-      const axios = require('axios');
-      
-      const response = await axios.get(
-        `https://api.paystack.co/transaction/verify/${reference}`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-          }
-        }
-      );
-      
-      if (response.data.status !== true || response.data.data.status !== 'success') {
-        throw new Error('Payment verification failed');
-      }
+  // REPLACE the verifyPayment method in payment.service.js
 
-      const paymentData = response.data.data;
-      const { metadata, amount, paid_at, channel } = paymentData;
+async verifyPayment(reference) {
+  try {
+    const axios = require('axios');
+    
+    // Check if already verified in our database
+    const existingTransaction = await pool.query(
+      `SELECT * FROM payment_transactions WHERE reference = $1`,
+      [reference]
+    );
 
-      await pool.query(
-        `UPDATE payment_transactions 
-         SET status = 'success', 
-             paystack_reference = $1,
-             payment_channel = $2,
-             paid_at = $3
-         WHERE reference = $4`,
-        [paymentData.reference, channel, paid_at, reference]
-      );
+    if (existingTransaction.rows.length === 0) {
+      throw new Error('Transaction not found');
+    }
 
-      await pool.query(
-        `UPDATE users 
-         SET games_remaining = games_remaining + $1,
-             total_games_purchased = total_games_purchased + $1,
-             last_purchase_date = NOW()
-         WHERE id = $2`,
-        [metadata.games_count, metadata.user_id]
-      );
+    const transaction = existingTransaction.rows[0];
 
-      logger.info(`Payment verified: ${reference} - ${metadata.games_count} games credited to user ${metadata.user_id}`);
-
+    // If already successfully processed, return cached result
+    if (transaction.status === 'success') {
+      logger.info(`Payment already verified: ${reference} - Returning cached result`);
       return {
         success: true,
-        amount: amount / 100,
-        games: metadata.games_count,
-        userId: metadata.user_id
+        amount: parseFloat(transaction.amount),
+        games: transaction.games_purchased,
+        userId: transaction.user_id
       };
-
-    } catch (error) {
-      logger.error('Error verifying payment:', error);
-      
-      await pool.query(
-        `UPDATE payment_transactions 
-         SET status = 'failed' 
-         WHERE reference = $1`,
-        [reference]
-      );
-
-      throw error;
     }
+
+    // Only verify with Paystack if status is still 'pending'
+    if (transaction.status !== 'pending') {
+      throw new Error(`Transaction status is ${transaction.status}`);
+    }
+
+    // Verify with Paystack
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+    
+    if (response.data.status !== true || response.data.data.status !== 'success') {
+      throw new Error('Payment verification failed');
+    }
+
+    const paymentData = response.data.data;
+    const { metadata, amount, paid_at, channel } = paymentData;
+
+    // Update transaction status FIRST (prevents race conditions)
+    await pool.query(
+      `UPDATE payment_transactions 
+       SET status = 'success', 
+           paystack_reference = $1,
+           payment_channel = $2,
+           paid_at = $3
+       WHERE reference = $4 AND status = 'pending'`,
+      [paymentData.reference, channel, paid_at, reference]
+    );
+
+    // Then credit games to user
+    await pool.query(
+      `UPDATE users 
+       SET games_remaining = games_remaining + $1,
+           total_games_purchased = total_games_purchased + $1,
+           last_purchase_date = NOW()
+       WHERE id = $2`,
+      [metadata.games_count, metadata.user_id]
+    );
+
+    logger.info(`Payment verified: ${reference} - ${metadata.games_count} games credited to user ${metadata.user_id}`);
+
+    return {
+      success: true,
+      amount: amount / 100,
+      games: metadata.games_count,
+      userId: metadata.user_id
+    };
+
+  } catch (error) {
+    logger.error('Error verifying payment:', error);
+    
+    // Only mark as failed if it was pending
+    await pool.query(
+      `UPDATE payment_transactions 
+       SET status = 'failed' 
+       WHERE reference = $1 AND status = 'pending'`,
+      [reference]
+    );
+
+    throw error;
   }
+}
 
   async hasGamesRemaining(userId) {
     try {
