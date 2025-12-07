@@ -16,77 +16,163 @@ const PRIZE_LADDER = {
 };
 
 const SAFE_CHECKPOINTS = [5, 10];
-
 const activeTimeouts = new Map();
 
 class GameService {
   async startNewGame(user) {
-  try {
-    // Check if payment is enabled and user has games
-    if (paymentService.isEnabled()) {
-      const hasGames = await paymentService.hasGamesRemaining(user.id);
-      
-      if (!hasGames) {
+    try {
+      // Check if payment is enabled and user has games
+      if (paymentService.isEnabled()) {
+        const hasGames = await paymentService.hasGamesRemaining(user.id);
+
+        if (!hasGames) {
+          await whatsappService.sendMessage(
+            user.phone_number,
+            '❌ You have no games remaining!\n\n' +
+            'Type BUY to purchase more games.'
+          );
+          return;
+        }
+
+        const gamesLeft = await paymentService.deductGame(user.id);
+        logger.info(`Game started for user ${user.id} - Games remaining: ${gamesLeft}`);
+      }
+
+      // Check for existing active session
+      const existingSession = await this.getActiveSession(user.id);
+
+      if (existingSession) {
         await whatsappService.sendMessage(
           user.phone_number,
-          '❌ You have no games remaining!\n\n' +
-          'Type BUY to purchase more games.'
+          '⚠️ You already have an active game! Complete it first.'
         );
         return;
       }
 
-      // Deduct one game and get remaining count
-      const gamesLeft = await paymentService.deductGame(user.id);
-      
-      logger.info(`Game started for user ${user.id} - Games remaining: ${gamesLeft}`);
-    }
+      const sessionKey = `game_${user.id}_${Date.now()}`;
 
-    // Check for existing active session
-    const existingSession = await this.getActiveSession(user.id);
-    if (existingSession) {
+      const result = await pool.query(
+        `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
+         VALUES ($1, $2, 1, 0)
+         RETURNING *`,
+        [user.id, sessionKey]
+      );
+
+      const session = result.rows[0];
+
+      await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
+
       await whatsappService.sendMessage(
         user.phone_number,
-        '⚠️ You already have an active game! Complete it first.'
-      );
-      return;
-    }
-
-    const sessionKey = `game_${user.id}_${Date.now()}`;
-    const result = await pool.query(
-      `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
-       VALUES ($1, $2, 1, 0)
-       RETURNING *`,
-      [user.id, sessionKey]
-    );
-
-    const session = result.rows[0];
-    await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
-
-    await whatsappService.sendMessage(
-      user.phone_number,
-      `🎮 GAME INSTRUCTIONS 🎮
+        `🎮 GAME INSTRUCTIONS 🎮
 
 📋 RULES:
-- 15 questions about Akwa Ibom
+- 15 questions about Akwa Ibom & Others
 - 15 seconds per question
 - Win up to ₦50,000!
 
 💎 LIFELINES:
-5️⃣0️⃣ 50:50 - Remove 2 wrong answers
-⏭️ Skip - Replace with new question (same level)
+5️⃣0️⃣ 50:50 - Remove 2 wrong answers (Type '50' to activate)
+⏭️ Skip - Replace with new question (Type 'Skip' to activate)
 
 Safe points: Q5 (₦1,000) & Q10 (₦10,000)
 
 When you're ready, reply START to begin! 🚀`
-    );
+      );
 
-    await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
-
-  } catch (error) {
-    logger.error('Error starting game:', error);
-    throw error;
+      await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
+    } catch (error) {
+      logger.error('Error starting game:', error);
+      throw error;
+    }
   }
-}
+
+  async completeGame(session, user, wonGrandPrize) {
+    try {
+      const finalScore = session.current_score;
+      const questionNumber = session.current_question;
+      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+
+      this.clearQuestionTimeout(timeoutKey);
+
+      await pool.query(
+        `UPDATE game_sessions
+         SET status = 'completed', completed_at = NOW(), final_score = $1
+         WHERE id = $2`,
+        [finalScore, session.id]
+      );
+
+      await pool.query(
+        `UPDATE users
+         SET total_games_played = total_games_played + 1,
+             total_winnings = total_winnings + $1,
+             highest_question_reached = GREATEST(highest_question_reached, $2),
+             last_active = NOW()
+         WHERE id = $3`,
+        [finalScore, session.current_question, user.id]
+      );
+
+      if (finalScore > 0) {
+        await pool.query(
+          `INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
+           VALUES ($1, $2, $3, 'prize', 'pending')`,
+          [user.id, session.id, finalScore]
+        );
+      }
+
+      await redis.del(`session:${session.session_key}`);
+      await redis.del(`asked_questions:${session.session_key}`);
+
+      if (wonGrandPrize) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `🎊 INCREDIBLE! 🎊
+
+🏆 CHAMPION! 🏆
+
+ALL 15 QUESTIONS CORRECT!
+
+💰 ₦50,000 WON! 💰
+
+${user.full_name.toUpperCase()}, you're in the HALL OF FAME!
+
+Prize processed in 24-48 hours.
+
+Would you like to share your win? Reply YES for victory card! 🎉
+
+1️⃣ Play Again
+2️⃣ View Leaderboard
+3️⃣ Claim Prize
+4️⃣ Print your victory card`
+        );
+      } else if (finalScore > 0) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `Congratulations ${user.full_name}! 🎉
+
+You won ₦${finalScore.toLocaleString()}!
+
+Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸
+
+1️⃣ Play Again
+2️⃣ View Leaderboard
+3️⃣ Claim Prize
+4️⃣ Print your victory card`
+        );
+      }
+
+      if (finalScore > 0) {
+        await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
+          amount: finalScore,
+          questionsAnswered: session.current_question - 1,
+          totalQuestions: 15
+        }));
+      }
+    } catch (error) {
+      logger.error('Error completing game:', error);
+      throw error;
+    }
+  }
 
   async sendQuestion(session, user) {
     try {
@@ -151,7 +237,6 @@ When you're ready, reply START to begin! 🚀`
       }, 15000);
 
       activeTimeouts.set(timeoutKey, timeoutId);
-
     } catch (error) {
       logger.error('Error sending question:', error);
       throw error;
@@ -171,8 +256,8 @@ When you're ready, reply START to begin! 🚀`
     try {
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-
       const timeout = await redis.get(timeoutKey);
+
       if (timeout && Date.now() > Number(timeout)) {
         await this.handleTimeout(session, user);
         return;
@@ -234,7 +319,6 @@ When you're ready, reply START to begin! 🚀`
       }
 
       await questionService.updateQuestionStats(question.id, isCorrect);
-
     } catch (error) {
       logger.error('Error processing answer:', error);
       throw error;
@@ -243,8 +327,8 @@ When you're ready, reply START to begin! 🚀`
 
   async handleWrongAnswer(session, user, question) {
     const questionNumber = session.current_question;
-
     let guaranteedAmount = 0;
+
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (questionNumber > checkpoint) {
         guaranteedAmount = PRIZE_LADDER[checkpoint];
@@ -271,7 +355,6 @@ When you're ready, reply START to begin! 🚀`
     if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
 
     await whatsappService.sendMessage(user.phone_number, message);
-
     await this.completeGame(session, user, false);
   }
 
@@ -282,6 +365,7 @@ When you're ready, reply START to begin! 🚀`
     );
 
     let guaranteedAmount = 0;
+
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (session.current_question > checkpoint) {
         guaranteedAmount = PRIZE_LADDER[checkpoint];
@@ -293,89 +377,10 @@ When you're ready, reply START to begin! 🚀`
     await this.completeGame(session, user, false);
   }
 
-  async completeGame(session, user, wonGrandPrize) {
-    try {
-      const finalScore = session.current_score;
-
-      const questionNumber = session.current_question;
-      const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-      this.clearQuestionTimeout(timeoutKey);
-
-      await pool.query(
-        `UPDATE game_sessions
-         SET status = 'completed', completed_at = NOW(), final_score = $1
-         WHERE id = $2`,
-        [finalScore, session.id]
-      );
-
-      await pool.query(
-        `UPDATE users
-         SET total_games_played = total_games_played + 1,
-             total_winnings = total_winnings + $1,
-             highest_question_reached = GREATEST(highest_question_reached, $2),
-             last_active = NOW()
-         WHERE id = $3`,
-        [finalScore, session.current_question, user.id]
-      );
-
-      if (finalScore > 0) {
-        await pool.query(
-          `INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
-           VALUES ($1, $2, $3, 'prize', 'pending')`,
-          [user.id, session.id, finalScore]
-        );
-      }
-
-      await redis.del(`session:${session.session_key}`);
-      await redis.del(`asked_questions:${session.session_key}`);
-
-      if (wonGrandPrize) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          `🎊 INCREDIBLE! 🎊
-🏆 CHAMPION! 🏆
-
-ALL 15 QUESTIONS CORRECT!
-
-💰 ₦50,000 WON! 💰
-
-${user.full_name.toUpperCase()}, you're in the HALL OF FAME!
-
-Prize processed in 24-48 hours.
-
-Would you like to share your win? Reply YES to get your victory card! 🎉
-
-1️⃣ Play Again
-2️⃣ View Leaderboard
-3️⃣ Claim Prize`);
-      } else if (finalScore > 0) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          `Congratulations ${user.full_name}! 🎉
-
-You won ₦${finalScore.toLocaleString()}!
-
-Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸`
-        );
-      }
-
-      if (finalScore > 0) {
-        await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
-          amount: finalScore,
-          questionsAnswered: session.current_question - 1,
-          totalQuestions: 15
-        }));
-      }
-
-    } catch (error) {
-      logger.error('Error completing game:', error);
-      throw error;
-    }
-  }
-
   async useLifeline(session, user, lifeline) {
     try {
       const currentSession = await this.getActiveSession(user.id);
+
       if (!currentSession) {
         await whatsappService.sendMessage(user.phone_number, '❌ No active game found.');
         return;
@@ -460,7 +465,6 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
           }
         }, 1500);
       }
-
     } catch (error) {
       logger.error('Error using lifeline:', error);
       throw error;

@@ -18,10 +18,10 @@ class ImageService {
 
   async generateWinImage(winData) {
     const { name, lga, amount, questionsAnswered, totalQuestions } = winData;
-    
+
     // Determine if this is a GRAND PRIZE (15/15 correct)
     const isGrandPrize = questionsAnswered === totalQuestions && totalQuestions === 15;
-    
+
     // Generate PNG image based on prize type
     if (isGrandPrize) {
       return await this.generateGrandPrizeImage(winData);
@@ -32,7 +32,7 @@ class ImageService {
 
   async generateRegularWinImage(winData) {
     const { name, lga, amount, questionsAnswered, totalQuestions } = winData;
-    
+
     // Create canvas - 1080x1080 (perfect for WhatsApp)
     const width = 1080;
     const height = 1080;
@@ -49,8 +49,8 @@ class ImageService {
 
     // CONFETTI PARTICLES - MORE (70 particles)
     this.drawConfetti(ctx, width, height, [
-      '#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3', 
-      '#F38181', '#AA96DA', '#FCBAD3', '#FFFFD2', 
+      '#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3',
+      '#F38181', '#AA96DA', '#FCBAD3', '#FFFFD2',
       '#A8E6CF', '#FFB3BA', '#C7CEEA', '#FFDAC1'
     ], 70);
 
@@ -58,6 +58,7 @@ class ImageService {
     const qrSize = 180;
     const qrPadding = 40;
     const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+
     const qrDataUrl = await QRCode.toDataURL(whatsappLink, {
       width: qrSize,
       margin: 1,
@@ -66,18 +67,20 @@ class ImageService {
         light: '#FFFFFF'
       }
     });
+
     const qrImage = await loadImage(qrDataUrl);
-    
+
     // QR Code with white background
     ctx.fillStyle = 'white';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
     ctx.shadowBlur = 20;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 5;
+
     const qrBgSize = qrSize + 20;
     ctx.fillRect(width - qrBgSize - qrPadding, qrPadding, qrBgSize, qrBgSize);
     ctx.shadowBlur = 0;
-    
+
     ctx.drawImage(qrImage, width - qrSize - qrPadding - 10, qrPadding + 10, qrSize, qrSize);
 
     // "Scan to Play" text under QR
@@ -91,13 +94,13 @@ class ImageService {
 
     // TROPHY IMAGE - Large at top (using local file)
     const trophyPath = path.join(__dirname, '../assets/trophy.png');
-    
+
     try {
       const trophyImage = await loadImage(trophyPath);
       const trophySize = 220;
       const trophyX = width / 2 - trophySize / 2;
       const trophyY = 120;
-      
+
       // Add shadow for trophy
       ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
       ctx.shadowBlur = 20;
@@ -121,7 +124,7 @@ class ImageService {
     this.roundRect(ctx, width/2 - 150, winnerY, 300, 60, 30);
     ctx.fill();
     ctx.shadowBlur = 0;
-    
+
     ctx.fillStyle = '#FF6B35';
     ctx.font = 'bold 36px Arial, sans-serif';
     ctx.textAlign = 'center';
@@ -129,7 +132,7 @@ class ImageService {
 
     // NEW TEXT LAYOUT - LARGE AND BOLD
     let currentY = 480;
-    
+
     // "I JUST WON"
     ctx.fillStyle = 'white';
     ctx.font = 'bold 72px Arial, sans-serif';
@@ -151,16 +154,16 @@ class ImageService {
     ctx.fillText('ON', width / 2, currentY);
     currentY += 100;
 
-    // "WHAT'S UP AKWA IBOM"
+    // "WHAT'S UP TRIVIA GAME"
     ctx.font = 'bold 76px Arial, sans-serif';
     ctx.shadowBlur = 10;
-    ctx.fillText("WHAT'S UP AKWA IBOM", width / 2, currentY);
+    ctx.fillText("WHAT'S UP TRIVIA GAME", width / 2, currentY);
     currentY += 85;
 
-    // "THE ULTIMATE TRIVIA GAME"
+    // "AKWA IBOM EDITION"
     ctx.font = 'bold 52px Arial, sans-serif';
     ctx.shadowBlur = 8;
-    ctx.fillText('THE ULTIMATE TRIVIA GAME', width / 2, currentY);
+    ctx.fillText('AKWA IBOM EDITION', width / 2, currentY);
     ctx.shadowBlur = 0;
     currentY += 80;
 
@@ -190,7 +193,7 @@ class ImageService {
 
   async generateGrandPrizeImage(winData) {
     const { name, lga, amount, questionsAnswered, totalQuestions } = winData;
-    
+
     // Create canvas - 1080x1080
     const width = 1080;
     const height = 1080;
@@ -206,7 +209,7 @@ class ImageService {
 
     // GOLD CONFETTI PARTICLES - MORE (60 particles)
     this.drawConfetti(ctx, width, height, [
-      '#FFD700', '#FFA500', '#FFFF00', '#FFD700', 
+      '#FFD700', '#FFA500', '#FFFF00', '#FFD700',
       '#FFA500', '#FFFF00', '#FFD700', '#FFA500'
     ], 60, true);
 
@@ -214,6 +217,7 @@ class ImageService {
     const qrSize = 180;
     const qrPadding = 40;
     const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+
     const qrDataUrl = await QRCode.toDataURL(whatsappLink, {
       width: qrSize,
       margin: 1,
@@ -222,22 +226,23 @@ class ImageService {
         light: '#FFD700'
       }
     });
+
     const qrImage = await loadImage(qrDataUrl);
-    
+
     // QR Code with gold glow
     const qrGradient = ctx.createRadialGradient(
-      width - qrPadding - qrSize/2, 
-      qrPadding + qrSize/2, 
+      width - qrPadding - qrSize/2,
+      qrPadding + qrSize/2,
       0,
-      width - qrPadding - qrSize/2, 
-      qrPadding + qrSize/2, 
+      width - qrPadding - qrSize/2,
+      qrPadding + qrSize/2,
       qrSize
     );
     qrGradient.addColorStop(0, 'rgba(255, 215, 0, 0.3)');
     qrGradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+
     ctx.fillStyle = qrGradient;
     ctx.fillRect(width - qrSize - qrPadding - 30, qrPadding - 30, qrSize + 60, qrSize + 60);
-    
     ctx.drawImage(qrImage, width - qrSize - qrPadding, qrPadding, qrSize, qrSize);
 
     // "Scan & Win" text under QR
@@ -254,13 +259,14 @@ class ImageService {
     const bannerGradient = ctx.createLinearGradient(width/2 - 350, bannerY, width/2 + 350, bannerY);
     bannerGradient.addColorStop(0, '#FFD700');
     bannerGradient.addColorStop(1, '#FFA500');
+
     ctx.fillStyle = bannerGradient;
     ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
     ctx.shadowBlur = 25;
     this.roundRect(ctx, width/2 - 380, bannerY, 760, 70, 35);
     ctx.fill();
     ctx.shadowBlur = 0;
-    
+
     ctx.fillStyle = '#1a1a2e';
     ctx.font = 'bold 38px Arial, sans-serif';
     ctx.textAlign = 'center';
@@ -268,13 +274,13 @@ class ImageService {
 
     // MEGA TROPHY IMAGE - Grand Prize (using local file)
     const trophyPath = path.join(__dirname, '../assets/trophy.png');
-    
+
     try {
       const trophyImage = await loadImage(trophyPath);
       const trophySize = 260;
       const trophyX = width / 2 - trophySize / 2;
       const trophyY = 150;
-      
+
       // Add golden glow for trophy
       ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
       ctx.shadowBlur = 40;
@@ -289,7 +295,7 @@ class ImageService {
 
     // NEW TEXT LAYOUT - LARGE AND BOLD
     let currentY = 480;
-    
+
     // "I JUST WON"
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 72px Arial, sans-serif';
@@ -314,19 +320,19 @@ class ImageService {
     ctx.fillText('ON', width / 2, currentY);
     currentY += 100;
 
-    // "WHAT'S UP AKWA IBOM"
+    // "WHAT'S UP TRIVIA GAME"
     ctx.fillStyle = 'white';
     ctx.font = 'bold 76px Arial, sans-serif';
     ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
     ctx.shadowBlur = 18;
-    ctx.fillText("WHAT'S UP AKWA IBOM", width / 2, currentY);
+    ctx.fillText("WHAT'S UP TRIVIA GAME", width / 2, currentY);
     currentY += 85;
 
-    // "THE ULTIMATE TRIVIA GAME"
+    // "AKWA IBOM EDITION"
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 52px Arial, sans-serif';
     ctx.shadowBlur = 15;
-    ctx.fillText('THE ULTIMATE TRIVIA GAME', width / 2, currentY);
+    ctx.fillText('AKWA IBOM EDITION', width / 2, currentY);
     ctx.shadowBlur = 0;
     currentY += 80;
 
@@ -358,7 +364,7 @@ class ImageService {
 
   drawTrophy(ctx, x, y, size, color, hasGlow = false) {
     ctx.save();
-    
+
     if (hasGlow) {
       ctx.shadowColor = color;
       ctx.shadowBlur = 40;
@@ -366,42 +372,42 @@ class ImageService {
       ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
       ctx.shadowBlur = 15;
     }
-    
+
     ctx.fillStyle = color;
-    
+
     // Trophy cup (main body)
     ctx.beginPath();
     ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Trophy stem
     ctx.fillRect(x - size * 0.12, y + size * 0.35, size * 0.24, size * 0.25);
-    
+
     // Trophy base
     ctx.fillRect(x - size * 0.35, y + size * 0.55, size * 0.7, size * 0.15);
-    
+
     // Left handle
     ctx.beginPath();
     ctx.arc(x - size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Right handle
     ctx.beginPath();
     ctx.arc(x + size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Trophy rim (top)
     ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size * 0.12);
-    
+
     // Shine/highlight
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.beginPath();
     ctx.arc(x - size * 0.2, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Star on trophy (for extra flair)
     this.drawStar(ctx, x, y - size * 0.65, size * 0.18, 'white');
-    
+
     ctx.restore();
   }
 
@@ -409,24 +415,24 @@ class ImageService {
     ctx.save();
     ctx.fillStyle = color;
     ctx.beginPath();
-    
+
     for (let i = 0; i < 5; i++) {
       const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
       const x = cx + Math.cos(angle) * radius;
       const y = cy + Math.sin(angle) * radius;
-      
+
       if (i === 0) {
         ctx.moveTo(x, y);
       } else {
         ctx.lineTo(x, y);
       }
-      
+
       const innerAngle = angle + Math.PI / 5;
       const innerX = cx + Math.cos(innerAngle) * (radius * 0.4);
       const innerY = cy + Math.sin(innerAngle) * (radius * 0.4);
       ctx.lineTo(innerX, innerY);
     }
-    
+
     ctx.closePath();
     ctx.fill();
     ctx.restore();
@@ -435,25 +441,25 @@ class ImageService {
   drawConfetti(ctx, width, height, colors, count = 50, isGold = false) {
     for (let i = 0; i < count; i++) {
       ctx.save();
-      
+
       const x = Math.random() * width;
       const y = Math.random() * height;
       const size = isGold ? (Math.random() * 12 + 8) : (Math.random() * 14 + 6);
       const rotation = Math.random() * Math.PI * 2;
       const color = colors[Math.floor(Math.random() * colors.length)];
-      
+
       ctx.translate(x, y);
       ctx.rotate(rotation);
-      
       ctx.fillStyle = color;
-      
+
       if (isGold) {
         ctx.shadowColor = color;
         ctx.shadowBlur = 12;
       }
-      
+
       // Draw different confetti shapes
       const shape = Math.random();
+
       if (shape > 0.66) {
         // Circle
         ctx.beginPath();
@@ -471,7 +477,7 @@ class ImageService {
         ctx.closePath();
         ctx.fill();
       }
-      
+
       ctx.restore();
     }
   }
@@ -480,15 +486,16 @@ class ImageService {
     ctx.save();
     ctx.strokeStyle = 'rgba(255, 215, 0, 0.03)';
     ctx.lineWidth = 1;
-    
+
     const spacing = 20;
+
     for (let i = 0; i < width + height; i += spacing) {
       ctx.beginPath();
       ctx.moveTo(i, 0);
       ctx.lineTo(0, i);
       ctx.stroke();
     }
-    
+
     ctx.restore();
   }
 
@@ -509,11 +516,12 @@ class ImageService {
   truncateText(ctx, text, maxWidth) {
     let width = ctx.measureText(text).width;
     if (width <= maxWidth) return text;
-    
+
     while (width > maxWidth && text.length > 0) {
       text = text.slice(0, -1);
       width = ctx.measureText(text + '...').width;
     }
+
     return text + '...';
   }
 
@@ -522,12 +530,12 @@ class ImageService {
       const files = fs.readdirSync(this.tempDir);
       const now = Date.now();
       const maxAge = 3600000; // 1 hour
-      
+
       files.forEach(file => {
         const filepath = path.join(this.tempDir, file);
         const stats = fs.statSync(filepath);
         const age = now - stats.mtimeMs;
-        
+
         if (age > maxAge) {
           fs.unlinkSync(filepath);
           logger.info(`Cleaned up old temp file: ${file}`);
