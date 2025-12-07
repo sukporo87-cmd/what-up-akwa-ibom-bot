@@ -182,12 +182,14 @@ Let's get you registered! What's your full name?`
       welcomeMsg += `Ready to play? Reply:\n\n`;
       welcomeMsg += `1️⃣ Buy Games\n`;
       welcomeMsg += `2️⃣ How to Play\n`;
-      welcomeMsg += `3️⃣ Leaderboard`;
+      welcomeMsg += `3️⃣ Leaderboard\n`;
+      welcomeMsg += `4️⃣ My Stats`;
     } else {
       welcomeMsg += `Ready to play? Reply:\n\n`;
       welcomeMsg += `1️⃣ Play Now\n`;
       welcomeMsg += `2️⃣ How to Play\n`;
-      welcomeMsg += `3️⃣ Leaderboard`;
+      welcomeMsg += `3️⃣ Leaderboard\n`;
+      welcomeMsg += `4️⃣ My Stats`;
     }
 
     await whatsappService.sendMessage(phone, welcomeMsg);
@@ -254,19 +256,81 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  async handleStatsRequest(user) {
+    try {
+      const stats = await userService.getUserStats(user.id);
+
+      if (!stats) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ Unable to retrieve your stats. Please try again later.'
+        );
+        return;
+      }
+
+      // Format the stats message
+      let message = `📊 YOUR STATS - ${stats.fullName} 📊\n\n`;
+      
+      message += `📍 Location: ${stats.lga}\n`;
+      message += `🏆 Overall Rank: #${stats.rank}\n\n`;
+      
+      message += `🎮 GAME STATISTICS\n`;
+      message += `━━━━━━━━━━━━━━━━\n`;
+      message += `Total Games: ${stats.totalGamesPlayed}\n`;
+      message += `Games Won: ${stats.gamesWon}\n`;
+      message += `Win Rate: ${stats.winRate}%\n`;
+      message += `Highest Question: Q${stats.highestQuestionReached}\n\n`;
+      
+      message += `💰 EARNINGS\n`;
+      message += `━━━━━━━━━━━━━━━━\n`;
+      message += `Total Winnings: ₦${stats.totalWinnings.toLocaleString()}\n`;
+      message += `Highest Win: ₦${stats.highestWin.toLocaleString()}\n`;
+      message += `Average Score: ₦${Math.round(stats.avgScore).toLocaleString()}\n\n`;
+
+      // Only show if payment is enabled
+      if (paymentService.isEnabled()) {
+        message += `💎 GAMES\n`;
+        message += `━━━━━━━━━━━━━━━━\n`;
+        message += `Games Remaining: ${stats.gamesRemaining}\n`;
+        message += `Total Purchased: ${stats.totalGamesPurchased}\n\n`;
+      }
+
+      message += `📅 Member Since: ${new Date(stats.joinedDate).toLocaleDateString()}\n\n`;
+      
+      message += `Keep playing to climb the ranks! 🚀\n\n`;
+      message += `1️⃣ Play Now\n`;
+      message += `2️⃣ View Leaderboard\n`;
+      message += `3️⃣ Main Menu`;
+
+      await whatsappService.sendMessage(user.phone_number, message);
+    } catch (error) {
+      logger.error('Error handling stats request:', error);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '❌ Error retrieving stats. Please try again later.'
+      );
+    }
+  }
+
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
 
+    // Check for stats request
+    if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
+      await this.handleStatsRequest(user);
+      return;
+    }
+
     // Check for win sharing response
     const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-    if (winSharePending && (input === 'YES' || input === 'Y' || input === '4')) {
+    if (winSharePending && (input === 'YES' || input === 'Y')) {
       await this.handleWinShare(user, JSON.parse(winSharePending));
       await redis.del(`win_share_pending:${user.id}`);
       return;
     }
 
     // Handle BUY command
-    if (input.includes('BUY') || input === '4') {
+    if (input.includes('BUY')) {
       await this.handleBuyGames(user);
       return;
     }
@@ -290,7 +354,7 @@ Let's get you registered! What's your full name?`
     const lastActiveMinutesAgo = user.last_active ?
       (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
 
-    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4') {
+    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
       let welcomeMessage = `Hello again ${user.full_name} from ${user.lga}! 👋\n\nWelcome back to What's Up Trivia Game - Akwa Ibom Edition! 🎉\n\n`;
 
       if (paymentService.isEnabled()) {
@@ -303,10 +367,13 @@ Let's get you registered! What's your full name?`
       welcomeMessage += `What would you like to do?\n\n`;
       welcomeMessage += `1️⃣ Play Now\n`;
       welcomeMessage += `2️⃣ How to Play\n`;
-      welcomeMessage += `3️⃣ View Leaderboard`;
+      welcomeMessage += `3️⃣ View Leaderboard\n`;
 
       if (paymentService.isEnabled()) {
-        welcomeMessage += `\n4️⃣ Buy Games`;
+        welcomeMessage += `4️⃣ Buy Games\n`;
+        welcomeMessage += `5️⃣ My Stats`;
+      } else {
+        welcomeMessage += `4️⃣ My Stats`;
       }
 
       await whatsappService.sendMessage(user.phone_number, welcomeMessage);
@@ -340,6 +407,9 @@ Let's get you registered! What's your full name?`
           user.phone_number,
           '🎁 PRIZE CLAIM 🎁\n\nYour prize will be processed within 24-48 hours.\n\nYou will receive payment details via WhatsApp.\n\nThank you for playing!'
         );
+        return;
+      } else if (input === '4') {
+        await this.handleWinShare(user, JSON.parse(winSharePending || '{}'));
         return;
       }
     }
@@ -377,7 +447,8 @@ Ready to start fresh?
 
 1️⃣ Play Now
 2️⃣ How to Play
-3️⃣ Leaderboard`
+3️⃣ Leaderboard
+4️⃣ My Stats`
       );
     } catch (error) {
       logger.error('Error resetting game:', error);
@@ -454,6 +525,9 @@ Ready to start fresh?
 
     if (isPaymentEnabled) {
       message += '4️⃣ Buy Games\n';
+      message += '5️⃣ My Stats\n';
+    } else {
+      message += '4️⃣ My Stats\n';
     }
 
     message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';

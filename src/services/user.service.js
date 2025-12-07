@@ -63,6 +63,83 @@ class UserService {
       logger.error('Error clearing user state:', error);
     }
   }
+
+  async getUserStats(userId) {
+  try {
+    // Get user basic info
+    const userResult = await pool.query(
+      'SELECT * FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return null;
+    }
+
+    const user = userResult.rows[0];
+
+    // Get total games and win rate
+    const gamesResult = await pool.query(
+      `SELECT 
+        COUNT(*) as total_games,
+        COUNT(CASE WHEN final_score > 0 THEN 1 END) as games_won,
+        MAX(final_score) as highest_win,
+        AVG(final_score) as avg_score
+       FROM game_sessions 
+       WHERE user_id = $1 AND status = 'completed'`,
+      [userId]
+    );
+
+    const gameStats = gamesResult.rows[0];
+
+    // Get highest question reached details
+    const bestGameResult = await pool.query(
+      `SELECT current_question, final_score, completed_at
+       FROM game_sessions
+       WHERE user_id = $1 AND status = 'completed'
+       ORDER BY current_question DESC, final_score DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    const bestGame = bestGameResult.rows[0];
+
+    // Get ranking position
+    const rankResult = await pool.query(
+      `SELECT COUNT(*) + 1 as rank
+       FROM users
+       WHERE total_winnings > $1`,
+      [user.total_winnings]
+    );
+
+    const rank = rankResult.rows[0].rank;
+
+    // Calculate win rate
+    const totalGames = parseInt(gameStats.total_games) || 0;
+    const gamesWon = parseInt(gameStats.games_won) || 0;
+    const winRate = totalGames > 0 ? ((gamesWon / totalGames) * 100).toFixed(1) : 0;
+
+    return {
+      fullName: user.full_name,
+      lga: user.lga,
+      totalGamesPlayed: user.total_games_played,
+      totalWinnings: parseFloat(user.total_winnings) || 0,
+      highestQuestionReached: user.highest_question_reached || 0,
+      gamesRemaining: user.games_remaining || 0,
+      totalGamesPurchased: user.total_games_purchased || 0,
+      gamesWon: gamesWon,
+      winRate: winRate,
+      highestWin: parseFloat(gameStats.highest_win) || 0,
+      avgScore: parseFloat(gameStats.avg_score) || 0,
+      rank: parseInt(rank),
+      bestGameDate: bestGame ? bestGame.completed_at : null,
+      joinedDate: user.created_at
+    };
+  } catch (error) {
+    logger.error('Error getting user stats:', error);
+    throw error;
+  }
+  }
 }
 
 module.exports = UserService;
