@@ -1,10 +1,16 @@
+// ============================================
+// FILE: src/server.js - UPDATED VERSION
+// ============================================
+
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 const webhookRoutes = require('./routes/webhook.routes');
 const paymentRoutes = require('./routes/payment.routes');
+const adminRoutes = require('./routes/admin.routes');  // NEW
 
 dotenv.config();
 
@@ -12,11 +18,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,  // Allow inline scripts for admin dashboard
+}));
 app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static files from views directory (for admin dashboard)
+app.use(express.static(path.join(__dirname, 'views')));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -26,6 +37,7 @@ app.get('/health', (req, res) => {
 // Routes
 app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
+app.use('/admin', adminRoutes);  // NEW - Admin Dashboard Routes
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -37,6 +49,7 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
   console.log(`Payment Mode: ${process.env.PAYMENT_MODE || 'free'}`);
+  console.log(`🔐 Admin Dashboard: http://localhost:${PORT}/admin`);
 });
 
 module.exports = app;
