@@ -4,12 +4,14 @@ const WhatsAppService = require('../services/whatsapp.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
 const PaymentService = require('../services/payment.service');
+const PayoutService = require('../services/payout.service');
 const { logger } = require('../utils/logger');
 
 const whatsappService = new WhatsAppService();
 const gameService = new GameService();
 const userService = new UserService();
 const paymentService = new PaymentService();
+const payoutService = new PayoutService();
 
 const LGA_LIST = [
   'Abak', 'Eastern Obolo', 'Eket', 'Esit Eket', 'Essien Udim',
@@ -80,6 +82,7 @@ class WebhookController {
       let user = await userService.getUserByPhone(phone);
       const userState = await userService.getUserState(phone);
 
+      // Registration states
       if (userState && userState.state === 'REGISTRATION_NAME') {
         await this.handleRegistrationName(phone, message);
         return;
@@ -90,13 +93,31 @@ class WebhookController {
         return;
       }
 
+      // Payment states
       if (userState && userState.state === 'SELECT_PACKAGE') {
         await this.handlePackageSelection(user, message, userState.data);
         return;
       }
 
+      // Leaderboard states
       if (userState && userState.state === 'SELECT_LEADERBOARD') {
         await this.handleLeaderboardSelection(phone, message);
+        return;
+      }
+
+      // Payout collection states
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
+        await this.handleAccountNameInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
+        await this.handleAccountNumberInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_BANK_NAME') {
+        await this.handleBankNameInput(phone, message, userState);
         return;
       }
 
@@ -268,7 +289,6 @@ Let's get you registered! What's your full name?`
         return;
       }
 
-      // Format the stats message
       let message = `📊 YOUR STATS - ${stats.fullName} 📊\n\n`;
       
       message += `📍 Location: ${stats.lga}\n`;
@@ -287,7 +307,6 @@ Let's get you registered! What's your full name?`
       message += `Highest Win: ₦${stats.highestWin.toLocaleString()}\n`;
       message += `Average Score: ₦${Math.round(stats.avgScore).toLocaleString()}\n\n`;
 
-      // Only show if payment is enabled
       if (paymentService.isEnabled()) {
         message += `💎 GAMES\n`;
         message += `━━━━━━━━━━━━━━━━\n`;
@@ -312,8 +331,309 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  async handleClaimPrize(user) {
+    try {
+      const transaction = await payoutService.getPendingTransaction(user.id);
+
+      if (!transaction) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ No pending prizes to claim.\n\nPlay games to win prizes! 🎮\n\nType PLAY to start.'
+        );
+        return;
+      }
+
+      const existingDetails = await payoutService.getPayoutDetails(transaction.id);
+
+      if (existingDetails) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `✅ Payment details already received for your ₦${parseFloat(transaction.amount).toLocaleString()} prize!\n\n` +
+          `Account: ${existingDetails.account_name}\n` +
+          `Bank: ${existingDetails.bank_name}\n\n` +
+          `Your payment is being processed and will be sent within 12-24 hours.\n\n` +
+          `Reference: #WUA-${transaction.id.toString().padStart(4, '0')}`
+        );
+        return;
+      }
+
+      await userService.setUserState(user.phone_number, 'COLLECT_ACCOUNT_NAME', {
+        transactionId: transaction.id,
+        amount: transaction.amount
+      });
+
+      await whatsappService.sendMessage(
+        user.phone_number,
+        `💰 PRIZE CLAIM - #WUA-${transaction.id.toString().padStart(4, '0')}\n\n` +
+        `Great! Let's get you paid! 💵\n\n` +
+        `You won: ₦${parseFloat(transaction.amount).toLocaleString()}\n\n` +
+        `━━━━━━━━━━━━━━━━\n` +
+        `Step 1 of 3\n\n` +
+        `Please send your FULL ACCOUNT NAME\n` +
+        `(exactly as it appears on your bank statement)\n\n` +
+        `Example: JOHN CHUKWUDI DOE\n\n` +
+        `Reply with your account name:`
+      );
+
+      logger.info(`Started payout collection for user ${user.id}, transaction ${transaction.id}`);
+    } catch (error) {
+      logger.error('Error handling claim prize:', error);
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '❌ Error processing your claim. Please try again or contact support.'
+      );
+    }
+  }
+
+  async handleAccountNameInput(phone, message, stateData) {
+    const accountName = message.trim();
+
+    if (accountName.length < 3) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Account name too short. Please enter your full name as it appears on your bank account.'
+      );
+      return;
+    }
+
+    if (accountName.length > 100) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Account name too long. Please enter a valid name (max 100 characters).'
+      );
+      return;
+    }
+
+    if (!/[a-zA-Z]/.test(accountName)) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Invalid account name. Please enter letters only (no numbers or special characters).'
+      );
+      return;
+    }
+
+    await userService.setUserState(phone, 'COLLECT_ACCOUNT_NUMBER', {
+      ...stateData.data,
+      accountName: accountName.toUpperCase()
+    });
+
+    await whatsappService.sendMessage(
+      phone,
+      `✅ Account Name: ${accountName.toUpperCase()}\n\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `Step 2 of 3\n\n` +
+      `Please send your ACCOUNT NUMBER\n` +
+      `(10 digits)\n\n` +
+      `Example: 0123456789\n\n` +
+      `Reply with your account number:`
+    );
+  }
+
+  async handleAccountNumberInput(phone, message, stateData) {
+    const validation = payoutService.validateAccountNumber(message);
+
+    if (!validation.valid) {
+      await whatsappService.sendMessage(
+        phone,
+        `❌ ${validation.error}\n\n` +
+        `Please enter a valid 10-digit account number.`
+      );
+      return;
+    }
+
+    await userService.setUserState(phone, 'COLLECT_BANK_NAME', {
+      ...stateData.data,
+      accountNumber: validation.cleaned
+    });
+
+    await whatsappService.sendMessage(
+      phone,
+      `✅ Account Number: ${validation.cleaned}\n\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `Step 3 of 3\n\n` +
+      `Please select your bank:\n\n` +
+      `1️⃣ Access Bank\n` +
+      `2️⃣ GTBank\n` +
+      `3️⃣ First Bank\n` +
+      `4️⃣ UBA\n` +
+      `5️⃣ Zenith Bank\n` +
+      `6️⃣ Ecobank\n` +
+      `7️⃣ Fidelity Bank\n` +
+      `8️⃣ Stanbic IBTC\n` +
+      `9️⃣ Union Bank\n` +
+      `🔟 Wema Bank\n` +
+      `1️⃣1️⃣ Others (Type your bank name)\n\n` +
+      `Reply with number or bank name:`
+    );
+  }
+
+  async handleBankNameInput(phone, message, stateData) {
+    const input = message.trim();
+    let bankName;
+
+    // Bank selection mapping
+    const bankMap = {
+      '1': 'Access Bank',
+      '2': 'GTBank',
+      '3': 'First Bank',
+      '4': 'UBA',
+      '5': 'Zenith Bank',
+      '6': 'Ecobank',
+      '7': 'Fidelity Bank',
+      '8': 'Stanbic IBTC',
+      '9': 'Union Bank',
+      '10': 'Wema Bank'
+    };
+
+    if (input === '11' || input.toUpperCase() === 'OTHERS' || input.toUpperCase() === 'OTHER') {
+      // User selected "Others", ask them to type bank name
+      await userService.setUserState(phone, 'COLLECT_CUSTOM_BANK', stateData.data);
+      
+      await whatsappService.sendMessage(
+        phone,
+        `Please type your bank name:\n\n` +
+        `Example: Sterling Bank\n\n` +
+        `Make sure to spell it correctly:`
+      );
+      return;
+    }
+
+    // Check if it's a number selection
+    if (bankMap[input]) {
+      bankName = bankMap[input];
+    } else {
+      // User typed a bank name directly
+      bankName = input;
+    }
+
+    // Validate bank name length
+    if (bankName.length < 3) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Invalid bank selection.\n\n' +
+        'Please reply with a number (1-11) or type your bank name.'
+      );
+      return;
+    }
+
+    await this.completePayoutCollection(phone, stateData.data, bankName);
+  }
+
+  async handleCustomBankInput(phone, message, stateData) {
+    const bankName = message.trim();
+
+    if (bankName.length < 3) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Bank name too short. Please enter a valid bank name.'
+      );
+      return;
+    }
+
+    if (bankName.length > 100) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Bank name too long. Please enter a shorter name (max 100 characters).'
+      );
+      return;
+    }
+
+    await this.completePayoutCollection(phone, stateData.data, bankName);
+  }
+
+  async completePayoutCollection(phone, stateData, bankName) {
+    try {
+      const user = await userService.getUserByPhone(phone);
+
+      await payoutService.savePayoutDetails(
+        user.id,
+        stateData.transactionId,
+        stateData.accountName,
+        stateData.accountNumber,
+        bankName
+      );
+
+      await userService.clearUserState(phone);
+
+      await whatsappService.sendMessage(
+        phone,
+        `✅ PAYMENT DETAILS RECEIVED! ✅\n\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `Account Name: ${stateData.accountName}\n` +
+        `Account Number: ${stateData.accountNumber}\n` +
+        `Bank: ${bankName}\n` +
+        `Amount: ₦${parseFloat(stateData.amount).toLocaleString()}\n` +
+        `━━━━━━━━━━━━━━━━━━━\n\n` +
+        `We're processing your payment now.\n\n` +
+        `You'll receive ₦${parseFloat(stateData.amount).toLocaleString()} within 12-24 hours.\n\n` +
+        `You'll get a confirmation message once payment is sent. 💸\n\n` +
+        `Thank you for playing! 🎉\n\n` +
+        `Reference: #WUA-${stateData.transactionId.toString().padStart(4, '0')}`
+      );
+
+      logger.info(`Payout details collected for transaction ${stateData.transactionId}`);
+    } catch (error) {
+      logger.error('Error saving payout details:', error);
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Error saving your details. Please try again.\n\nType CLAIM to restart the process.'
+      );
+    }
+  }
+
+  async handlePaymentConfirmation(user) {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM transactions 
+         WHERE user_id = $1 
+           AND transaction_type = 'prize' 
+           AND payout_status = 'paid'
+         ORDER BY paid_at DESC 
+         LIMIT 1`,
+        [user.id]
+      );
+
+      if (result.rows.length === 0) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ No recent payments found to confirm.'
+        );
+        return;
+      }
+
+      const transaction = result.rows[0];
+
+      await payoutService.confirmPayout(transaction.id);
+
+      await whatsappService.sendMessage(
+        user.phone_number,
+        `✅ PAYMENT CONFIRMED!\n\n` +
+        `Thank you for confirming receipt of ₦${parseFloat(transaction.amount).toLocaleString()}!\n\n` +
+        `We're glad you received it safely. 🎉\n\n` +
+        `Keep playing to win more! 🏆\n\n` +
+        `Type PLAY to start a new game.`
+      );
+
+      logger.info(`Payment confirmed by user ${user.id} for transaction ${transaction.id}`);
+    } catch (error) {
+      logger.error('Error handling payment confirmation:', error);
+    }
+  }
+
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
+
+    // Handle CLAIM command
+    if (input === 'CLAIM' || input.includes('CLAIM')) {
+      await this.handleClaimPrize(user);
+      return;
+    }
+
+    // Handle RECEIVED confirmation
+    if (input === 'RECEIVED' || input.includes('CONFIRM')) {
+      await this.handlePaymentConfirmation(user);
+      return;
+    }
 
     // Check for stats request
     if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
@@ -403,13 +723,14 @@ Let's get you registered! What's your full name?`
         await this.sendLeaderboardMenu(user.phone_number);
         return;
       } else if (input === '3' || input.includes('CLAIM')) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          '🎁 PRIZE CLAIM 🎁\n\nYour prize will be processed within 24-48 hours.\n\nYou will receive payment details via WhatsApp.\n\nThank you for playing!'
-        );
+        await this.handleClaimPrize(user);
         return;
       } else if (input === '4') {
-        await this.handleWinShare(user, JSON.parse(winSharePending || '{}'));
+        const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+        if (winSharePending) {
+          await this.handleWinShare(user, JSON.parse(winSharePending));
+          await redis.del(`win_share_pending:${user.id}`);
+        }
         return;
       }
     }
