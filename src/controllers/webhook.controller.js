@@ -139,6 +139,15 @@ class WebhookController {
 
       const activeSession = await gameService.getActiveSession(user.id);
 
+      // CRITICAL FIX: If no active session in DB, clean up any leftover Redis game state
+      if (!activeSession) {
+        const gameReady = await redis.get(`game_ready:${user.id}`);
+        if (gameReady) {
+          logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+          await redis.del(`game_ready:${user.id}`);
+        }
+      }
+
       if (activeSession) {
         await this.handleGameInput(user, activeSession, message);
       } else {
@@ -867,6 +876,9 @@ Let's get you registered! What's your full name?`
       );
 
       await userService.clearUserState(user.phone_number);
+      
+      // Clear any leftover Redis game state
+      await redis.del(`game_ready:${user.id}`);
 
       await whatsappService.sendMessage(
         user.phone_number,
