@@ -1,5 +1,5 @@
 // ============================================
-// FILE: src/routes/admin.routes.js
+// FILE: src/routes/admin.routes.js - IMPROVED VERSION
 // ============================================
 
 const express = require('express');
@@ -32,15 +32,30 @@ router.get('/', (req, res) => {
 // Get dashboard stats
 router.get('/api/stats', authenticateAdmin, async (req, res) => {
   try {
-    const stats = await payoutService.getPayoutStats();
+    // Get payout stats with proper date filtering
+    const payoutStats = await pool.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE payout_status IN ('pending', 'details_collected', 'approved')) as pending_count,
+        COALESCE(SUM(amount) FILTER (WHERE payout_status IN ('pending', 'details_collected', 'approved')), 0) as pending_amount,
+        COUNT(*) FILTER (WHERE payout_status = 'paid' AND DATE(paid_at) = CURRENT_DATE) as paid_today_count,
+        COALESCE(SUM(amount) FILTER (WHERE payout_status = 'paid' AND DATE(paid_at) = CURRENT_DATE), 0) as paid_today_amount,
+        COUNT(*) FILTER (WHERE payout_status = 'confirmed') as confirmed_count,
+        COALESCE(SUM(amount) FILTER (WHERE payout_status = 'confirmed'), 0) as confirmed_amount
+      FROM transactions
+      WHERE transaction_type = 'prize'
+    `);
     
-    // Get total users and games
     const totalUsers = await pool.query('SELECT COUNT(*) as count FROM users');
     const totalGames = await pool.query('SELECT COUNT(*) as count FROM game_sessions WHERE status = \'completed\'');
     const totalQuestions = await pool.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
     
     res.json({
-      ...stats,
+      pending_count: parseInt(payoutStats.rows[0].pending_count) || 0,
+      pending_amount: parseFloat(payoutStats.rows[0].pending_amount) || 0,
+      paid_today_count: parseInt(payoutStats.rows[0].paid_today_count) || 0,
+      paid_today_amount: parseFloat(payoutStats.rows[0].paid_today_amount) || 0,
+      confirmed_count: parseInt(payoutStats.rows[0].confirmed_count) || 0,
+      confirmed_amount: parseFloat(payoutStats.rows[0].confirmed_amount) || 0,
       total_users: parseInt(totalUsers.rows[0].count),
       total_games: parseInt(totalGames.rows[0].count),
       total_questions: parseInt(totalQuestions.rows[0].count)
@@ -51,15 +66,136 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get pending payouts
+// Get pending payouts with proper filtering
 router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
   try {
-    const status = req.query.status || null;
-    const payouts = await payoutService.getAllPendingPayouts(status);
-    res.json(payouts);
+    const status = req.query.status;
+    
+    let whereClause = "t.transaction_type = 'prize' AND t.payout_status != 'confirmed'";
+    const params = [];
+    
+    if (status && status !== '') {
+      params.push(status);
+      whereClause += ` AND t.payout_status = $${params.length}`;
+    } else {
+      // Show pending, details_collected, approved, and paid (not confirmed)
+      whereClause += " AND t.payout_status IN ('pending', 'details_collected', 'approved', 'paid')";
+    }
+
+    const query = `
+      SELECT 
+        t.id as transaction_id,
+        t.user_id,
+        u.full_name,
+        u.phone_number,
+        u.lga,
+        t.amount,
+        t.payout_status,
+        t.transaction_type,
+        t.created_at as win_date,
+        t.paid_at,
+        t.payment_reference,
+        pd.id as payout_detail_id,
+        pd.account_name,
+        pd.account_number,
+        pd.bank_name,
+        pd.bank_code,
+        pd.verified,
+        pd.created_at as details_submitted_at,
+        gs.current_question as questions_answered,
+        gs.session_key
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
+      LEFT JOIN game_sessions gs ON t.session_id = gs.id
+      WHERE ${whereClause}
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `;
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
   } catch (error) {
     logger.error('Error getting pending payouts:', error);
     res.status(500).json({ error: 'Failed to fetch payouts' });
+  }
+});
+
+// Get payout history with date filters
+router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
+  try {
+    const period = req.query.period || 'all'; // daily, weekly, monthly, all
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+
+    let dateFilter = '';
+    switch(period) {
+      case 'daily':
+        dateFilter = "AND DATE(t.paid_at) = CURRENT_DATE";
+        break;
+      case 'weekly':
+        dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '7 days'";
+        break;
+      case 'monthly':
+        dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '30 days'";
+        break;
+      case 'all':
+      default:
+        dateFilter = '';
+    }
+
+    const query = `
+      SELECT 
+        t.id as transaction_id,
+        t.user_id,
+        u.full_name,
+        u.phone_number,
+        u.lga,
+        t.amount,
+        t.payout_status,
+        t.payment_reference,
+        t.payment_method,
+        t.paid_at,
+        t.confirmed_at,
+        pd.account_name,
+        pd.account_number,
+        pd.bank_name
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
+      WHERE t.transaction_type = 'prize' 
+        AND t.payout_status IN ('paid', 'confirmed')
+        ${dateFilter}
+      ORDER BY t.paid_at DESC
+      LIMIT $1 OFFSET $2
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM transactions t
+      WHERE t.transaction_type = 'prize' 
+        AND t.payout_status IN ('paid', 'confirmed')
+        ${dateFilter}
+    `;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [limit, offset]),
+      pool.query(countQuery)
+    ]);
+
+    res.json({
+      payouts: result.rows,
+      pagination: {
+        page,
+        limit,
+        total: parseInt(countResult.rows[0].total),
+        totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting payout history:', error);
+    res.status(500).json({ error: 'Failed to fetch payout history' });
   }
 });
 
@@ -135,7 +271,6 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
     );
 
     if (success) {
-      // Get transaction and user details
       const result = await pool.query(
         `SELECT t.*, u.phone_number, u.full_name, pd.account_name, pd.bank_name, pd.account_number
          FROM transactions t
@@ -148,7 +283,6 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
       if (result.rows.length > 0) {
         const transaction = result.rows[0];
 
-        // Send WhatsApp notification to winner
         await whatsappService.sendMessage(
           transaction.phone_number,
           `✅ PAYMENT SENT! 🎉\n\n` +
@@ -258,9 +392,17 @@ router.post('/api/questions', authenticateAdmin, async (req, res) => {
       fun_fact
     } = req.body;
 
-    // Validate required fields
     if (!question_text || !option_a || !option_b || !option_c || !option_d || !correct_answer || !difficulty) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (!['A', 'B', 'C', 'D'].includes(correct_answer.toUpperCase())) {
+      return res.status(400).json({ error: 'Correct answer must be A, B, C, or D' });
+    }
+
+    const difficultyNum = parseInt(difficulty);
+    if (isNaN(difficultyNum) || difficultyNum < 1 || difficultyNum > 15) {
+      return res.status(400).json({ error: 'Difficulty must be between 1 and 15' });
     }
 
     const result = await pool.query(
@@ -268,7 +410,7 @@ router.post('/api/questions', authenticateAdmin, async (req, res) => {
        (question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category || 'General', fun_fact]
+      [question_text, option_a, option_b, option_c, option_d, correct_answer.toUpperCase(), difficultyNum, category || 'General', fun_fact]
     );
 
     res.json({ success: true, question: result.rows[0] });
@@ -331,29 +473,6 @@ router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Error deleting question:', error);
     res.status(500).json({ error: 'Failed to delete question' });
-  }
-});
-
-// Get payout history
-router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT 
-        ph.*,
-        t.amount,
-        u.full_name,
-        u.phone_number
-       FROM payout_history ph
-       JOIN transactions t ON ph.transaction_id = t.id
-       JOIN users u ON t.user_id = u.id
-       ORDER BY ph.created_at DESC
-       LIMIT 100`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    logger.error('Error getting payout history:', error);
-    res.status(500).json({ error: 'Failed to fetch payout history' });
   }
 });
 

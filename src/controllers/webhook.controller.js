@@ -105,6 +105,12 @@ class WebhookController {
         return;
       }
 
+      // Bank details confirmation state
+      if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
+        await this.handleBankDetailsConfirmation(phone, message, userState.data);
+        return;
+      }
+
       // Payout collection states
       if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
         await this.handleAccountNameInput(phone, message, userState);
@@ -118,6 +124,11 @@ class WebhookController {
 
       if (userState && userState.state === 'COLLECT_BANK_NAME') {
         await this.handleBankNameInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
+        await this.handleCustomBankInput(phone, message, userState);
         return;
       }
 
@@ -334,7 +345,7 @@ Let's get you registered! What's your full name?`
   async handleClaimPrize(user) {
     try {
       const transaction = await payoutService.getPendingTransaction(user.id);
-
+      
       if (!transaction) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -344,7 +355,7 @@ Let's get you registered! What's your full name?`
       }
 
       const existingDetails = await payoutService.getPayoutDetails(transaction.id);
-
+      
       if (existingDetails) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -357,6 +368,40 @@ Let's get you registered! What's your full name?`
         return;
       }
 
+      // Check if user has bank details on file
+      const hasBankDetails = await payoutService.hasBankDetails(user.id);
+      
+      if (hasBankDetails) {
+        const userBankDetails = await payoutService.getUserBankDetails(user.id);
+        
+        // Show confirmation message with existing details
+        await userService.setUserState(user.phone_number, 'CONFIRM_BANK_DETAILS', {
+          transactionId: transaction.id,
+          amount: transaction.amount,
+          existingDetails: userBankDetails
+        });
+
+        await whatsappService.sendMessage(
+          user.phone_number,
+          `💰 PRIZE CLAIM - #WUA-${transaction.id.toString().padStart(4, '0')}\n\n` +
+          `You won: ₦${parseFloat(transaction.amount).toLocaleString()}\n\n` +
+          `━━━━━━━━━━━━━━━━\n` +
+          `We have your bank details on file:\n\n` +
+          `Account Name: ${userBankDetails.account_name}\n` +
+          `Account Number: ${userBankDetails.account_number}\n` +
+          `Bank: ${userBankDetails.bank_name}\n\n` +
+          `━━━━━━━━━━━━━━━━\n\n` +
+          `Reply:\n` +
+          `✅ YES - Use these details\n` +
+          `🔄 UPDATE - Enter new details\n` +
+          `❌ CANCEL - Cancel claim`
+        );
+        
+        logger.info(`Showing existing bank details to user ${user.id} for transaction ${transaction.id}`);
+        return;
+      }
+
+      // No bank details on file - start collection
       await userService.setUserState(user.phone_number, 'COLLECT_ACCOUNT_NAME', {
         transactionId: transaction.id,
         amount: transaction.amount
@@ -381,6 +426,71 @@ Let's get you registered! What's your full name?`
       await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error processing your claim. Please try again or contact support.'
+      );
+    }
+  }
+
+  async handleBankDetailsConfirmation(phone, message, stateData) {
+    const input = message.trim().toUpperCase();
+    const user = await userService.getUserByPhone(phone);
+
+    if (input === 'YES' || input === 'Y' || input === '✅') {
+      // User confirmed - link existing details to transaction
+      const success = await payoutService.linkBankDetailsToTransaction(
+        user.id,
+        stateData.transactionId
+      );
+
+      if (success) {
+        await userService.clearUserState(phone);
+        
+        await whatsappService.sendMessage(
+          phone,
+          `✅ PAYMENT DETAILS CONFIRMED! ✅\n\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `Account Name: ${stateData.existingDetails.account_name}\n` +
+          `Account Number: ${stateData.existingDetails.account_number}\n` +
+          `Bank: ${stateData.existingDetails.bank_name}\n` +
+          `Amount: ₦${parseFloat(stateData.amount).toLocaleString()}\n` +
+          `━━━━━━━━━━━━━━━━━━━\n\n` +
+          `We're processing your payment now.\n\n` +
+          `You'll receive ₦${parseFloat(stateData.amount).toLocaleString()} within 12-24 hours.\n\n` +
+          `You'll get a confirmation message once payment is sent. 💸\n\n` +
+          `Thank you for playing! 🎉\n\n` +
+          `Reference: #WUA-${stateData.transactionId.toString().padStart(4, '0')}`
+        );
+      } else {
+        await whatsappService.sendMessage(
+          phone,
+          '❌ Error confirming details. Please try again.\n\nType CLAIM to restart.'
+        );
+      }
+    } else if (input === 'UPDATE' || input === '🔄') {
+      // User wants to update - start collection
+      await userService.setUserState(phone, 'COLLECT_ACCOUNT_NAME', {
+        transactionId: stateData.transactionId,
+        amount: stateData.amount,
+        isUpdate: true
+      });
+
+      await whatsappService.sendMessage(
+        phone,
+        `🔄 UPDATE BANK DETAILS\n\n` +
+        `Step 1 of 3\n\n` +
+        `Please send your NEW ACCOUNT NAME\n` +
+        `(exactly as it appears on your bank statement)\n\n` +
+        `Reply with your account name:`
+      );
+    } else if (input === 'CANCEL' || input === '❌') {
+      await userService.clearUserState(phone);
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Claim cancelled.\n\nType CLAIM when you\'re ready to proceed.'
+      );
+    } else {
+      await whatsappService.sendMessage(
+        phone,
+        '⚠️ Invalid response.\n\nReply:\n✅ YES\n🔄 UPDATE\n❌ CANCEL'
       );
     }
   }

@@ -5,124 +5,154 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>What's Up Trivia - Admin Dashboard</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    :root {
+      --primary: #667eea;
+      --primary-dark: #5568d3;
+      --success: #10b981;
+      --success-dark: #059669;
+      --danger: #ef4444;
+      --danger-dark: #dc2626;
+      --warning: #f59e0b;
+      --secondary: #6b7280;
+      --bg-gray: #f5f7fa;
+      --text-dark: #333;
+      --text-gray: #666;
+      --text-light: #999;
+      --border: #e0e0e0;
+      --shadow: 0 2px 8px rgba(0,0,0,0.08);
+      --shadow-lg: 0 4px 12px rgba(0,0,0,0.12);
     }
-
+    
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f7fa;
-      color: #333;
+      background: var(--bg-gray);
+      color: var(--text-dark);
+      line-height: 1.6;
     }
-
+    
     .header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, var(--primary) 0%, #764ba2 100%);
       color: white;
       padding: 20px 40px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
-
-    .header h1 {
-      font-size: 24px;
-      margin-bottom: 5px;
-    }
-
-    .header p {
-      opacity: 0.9;
-      font-size: 14px;
-    }
-
+    
+    .header h1 { font-size: 24px; margin-bottom: 5px; }
+    .header p { opacity: 0.9; font-size: 14px; }
+    
     .container {
       max-width: 1400px;
       margin: 0 auto;
       padding: 30px 20px;
     }
-
+    
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 20px;
       margin-bottom: 30px;
     }
-
+    
     .stat-card {
       background: white;
       border-radius: 12px;
       padding: 25px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-      transition: transform 0.2s;
+      box-shadow: var(--shadow);
+      transition: transform 0.2s, box-shadow 0.2s;
+      position: relative;
+      overflow: hidden;
     }
-
+    
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: var(--primary);
+      transform: scaleY(0);
+      transition: transform 0.3s;
+    }
+    
     .stat-card:hover {
       transform: translateY(-3px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+      box-shadow: var(--shadow-lg);
     }
-
+    
+    .stat-card:hover::before {
+      transform: scaleY(1);
+    }
+    
     .stat-card h3 {
       font-size: 14px;
-      color: #666;
+      color: var(--text-gray);
       margin-bottom: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-
+    
     .stat-card .value {
       font-size: 32px;
       font-weight: bold;
-      color: #667eea;
+      color: var(--primary);
       margin-bottom: 5px;
     }
-
+    
     .stat-card .label {
       font-size: 13px;
-      color: #999;
+      color: var(--text-light);
     }
-
+    
     .tabs {
       display: flex;
       gap: 10px;
       margin-bottom: 20px;
-      border-bottom: 2px solid #e0e0e0;
+      border-bottom: 2px solid var(--border);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
-
+    
     .tab {
       padding: 12px 24px;
       background: none;
       border: none;
       cursor: pointer;
       font-size: 15px;
-      color: #666;
+      color: var(--text-gray);
       border-bottom: 3px solid transparent;
       transition: all 0.3s;
+      white-space: nowrap;
     }
-
-    .tab:hover {
-      color: #667eea;
-    }
-
+    
+    .tab:hover { color: var(--primary); }
     .tab.active {
-      color: #667eea;
-      border-bottom-color: #667eea;
+      color: var(--primary);
+      border-bottom-color: var(--primary);
       font-weight: 600;
     }
-
-    .tab-content {
-      display: none;
+    
+    .tab-content { display: none; }
+    .tab-content.active { display: block; animation: fadeIn 0.3s; }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
-
-    .tab-content.active {
-      display: block;
-    }
-
+    
     .card {
       background: white;
       border-radius: 12px;
       padding: 25px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
     }
-
+    
     .card-header {
       display: flex;
       justify-content: space-between;
@@ -130,26 +160,32 @@
       margin-bottom: 20px;
       padding-bottom: 15px;
       border-bottom: 2px solid #f0f0f0;
+      flex-wrap: wrap;
+      gap: 15px;
     }
-
-    .card-header h2 {
-      font-size: 20px;
-      color: #333;
-    }
-
+    
+    .card-header h2 { font-size: 20px; color: var(--text-dark); }
+    
     .filter-group {
       display: flex;
       gap: 10px;
       align-items: center;
+      flex-wrap: wrap;
     }
-
+    
     .filter-group select, .filter-group input {
       padding: 8px 12px;
       border: 1px solid #ddd;
       border-radius: 6px;
       font-size: 14px;
+      transition: border-color 0.3s;
     }
-
+    
+    .filter-group select:focus, .filter-group input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    
     .btn {
       padding: 10px 20px;
       border: none;
@@ -158,69 +194,60 @@
       font-size: 14px;
       font-weight: 500;
       transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-
-    .btn-primary {
-      background: #667eea;
-      color: white;
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
-
-    .btn-primary:hover {
-      background: #5568d3;
-    }
-
-    .btn-success {
-      background: #10b981;
-      color: white;
-    }
-
-    .btn-success:hover {
-      background: #059669;
-    }
-
-    .btn-danger {
-      background: #ef4444;
-      color: white;
-    }
-
-    .btn-danger:hover {
-      background: #dc2626;
-    }
-
-    .btn-secondary {
-      background: #6b7280;
-      color: white;
-    }
-
+    
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+    
+    .btn-success { background: var(--success); color: white; }
+    .btn-success:hover:not(:disabled) { background: var(--success-dark); }
+    
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-danger:hover:not(:disabled) { background: var(--danger-dark); }
+    
+    .btn-secondary { background: var(--secondary); color: white; }
+    .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+    
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+    
     table {
       width: 100%;
       border-collapse: collapse;
+      font-size: 14px;
     }
-
+    
     thead {
       background: #f9fafb;
+      position: sticky;
+      top: 0;
     }
-
+    
     th {
       text-align: left;
       padding: 12px;
       font-size: 13px;
       font-weight: 600;
-      color: #666;
+      color: var(--text-gray);
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      border-bottom: 2px solid var(--border);
     }
-
+    
     td {
       padding: 15px 12px;
       border-bottom: 1px solid #f0f0f0;
-      font-size: 14px;
     }
-
-    tr:hover {
-      background: #f9fafb;
-    }
-
+    
+    tr:hover { background: #f9fafb; }
+    
     .status-badge {
       display: inline-block;
       padding: 4px 12px;
@@ -228,44 +255,25 @@
       font-size: 12px;
       font-weight: 500;
     }
-
-    .status-pending {
-      background: #fef3c7;
-      color: #92400e;
-    }
-
-    .status-details_collected {
-      background: #dbeafe;
-      color: #1e40af;
-    }
-
-    .status-approved {
-      background: #d1fae5;
-      color: #065f46;
-    }
-
-    .status-paid {
-      background: #d1fae5;
-      color: #065f46;
-    }
-
-    .status-confirmed {
-      background: #e0e7ff;
-      color: #3730a3;
-    }
-
+    
+    .status-pending { background: #fef3c7; color: #92400e; }
+    .status-details_collected { background: #dbeafe; color: #1e40af; }
+    .status-approved { background: #d1fae5; color: #065f46; }
+    .status-paid { background: #d1fae5; color: #065f46; }
+    .status-confirmed { background: #e0e7ff; color: #3730a3; }
+    
     .empty-state {
       text-align: center;
       padding: 60px 20px;
-      color: #999;
+      color: var(--text-light);
     }
-
-    .empty-state img {
-      width: 120px;
-      opacity: 0.5;
-      margin-bottom: 20px;
+    
+    .empty-state .icon {
+      font-size: 64px;
+      opacity: 0.3;
+      margin-bottom: 15px;
     }
-
+    
     .modal {
       display: none;
       position: fixed;
@@ -277,45 +285,57 @@
       z-index: 1000;
       align-items: center;
       justify-content: center;
+      backdrop-filter: blur(4px);
     }
-
-    .modal.show {
-      display: flex;
-    }
-
+    
+    .modal.show { display: flex; animation: fadeIn 0.2s; }
+    
     .modal-content {
       background: white;
       border-radius: 12px;
       padding: 30px;
-      max-width: 500px;
+      max-width: 600px;
       width: 90%;
       max-height: 90vh;
       overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      animation: slideUp 0.3s;
     }
-
+    
+    @keyframes slideUp {
+      from { transform: translateY(50px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    
     .modal-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #f0f0f0;
     }
-
-    .modal-header h3 {
-      font-size: 20px;
-    }
-
+    
+    .modal-header h3 { font-size: 20px; }
+    
     .close-modal {
       background: none;
       border: none;
       font-size: 28px;
       cursor: pointer;
-      color: #999;
+      color: var(--text-light);
+      transition: color 0.3s, transform 0.3s;
     }
-
+    
+    .close-modal:hover {
+      color: var(--danger);
+      transform: rotate(90deg);
+    }
+    
     .form-group {
       margin-bottom: 20px;
     }
-
+    
     .form-group label {
       display: block;
       margin-bottom: 8px;
@@ -323,98 +343,158 @@
       font-weight: 500;
       color: #555;
     }
-
+    
     .form-group input, .form-group textarea, .form-group select {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid #ddd;
       border-radius: 6px;
       font-size: 14px;
+      transition: border-color 0.3s;
     }
-
+    
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    
     .form-group textarea {
       resize: vertical;
       min-height: 80px;
+      font-family: inherit;
     }
-
+    
     .detail-row {
       display: flex;
       justify-content: space-between;
       padding: 12px 0;
       border-bottom: 1px solid #f0f0f0;
     }
-
-    .detail-row:last-child {
-      border-bottom: none;
-    }
-
-    .detail-label {
-      font-weight: 500;
-      color: #666;
-    }
-
-    .detail-value {
-      color: #333;
-      font-weight: 500;
-    }
-
+    
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { font-weight: 500; color: var(--text-gray); }
+    .detail-value { color: var(--text-dark); font-weight: 500; }
+    
     .loading {
       text-align: center;
       padding: 40px;
-      color: #999;
+      color: var(--text-light);
     }
-
+    
     .spinner {
       border: 3px solid #f3f3f3;
-      border-top: 3px solid #667eea;
+      border-top: 3px solid var(--primary);
       border-radius: 50%;
       width: 40px;
       height: 40px;
       animation: spin 1s linear infinite;
       margin: 0 auto 15px;
     }
-
+    
     @keyframes spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
-
+    
     .alert {
       padding: 15px 20px;
       border-radius: 8px;
       margin-bottom: 20px;
       font-size: 14px;
+      animation: slideDown 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
-
+    
+    @keyframes slideDown {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    
     .alert-success {
       background: #d1fae5;
       color: #065f46;
-      border: 1px solid #10b981;
+      border: 1px solid var(--success);
     }
-
+    
     .alert-error {
       background: #fee2e2;
       color: #991b1b;
-      border: 1px solid #ef4444;
+      border: 1px solid var(--danger);
     }
-
+    
+    .alert-info {
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #3b82f6;
+    }
+    
+    .search-box {
+      position: relative;
+      flex: 1;
+      max-width: 300px;
+    }
+    
+    .search-box input {
+      width: 100%;
+      padding: 8px 12px 8px 36px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    
+    .search-box::before {
+      content: '🔍';
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    
+    .pagination {
+      display: flex;
+      gap: 5px;
+      justify-content: center;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    
+    .pagination button {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      background: white;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .pagination button:hover:not(:disabled) {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    
+    .pagination button.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    
+    .pagination button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
     @media (max-width: 768px) {
-      .stats-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .tabs {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      table {
-        font-size: 12px;
-      }
-
-      th, td {
-        padding: 8px;
-      }
+      .header { padding: 15px 20px; }
+      .container { padding: 20px 15px; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .card-header { flex-direction: column; align-items: flex-start; }
+      .filter-group { width: 100%; }
+      table { font-size: 12px; }
+      th, td { padding: 8px; }
+      .btn { padding: 8px 16px; font-size: 13px; }
     }
   </style>
 </head>
@@ -432,19 +512,16 @@
         <div class="value" id="pendingCount">-</div>
         <div class="label" id="pendingAmount">Loading...</div>
       </div>
-
       <div class="stat-card">
         <h3>Paid Today</h3>
         <div class="value" id="paidCount">-</div>
         <div class="label" id="paidAmount">Loading...</div>
       </div>
-
       <div class="stat-card">
         <h3>Total Users</h3>
         <div class="value" id="totalUsers">-</div>
         <div class="label">Registered players</div>
       </div>
-
       <div class="stat-card">
         <h3>Total Questions</h3>
         <div class="value" id="totalQuestions">-</div>
@@ -458,6 +535,7 @@
     <!-- Tabs -->
     <div class="tabs">
       <button class="tab active" onclick="switchTab('payouts')">💰 Payouts</button>
+      <button class="tab" onclick="switchTab('history')">📜 History</button>
       <button class="tab" onclick="switchTab('users')">👥 Users</button>
       <button class="tab" onclick="switchTab('questions')">❓ Questions</button>
     </div>
@@ -473,15 +551,39 @@
               <option value="pending">Pending</option>
               <option value="details_collected">Details Collected</option>
               <option value="approved">Approved</option>
+              <option value="paid">Paid</option>
             </select>
             <button class="btn btn-primary" onclick="loadPayouts()">🔄 Refresh</button>
           </div>
         </div>
-
         <div id="payoutsTableContainer">
           <div class="loading">
             <div class="spinner"></div>
             <p>Loading payouts...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="historyTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>Payout History</h2>
+          <div class="filter-group">
+            <select id="periodFilter" onchange="loadHistory()">
+              <option value="all">All Time</option>
+              <option value="daily">Today</option>
+              <option value="weekly">This Week</option>
+              <option value="monthly">This Month</option>
+            </select>
+            <button class="btn btn-primary" onclick="loadHistory()">🔄 Refresh</button>
+          </div>
+        </div>
+        <div id="historyTableContainer">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Loading history...</p>
           </div>
         </div>
       </div>
@@ -492,9 +594,13 @@
       <div class="card">
         <div class="card-header">
           <h2>All Users</h2>
-          <button class="btn btn-primary" onclick="loadUsers()">🔄 Refresh</button>
+          <div class="filter-group">
+            <div class="search-box">
+              <input type="text" id="userSearch" placeholder="Search users..." onkeyup="searchUsers()">
+            </div>
+            <button class="btn btn-primary" onclick="loadUsers()">🔄 Refresh</button>
+          </div>
         </div>
-
         <div id="usersTableContainer">
           <div class="loading">
             <div class="spinner"></div>
@@ -509,9 +615,16 @@
       <div class="card">
         <div class="card-header">
           <h2>Questions Bank</h2>
-          <button class="btn btn-success" onclick="showAddQuestionModal()">+ Add Question</button>
+          <div class="filter-group">
+            <select id="difficultyFilter" onchange="loadQuestions()">
+              <option value="">All Difficulties</option>
+              <option value="1-5">Easy (1-5)</option>
+              <option value="6-10">Medium (6-10)</option>
+              <option value="11-15">Hard (11-15)</option>
+            </select>
+            <button class="btn btn-success" onclick="showAddQuestionModal()">+ Add Question</button>
+          </div>
         </div>
-
         <div id="questionsTableContainer">
           <div class="loading">
             <div class="spinner"></div>
@@ -526,18 +639,15 @@
   <div id="markPaidModal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>Mark as Paid</h3>
+        <h3>💵 Mark as Paid</h3>
         <button class="close-modal" onclick="closeModal('markPaidModal')">&times;</button>
       </div>
-
       <div id="payoutDetails"></div>
-
       <form id="markPaidForm" onsubmit="submitMarkPaid(event)">
         <div class="form-group">
           <label>Payment Reference *</label>
           <input type="text" id="paymentReference" required placeholder="e.g., GTB/20241208/12345">
         </div>
-
         <div class="form-group">
           <label>Payment Method</label>
           <select id="paymentMethod">
@@ -547,9 +657,7 @@
             <option value="other">Other</option>
           </select>
         </div>
-
         <input type="hidden" id="selectedTransactionId">
-
         <div style="display: flex; gap: 10px; margin-top: 20px;">
           <button type="submit" class="btn btn-success" style="flex: 1;">✓ Confirm Payment</button>
           <button type="button" class="btn btn-secondary" onclick="closeModal('markPaidModal')">Cancel</button>
@@ -558,11 +666,73 @@
     </div>
   </div>
 
+  <!-- Add Question Modal -->
+  <div id="addQuestionModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>➕ Add New Question</h3>
+        <button class="close-modal" onclick="closeModal('addQuestionModal')">&times;</button>
+      </div>
+      <form id="addQuestionForm" onsubmit="submitAddQuestion(event)">
+        <div class="form-group">
+          <label>Question Text *</label>
+          <textarea id="questionText" required placeholder="What is the capital of Akwa Ibom State?"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Option A *</label>
+          <input type="text" id="optionA" required placeholder="First option">
+        </div>
+        <div class="form-group">
+          <label>Option B *</label>
+          <input type="text" id="optionB" required placeholder="Second option">
+        </div>
+        <div class="form-group">
+          <label>Option C *</label>
+          <input type="text" id="optionC" required placeholder="Third option">
+        </div>
+        <div class="form-group">
+          <label>Option D *</label>
+          <input type="text" id="optionD" required placeholder="Fourth option">
+        </div>
+        <div class="form-group">
+          <label>Correct Answer *</label>
+          <select id="correctAnswer" required>
+            <option value="">Select correct answer</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Difficulty Level (1-15) *</label>
+          <input type="number" id="difficulty" required min="1" max="15" placeholder="1 = Easiest, 15 = Hardest">
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <input type="text" id="category" placeholder="e.g., History, Geography, Culture">
+        </div>
+        <div class="form-group">
+          <label>Fun Fact (Optional)</label>
+          <textarea id="funFact" placeholder="Interesting fact related to the answer"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+          <button type="submit" class="btn btn-success" style="flex: 1;">✓ Add Question</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal('addQuestionModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
-    const API_TOKEN = prompt('Enter Admin Token:');
+    // Configuration
+    const API_TOKEN = localStorage.getItem('adminToken') || prompt('Enter Admin Token:');
+    
     if (!API_TOKEN) {
       alert('Admin token required!');
       window.location.reload();
+    } else {
+      localStorage.setItem('adminToken', API_TOKEN);
     }
 
     const API_HEADERS = {
@@ -570,10 +740,18 @@
       'Content-Type': 'application/json'
     };
 
+    // State
+    let currentUsersPage = 1;
+    let currentQuestionsPage = 1;
+    let allUsers = [];
+
     // Initialize
     loadStats();
     loadPayouts();
 
+    // ============================================
+    // STATS
+    // ============================================
     async function loadStats() {
       try {
         const response = await fetch('/admin/api/stats', { headers: API_HEADERS });
@@ -582,7 +760,7 @@
         document.getElementById('pendingCount').textContent = stats.pending_count || 0;
         document.getElementById('pendingAmount').textContent = `₦${(parseFloat(stats.pending_amount) || 0).toLocaleString()}`;
         
-        document.getElementById('paidCount').textContent = stats.paid_count || 0;
+        document.getElementById('paidCount').textContent = stats.paid_today_count || 0;
         document.getElementById('paidAmount').textContent = `₦${(parseFloat(stats.paid_today_amount) || 0).toLocaleString()}`;
         
         document.getElementById('totalUsers').textContent = stats.total_users || 0;
@@ -593,16 +771,22 @@
       }
     }
 
+    // ============================================
+    // PAYOUTS
+    // ============================================
     async function loadPayouts() {
       const container = document.getElementById('payoutsTableContainer');
       container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading payouts...</p></div>';
 
       try {
-        const response = await fetch('/admin/api/payouts/pending', { headers: API_HEADERS });
+        const status = document.getElementById('statusFilter')?.value || '';
+        const url = status ? `/admin/api/payouts/pending?status=${status}` : '/admin/api/payouts/pending';
+        
+        const response = await fetch(url, { headers: API_HEADERS });
         const payouts = await response.json();
 
         if (payouts.length === 0) {
-          container.innerHTML = '<div class="empty-state"><p>No pending payouts</p></div>';
+          container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending payouts</p></div>';
           return;
         }
 
@@ -614,7 +798,7 @@
                 <th>Winner</th>
                 <th>Amount</th>
                 <th>Status</th>
-                <th>Details</th>
+                <th>Bank Details</th>
                 <th>Date</th>
                 <th>Actions</th>
               </tr>
@@ -633,12 +817,12 @@
               <td>#${payout.transaction_id}</td>
               <td>
                 <strong>${payout.full_name}</strong><br>
-                <small>${payout.phone_number}</small>
+                <small style="color: #999;">${payout.phone_number}</small>
               </td>
               <td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td>
               <td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td>
               <td>
-                ${hasDetails} ${detailsText}
+                ${hasDetails} <small>${detailsText}</small>
               </td>
               <td>${new Date(payout.win_date).toLocaleDateString()}</td>
               <td>
@@ -648,7 +832,7 @@
                   </button>
                 ` : `
                   <button class="btn btn-secondary btn-sm" disabled>
-                    ⏳ Awaiting Details
+                    ⏳ Waiting
                   </button>
                 `}
               </td>
@@ -664,10 +848,13 @@
       }
     }
 
+    function filterPayouts() {
+      loadPayouts();
+    }
+
     async function showMarkPaidModal(transactionId) {
       document.getElementById('selectedTransactionId').value = transactionId;
       
-      // Load payout details
       try {
         const response = await fetch(`/admin/api/payouts/${transactionId}`, { headers: API_HEADERS });
         const payout = await response.json();
@@ -705,7 +892,7 @@
 
     async function submitMarkPaid(event) {
       event.preventDefault();
-
+      
       const transactionId = document.getElementById('selectedTransactionId').value;
       const paymentReference = document.getElementById('paymentReference').value;
       const paymentMethod = document.getElementById('paymentMethod').value;
@@ -714,61 +901,39 @@
         const response = await fetch(`/admin/api/payouts/${transactionId}/mark-paid`, {
           method: 'POST',
           headers: API_HEADERS,
-          body: JSON.stringify({
-            paymentReference,
-            paymentMethod,
-            adminId: 'admin'
-          })
+          body: JSON.stringify({ paymentReference, paymentMethod, adminId: 'admin' })
         });
 
         const result = await response.json();
 
         if (result.success) {
-          showAlert('Payment marked as paid successfully! Winner notified via WhatsApp.', 'success');
+          showAlert('✅ Payment marked as paid! Winner notified via WhatsApp.', 'success');
           closeModal('markPaidModal');
           loadStats();
           loadPayouts();
           document.getElementById('markPaidForm').reset();
         } else {
-          showAlert('Error marking payment as paid', 'error');
+          showAlert('❌ Error marking payment as paid', 'error');
         }
       } catch (error) {
-        showAlert('Error processing request', 'error');
+        showAlert('❌ Error processing request', 'error');
       }
     }
 
-    function closeModal(modalId) {
-      document.getElementById(modalId).classList.remove('show');
-    }
-
-    function switchTab(tab) {
-      // Update tab buttons
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      event.target.classList.add('active');
-
-      // Update tab content
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      document.getElementById(`${tab}Tab`).classList.add('active');
-
-      // Load data if not loaded
-      if (tab === 'users' && !document.getElementById('usersTableContainer').innerHTML.includes('table')) {
-        loadUsers();
-      }
-      if (tab === 'questions' && !document.getElementById('questionsTableContainer').innerHTML.includes('table')) {
-        loadQuestions();
-      }
-    }
-
-    async function loadUsers() {
-      const container = document.getElementById('usersTableContainer');
-      container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading users...</p></div>';
+    // ============================================
+    // HISTORY
+    // ============================================
+    async function loadHistory() {
+      const container = document.getElementById('historyTableContainer');
+      container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading history...</p></div>';
 
       try {
-        const response = await fetch('/admin/api/users', { headers: API_HEADERS });
+        const period = document.getElementById('periodFilter')?.value || 'all';
+        const response = await fetch(`/admin/api/payouts/history?period=${period}`, { headers: API_HEADERS });
         const data = await response.json();
 
-        if (data.users.length === 0) {
-          container.innerHTML = '<div class="empty-state"><p>No users found</p></div>';
+        if (data.payouts.length === 0) {
+          container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No payout history found</p></div>';
           return;
         }
 
@@ -776,28 +941,33 @@
           <table>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Phone</th>
-                <th>LGA</th>
-                <th>Games Played</th>
-                <th>Winnings</th>
-                <th>Games Left</th>
-                <th>Joined</th>
+                <th>ID</th>
+                <th>Winner</th>
+                <th>Amount</th>
+                <th>Bank Details</th>
+                <th>Reference</th>
+                <th>Paid Date</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
         `;
 
-        data.users.forEach(user => {
+        data.payouts.forEach(payout => {
           html += `
             <tr>
-              <td><strong>${user.full_name}</strong></td>
-              <td>${user.phone_number}</td>
-              <td>${user.lga}</td>
-              <td>${user.total_games_played}</td>
-              <td>₦${parseFloat(user.total_winnings).toLocaleString()}</td>
-              <td>${user.games_remaining || 0}</td>
-              <td>${new Date(user.created_at).toLocaleDateString()}</td>
+              <td>#${payout.transaction_id}</td>
+              <td>
+                <strong>${payout.full_name}</strong><br>
+                <small style="color: #999;">${payout.phone_number}</small>
+              </td>
+              <td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td>
+              <td>
+                <small>${payout.account_name || 'N/A'}<br>${payout.bank_name || 'N/A'}</small>
+              </td>
+              <td><small>${payout.payment_reference || 'N/A'}</small></td>
+              <td>${payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : 'N/A'}</td>
+              <td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td>
             </tr>
           `;
         });
@@ -805,10 +975,84 @@
         html += '</tbody></table>';
         container.innerHTML = html;
       } catch (error) {
+        console.error('Error loading history:', error);
+        container.innerHTML = '<div class="empty-state"><p>Error loading history</p></div>';
+      }
+    }
+
+    // ============================================
+    // USERS
+    // ============================================
+    async function loadUsers() {
+      const container = document.getElementById('usersTableContainer');
+      container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading users...</p></div>';
+
+      try {
+        const response = await fetch('/admin/api/users', { headers: API_HEADERS });
+        const data = await response.json();
+        allUsers = data.users;
+
+        renderUsers(allUsers);
+      } catch (error) {
         container.innerHTML = '<div class="empty-state"><p>Error loading users</p></div>';
       }
     }
 
+    function renderUsers(users) {
+      const container = document.getElementById('usersTableContainer');
+
+      if (users.length === 0) {
+        container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>No users found</p></div>';
+        return;
+      }
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Phone</th>
+              <th>LGA</th>
+              <th>Games</th>
+              <th>Winnings</th>
+              <th>Remaining</th>
+              <th>Joined</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      users.forEach(user => {
+        html += `
+          <tr>
+            <td><strong>${user.full_name}</strong></td>
+            <td>${user.phone_number}</td>
+            <td>${user.lga}</td>
+            <td>${user.total_games_played}</td>
+            <td>₦${parseFloat(user.total_winnings).toLocaleString()}</td>
+            <td>${user.games_remaining || 0}</td>
+            <td>${new Date(user.created_at).toLocaleDateString()}</td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    function searchUsers() {
+      const searchTerm = document.getElementById('userSearch').value.toLowerCase();
+      const filtered = allUsers.filter(user => 
+        user.full_name.toLowerCase().includes(searchTerm) ||
+        user.phone_number.includes(searchTerm) ||
+        user.lga.toLowerCase().includes(searchTerm)
+      );
+      renderUsers(filtered);
+    }
+
+    // ============================================
+    // QUESTIONS
+    // ============================================
     async function loadQuestions() {
       const container = document.getElementById('questionsTableContainer');
       container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading questions...</p></div>';
@@ -818,7 +1062,7 @@
         const data = await response.json();
 
         if (data.questions.length === 0) {
-          container.innerHTML = '<div class="empty-state"><p>No questions found</p></div>';
+          container.innerHTML = '<div class="empty-state"><div class="icon">❓</div><p>No questions found</p></div>';
           return;
         }
 
@@ -830,7 +1074,7 @@
                 <th>Question</th>
                 <th>Difficulty</th>
                 <th>Category</th>
-                <th>Correct Answer</th>
+                <th>Answer</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -841,7 +1085,7 @@
           html += `
             <tr>
               <td>${q.id}</td>
-              <td>${q.question_text.substring(0, 60)}...</td>
+              <td>${q.question_text.substring(0, 80)}${q.question_text.length > 80 ? '...' : ''}</td>
               <td>Q${q.difficulty}</td>
               <td>${q.category}</td>
               <td><strong>${q.correct_answer}</strong></td>
@@ -857,25 +1101,91 @@
       }
     }
 
+    function showAddQuestionModal() {
+      document.getElementById('addQuestionModal').classList.add('show');
+    }
+
+    async function submitAddQuestion(event) {
+      event.preventDefault();
+
+      const questionData = {
+        question_text: document.getElementById('questionText').value,
+        option_a: document.getElementById('optionA').value,
+        option_b: document.getElementById('optionB').value,
+        option_c: document.getElementById('optionC').value,
+        option_d: document.getElementById('optionD').value,
+        correct_answer: document.getElementById('correctAnswer').value,
+        difficulty: parseInt(document.getElementById('difficulty').value),
+        category: document.getElementById('category').value || 'General',
+        fun_fact: document.getElementById('funFact').value || null
+      };
+
+      try {
+        const response = await fetch('/admin/api/questions', {
+          method: 'POST',
+          headers: API_HEADERS,
+          body: JSON.stringify(questionData)
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showAlert('✅ Question added successfully!', 'success');
+          closeModal('addQuestionModal');
+          loadQuestions();
+          loadStats();
+          document.getElementById('addQuestionForm').reset();
+        } else {
+          showAlert('❌ ' + (result.error || 'Error adding question'), 'error');
+        }
+      } catch (error) {
+        showAlert('❌ Error adding question', 'error');
+      }
+    }
+
+    // ============================================
+    // UTILITIES
+    // ============================================
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.getElementById(`${tab}Tab`).classList.add('active');
+
+      if (tab === 'users' && allUsers.length === 0) {
+        loadUsers();
+      }
+      if (tab === 'questions' && !document.getElementById('questionsTableContainer').innerHTML.includes('table')) {
+        loadQuestions();
+      }
+      if (tab === 'history' && !document.getElementById('historyTableContainer').innerHTML.includes('table')) {
+        loadHistory();
+      }
+    }
+
+    function closeModal(modalId) {
+      document.getElementById(modalId).classList.remove('show');
+    }
+
     function showAlert(message, type) {
       const container = document.getElementById('alertContainer');
       const alert = document.createElement('div');
       alert.className = `alert alert-${type}`;
-      alert.textContent = message;
+      
+      const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+      alert.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+      
       container.appendChild(alert);
 
       setTimeout(() => {
-        alert.remove();
+        alert.style.animation = 'fadeOut 0.3s';
+        setTimeout(() => alert.remove(), 300);
       }, 5000);
     }
 
-    function filterPayouts() {
-      loadPayouts();
-    }
-
-    function showAddQuestionModal() {
-      alert('Add question feature - to be implemented');
-    }
+    // Auto-refresh stats every 30 seconds
+    setInterval(loadStats, 30000);
   </script>
 </body>
 </html>
