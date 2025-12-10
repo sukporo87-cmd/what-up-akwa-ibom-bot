@@ -66,101 +66,127 @@ class WebhookController {
   }
 
   async routeMessage(phone, message) {
-    try {
-      const input = message.trim().toUpperCase();
+  try {
+    const input = message.trim().toUpperCase();
 
-      if (input === 'RESET' || input === 'RESTART') {
-        let user = await userService.getUserByPhone(phone);
-        if (user) {
-          await this.handleReset(user);
-        } else {
-          await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
-        }
-        return;
-      }
-
+    // Handle RESET command first (before any state checks)
+    if (input === 'RESET' || input === 'RESTART') {
       let user = await userService.getUserByPhone(phone);
-      const userState = await userService.getUserState(phone);
-
-      // Registration states
-      if (userState && userState.state === 'REGISTRATION_NAME') {
-        await this.handleRegistrationName(phone, message);
-        return;
-      }
-
-      if (userState && userState.state === 'REGISTRATION_LGA') {
-        await this.handleRegistrationLGA(phone, message, userState.data.name);
-        return;
-      }
-
-      // Payment states
-      if (userState && userState.state === 'SELECT_PACKAGE') {
-        await this.handlePackageSelection(user, message, userState.data);
-        return;
-      }
-
-      // Leaderboard states
-      if (userState && userState.state === 'SELECT_LEADERBOARD') {
-        await this.handleLeaderboardSelection(phone, message);
-        return;
-      }
-
-      // Bank details confirmation state
-      if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
-        await this.handleBankDetailsConfirmation(phone, message, userState.data);
-        return;
-      }
-
-      // Payout collection states
-      if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
-        await this.handleAccountNameInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
-        await this.handleAccountNumberInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_BANK_NAME') {
-        await this.handleBankNameInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
-        await this.handleCustomBankInput(phone, message, userState);
-        return;
-      }
-
-      if (!user) {
-        await this.handleNewUser(phone);
-        return;
-      }
-
-      const activeSession = await gameService.getActiveSession(user.id);
-
-      // CRITICAL FIX: If no active session in DB, clean up any leftover Redis game state
-      if (!activeSession) {
-        const gameReady = await redis.get(`game_ready:${user.id}`);
-        if (gameReady) {
-          logger.info(`Cleaning stale game_ready state for user ${user.id}`);
-          await redis.del(`game_ready:${user.id}`);
-        }
-      }
-
-      if (activeSession) {
-        await this.handleGameInput(user, activeSession, message);
+      if (user) {
+        await this.handleReset(user);
       } else {
-        await this.handleMenuInput(user, message);
+        await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
       }
-    } catch (error) {
-      logger.error('Error routing message:', error);
-      await whatsappService.sendMessage(
-        phone,
-        '❌ Sorry, something went wrong. Type RESET to start over.'
-      );
+      return;
     }
+
+    let user = await userService.getUserByPhone(phone);
+    const userState = await userService.getUserState(phone);
+
+    // Registration states
+    if (userState && userState.state === 'REGISTRATION_NAME') {
+      await this.handleRegistrationName(phone, message);
+      return;
+    }
+
+    if (userState && userState.state === 'REGISTRATION_LGA') {
+      await this.handleRegistrationLGA(phone, message, userState.data.name);
+      return;
+    }
+
+    // Payment states
+    if (userState && userState.state === 'SELECT_PACKAGE') {
+      await this.handlePackageSelection(user, message, userState.data);
+      return;
+    }
+
+    // Leaderboard states
+    if (userState && userState.state === 'SELECT_LEADERBOARD') {
+      await this.handleLeaderboardSelection(phone, message);
+      return;
+    }
+
+    // Bank details confirmation state
+    if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
+      await this.handleBankDetailsConfirmation(phone, message, userState.data);
+      return;
+    }
+
+    // Payout collection states
+    if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
+      await this.handleAccountNameInput(phone, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
+      await this.handleAccountNumberInput(phone, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_BANK_NAME') {
+      await this.handleBankNameInput(phone, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
+      await this.handleCustomBankInput(phone, message, userState);
+      return;
+    }
+
+    if (!user) {
+      await this.handleNewUser(phone);
+      return;
+    }
+
+    const activeSession = await gameService.getActiveSession(user.id);
+
+    // ===== CRITICAL FIX: Clean up stale game_ready state =====
+    if (!activeSession) {
+      const gameReady = await redis.get(`game_ready:${user.id}`);
+      if (gameReady) {
+        logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+        await redis.del(`game_ready:${user.id}`);
+      }
+    }
+
+    // ===== NEW FIX: Check if user is trying to interact normally (not in game) =====
+    const isNormalMenuInput = !activeSession && (
+      input.includes('HELLO') ||
+      input.includes('HI') ||
+      input.includes('MENU') ||
+      input === '1' || input === '2' || input === '3' || input === '4' || input === '5' ||
+      input.includes('PLAY') ||
+      input.includes('HOW') ||
+      input.includes('LEADERBOARD') ||
+      input.includes('STATS') ||
+      input.includes('BUY') ||
+      input.includes('CLAIM')
+    );
+
+    // If user is trying normal menu interaction but somehow game_ready exists, clean it
+    if (isNormalMenuInput) {
+      const gameReady = await redis.get(`game_ready:${user.id}`);
+      if (gameReady) {
+        logger.warn(`User ${user.id} trying menu interaction but game_ready exists - cleaning up`);
+        await redis.del(`game_ready:${user.id}`);
+      }
+    }
+
+    // Route based on active session
+    if (activeSession) {
+      await this.handleGameInput(user, activeSession, message);
+    } else {
+      await this.handleMenuInput(user, message);
+    }
+
+  } catch (error) {
+    logger.error('Error routing message:', error);
+    await whatsappService.sendMessage(
+      phone,
+      '❌ Sorry, something went wrong. Type RESET to start over.'
+    );
   }
+}
 
   async handleNewUser(phone) {
     await whatsappService.sendMessage(
@@ -740,133 +766,138 @@ Let's get you registered! What's your full name?`
   }
 
   async handleMenuInput(user, message) {
-    const input = message.trim().toUpperCase();
+  const input = message.trim().toUpperCase();
 
-    // Handle CLAIM command
-    if (input === 'CLAIM' || input.includes('CLAIM')) {
-      await this.handleClaimPrize(user);
-      return;
-    }
+  // ===== NEW: Extra safety check - clean game_ready if it exists =====
+  const gameReady = await redis.get(`game_ready:${user.id}`);
+  if (gameReady) {
+    logger.warn(`handleMenuInput called but game_ready exists for user ${user.id} - cleaning up`);
+    await redis.del(`game_ready:${user.id}`);
+  }
 
-    // Handle RECEIVED confirmation
-    if (input === 'RECEIVED' || input.includes('CONFIRM')) {
-      await this.handlePaymentConfirmation(user);
-      return;
-    }
+  // Handle CLAIM command
+  if (input === 'CLAIM' || input.includes('CLAIM')) {
+    await this.handleClaimPrize(user);
+    return;
+  }
 
-    // Check for stats request
-    if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
-      await this.handleStatsRequest(user);
-      return;
-    }
+  // Handle RECEIVED confirmation
+  if (input === 'RECEIVED' || input.includes('CONFIRM')) {
+    await this.handlePaymentConfirmation(user);
+    return;
+  }
 
-    // Check for win sharing response
-    const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-    if (winSharePending && (input === 'YES' || input === 'Y')) {
-      await this.handleWinShare(user, JSON.parse(winSharePending));
-      await redis.del(`win_share_pending:${user.id}`);
-      return;
-    }
+  // Check for stats request
+  if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
+    await this.handleStatsRequest(user);
+    return;
+  }
 
-    // Handle BUY command
-    if (input.includes('BUY')) {
-      await this.handleBuyGames(user);
-      return;
-    }
+  // Check for win sharing response
+  const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+  if (winSharePending && (input === 'YES' || input === 'Y')) {
+    await this.handleWinShare(user, JSON.parse(winSharePending));
+    await redis.del(`win_share_pending:${user.id}`);
+    return;
+  }
 
-    // Check if payment is enabled and user has games
-    if (paymentService.isEnabled()) {
-      const hasGames = await paymentService.hasGamesRemaining(user.id);
+  // Handle BUY command
+  if (input.includes('BUY')) {
+    await this.handleBuyGames(user);
+    return;
+  }
 
-      if (!hasGames && (input === '1' || input.includes('PLAY'))) {
-        await whatsappService.sendMessage(
-          user.phone_number,
-          '❌ You have no games remaining!\n\n' +
-          'Buy games to continue playing.\n\n' +
-          'Type BUY to see packages.'
-        );
-        return;
-      }
-    }
-
-    // Check if this is first interaction after coming back
-    const lastActiveMinutesAgo = user.last_active ?
-      (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
-
-    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
-      let welcomeMessage = `Hello again ${user.full_name} from ${user.lga}! 👋\n\nWelcome back to What's Up Trivia Game - Akwa Ibom Edition! 🎉\n\n`;
-
-      if (paymentService.isEnabled()) {
-        const gamesRemaining = await paymentService.getGamesRemaining(user.id);
-        welcomeMessage += `💎 Games Remaining: ${gamesRemaining}\n\n`;
-      }
-
-      welcomeMessage += `The ultimate trivia game about our great state!\n\n`;
-      welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
-      welcomeMessage += `What would you like to do?\n\n`;
-      welcomeMessage += `1️⃣ Play Now\n`;
-      welcomeMessage += `2️⃣ How to Play\n`;
-      welcomeMessage += `3️⃣ View Leaderboard\n`;
-
-      if (paymentService.isEnabled()) {
-        welcomeMessage += `4️⃣ Buy Games\n`;
-        welcomeMessage += `5️⃣ My Stats`;
-      } else {
-        welcomeMessage += `4️⃣ My Stats`;
-      }
-
-      await whatsappService.sendMessage(user.phone_number, welcomeMessage);
-
-      await pool.query(
-        'UPDATE users SET last_active = NOW() WHERE id = $1',
-        [user.id]
+  // Check if payment is enabled and user has games
+  if (paymentService.isEnabled()) {
+    const hasGames = await paymentService.hasGamesRemaining(user.id);
+    if (!hasGames && (input === '1' || input.includes('PLAY'))) {
+      await whatsappService.sendMessage(
+        user.phone_number,
+        '❌ You have no games remaining!\n\n' +
+        'Buy games to continue playing.\n\n' +
+        'Type BUY to see packages.'
       );
-
       return;
-    }
-
-    // Handle post-game menu selections
-    const recentGame = await pool.query(
-      `SELECT * FROM game_sessions
-       WHERE user_id = $1 AND status = 'completed'
-       AND completed_at > NOW() - INTERVAL '2 minutes'
-       ORDER BY completed_at DESC LIMIT 1`,
-      [user.id]
-    );
-
-    if (recentGame.rows.length > 0) {
-      if (input === '1' || input.includes('PLAY')) {
-        await gameService.startNewGame(user);
-        return;
-      } else if (input === '2' || input.includes('LEADERBOARD')) {
-        await this.sendLeaderboardMenu(user.phone_number);
-        return;
-      } else if (input === '3' || input.includes('CLAIM')) {
-        await this.handleClaimPrize(user);
-        return;
-      } else if (input === '4') {
-        const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-        if (winSharePending) {
-          await this.handleWinShare(user, JSON.parse(winSharePending));
-          await redis.del(`win_share_pending:${user.id}`);
-        }
-        return;
-      }
-    }
-
-    // Regular menu handling
-    if (input === '1' || input.includes('PLAY')) {
-      await gameService.startNewGame(user);
-    } else if (input === '2' || input.includes('HOW')) {
-      await this.sendHowToPlay(user.phone_number);
-    } else if (input === '3' || input.includes('LEADERBOARD')) {
-      await this.sendLeaderboardMenu(user.phone_number);
-    } else if (input === 'RESET' || input === 'RESTART') {
-      await this.handleReset(user);
-    } else {
-      await this.sendMainMenu(user.phone_number);
     }
   }
+
+  // Check if this is first interaction after coming back
+  const lastActiveMinutesAgo = user.last_active ?
+    (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
+
+  if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
+    let welcomeMessage = `Hello again ${user.full_name} from ${user.lga}! 👋\n\nWelcome back to What's Up Trivia Game - Akwa Ibom Edition! 🎉\n\n`;
+
+    if (paymentService.isEnabled()) {
+      const gamesRemaining = await paymentService.getGamesRemaining(user.id);
+      welcomeMessage += `💎 Games Remaining: ${gamesRemaining}\n\n`;
+    }
+
+    welcomeMessage += `The ultimate trivia game about our great state!\n\n`;
+    welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
+    welcomeMessage += `What would you like to do?\n\n`;
+    welcomeMessage += `1️⃣ Play Now\n`;
+    welcomeMessage += `2️⃣ How to Play\n`;
+    welcomeMessage += `3️⃣ View Leaderboard\n`;
+
+    if (paymentService.isEnabled()) {
+      welcomeMessage += `4️⃣ Buy Games\n`;
+      welcomeMessage += `5️⃣ My Stats`;
+    } else {
+      welcomeMessage += `4️⃣ My Stats`;
+    }
+
+    await whatsappService.sendMessage(user.phone_number, welcomeMessage);
+
+    await pool.query(
+      'UPDATE users SET last_active = NOW() WHERE id = $1',
+      [user.id]
+    );
+    return;
+  }
+
+  // Handle post-game menu selections
+  const recentGame = await pool.query(
+    `SELECT * FROM game_sessions
+    WHERE user_id = $1 AND status = 'completed'
+    AND completed_at > NOW() - INTERVAL '2 minutes'
+    ORDER BY completed_at DESC LIMIT 1`,
+    [user.id]
+  );
+
+  if (recentGame.rows.length > 0) {
+    if (input === '1' || input.includes('PLAY')) {
+      await gameService.startNewGame(user);
+      return;
+    } else if (input === '2' || input.includes('LEADERBOARD')) {
+      await this.sendLeaderboardMenu(user.phone_number);
+      return;
+    } else if (input === '3' || input.includes('CLAIM')) {
+      await this.handleClaimPrize(user);
+      return;
+    } else if (input === '4') {
+      const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+      if (winSharePending) {
+        await this.handleWinShare(user, JSON.parse(winSharePending));
+        await redis.del(`win_share_pending:${user.id}`);
+      }
+      return;
+    }
+  }
+
+  // Regular menu handling
+  if (input === '1' || input.includes('PLAY')) {
+    await gameService.startNewGame(user);
+  } else if (input === '2' || input.includes('HOW')) {
+    await this.sendHowToPlay(user.phone_number);
+  } else if (input === '3' || input.includes('LEADERBOARD')) {
+    await this.sendLeaderboardMenu(user.phone_number);
+  } else if (input === 'RESET' || input === 'RESTART') {
+    await this.handleReset(user);
+  } else {
+    await this.sendMainMenu(user.phone_number);
+  }
+}
 
   async handleReset(user) {
     try {
