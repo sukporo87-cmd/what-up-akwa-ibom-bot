@@ -69,15 +69,8 @@ class WebhookController {
   try {
     const input = message.trim().toUpperCase();
 
-    // ===== DEBUG LOGGING =====
-    logger.info(`========== ROUTING DEBUG START ==========`);
-    logger.info(`Phone: ${phone}`);
-    logger.info(`Message: ${message}`);
-    logger.info(`Input (uppercase): ${input}`);
-    
     // Handle RESET command first
     if (input === 'RESET' || input === 'RESTART') {
-      logger.info(`RESET command detected`);
       let user = await userService.getUserByPhone(phone);
       if (user) {
         await this.handleReset(user);
@@ -88,100 +81,131 @@ class WebhookController {
     }
 
     let user = await userService.getUserByPhone(phone);
-    logger.info(`User found: ${user ? `ID ${user.id}, Name: ${user.full_name}` : 'NO USER'}`);
-    
     const userState = await userService.getUserState(phone);
-    logger.info(`User state: ${userState ? userState.state : 'NONE'}`);
 
     // Registration states
     if (userState && userState.state === 'REGISTRATION_NAME') {
-      logger.info(`Routing to: REGISTRATION_NAME`);
       await this.handleRegistrationName(phone, message);
       return;
     }
 
     if (userState && userState.state === 'REGISTRATION_LGA') {
-      logger.info(`Routing to: REGISTRATION_LGA`);
       await this.handleRegistrationLGA(phone, message, userState.data.name);
       return;
     }
 
     // Payment states
     if (userState && userState.state === 'SELECT_PACKAGE') {
-      logger.info(`Routing to: SELECT_PACKAGE`);
       await this.handlePackageSelection(user, message, userState.data);
       return;
     }
 
     // Leaderboard states
     if (userState && userState.state === 'SELECT_LEADERBOARD') {
-      logger.info(`Routing to: SELECT_LEADERBOARD`);
       await this.handleLeaderboardSelection(phone, message);
       return;
     }
 
     // Bank details confirmation state
     if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
-      logger.info(`Routing to: CONFIRM_BANK_DETAILS`);
       await this.handleBankDetailsConfirmation(phone, message, userState.data);
       return;
     }
 
     // Payout collection states
     if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
-      logger.info(`Routing to: COLLECT_ACCOUNT_NAME`);
       await this.handleAccountNameInput(phone, message, userState);
       return;
     }
 
     if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
-      logger.info(`Routing to: COLLECT_ACCOUNT_NUMBER`);
       await this.handleAccountNumberInput(phone, message, userState);
       return;
     }
 
     if (userState && userState.state === 'COLLECT_BANK_NAME') {
-      logger.info(`Routing to: COLLECT_BANK_NAME`);
       await this.handleBankNameInput(phone, message, userState);
       return;
     }
 
     if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
-      logger.info(`Routing to: COLLECT_CUSTOM_BANK`);
       await this.handleCustomBankInput(phone, message, userState);
       return;
     }
 
     if (!user) {
-      logger.info(`Routing to: NEW USER`);
       await this.handleNewUser(phone);
       return;
     }
 
     const activeSession = await gameService.getActiveSession(user.id);
-    logger.info(`Active session: ${activeSession ? `ID ${activeSession.id}, Status: ${activeSession.status}, Question: ${activeSession.current_question}` : 'NONE'}`);
 
-    // Check game_ready state
-    const gameReady = await redis.get(`game_ready:${user.id}`);
-    logger.info(`game_ready state: ${gameReady ? `EXISTS (${gameReady})` : 'NONE'}`);
+    // ===== CRITICAL FIX: Detect and cancel zombie sessions =====
+    if (activeSession) {
+      const sessionAge = Date.now() - new Date(activeSession.started_at).getTime();
+      const isZombie = sessionAge > 3600000; // 1 hour in milliseconds
+
+      // If session is a zombie (older than 1 hour), cancel it
+      if (isZombie) {
+        logger.warn(`🧟 ZOMBIE SESSION DETECTED: Session ${activeSession.id} is ${Math.round(sessionAge/60000)} minutes old - CANCELLING`);
+        
+        await pool.query(
+          `UPDATE game_sessions SET status = 'cancelled', completed_at = NOW() WHERE id = $1`,
+          [activeSession.id]
+        );
+        
+        // Clean up related Redis states
+        await redis.del(`game_ready:${user.id}`);
+        await redis.del(`session:${activeSession.session_key}`);
+        await redis.del(`asked_questions:${activeSession.session_key}`);
+        
+        logger.info(`✅ Zombie session ${activeSession.id} cancelled`);
+        
+        // Route to menu instead
+        await this.handleMenuInput(user, message);
+        return;
+      }
+
+      // Check if user is trying to use menu commands while in an active game
+      const isMenuCommand = 
+        input.includes('HELLO') || 
+        input.includes('HI') || 
+        input.includes('MENU') ||
+        input === 'CLAIM' ||
+        input === 'STATS' ||
+        input === 'BUY' ||
+        input === 'LEADERBOARD';
+
+      if (isMenuCommand) {
+        logger.info(`User ${user.id} tried menu command "${input}" during active game - offering reset`);
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '⚠️ You have an active game in progress.\n\n' +
+          'Reply:\n' +
+          '• A, B, C, or D to answer\n' +
+          '• "50" to use 50:50 lifeline\n' +
+          '• "Skip" to skip question\n' +
+          '• "RESET" to cancel and start over'
+        );
+        return;
+      }
+    }
 
     // Clean up stale game_ready state if no active session
-    if (!activeSession && gameReady) {
-      logger.warn(`⚠️ STALE STATE DETECTED: No active session but game_ready exists - CLEANING UP`);
-      await redis.del(`game_ready:${user.id}`);
-      logger.info(`✅ Cleaned game_ready state`);
+    if (!activeSession) {
+      const gameReady = await redis.get(`game_ready:${user.id}`);
+      if (gameReady) {
+        logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+        await redis.del(`game_ready:${user.id}`);
+      }
     }
 
-    // Determine routing decision
+    // Route based on active session
     if (activeSession) {
-      logger.info(`🎮 ROUTING DECISION: handleGameInput (Active Session)`);
       await this.handleGameInput(user, activeSession, message);
     } else {
-      logger.info(`📋 ROUTING DECISION: handleMenuInput (No Active Session)`);
       await this.handleMenuInput(user, message);
     }
-    
-    logger.info(`========== ROUTING DEBUG END ==========`);
 
   } catch (error) {
     logger.error('Error routing message:', error);

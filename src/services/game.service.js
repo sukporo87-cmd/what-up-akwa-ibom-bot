@@ -16,15 +16,134 @@ const PRIZE_LADDER = {
 };
 
 const SAFE_CHECKPOINTS = [5, 10];
+
 const activeTimeouts = new Map();
 
 class GameService {
+  constructor() {
+    // Start background cleanup jobs
+    this.startZombieCleanup();
+    this.startTimeoutCleanup();
+  }
+
+  // ============================================
+  // CLEANUP & MAINTENANCE
+  // ============================================
+
+  /**
+   * Automatic zombie session cleanup
+   * Runs every 10 minutes to cancel sessions older than 1 hour
+   */
+  startZombieCleanup() {
+    setInterval(async () => {
+      try {
+        const result = await pool.query(
+          `UPDATE game_sessions
+           SET status = 'cancelled', completed_at = NOW()
+           WHERE status = 'active'
+             AND started_at < NOW() - INTERVAL '1 hour'
+           RETURNING id, user_id, session_key`
+        );
+
+        if (result.rows.length > 0) {
+          logger.info(`🧹 Auto-cleanup: Cancelled ${result.rows.length} zombie sessions`);
+          
+          // Clean up Redis states for cancelled sessions
+          for (const session of result.rows) {
+            await redis.del(`game_ready:${session.user_id}`);
+            await redis.del(`session:${session.session_key}`);
+            await redis.del(`asked_questions:${session.session_key}`);
+            
+            // Clean up timeouts for this session
+            const sessionPrefix = `timeout:${session.session_key}:`;
+            for (const [key, timeoutId] of activeTimeouts.entries()) {
+              if (key.startsWith(sessionPrefix)) {
+                clearTimeout(timeoutId);
+                activeTimeouts.delete(key);
+              }
+            }
+          }
+          
+          logger.info(`✅ Cleaned up Redis states and timeouts for ${result.rows.length} sessions`);
+        }
+      } catch (error) {
+        logger.error('Error in zombie cleanup:', error);
+      }
+    }, 600000); // 10 minutes
+  }
+
+  /**
+   * Memory leak prevention: Clean up stale timeouts
+   * Runs every 5 minutes
+   */
+  startTimeoutCleanup() {
+    setInterval(async () => {
+      try {
+        const now = Date.now();
+        let cleaned = 0;
+
+        for (const [key, timeoutId] of activeTimeouts.entries()) {
+          // Check if the Redis key still exists and is valid
+          const timeoutValue = await redis.get(key);
+          
+          // If timeout expired or Redis key doesn't exist, clean it
+          if (!timeoutValue || parseInt(timeoutValue) < now) {
+            clearTimeout(timeoutId);
+            activeTimeouts.delete(key);
+            cleaned++;
+          }
+        }
+
+        if (cleaned > 0) {
+          logger.info(`🧹 Timeout cleanup: Removed ${cleaned} stale timeouts. Active: ${activeTimeouts.size}`);
+        }
+      } catch (error) {
+        logger.error('Error in timeout cleanup:', error);
+      }
+    }, 300000); // 5 minutes
+  }
+
+  /**
+   * Clear a specific question timeout
+   */
+  clearQuestionTimeout(timeoutKey) {
+    const timeoutId = activeTimeouts.get(timeoutKey);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      activeTimeouts.delete(timeoutKey);
+      logger.debug(`Cleared timeout for ${timeoutKey}. Remaining: ${activeTimeouts.size}`);
+    }
+  }
+
+  /**
+   * Clear all timeouts for a specific session
+   */
+  clearAllSessionTimeouts(sessionKey) {
+    const sessionPrefix = `timeout:${sessionKey}:`;
+    let cleared = 0;
+    
+    for (const [key, timeoutId] of activeTimeouts.entries()) {
+      if (key.startsWith(sessionPrefix)) {
+        clearTimeout(timeoutId);
+        activeTimeouts.delete(key);
+        cleared++;
+      }
+    }
+    
+    if (cleared > 0) {
+      logger.info(`Cleared ${cleared} timeouts for session ${sessionKey}`);
+    }
+  }
+
+  // ============================================
+  // GAME LIFECYCLE
+  // ============================================
+
   async startNewGame(user) {
     try {
       // Check if payment is enabled and user has games
       if (paymentService.isEnabled()) {
         const hasGames = await paymentService.hasGamesRemaining(user.id);
-
         if (!hasGames) {
           await whatsappService.sendMessage(
             user.phone_number,
@@ -40,7 +159,6 @@ class GameService {
 
       // Check for existing active session
       const existingSession = await this.getActiveSession(user.id);
-
       if (existingSession) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -50,7 +168,6 @@ class GameService {
       }
 
       const sessionKey = `game_${user.id}_${Date.now()}`;
-
       const result = await pool.query(
         `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
          VALUES ($1, $2, 1, 0)
@@ -59,7 +176,6 @@ class GameService {
       );
 
       const session = result.rows[0];
-
       await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
       await whatsappService.sendMessage(
@@ -93,7 +209,11 @@ When you're ready, reply START to begin! 🚀`
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
 
+      // Clear current question timeout
       this.clearQuestionTimeout(timeoutKey);
+      
+      // Clear ALL timeouts for this session
+      this.clearAllSessionTimeouts(session.session_key);
 
       await pool.query(
         `UPDATE game_sessions
@@ -120,8 +240,10 @@ When you're ready, reply START to begin! 🚀`
         );
       }
 
+      // Clean up Redis states
       await redis.del(`session:${session.session_key}`);
       await redis.del(`asked_questions:${session.session_key}`);
+      await redis.del(`game_ready:${user.id}`);
 
       if (wonGrandPrize) {
         await whatsappService.sendMessage(
@@ -174,13 +296,18 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     }
   }
 
+  // ============================================
+  // QUESTION MANAGEMENT
+  // ============================================
+
   async sendQuestion(session, user) {
     try {
       const questionNumber = session.current_question;
       const prizeAmount = PRIZE_LADDER[questionNumber];
       const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
-
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+
+      // Clear any existing timeout for this question
       this.clearQuestionTimeout(timeoutKey);
 
       const askedQuestionsKey = `asked_questions:${session.session_key}`;
@@ -218,8 +345,10 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
 
       await whatsappService.sendMessage(user.phone_number, message);
 
+      // Set timeout in Redis
       await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
 
+      // Set JavaScript timeout
       const timeoutId = setTimeout(async () => {
         try {
           const timeout = await redis.get(timeoutKey);
@@ -243,21 +372,16 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     }
   }
 
-  clearQuestionTimeout(timeoutKey) {
-    const timeoutId = activeTimeouts.get(timeoutKey);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      activeTimeouts.delete(timeoutKey);
-      logger.info(`Cleared timeout for ${timeoutKey}`);
-    }
-  }
+  // ============================================
+  // ANSWER PROCESSING
+  // ============================================
 
   async processAnswer(session, user, answer) {
     try {
       const questionNumber = session.current_question;
       const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-      const timeout = await redis.get(timeoutKey);
 
+      const timeout = await redis.get(timeoutKey);
       if (timeout && Date.now() > Number(timeout)) {
         await this.handleTimeout(session, user);
         return;
@@ -327,8 +451,8 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
 
   async handleWrongAnswer(session, user, question) {
     const questionNumber = session.current_question;
-    let guaranteedAmount = 0;
 
+    let guaranteedAmount = 0;
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (questionNumber > checkpoint) {
         guaranteedAmount = PRIZE_LADDER[checkpoint];
@@ -365,7 +489,6 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     );
 
     let guaranteedAmount = 0;
-
     for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
       if (session.current_question > checkpoint) {
         guaranteedAmount = PRIZE_LADDER[checkpoint];
@@ -376,6 +499,10 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     session.current_score = guaranteedAmount;
     await this.completeGame(session, user, false);
   }
+
+  // ============================================
+  // LIFELINES
+  // ============================================
 
   async useLifeline(session, user, lifeline) {
     try {
@@ -471,6 +598,10 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     }
   }
 
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
   async getActiveSession(userId) {
     const result = await pool.query(
       `SELECT * FROM game_sessions
@@ -499,7 +630,6 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
   async getLeaderboard(period = 'daily', limit = 10) {
     try {
       let dateCondition;
-
       switch(period.toLowerCase()) {
         case 'daily':
           dateCondition = 'CURRENT_DATE';
@@ -522,7 +652,7 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
          FROM transactions t
          JOIN users u ON t.user_id = u.id
          WHERE t.created_at >= ${dateCondition}
-         AND t.transaction_type = 'prize'
+           AND t.transaction_type = 'prize'
          ORDER BY t.amount DESC, t.created_at DESC
          LIMIT $1`,
         [limit]
