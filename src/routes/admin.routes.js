@@ -1,5 +1,5 @@
 // ============================================
-// FILE: src/routes/admin.routes.js - IMPROVED VERSION
+// FILE: src/routes/admin.routes.js - COMPLETE WITH AUTHENTICATION
 // ============================================
 
 const express = require('express');
@@ -7,32 +7,105 @@ const router = express.Router();
 const pool = require('../config/database');
 const PayoutService = require('../services/payout.service');
 const WhatsAppService = require('../services/whatsapp.service');
+const AdminAuthService = require('../services/admin-auth.service');
 const { logger } = require('../utils/logger');
 
 const payoutService = new PayoutService();
 const whatsappService = new WhatsAppService();
+const adminAuthService = new AdminAuthService();
 
-// Simple authentication middleware
-const authenticateAdmin = (req, res, next) => {
+// ============================================
+// AUTHENTICATION MIDDLEWARE
+// ============================================
+
+const authenticateAdmin = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token || token !== process.env.ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized - No token provided' });
   }
 
+  // Validate session token
+  const validation = await adminAuthService.validateSession(token);
+  
+  if (!validation.valid) {
+    return res.status(401).json({ error: 'Unauthorized - ' + validation.reason });
+  }
+
+  req.adminSession = validation.session;
   next();
 };
 
-// Serve admin dashboard HTML
+// Get IP address from request
+const getIpAddress = (req) => {
+  return req.headers['x-forwarded-for']?.split(',')[0] || 
+         req.connection.remoteAddress || 
+         req.socket.remoteAddress;
+};
+
+// ============================================
+// PUBLIC ROUTES (No Auth Required)
+// ============================================
+
+// Serve admin login page
 router.get('/', (req, res) => {
   res.sendFile('admin.html', { root: './src/views' });
+});
+
+// Login endpoint
+router.post('/api/login', async (req, res) => {
+  try {
+    const { token } = req.body;
+    const ipAddress = getIpAddress(req);
+    const userAgent = req.headers['user-agent'];
+
+    const result = await adminAuthService.login(token, ipAddress, userAgent);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        sessionToken: result.sessionToken,
+        expiresAt: result.expiresAt
+      });
+    } else {
+      res.status(401).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    logger.error('Login error:', error);
+    res.status(500).json({ success: false, error: 'Login failed' });
+  }
+});
+
+// ============================================
+// PROTECTED ROUTES (Auth Required)
+// ============================================
+
+// Logout endpoint
+router.post('/api/logout', authenticateAdmin, async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    await adminAuthService.logout(token);
+    
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Logout error:', error);
+    res.status(500).json({ success: false, error: 'Logout failed' });
+  }
 });
 
 // Get dashboard stats
 router.get('/api/stats', authenticateAdmin, async (req, res) => {
   try {
-    // Get payout stats with proper date filtering
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_stats',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     const payoutStats = await pool.query(`
       SELECT 
         COUNT(*) FILTER (WHERE payout_status IN ('pending', 'details_collected', 'approved')) as pending_count,
@@ -66,9 +139,33 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Get activity log
+router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    const activities = await adminAuthService.getActivityLog(limit, offset);
+    
+    res.json({ activities });
+  } catch (error) {
+    logger.error('Error getting activity log:', error);
+    res.status(500).json({ error: 'Failed to fetch activity log' });
+  }
+});
+
 // Get pending payouts with proper filtering
 router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
   try {
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_payouts',
+      { filter: req.query.status || 'all' },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     const status = req.query.status;
     
     let whereClause = "t.transaction_type = 'prize' AND t.payout_status != 'confirmed'";
@@ -78,7 +175,6 @@ router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
       params.push(status);
       whereClause += ` AND t.payout_status = $${params.length}`;
     } else {
-      // Show pending, details_collected, approved, and paid (not confirmed)
       whereClause += " AND t.payout_status IN ('pending', 'details_collected', 'approved', 'paid')";
     }
 
@@ -124,7 +220,16 @@ router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
 // Get payout history with date filters
 router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
   try {
-    const period = req.query.period || 'all'; // daily, weekly, monthly, all
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_history',
+      { period: req.query.period || 'all' },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    const period = req.query.period || 'all';
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
@@ -204,6 +309,15 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
     
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_payout_details',
+      { transaction_id: transactionId },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    
     const result = await pool.query(
       `SELECT 
         t.*,
@@ -214,6 +328,7 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
         pd.account_number,
         pd.bank_name,
         pd.bank_code,
+        pd.verified,
         gs.current_question as questions_answered
        FROM transactions t
        JOIN users u ON t.user_id = u.id
@@ -238,11 +353,19 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
 router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
-    const adminId = req.body.adminId || 'admin';
 
-    const success = await payoutService.approvePayout(transactionId, adminId);
+    const success = await payoutService.approvePayout(transactionId, req.adminSession.admin_id);
 
     if (success) {
+      // Log activity
+      await adminAuthService.logActivity(
+        req.adminSession.admin_id,
+        'approve_payout',
+        { transaction_id: transactionId },
+        getIpAddress(req),
+        req.headers['user-agent']
+      );
+
       res.json({ success: true, message: 'Payout approved' });
     } else {
       res.status(500).json({ error: 'Failed to approve payout' });
@@ -257,7 +380,7 @@ router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
 router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
-    const { paymentReference, paymentMethod, adminId } = req.body;
+    const { paymentReference, paymentMethod } = req.body;
 
     if (!paymentReference) {
       return res.status(400).json({ error: 'Payment reference is required' });
@@ -265,12 +388,21 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
 
     const success = await payoutService.markAsPaid(
       transactionId,
-      adminId || 'admin',
+      req.adminSession.admin_id,
       paymentReference,
       paymentMethod || 'bank_transfer'
     );
 
     if (success) {
+      // Log activity
+      await adminAuthService.logActivity(
+        req.adminSession.admin_id,
+        'mark_paid',
+        { transaction_id: transactionId, payment_reference: paymentReference },
+        getIpAddress(req),
+        req.headers['user-agent']
+      );
+
       const result = await pool.query(
         `SELECT t.*, u.phone_number, u.full_name, pd.account_name, pd.bank_name, pd.account_number
          FROM transactions t
@@ -308,9 +440,49 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
   }
 });
 
+// Re-verify payout
+router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
+  try {
+    const transactionId = req.params.id;
+
+    const result = await payoutService.reverifyPayout(transactionId);
+
+    if (result.success) {
+      // Log activity
+      await adminAuthService.logActivity(
+        req.adminSession.admin_id,
+        'reverify_payout',
+        { transaction_id: transactionId, account_name: result.accountName },
+        getIpAddress(req),
+        req.headers['user-agent']
+      );
+
+      res.json({ 
+        success: true, 
+        message: 'Account re-verified successfully',
+        accountName: result.accountName 
+      });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  } catch (error) {
+    logger.error('Error re-verifying payout:', error);
+    res.status(500).json({ error: 'Failed to re-verify payout' });
+  }
+});
+
 // Get all users
 router.get('/api/users', authenticateAdmin, async (req, res) => {
   try {
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_users',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
@@ -347,6 +519,15 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
 // Get all questions
 router.get('/api/questions', authenticateAdmin, async (req, res) => {
   try {
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_questions',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
@@ -413,6 +594,15 @@ router.post('/api/questions', authenticateAdmin, async (req, res) => {
       [question_text, option_a, option_b, option_c, option_d, correct_answer.toUpperCase(), difficultyNum, category || 'General', fun_fact]
     );
 
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'add_question',
+      { question_id: result.rows[0].id, difficulty: difficultyNum },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     res.json({ success: true, question: result.rows[0] });
   } catch (error) {
     logger.error('Error adding question:', error);
@@ -452,6 +642,15 @@ router.put('/api/questions/:id', authenticateAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Question not found' });
     }
 
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'update_question',
+      { question_id: questionId },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
     res.json({ success: true, question: result.rows[0] });
   } catch (error) {
     logger.error('Error updating question:', error);
@@ -467,6 +666,15 @@ router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
     await pool.query(
       'UPDATE questions SET is_active = false WHERE id = $1',
       [questionId]
+    );
+
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'delete_question',
+      { question_id: questionId },
+      getIpAddress(req),
+      req.headers['user-agent']
     );
 
     res.json({ success: true, message: 'Question deleted' });

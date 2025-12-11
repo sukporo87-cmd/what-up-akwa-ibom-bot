@@ -1,11 +1,16 @@
 // ============================================
-// FILE: src/services/payout.service.js - COMPLETE VERSION
+// FILE: src/services/payout.service.js - COMPLETE VERSION WITH BANK VERIFICATION
 // ============================================
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const BankService = require('./bank.service');
 
 class PayoutService {
+  constructor() {
+    this.bankService = new BankService();
+  }
+
   // Get user's existing bank details
   async getUserBankDetails(userId) {
     try {
@@ -99,7 +104,7 @@ class PayoutService {
     }
   }
 
-  // Save new bank details
+  // Save new bank details with bank verification
   async savePayoutDetails(userId, transactionId, accountName, accountNumber, bankName) {
     try {
       // Get bank code from bank_codes table
@@ -108,24 +113,67 @@ class PayoutService {
         [bankName]
       );
 
-      const bankCode = bankResult.rows[0]?.bank_code || null;
+      let bankCode = bankResult.rows[0]?.bank_code || null;
 
+      // If no bank code found, try to get it from Paystack
+      if (!bankCode) {
+        bankCode = await this.bankService.getBankCodeByName(bankName);
+        
+        if (bankCode) {
+          // Save it for future use
+          await pool.query(
+            'INSERT INTO bank_codes (bank_name, bank_code) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [bankName, bankCode]
+          );
+        }
+      }
+
+      // Attempt bank verification if we have bank code
+      let verified = false;
+      let verifiedAccountName = accountName;
+
+      if (bankCode) {
+        logger.info(`Attempting to verify account ${accountNumber} with ${bankName}`);
+        
+        const verificationResult = await this.bankService.verifyBankAccount(accountNumber, bankCode);
+
+        if (verificationResult.verified) {
+          verified = true;
+          verifiedAccountName = verificationResult.accountName;
+          
+          logger.info(`✅ Account verified! Name: ${verifiedAccountName}`);
+
+          // Check if provided name matches verified name (fuzzy match)
+          const providedNameNormalized = accountName.toLowerCase().replace(/\s+/g, '');
+          const verifiedNameNormalized = verifiedAccountName.toLowerCase().replace(/\s+/g, '');
+          
+          if (!verifiedNameNormalized.includes(providedNameNormalized) && 
+              !providedNameNormalized.includes(verifiedNameNormalized)) {
+            logger.warn(`⚠️ Name mismatch: Provided "${accountName}" vs Verified "${verifiedAccountName}"`);
+          }
+        } else {
+          logger.warn(`❌ Account verification failed: ${verificationResult.error}`);
+          // Continue anyway - admin will review
+        }
+      }
+
+      // Save payout details
       const result = await pool.query(
-        `INSERT INTO payout_details 
-         (user_id, transaction_id, account_name, account_number, bank_name, bank_code)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO payout_details
+         (user_id, transaction_id, account_name, account_number, bank_name, bank_code, verified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [userId, transactionId, accountName, accountNumber, bankName, bankCode]
+        [userId, transactionId, verifiedAccountName, accountNumber, bankName, bankCode, verified]
       );
 
       // Log the action
       await pool.query(
         `INSERT INTO payout_history (transaction_id, action, notes)
-         VALUES ($1, 'details_collected', 'Bank details submitted by user')`,
-        [transactionId]
+         VALUES ($1, 'details_collected', $2)`,
+        [transactionId, verified ? 'Bank details submitted and verified' : 'Bank details submitted (verification failed)']
       );
 
-      logger.info(`Saved payout details for transaction ${transactionId}`);
+      logger.info(`Saved payout details for transaction ${transactionId} - Verified: ${verified}`);
       return result.rows[0];
     } catch (error) {
       logger.error('Error saving payout details:', error);
@@ -161,6 +209,66 @@ class PayoutService {
     } catch (error) {
       logger.error('Error updating bank details:', error);
       return false;
+    }
+  }
+
+  // Get verification status for a payout
+  async getVerificationStatus(transactionId) {
+    try {
+      const result = await pool.query(
+        'SELECT verified, account_name, account_number, bank_code FROM payout_details WHERE transaction_id = $1',
+        [transactionId]
+      );
+
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('Error getting verification status:', error);
+      return null;
+    }
+  }
+
+  // Re-verify an existing payout
+  async reverifyPayout(transactionId) {
+    try {
+      const details = await pool.query(
+        'SELECT * FROM payout_details WHERE transaction_id = $1',
+        [transactionId]
+      );
+
+      if (details.rows.length === 0) {
+        return { success: false, error: 'Payout details not found' };
+      }
+
+      const { account_number, bank_code } = details.rows[0];
+
+      if (!bank_code) {
+        return { success: false, error: 'Bank code not available for verification' };
+      }
+
+      const verification = await this.bankService.verifyBankAccount(account_number, bank_code);
+
+      if (verification.verified) {
+        // Update verification status
+        await pool.query(
+          `UPDATE payout_details 
+           SET verified = true, account_name = $1, updated_at = NOW()
+           WHERE transaction_id = $2`,
+          [verification.accountName, transactionId]
+        );
+
+        await pool.query(
+          `INSERT INTO payout_history (transaction_id, action, notes)
+           VALUES ($1, 'reverified', 'Account successfully re-verified')`,
+          [transactionId]
+        );
+
+        return { success: true, accountName: verification.accountName };
+      }
+
+      return { success: false, error: verification.error };
+    } catch (error) {
+      logger.error('Error re-verifying payout:', error);
+      return { success: false, error: 'Verification failed' };
     }
   }
 
