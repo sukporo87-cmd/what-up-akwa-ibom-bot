@@ -790,5 +790,261 @@ router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete question' });
   }
 });
+// ============================================
+// ENHANCED ANALYTICS ENDPOINT
+// Add this to your admin.routes.js file
+// ============================================
+
+// Enhanced analytics endpoint with all new metrics
+router.get('/api/analytics/enhanced', authenticateAdmin, async (req, res) => {
+  try {
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_enhanced_analytics',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    // 1. Games Count by Period
+    const gamesCount = await pool.query(`
+      SELECT * FROM games_count_by_period
+    `);
+
+    // 2. Peak Playing Times (Hourly Heatmap)
+    const peakTimes = await pool.query(`
+      SELECT 
+        hour_of_day,
+        day_of_week,
+        SUM(games_count) as total_games
+      FROM game_session_hourly_stats
+      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY hour_of_day, day_of_week
+      ORDER BY hour_of_day, day_of_week
+    `);
+
+    // 3. Popular Question Categories
+    const questionCategories = await pool.query(`
+      SELECT * FROM question_category_performance
+      ORDER BY total_times_asked DESC
+      LIMIT 10
+    `);
+
+    // 4. User Retention Metrics
+    const retentionMetrics = await pool.query(`
+      SELECT * FROM user_retention_metrics
+      WHERE registration_date >= CURRENT_DATE - INTERVAL '30 days'
+      ORDER BY registration_date DESC
+    `);
+
+    // 5. Daily Active Users (Last 30 days)
+    const dailyActiveUsers = await pool.query(`
+      SELECT 
+        DATE(last_active) as date,
+        COUNT(DISTINCT id) as active_users
+      FROM users
+      WHERE last_active >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(last_active)
+      ORDER BY date ASC
+    `);
+
+    // 6. User Engagement Funnel
+    const engagementFunnel = await pool.query(`
+      SELECT 
+        COUNT(*) as total_registered,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as started_game,
+        COUNT(CASE WHEN total_games_played >= 3 THEN 1 END) as played_3_games,
+        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
+        COUNT(CASE WHEN total_games_played >= 10 THEN 1 END) as power_users
+      FROM users
+    `);
+
+    // 7. LGA Performance (Top 10)
+    const lgaPerformance = await pool.query(`
+      SELECT 
+        lga,
+        COUNT(*) as user_count,
+        COALESCE(SUM(total_games_played), 0) as total_games,
+        COALESCE(SUM(total_winnings), 0) as total_winnings,
+        COALESCE(AVG(total_winnings), 0) as avg_winnings_per_user
+      FROM users
+      GROUP BY lga
+      ORDER BY total_games DESC
+      LIMIT 10
+    `);
+
+    // 8. Question Difficulty Trends
+    const difficultyTrends = await pool.query(`
+      SELECT 
+        difficulty,
+        COUNT(*) as question_count,
+        SUM(times_asked) as total_asked,
+        SUM(times_correct) as total_correct,
+        CASE 
+          WHEN SUM(times_asked) > 0 THEN 
+            ROUND((SUM(times_correct)::numeric / SUM(times_asked)::numeric) * 100, 1)
+          ELSE 0
+        END as success_rate
+      FROM questions
+      WHERE is_active = true AND times_asked > 0
+      GROUP BY difficulty
+      ORDER BY difficulty ASC
+    `);
+
+    // 9. Conversion Rate (Registration to First Game)
+    const conversionRate = await pool.query(`
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as converted_users,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / COUNT(*)::numeric) * 100,
+          1
+        ) as conversion_rate_percentage
+      FROM users
+      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+    `);
+
+    // 10. Average Session Duration
+    const sessionDuration = await pool.query(`
+      SELECT 
+        AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_seconds,
+        MIN(EXTRACT(EPOCH FROM (completed_at - started_at))) as min_duration_seconds,
+        MAX(EXTRACT(EPOCH FROM (completed_at - started_at))) as max_duration_seconds
+      FROM game_sessions
+      WHERE status = 'completed'
+        AND completed_at IS NOT NULL
+        AND started_at IS NOT NULL
+        AND completed_at >= CURRENT_DATE - INTERVAL '7 days'
+    `);
+
+    // 11. Win Rate by Question Number
+    const winRateByQuestion = await pool.query(`
+      SELECT 
+        current_question,
+        COUNT(*) as attempts,
+        COUNT(CASE WHEN final_score > 0 THEN 1 END) as wins,
+        ROUND(
+          (COUNT(CASE WHEN final_score > 0 THEN 1 END)::numeric / COUNT(*)::numeric) * 100,
+          1
+        ) as win_rate_percentage
+      FROM game_sessions
+      WHERE status = 'completed'
+        AND current_question BETWEEN 1 AND 15
+      GROUP BY current_question
+      ORDER BY current_question ASC
+    `);
+
+    // 12. Returning Users (played in last 7 days AND 7-14 days ago)
+    const returningUsers = await pool.query(`
+      SELECT 
+        COUNT(DISTINCT CASE 
+          WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' THEN id 
+        END) as active_last_7_days,
+        COUNT(DISTINCT CASE 
+          WHEN last_active >= CURRENT_DATE - INTERVAL '14 days' 
+          AND last_active < CURRENT_DATE - INTERVAL '7 days' THEN id 
+        END) as active_7_to_14_days_ago,
+        COUNT(DISTINCT CASE 
+          WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' 
+          AND last_active >= CURRENT_DATE - INTERVAL '14 days'
+          AND last_active < CURRENT_DATE - INTERVAL '7 days' THEN id 
+        END) as returning_users
+      FROM users
+      WHERE last_active IS NOT NULL
+    `);
+
+    res.json({
+      gamesCount: gamesCount.rows[0],
+      peakTimes: peakTimes.rows,
+      questionCategories: questionCategories.rows,
+      retentionMetrics: retentionMetrics.rows,
+      dailyActiveUsers: dailyActiveUsers.rows,
+      engagementFunnel: engagementFunnel.rows[0],
+      lgaPerformance: lgaPerformance.rows,
+      difficultyTrends: difficultyTrends.rows,
+      conversionRate: conversionRate.rows[0],
+      sessionDuration: sessionDuration.rows[0],
+      winRateByQuestion: winRateByQuestion.rows,
+      returningUsers: returningUsers.rows[0]
+    });
+  } catch (error) {
+    logger.error('Error getting enhanced analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch enhanced analytics' });
+  }
+});
+
+// Get games count summary (for dashboard cards)
+router.get('/api/analytics/games-count', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM games_count_by_period');
+    res.json(result.rows[0]);
+  } catch (error) {
+    logger.error('Error getting games count:', error);
+    res.status(500).json({ error: 'Failed to fetch games count' });
+  }
+});
+
+// Get peak playing times (for heatmap)
+router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        hour_of_day,
+        day_of_week,
+        SUM(games_count) as total_games,
+        CASE day_of_week
+          WHEN 0 THEN 'Sunday'
+          WHEN 1 THEN 'Monday'
+          WHEN 2 THEN 'Tuesday'
+          WHEN 3 THEN 'Wednesday'
+          WHEN 4 THEN 'Thursday'
+          WHEN 5 THEN 'Friday'
+          WHEN 6 THEN 'Saturday'
+        END as day_name
+      FROM game_session_hourly_stats
+      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY hour_of_day, day_of_week
+      ORDER BY day_of_week, hour_of_day
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error getting peak times:', error);
+    res.status(500).json({ error: 'Failed to fetch peak times' });
+  }
+});
+
+// Get question categories performance
+router.get('/api/analytics/categories', authenticateAdmin, async (req, res) => {
+  try {
+    // Refresh materialized view first
+    await pool.query('REFRESH MATERIALIZED VIEW question_category_performance');
+    
+    const result = await pool.query(`
+      SELECT * FROM question_category_performance
+      ORDER BY total_times_asked DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error getting category performance:', error);
+    res.status(500).json({ error: 'Failed to fetch category performance' });
+  }
+});
+
+// Get user retention metrics
+router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const result = await pool.query(`
+      SELECT * FROM user_retention_metrics
+      WHERE registration_date >= CURRENT_DATE - INTERVAL '${days} days'
+      ORDER BY registration_date DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error getting retention metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch retention metrics' });
+  }
+});
 
 module.exports = router;
