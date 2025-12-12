@@ -1,5 +1,5 @@
 // ============================================
-// FILE: src/routes/admin.routes.js - COMPLETE WITH AUTHENTICATION
+// FILE: src/routes/admin.routes.js - COMPLETE WITH FULL ACTIVITY LOGGING & ANALYTICS
 // ============================================
 
 const express = require('express');
@@ -28,7 +28,6 @@ const authenticateAdmin = async (req, res, next) => {
 
   // Validate session token
   const validation = await adminAuthService.validateSession(token);
-  
   if (!validation.valid) {
     return res.status(401).json({ error: 'Unauthorized - ' + validation.reason });
   }
@@ -39,8 +38,8 @@ const authenticateAdmin = async (req, res, next) => {
 
 // Get IP address from request
 const getIpAddress = (req) => {
-  return req.headers['x-forwarded-for']?.split(',')[0] || 
-         req.connection.remoteAddress || 
+  return req.headers['x-forwarded-for']?.split(',')[0] ||
+         req.connection.remoteAddress ||
          req.socket.remoteAddress;
 };
 
@@ -86,7 +85,6 @@ router.post('/api/logout', authenticateAdmin, async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     await adminAuthService.logout(token);
-    
     res.json({ success: true });
   } catch (error) {
     logger.error('Logout error:', error);
@@ -107,7 +105,7 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
     );
 
     const payoutStats = await pool.query(`
-      SELECT 
+      SELECT
         COUNT(*) FILTER (WHERE payout_status IN ('pending', 'details_collected', 'approved')) as pending_count,
         COALESCE(SUM(amount) FILTER (WHERE payout_status IN ('pending', 'details_collected', 'approved')), 0) as pending_amount,
         COUNT(*) FILTER (WHERE payout_status = 'paid' AND DATE(paid_at) = CURRENT_DATE) as paid_today_count,
@@ -117,11 +115,11 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
       FROM transactions
       WHERE transaction_type = 'prize'
     `);
-    
+
     const totalUsers = await pool.query('SELECT COUNT(*) as count FROM users');
     const totalGames = await pool.query('SELECT COUNT(*) as count FROM game_sessions WHERE status = \'completed\'');
     const totalQuestions = await pool.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
-    
+
     res.json({
       pending_count: parseInt(payoutStats.rows[0].pending_count) || 0,
       pending_amount: parseFloat(payoutStats.rows[0].pending_amount) || 0,
@@ -139,6 +137,150 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
+// ============================================
+// ANALYTICS ENDPOINTS
+// ============================================
+
+// Get analytics data
+router.get('/api/analytics', authenticateAdmin, async (req, res) => {
+  try {
+    // Log activity
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_analytics',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    // 1. Daily Games Played (Last 14 days)
+    const dailyGames = await pool.query(`
+      SELECT 
+        DATE(completed_at) as date,
+        COUNT(*) as games_count
+      FROM game_sessions
+      WHERE status = 'completed'
+      AND completed_at >= CURRENT_DATE - INTERVAL '14 days'
+      GROUP BY DATE(completed_at)
+      ORDER BY date ASC
+    `);
+
+    // 2. Prize Distribution by Question Range
+    const prizeDistribution = await pool.query(`
+      SELECT
+        CASE
+          WHEN gs.current_question BETWEEN 1 AND 5 THEN 'Q1-Q5 (Easy)'
+          WHEN gs.current_question BETWEEN 6 AND 10 THEN 'Q6-Q10 (Medium)'
+          WHEN gs.current_question BETWEEN 11 AND 15 THEN 'Q11-Q15 (Hard)'
+        END as difficulty_range,
+        COUNT(*) as wins_count,
+        COALESCE(SUM(t.amount), 0) as total_amount
+      FROM game_sessions gs
+      LEFT JOIN transactions t ON gs.id = t.session_id
+      WHERE gs.status = 'completed'
+      AND gs.final_score > 0
+      GROUP BY difficulty_range
+      ORDER BY difficulty_range
+    `);
+
+    // 3. User Registration Trend (Last 30 days)
+    const registrationTrend = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as new_users
+      FROM users
+      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `);
+
+    // 4. Question Difficulty Performance
+    const questionPerformance = await pool.query(`
+      SELECT 
+        difficulty,
+        times_asked,
+        times_correct,
+        CASE 
+          WHEN times_asked > 0 THEN ROUND((times_correct::numeric / times_asked::numeric) * 100, 1)
+          ELSE 0
+        END as success_rate
+      FROM questions
+      WHERE is_active = true
+      AND times_asked > 0
+      ORDER BY difficulty ASC
+    `);
+
+    // 5. Payout Status Breakdown
+    const payoutBreakdown = await pool.query(`
+      SELECT 
+        payout_status,
+        COUNT(*) as count,
+        COALESCE(SUM(amount), 0) as total_amount
+      FROM transactions
+      WHERE transaction_type = 'prize'
+      GROUP BY payout_status
+      ORDER BY 
+        CASE payout_status
+          WHEN 'pending' THEN 1
+          WHEN 'details_collected' THEN 2
+          WHEN 'approved' THEN 3
+          WHEN 'paid' THEN 4
+          WHEN 'confirmed' THEN 5
+        END
+    `);
+
+    // 6. Top Performers
+    const topPerformers = await pool.query(`
+      SELECT 
+        u.full_name,
+        u.lga,
+        u.total_games_played,
+        u.total_winnings,
+        u.highest_question_reached
+      FROM users u
+      WHERE u.total_winnings > 0
+      ORDER BY u.total_winnings DESC
+      LIMIT 5
+    `);
+
+    // 7. LGA Distribution
+    const lgaDistribution = await pool.query(`
+      SELECT 
+        lga,
+        COUNT(*) as user_count,
+        COALESCE(SUM(total_winnings), 0) as total_winnings
+      FROM users
+      GROUP BY lga
+      ORDER BY user_count DESC
+      LIMIT 10
+    `);
+
+    // 8. Game Completion Rate
+    const completionStats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+        COUNT(*) as total
+      FROM game_sessions
+      WHERE started_at >= CURRENT_DATE - INTERVAL '7 days'
+    `);
+
+    res.json({
+      dailyGames: dailyGames.rows,
+      prizeDistribution: prizeDistribution.rows,
+      registrationTrend: registrationTrend.rows,
+      questionPerformance: questionPerformance.rows,
+      payoutBreakdown: payoutBreakdown.rows,
+      topPerformers: topPerformers.rows,
+      lgaDistribution: lgaDistribution.rows,
+      completionStats: completionStats.rows[0]
+    });
+  } catch (error) {
+    logger.error('Error getting analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
+});
+
 // Get activity log
 router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
   try {
@@ -146,13 +288,16 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
     const offset = parseInt(req.query.offset) || 0;
 
     const activities = await adminAuthService.getActivityLog(limit, offset);
-    
     res.json({ activities });
   } catch (error) {
     logger.error('Error getting activity log:', error);
     res.status(500).json({ error: 'Failed to fetch activity log' });
   }
 });
+
+// ============================================
+// PAYOUT ROUTES
+// ============================================
 
 // Get pending payouts with proper filtering
 router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
@@ -167,50 +312,8 @@ router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
     );
 
     const status = req.query.status;
-    
-    let whereClause = "t.transaction_type = 'prize' AND t.payout_status != 'confirmed'";
-    const params = [];
-    
-    if (status && status !== '') {
-      params.push(status);
-      whereClause += ` AND t.payout_status = $${params.length}`;
-    } else {
-      whereClause += " AND t.payout_status IN ('pending', 'details_collected', 'approved', 'paid')";
-    }
-
-    const query = `
-      SELECT 
-        t.id as transaction_id,
-        t.user_id,
-        u.full_name,
-        u.phone_number,
-        u.lga,
-        t.amount,
-        t.payout_status,
-        t.transaction_type,
-        t.created_at as win_date,
-        t.paid_at,
-        t.payment_reference,
-        pd.id as payout_detail_id,
-        pd.account_name,
-        pd.account_number,
-        pd.bank_name,
-        pd.bank_code,
-        pd.verified,
-        pd.created_at as details_submitted_at,
-        gs.current_question as questions_answered,
-        gs.session_key
-      FROM transactions t
-      JOIN users u ON t.user_id = u.id
-      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      LEFT JOIN game_sessions gs ON t.session_id = gs.id
-      WHERE ${whereClause}
-      ORDER BY t.created_at DESC
-      LIMIT 100
-    `;
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    const payouts = await payoutService.getAllPendingPayouts(status);
+    res.json(payouts);
   } catch (error) {
     logger.error('Error getting pending payouts:', error);
     res.status(500).json({ error: 'Failed to fetch payouts' });
@@ -251,7 +354,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
     }
 
     const query = `
-      SELECT 
+      SELECT
         t.id as transaction_id,
         t.user_id,
         u.full_name,
@@ -269,7 +372,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type = 'prize' 
+      WHERE t.transaction_type = 'prize'
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
       ORDER BY t.paid_at DESC
@@ -279,7 +382,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
     const countQuery = `
       SELECT COUNT(*) as total
       FROM transactions t
-      WHERE t.transaction_type = 'prize' 
+      WHERE t.transaction_type = 'prize'
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
     `;
@@ -308,7 +411,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
 router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
-    
+
     // Log activity
     await adminAuthService.logActivity(
       req.adminSession.admin_id,
@@ -317,9 +420,9 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
       getIpAddress(req),
       req.headers['user-agent']
     );
-    
+
     const result = await pool.query(
-      `SELECT 
+      `SELECT
         t.*,
         u.full_name,
         u.phone_number,
@@ -330,11 +433,11 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
         pd.bank_code,
         pd.verified,
         gs.current_question as questions_answered
-       FROM transactions t
-       JOIN users u ON t.user_id = u.id
-       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-       LEFT JOIN game_sessions gs ON t.session_id = gs.id
-       WHERE t.id = $1`,
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
+      LEFT JOIN game_sessions gs ON t.session_id = gs.id
+      WHERE t.id = $1`,
       [transactionId]
     );
 
@@ -353,7 +456,6 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
 router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
-
     const success = await payoutService.approvePayout(transactionId, req.adminSession.admin_id);
 
     if (success) {
@@ -414,7 +516,6 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
 
       if (result.rows.length > 0) {
         const transaction = result.rows[0];
-
         await whatsappService.sendMessage(
           transaction.phone_number,
           `✅ PAYMENT SENT! 🎉\n\n` +
@@ -426,7 +527,6 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
           `Reply "RECEIVED" to confirm!\n\n` +
           `Keep playing to win more! 🏆`
         );
-
         logger.info(`Payment notification sent to ${transaction.phone_number}`);
       }
 
@@ -444,7 +544,6 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
 router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
-
     const result = await payoutService.reverifyPayout(transactionId);
 
     if (result.success) {
@@ -457,10 +556,10 @@ router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => 
         req.headers['user-agent']
       );
 
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: 'Account re-verified successfully',
-        accountName: result.accountName 
+        accountName: result.accountName
       });
     } else {
       res.status(400).json({ error: result.error });
@@ -470,6 +569,10 @@ router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => 
     res.status(500).json({ error: 'Failed to re-verify payout' });
   }
 });
+
+// ============================================
+// USER ROUTES
+// ============================================
 
 // Get all users
 router.get('/api/users', authenticateAdmin, async (req, res) => {
@@ -488,13 +591,13 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
     const offset = (page - 1) * limit;
 
     const result = await pool.query(
-      `SELECT 
-        id, full_name, phone_number, lga, 
-        total_games_played, total_winnings, 
+      `SELECT
+        id, full_name, phone_number, lga,
+        total_games_played, total_winnings,
         games_remaining, created_at, last_active
-       FROM users
-       ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
+      FROM users
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
@@ -515,6 +618,10 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
+
+// ============================================
+// QUESTION ROUTES
+// ============================================
 
 // Get all questions
 router.get('/api/questions', authenticateAdmin, async (req, res) => {
@@ -587,7 +694,7 @@ router.post('/api/questions', authenticateAdmin, async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO questions 
+      `INSERT INTO questions
        (question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
@@ -628,13 +735,13 @@ router.put('/api/questions/:id', authenticateAdmin, async (req, res) => {
     } = req.body;
 
     const result = await pool.query(
-      `UPDATE questions 
-       SET question_text = $1, option_a = $2, option_b = $3, option_c = $4, 
-           option_d = $5, correct_answer = $6, difficulty = $7, category = $8, 
+      `UPDATE questions
+       SET question_text = $1, option_a = $2, option_b = $3, option_c = $4,
+           option_d = $5, correct_answer = $6, difficulty = $7, category = $8,
            fun_fact = $9, is_active = $10
        WHERE id = $11
        RETURNING *`,
-      [question_text, option_a, option_b, option_c, option_d, correct_answer, 
+      [question_text, option_a, option_b, option_c, option_d, correct_answer,
        difficulty, category, fun_fact, is_active, questionId]
     );
 
