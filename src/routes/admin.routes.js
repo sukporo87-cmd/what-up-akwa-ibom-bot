@@ -1203,4 +1203,167 @@ router.get('/conversion-funnel', authenticateAdmin, async (req, res) => {
   }
 });
 
+// ============================================
+// ADD THESE ENDPOINTS TO src/routes/admin.routes.js
+// Place them BEFORE the "module.exports = router;" line
+// ============================================
+
+// Get user activity metrics (Daily Active Users)
+router.get('/api/analytics/user-activity', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_user_activity',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    // Daily Active Users (last 30 days)
+    const dailyActiveUsers = await pool.query(`
+      SELECT 
+        DATE(last_active) as date,
+        COUNT(DISTINCT id) as active_users
+      FROM users
+      WHERE last_active >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(last_active)
+      ORDER BY date ASC
+    `);
+
+    // Total users stats
+    const totalStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(CASE WHEN last_active >= CURRENT_DATE THEN 1 END) as active_today,
+        COUNT(CASE WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as active_week,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users
+      FROM users
+    `);
+
+    res.json({
+      dailyActiveUsers: dailyActiveUsers.rows,
+      summary: totalStats.rows[0]
+    });
+  } catch (error) {
+    logger.error('Error getting user activity:', error);
+    res.status(500).json({ error: 'Failed to fetch user activity' });
+  }
+});
+
+// Get conversion funnel metrics
+router.get('/api/analytics/conversion-funnel', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_conversion_funnel',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    const funnel = await pool.query(`
+      SELECT
+        COUNT(*) as total_registered,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as started_game,
+        COUNT(CASE WHEN total_games_played >= 3 THEN 1 END) as played_3_games,
+        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
+        COUNT(CASE WHEN total_games_played >= 10 THEN 1 END) as power_users,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as activation_rate,
+        ROUND(
+          (COUNT(CASE WHEN total_winnings > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as win_rate
+      FROM users
+    `);
+
+    res.json(funnel.rows[0]);
+  } catch (error) {
+    logger.error('Error getting conversion funnel:', error);
+    res.status(500).json({ error: 'Failed to fetch conversion funnel' });
+  }
+});
+
+// Get LGA performance metrics
+router.get('/api/analytics/lga-performance', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_lga_performance',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    const lgaStats = await pool.query(`
+      SELECT
+        lga,
+        COUNT(*) as user_count,
+        COALESCE(SUM(total_games_played), 0) as total_games,
+        COALESCE(SUM(total_winnings), 0) as total_winnings,
+        COALESCE(AVG(total_winnings), 0) as avg_winnings_per_user,
+        ROUND(
+          COALESCE(AVG(total_games_played), 0),
+          1
+        ) as avg_games_per_user
+      FROM users
+      GROUP BY lga
+      ORDER BY total_games DESC
+      LIMIT 15
+    `);
+
+    res.json(lgaStats.rows);
+  } catch (error) {
+    logger.error('Error getting LGA performance:', error);
+    res.status(500).json({ error: 'Failed to fetch LGA performance' });
+  }
+});
+
+// Get user retention metrics
+router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_retention',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    const days = parseInt(req.query.days) || 30;
+
+    const retention = await pool.query(`
+      SELECT
+        DATE(created_at) as registration_date,
+        COUNT(*) as new_users,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users,
+        COUNT(CASE WHEN total_games_played > 1 THEN 1 END) as retained_users,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as activation_rate,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 1 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as retention_rate
+      FROM users
+      WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
+      GROUP BY DATE(created_at)
+      ORDER BY registration_date DESC
+    `);
+
+    res.json(retention.rows);
+  } catch (error) {
+    logger.error('Error getting retention metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch retention metrics' });
+  }
+});
+
+// ============================================
+// IMPORTANT: Make sure these are ABOVE this line:
+// module.exports = router;
+// ============================================
+
 module.exports = router;
