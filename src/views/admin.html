@@ -149,13 +149,13 @@
 
     .logout-btn:hover { background: white; color: var(--primary); }
 
-    .container { max-width: 1400px; margin: 0 auto; padding: 30px 20px; }
+    .container { max-width: 1600px; margin: 0 auto; padding: 30px 20px; }
 
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 20px;
-      margin-bottom: 30px;
+      margin-bottom: 20px;
     }
 
     .stat-card {
@@ -184,7 +184,7 @@
     .stat-card:hover::before { transform: scaleY(1); }
 
     .stat-card h3 {
-      font-size: 14px;
+      font-size: 13px;
       color: var(--text-gray);
       margin-bottom: 10px;
       text-transform: uppercase;
@@ -193,6 +193,22 @@
 
     .stat-card .value { font-size: 32px; font-weight: bold; color: var(--primary); margin-bottom: 5px; }
     .stat-card .label { font-size: 13px; color: var(--text-light); }
+
+    .stat-card.gradient {
+      color: white;
+    }
+
+    .stat-card.gradient h3 {
+      color: rgba(255,255,255,0.9);
+    }
+
+    .stat-card.gradient .value {
+      color: white;
+    }
+
+    .stat-card.gradient .label {
+      color: rgba(255,255,255,0.8);
+    }
 
     .tabs {
       display: flex;
@@ -480,6 +496,47 @@
     .top-performers-table td { padding: 12px; }
     .medal { font-size: 24px; margin-right: 8px; }
 
+    .metric-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .metric-icon {
+      font-size: 48px;
+      width: 70px;
+      height: 70px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: rgba(102, 126, 234, 0.1);
+    }
+
+    .metric-info h4 {
+      font-size: 14px;
+      color: var(--text-gray);
+      margin-bottom: 5px;
+    }
+
+    .metric-info .metric-value {
+      font-size: 28px;
+      font-weight: bold;
+      color: var(--text-dark);
+    }
+
+    .metric-info .metric-change {
+      font-size: 13px;
+      margin-top: 5px;
+    }
+
+    .metric-change.positive { color: var(--success); }
+    .metric-change.negative { color: var(--danger); }
+
     @media (max-width: 768px) {
       .header { padding: 15px 20px; flex-direction: column; gap: 15px; }
       .header-right { width: 100%; justify-content: space-between; }
@@ -498,7 +555,6 @@
 <body>
 
 <!-- ========== PART 1 ENDS HERE ========== -->
-<!-- Copy everything above this line as PART 1 -->
  <!-- ========== PART 2 STARTS HERE ========== -->
 <!-- Paste PART 1 first, then add this below it -->
 
@@ -568,6 +624,7 @@
   </div>
 
   <div class="container">
+    <!-- Basic Stats -->
     <div class="stats-grid" id="statsGrid">
       <div class="stat-card">
         <h3>Pending Payouts</h3>
@@ -591,6 +648,68 @@
       </div>
     </div>
 
+    <!-- Games Count Stats -->
+    <div class="stats-grid">
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+        <h3>Today</h3>
+        <div class="value" id="gamesToday">-</div>
+        <div class="label">Games played today</div>
+      </div>
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+        <h3>This Week</h3>
+        <div class="value" id="gamesWeek">-</div>
+        <div class="label">Games this week</div>
+      </div>
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+        <h3>This Month</h3>
+        <div class="value" id="gamesMonth">-</div>
+        <div class="label">Games this month</div>
+      </div>
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+        <h3>This Quarter</h3>
+        <div class="value" id="gamesQuarter">-</div>
+        <div class="label">Games this quarter</div>
+      </div>
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);">
+        <h3>This Year</h3>
+        <div class="value" id="gamesYear">-</div>
+        <div class="label">Games this year</div>
+      </div>
+      <div class="stat-card gradient" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+        <h3>All Time</h3>
+        <div class="value" id="gamesAllTime">-</div>
+        <div class="label">Total games played</div>
+      </div>
+    </div>
+
+    <!-- User Activity Metrics -->
+    <div class="stats-grid">
+      <div class="metric-card">
+        <div class="metric-icon">👥</div>
+        <div class="metric-info">
+          <h4>Daily Active Users</h4>
+          <div class="metric-value" id="dailyActiveUsers">-</div>
+          <div class="metric-change positive" id="dauChange">-</div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">🔄</div>
+        <div class="metric-info">
+          <h4>User Retention (7-Day)</h4>
+          <div class="metric-value" id="userRetention">-</div>
+          <div class="metric-change" id="retentionChange">-</div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">📊</div>
+        <div class="metric-info">
+          <h4>Conversion Rate</h4>
+          <div class="metric-value" id="conversionRate">-</div>
+          <div class="metric-change" id="conversionChange">-</div>
+        </div>
+      </div>
+    </div>
+
     <div id="alertContainer"></div>
 
     <div class="tabs">
@@ -606,7 +725,7 @@
     <div id="analyticsTab" class="tab-content active">
       <div class="card">
         <div class="card-header">
-          <h2>📊 Analytics Dashboard</h2>
+          <h2>📊 Advanced Analytics Dashboard</h2>
           <button class="btn btn-primary" onclick="loadAnalytics()">🔄 Refresh</button>
         </div>
         <div id="analyticsContent">
@@ -819,8 +938,7 @@
 </div>
 
 <!-- ========== PART 2 ENDS HERE ========== -->
-<!-- Continue to PART 3 for JavaScript -->
- <!-- ========== PART 3A STARTS HERE ========== -->
+ <!-- ========== PART 3 STARTS HERE ========== -->
 <!-- Paste PART 1, then PART 2, then add this below them -->
 
 <script>
@@ -882,7 +1000,7 @@ function showLogin() {
 function showDashboard() {
   document.getElementById('loginPage').style.display = 'none';
   document.getElementById('dashboardPage').classList.add('active');
-  loadStats();
+  loadEnhancedStats();
   loadAnalytics();
 }
 
@@ -1020,60 +1138,201 @@ function getAuthHeaders() {
   };
 }
 
-// STATS
-async function loadStats() {
+// ENHANCED STATS LOADING
+async function loadEnhancedStats() {
   try {
-    const response = await fetch('/admin/api/stats', { headers: getAuthHeaders() });
-    const stats = await response.json();
+    // Basic stats
+    const statsResponse = await fetch('/admin/api/stats', { headers: getAuthHeaders() });
+    const stats = await statsResponse.json();
+    
     document.getElementById('pendingCount').textContent = stats.pending_count || 0;
     document.getElementById('pendingAmount').textContent = `₦${(parseFloat(stats.pending_amount) || 0).toLocaleString()}`;
     document.getElementById('paidCount').textContent = stats.paid_today_count || 0;
     document.getElementById('paidAmount').textContent = `₦${(parseFloat(stats.paid_today_amount) || 0).toLocaleString()}`;
     document.getElementById('totalUsers').textContent = stats.total_users || 0;
     document.getElementById('totalQuestions').textContent = stats.total_questions || 0;
+    
+    // Games count (all periods)
+    const gamesResponse = await fetch('/admin/api/analytics/games-count', { headers: getAuthHeaders() });
+    const games = await gamesResponse.json();
+    
+    document.getElementById('gamesToday').textContent = games.games_today || 0;
+    document.getElementById('gamesWeek').textContent = games.games_this_week || 0;
+    document.getElementById('gamesMonth').textContent = games.games_this_month || 0;
+    document.getElementById('gamesQuarter').textContent = games.games_this_quarter || 0;
+    document.getElementById('gamesYear').textContent = games.games_this_year || 0;
+    document.getElementById('gamesAllTime').textContent = games.total_games_alltime || 0;
+    
+    // User activity metrics
+    const activityResponse = await fetch('/admin/api/analytics/user-activity', { headers: getAuthHeaders() });
+    const activity = await activityResponse.json();
+    
+    const dauElement = document.getElementById('dailyActiveUsers');
+    const dauChangeElement = document.getElementById('dauChange');
+    dauElement.textContent = activity.daily_active_users || 0;
+    if (activity.dau_change) {
+      const change = parseFloat(activity.dau_change);
+      dauChangeElement.textContent = `${change > 0 ? '↑' : '↓'} ${Math.abs(change).toFixed(1)}% vs yesterday`;
+      dauChangeElement.className = change > 0 ? 'metric-change positive' : 'metric-change negative';
+    }
+    
+    const retentionElement = document.getElementById('userRetention');
+    const retentionChangeElement = document.getElementById('retentionChange');
+    retentionElement.textContent = activity.retention_rate ? `${activity.retention_rate}%` : '-';
+    if (activity.retention_change) {
+      const change = parseFloat(activity.retention_change);
+      retentionChangeElement.textContent = `${change > 0 ? '↑' : '↓'} ${Math.abs(change).toFixed(1)}% vs last week`;
+      retentionChangeElement.className = change > 0 ? 'metric-change positive' : 'metric-change negative';
+    }
+    
+    const conversionElement = document.getElementById('conversionRate');
+    const conversionChangeElement = document.getElementById('conversionChange');
+    conversionElement.textContent = activity.conversion_rate ? `${activity.conversion_rate}%` : '-';
+    if (activity.conversion_change) {
+      const change = parseFloat(activity.conversion_change);
+      conversionChangeElement.textContent = `${change > 0 ? '↑' : '↓'} ${Math.abs(change).toFixed(1)}% vs last period`;
+      conversionChangeElement.className = change > 0 ? 'metric-change positive' : 'metric-change negative';
+    }
+    
   } catch (error) {
-    console.error('Error loading stats:', error);
+    console.error('Error loading enhanced stats:', error);
   }
 }
 
-// ANALYTICS
+// ========== PART 3 ENDS HERE ========== 
+// Continue to PART 4
+// ========== PART 4 STARTS HERE ========== 
+// Paste PART 1, PART 2, PART 3, then add this below them
+
+// ENHANCED ANALYTICS LOADING
 async function loadAnalytics() {
   const container = document.getElementById('analyticsContent');
-  container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading analytics...</p></div>';
+  container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading comprehensive analytics...</p></div>';
+  
   try {
-    const response = await fetch('/admin/api/analytics', { headers: getAuthHeaders() });
-    const data = await response.json();
-    Object.values(charts).forEach(chart => { if (chart && typeof chart.destroy === 'function') chart.destroy(); });
+    // Fetch all analytics data
+    const [
+      analyticsResponse,
+      peakTimesResponse,
+      categoriesResponse,
+      lgaResponse,
+      funnelResponse
+    ] = await Promise.all([
+      fetch('/admin/api/analytics', { headers: getAuthHeaders() }),
+      fetch('/admin/api/analytics/peak-times', { headers: getAuthHeaders() }),
+      fetch('/admin/api/analytics/categories', { headers: getAuthHeaders() }),
+      fetch('/admin/api/analytics/lga-performance', { headers: getAuthHeaders() }),
+      fetch('/admin/api/analytics/conversion-funnel', { headers: getAuthHeaders() })
+    ]);
+    
+    const data = await analyticsResponse.json();
+    const peakTimes = await peakTimesResponse.json();
+    const categories = await categoriesResponse.json();
+    const lgaData = await lgaResponse.json();
+    const funnelData = await funnelResponse.json();
+    
+    // Destroy existing charts
+    Object.values(charts).forEach(chart => { 
+      if (chart && typeof chart.destroy === 'function') chart.destroy(); 
+    });
     charts = {};
+    
+    // Build comprehensive analytics HTML
     let html = `
+      <!-- Row 1: Daily Games & Prize Distribution -->
       <div class="chart-grid">
-        <div class="card"><h3>📈 Daily Games Played (Last 14 Days)</h3><div class="chart-container"><canvas id="dailyGamesChart"></canvas></div></div>
-        <div class="card"><h3>💰 Prize Distribution by Difficulty</h3><div class="chart-container"><canvas id="prizeDistChart"></canvas></div></div>
+        <div class="card">
+          <h3>📈 Daily Games Played (Last 14 Days)</h3>
+          <div class="chart-container"><canvas id="dailyGamesChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>💰 Prize Distribution by Difficulty</h3>
+          <div class="chart-container"><canvas id="prizeDistChart"></canvas></div>
+        </div>
       </div>
+      
+      <!-- Row 2: Peak Times & Category Performance -->
       <div class="chart-grid">
-        <div class="card"><h3>👥 User Registration Trend (Last 30 Days)</h3><div class="chart-container"><canvas id="regTrendChart"></canvas></div></div>
-        <div class="card"><h3>📊 Question Performance by Difficulty</h3><div class="chart-container"><canvas id="questionPerfChart"></canvas></div></div>
+        <div class="card">
+          <h3>⏰ Peak Gaming Times (24-Hour Heatmap)</h3>
+          <div class="chart-container"><canvas id="peakTimesChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>📚 Popular Question Categories</h3>
+          <div class="chart-container"><canvas id="categoryPerfChart"></canvas></div>
+        </div>
       </div>
+      
+      <!-- Row 3: User Registration & Question Performance -->
       <div class="chart-grid">
-        <div class="card"><h3>🎯 Payout Status Breakdown</h3><div class="chart-container"><canvas id="payoutStatusChart"></canvas></div></div>
-        <div class="card"><h3>🏆 Top Performers</h3><table class="top-performers-table"><thead><tr><th>Rank</th><th>Player</th><th>LGA</th><th>Games</th><th>Winnings</th></tr></thead><tbody id="topPerformersBody"></tbody></table></div>
+        <div class="card">
+          <h3>👥 User Registration Trend (Last 30 Days)</h3>
+          <div class="chart-container"><canvas id="regTrendChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>📊 Question Performance by Difficulty</h3>
+          <div class="chart-container"><canvas id="questionPerfChart"></canvas></div>
+        </div>
+      </div>
+      
+      <!-- Row 4: Conversion Funnel & Payout Status -->
+      <div class="chart-grid">
+        <div class="card">
+          <h3>🎯 User Conversion Funnel</h3>
+          <div class="chart-container"><canvas id="funnelChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>💳 Payout Status Breakdown</h3>
+          <div class="chart-container"><canvas id="payoutStatusChart"></canvas></div>
+        </div>
+      </div>
+      
+      <!-- Row 5: LGA Performance & Top Performers -->
+      <div class="chart-grid">
+        <div class="card">
+          <h3>🗺️ LGA Performance Rankings</h3>
+          <div class="chart-container"><canvas id="lgaChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>🏆 Top Performers</h3>
+          <table class="top-performers-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Player</th>
+                <th>LGA</th>
+                <th>Games</th>
+                <th>Winnings</th>
+              </tr>
+            </thead>
+            <tbody id="topPerformersBody"></tbody>
+          </table>
+        </div>
       </div>
     `;
+    
     container.innerHTML = html;
+    
+    // Render all charts
     setTimeout(() => {
       renderDailyGamesChart(data.dailyGames);
       renderPrizeDistChart(data.prizeDistribution);
+      renderPeakTimesChart(peakTimes);
+      renderCategoryPerformanceChart(categories);
       renderRegTrendChart(data.registrationTrend);
       renderQuestionPerfChart(data.questionPerformance);
+      renderConversionFunnelChart(funnelData);
       renderPayoutStatusChart(data.payoutBreakdown);
+      renderLGAPerformanceChart(lgaData);
       renderTopPerformers(data.topPerformers);
     }, 100);
   } catch (error) {
     console.error('Error loading analytics:', error);
-    container.innerHTML = '<div class="empty-state"><p>Error loading analytics</p></div>';
+    container.innerHTML = '<div class="empty-state"><p>Error loading analytics. Please try again.</p></div>';
   }
 }
 
+// Chart: Daily Games
 function renderDailyGamesChart(data) {
   const ctx = document.getElementById('dailyGamesChart');
   if (!ctx) return;
@@ -1081,11 +1340,12 @@ function renderDailyGamesChart(data) {
   const values = data.map(d => parseInt(d.games_count));
   charts.dailyGames = new Chart(ctx, {
     type: 'line',
-    data: { labels: labels, datasets: [{ label: 'Games Played', data: values, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.4 }] },
+    data: { labels, datasets: [{ label: 'Games Played', data: values, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.4 }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
   });
 }
 
+// Chart: Prize Distribution
 function renderPrizeDistChart(data) {
   const ctx = document.getElementById('prizeDistChart');
   if (!ctx) return;
@@ -1093,11 +1353,76 @@ function renderPrizeDistChart(data) {
   const values = data.map(d => parseFloat(d.total_amount));
   charts.prizeDist = new Chart(ctx, {
     type: 'bar',
-    data: { labels: labels, datasets: [{ label: 'Total Winnings', data: values, backgroundColor: ['#10b981', '#f59e0b', '#ef4444'] }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: function(value) { return '₦' + value.toLocaleString(); } } } } }
+    data: { labels, datasets: [{ label: 'Total Winnings', data: values, backgroundColor: ['#10b981', '#f59e0b', '#ef4444'] }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '₦' + v.toLocaleString() } } } }
   });
 }
 
+// Chart: Peak Times (24-Hour Heatmap)
+function renderPeakTimesChart(data) {
+  const ctx = document.getElementById('peakTimesChart');
+  if (!ctx) return;
+  
+  const hourlyData = {};
+  data.forEach(item => {
+    hourlyData[item.hour_of_day] = (hourlyData[item.hour_of_day] || 0) + parseInt(item.games_count);
+  });
+  
+  const labels = Array.from({length: 24}, (_, i) => {
+    return i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i-12} PM`;
+  });
+  const values = Array.from({length: 24}, (_, i) => hourlyData[i] || 0);
+  const maxValue = Math.max(...values);
+  const backgroundColor = values.map(v => {
+    const intensity = maxValue > 0 ? v / maxValue : 0;
+    return `rgba(239, 68, 68, ${0.3 + intensity * 0.7})`;
+  });
+  
+  charts.peakTimes = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Games Played', data: values, backgroundColor, borderRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} games` } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  });
+}
+
+// Chart: Category Performance
+function renderCategoryPerformanceChart(data) {
+  const ctx = document.getElementById('categoryPerfChart');
+  if (!ctx) return;
+  
+  if (data.length === 0) {
+    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No category data</p></div>';
+    return;
+  }
+  
+  data.sort((a, b) => parseInt(b.total_questions) - parseInt(a.total_questions));
+  const topCategories = data.slice(0, 10);
+  
+  const labels = topCategories.map(cat => cat.category || 'General');
+  const questionCounts = topCategories.map(cat => parseInt(cat.total_questions));
+  const successRates = topCategories.map(cat => parseFloat(cat.success_rate_percentage));
+  
+  charts.categoryPerf = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Questions', data: questionCounts, backgroundColor: '#667eea', yAxisID: 'y' },
+        { label: 'Success Rate (%)', data: successRates, backgroundColor: '#10b981', yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Questions' } },
+        y1: { type: 'linear', position: 'right', beginAtZero: true, max: 100, title: { display: true, text: 'Success Rate (%)' }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+
+// Chart: Registration Trend
 function renderRegTrendChart(data) {
   const ctx = document.getElementById('regTrendChart');
   if (!ctx) return;
@@ -1105,56 +1430,142 @@ function renderRegTrendChart(data) {
   const values = data.map(d => parseInt(d.new_users));
   charts.regTrend = new Chart(ctx, {
     type: 'line',
-    data: { labels: labels, datasets: [{ label: 'New Users', data: values, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.4 }] },
+    data: { labels, datasets: [{ label: 'New Users', data: values, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.4 }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
   });
 }
 
+// Chart: Question Performance
 function renderQuestionPerfChart(data) {
   const ctx = document.getElementById('questionPerfChart');
   if (!ctx) return;
   const grouped = {};
   data.forEach(q => {
-    let range;
-    if (q.difficulty >= 1 && q.difficulty <= 5) range = 'Q1-Q5';
-    else if (q.difficulty >= 6 && q.difficulty <= 10) range = 'Q6-Q10';
-    else range = 'Q11-Q15';
+    const range = q.difficulty <= 5 ? 'Q1-Q5' : q.difficulty <= 10 ? 'Q6-Q10' : 'Q11-Q15';
     if (!grouped[range]) grouped[range] = { total: 0, count: 0 };
     grouped[range].total += parseFloat(q.success_rate);
     grouped[range].count++;
   });
   const labels = Object.keys(grouped);
   const values = labels.map(l => (grouped[l].total / grouped[l].count).toFixed(1));
-  const colors = values.map(v => { if (v >= 80) return '#10b981'; if (v >= 60) return '#f59e0b'; return '#ef4444'; });
+  const colors = values.map(v => v >= 80 ? '#10b981' : v >= 60 ? '#f59e0b' : '#ef4444');
   charts.questionPerf = new Chart(ctx, {
     type: 'bar',
-    data: { labels: labels, datasets: [{ label: 'Success Rate (%)', data: values, backgroundColor: colors }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function(value) { return value + '%'; } } } } }
+    data: { labels, datasets: [{ label: 'Success Rate (%)', data: values, backgroundColor: colors }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
   });
 }
 
+// Chart: Conversion Funnel
+function renderConversionFunnelChart(data) {
+  const ctx = document.getElementById('funnelChart');
+  if (!ctx) return;
+  
+  const stages = ['Registered', 'Played Game', 'Won Prize', 'Claimed Payout'];
+  const values = [
+    parseInt(data.total_registered || 0),
+    parseInt(data.played_game || 0),
+    parseInt(data.won_prize || 0),
+    parseInt(data.claimed_payout || 0)
+  ];
+  
+  const percentages = values.map((v, i) => i === 0 ? 100 : ((v / values[0]) * 100).toFixed(1));
+  
+  charts.funnel = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: stages,
+      datasets: [{
+        label: 'Users',
+        data: values,
+        backgroundColor: ['#667eea', '#10b981', '#f59e0b', '#ef4444']
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.parsed.x.toLocaleString()} users (${percentages[ctx.dataIndex]}%)`
+          }
+        }
+      },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+}
+
+// Chart: Payout Status
 function renderPayoutStatusChart(data) {
   const ctx = document.getElementById('payoutStatusChart');
   if (!ctx) return;
-  const labels = data.map(d => {
-    const statusNames = { 'pending': 'Pending', 'details_collected': 'Details Collected', 'approved': 'Approved', 'paid': 'Paid', 'confirmed': 'Confirmed' };
-    return statusNames[d.payout_status] || d.payout_status;
-  });
+  const statusNames = { pending: 'Pending', details_collected: 'Details Collected', approved: 'Approved', paid: 'Paid', confirmed: 'Confirmed' };
+  const labels = data.map(d => statusNames[d.payout_status] || d.payout_status);
   const values = data.map(d => parseInt(d.count));
   charts.payoutStatus = new Chart(ctx, {
     type: 'doughnut',
-    data: { labels: labels, datasets: [{ data: values, backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#059669', '#6366f1'] }] },
+    data: { labels, datasets: [{ data: values, backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#059669', '#6366f1'] }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
   });
 }
 
+// Chart: LGA Performance
+function renderLGAPerformanceChart(data) {
+  const ctx = document.getElementById('lgaChart');
+  if (!ctx) return;
+  
+  if (data.length === 0) {
+    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No LGA data</p></div>';
+    return;
+  }
+  
+  data.sort((a, b) => parseInt(b.total_games) - parseInt(a.total_games));
+  const topLGAs = data.slice(0, 15);
+  
+  const labels = topLGAs.map(lga => lga.lga);
+  const games = topLGAs.map(lga => parseInt(lga.total_games));
+  const users = topLGAs.map(lga => parseInt(lga.total_users));
+  
+  charts.lga = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Games Played', data: games, backgroundColor: '#667eea' },
+        { label: 'Active Users', data: users, backgroundColor: '#10b981' }
+      ]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+}
+
+// Table: Top Performers
 function renderTopPerformers(data) {
   const tbody = document.getElementById('topPerformersBody');
   if (!tbody) return;
-  if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No data yet</td></tr>'; return; }
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No data yet</td></tr>';
+    return;
+  }
   const medals = ['🥇', '🥈', '🥉'];
-  tbody.innerHTML = data.map((player, index) => `<tr><td>${index < 3 ? `<span class="medal">${medals[index]}</span>` : ''}#${index + 1}</td><td><strong>${player.full_name}</strong></td><td>${player.lga}</td><td>${player.total_games_played}</td><td><strong>₦${parseFloat(player.total_winnings).toLocaleString()}</strong></td></tr>`).join('');
+  tbody.innerHTML = data.map((p, i) => 
+    `<tr><td>${i < 3 ? `<span class="medal">${medals[i]}</span>` : ''}#${i + 1}</td><td><strong>${p.full_name}</strong></td><td>${p.lga}</td><td>${p.total_games_played}</td><td><strong>₦${parseFloat(p.total_winnings).toLocaleString()}</strong></td></tr>`
+  ).join('');
 }
+
+// ========== PART 4 ENDS HERE ==========
+// Continue to PART 5 (Final)
+// ========== PART 5 STARTS HERE (FINAL) ==========
+// Paste PART 1, 2, 3, 4, then add this below them 
 
 // PAYOUTS
 async function loadPayouts() {
@@ -1165,7 +1576,10 @@ async function loadPayouts() {
     const url = status ? `/admin/api/payouts/pending?status=${status}` : '/admin/api/payouts/pending';
     const response = await fetch(url, { headers: getAuthHeaders() });
     const payouts = await response.json();
-    if (payouts.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending payouts</p></div>'; return; }
+    if (payouts.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending payouts</p></div>';
+      return;
+    }
     let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Status</th><th>Bank Details</th><th>Verification</th><th>Date</th><th>Actions</th></tr></thead><tbody>';
     payouts.forEach(payout => {
       const hasDetails = payout.account_name ? '✅' : '⏳';
@@ -1188,8 +1602,15 @@ async function reverifyPayout(transactionId) {
   try {
     const response = await fetch(`/admin/api/payouts/${transactionId}/reverify`, { method: 'POST', headers: getAuthHeaders() });
     const result = await response.json();
-    if (result.success) { showAlert(`✅ Account verified: ${result.accountName}`, 'success'); loadPayouts(); } else { showAlert(`❌ Verification failed: ${result.error}`, 'error'); }
-  } catch (error) { showAlert('❌ Error re-verifying account', 'error'); }
+    if (result.success) {
+      showAlert(`✅ Account verified: ${result.accountName}`, 'success');
+      loadPayouts();
+    } else {
+      showAlert(`❌ Verification failed: ${result.error}`, 'error');
+    }
+  } catch (error) {
+    showAlert('❌ Error re-verifying account', 'error');
+  }
 }
 
 async function showMarkPaidModal(transactionId) {
@@ -1200,7 +1621,9 @@ async function showMarkPaidModal(transactionId) {
     const verificationBadge = payout.verified ? '<span class="verified-badge">✓ Verified by Paystack</span>' : '<span class="unverified-badge">⚠ Not Verified</span>';
     document.getElementById('payoutDetails').innerHTML = `<div style="margin-bottom: 20px; padding: 15px; background: #f9fafb; border-radius: 8px;"><div class="detail-row"><span class="detail-label">Winner:</span><span class="detail-value">${payout.full_name}</span></div><div class="detail-row"><span class="detail-label">Amount:</span><span class="detail-value">₦${parseFloat(payout.amount).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">Account Name:</span><span class="detail-value">${payout.account_name}</span></div><div class="detail-row"><span class="detail-label">Account Number:</span><span class="detail-value">${payout.account_number}</span></div><div class="detail-row"><span class="detail-label">Bank:</span><span class="detail-value">${payout.bank_name}</span></div><div class="detail-row"><span class="detail-label">Verification Status:</span><span class="detail-value">${verificationBadge}</span></div></div>`;
     document.getElementById('markPaidModal').classList.add('show');
-  } catch (error) { showAlert('Error loading payout details', 'error'); }
+  } catch (error) {
+    showAlert('Error loading payout details', 'error');
+  }
 }
 
 async function submitMarkPaid(event) {
@@ -1209,16 +1632,25 @@ async function submitMarkPaid(event) {
   const paymentReference = document.getElementById('paymentReference').value;
   const paymentMethod = document.getElementById('paymentMethod').value;
   try {
-    const response = await fetch(`/admin/api/payouts/${transactionId}/mark-paid`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ paymentReference, paymentMethod }) });
+    const response = await fetch(`/admin/api/payouts/${transactionId}/mark-paid`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ paymentReference, paymentMethod })
+    });
     const result = await response.json();
-    if (result.success) { showAlert('✅ Payment marked as paid! Winner notified via WhatsApp.', 'success'); closeModal('markPaidModal'); loadStats(); loadPayouts(); document.getElementById('markPaidForm').reset(); } else { showAlert('❌ Error marking payment as paid', 'error'); }
-  } catch (error) { showAlert('❌ Error processing request', 'error'); }
+    if (result.success) {
+      showAlert('✅ Payment marked as paid! Winner notified via WhatsApp.', 'success');
+      closeModal('markPaidModal');
+      loadEnhancedStats();
+      loadPayouts();
+      document.getElementById('markPaidForm').reset();
+    } else {
+      showAlert('❌ Error marking payment as paid', 'error');
+    }
+  } catch (error) {
+    showAlert('❌ Error processing request', 'error');
+  }
 }
-
-// ========== PART 3A ENDS HERE ==========
-// Continue to PART 3B -->
-//<!-- ========== PART 3B STARTS HERE (FINAL SECTION) ========== -->
-//<!-- Paste PART 1, PART 2, PART 3A, then add this below them -->
 
 // HISTORY
 async function loadHistory() {
@@ -1228,12 +1660,20 @@ async function loadHistory() {
     const period = document.getElementById('periodFilter')?.value || 'all';
     const response = await fetch(`/admin/api/payouts/history?period=${period}`, { headers: getAuthHeaders() });
     const data = await response.json();
-    if (data.payouts.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No payout history found</p></div>'; return; }
+    if (data.payouts.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No payout history found</p></div>';
+      return;
+    }
     let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Bank Details</th><th>Reference</th><th>Paid Date</th><th>Status</th></tr></thead><tbody>';
-    data.payouts.forEach(payout => { html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${payout.phone_number}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><small>${payout.account_name || 'N/A'}<br>${payout.bank_name || 'N/A'}</small></td><td><small>${payout.payment_reference || 'N/A'}</small></td><td>${payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td></tr>`; });
+    data.payouts.forEach(payout => {
+      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${payout.phone_number}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><small>${payout.account_name || 'N/A'}<br>${payout.bank_name || 'N/A'}</small></td><td><small>${payout.payment_reference || 'N/A'}</small></td><td>${payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td></tr>`;
+    });
     html += '</tbody></table>';
     container.innerHTML = html;
-  } catch (error) { console.error('Error loading history:', error); container.innerHTML = '<div class="empty-state"><p>Error loading history</p></div>'; }
+  } catch (error) {
+    console.error('Error loading history:', error);
+    container.innerHTML = '<div class="empty-state"><p>Error loading history</p></div>';
+  }
 }
 
 // USERS
@@ -1244,12 +1684,19 @@ async function loadUsers() {
     const response = await fetch('/admin/api/users', { headers: getAuthHeaders() });
     const data = await response.json();
     allUsers = data.users;
-    if (allUsers.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>No users found</p></div>'; return; }
+    if (allUsers.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>No users found</p></div>';
+      return;
+    }
     let html = '<table><thead><tr><th>Name</th><th>Phone</th><th>LGA</th><th>Games</th><th>Winnings</th><th>Remaining</th><th>Joined</th></tr></thead><tbody>';
-    allUsers.forEach(user => { html += `<tr><td><strong>${user.full_name}</strong></td><td>${user.phone_number}</td><td>${user.lga}</td><td>${user.total_games_played}</td><td>₦${parseFloat(user.total_winnings).toLocaleString()}</td><td>${user.games_remaining || 0}</td><td>${new Date(user.created_at).toLocaleDateString()}</td></tr>`; });
+    allUsers.forEach(user => {
+      html += `<tr><td><strong>${user.full_name}</strong></td><td>${user.phone_number}</td><td>${user.lga}</td><td>${user.total_games_played}</td><td>₦${parseFloat(user.total_winnings).toLocaleString()}</td><td>${user.games_remaining || 0}</td><td>${new Date(user.created_at).toLocaleDateString()}</td></tr>`;
+    });
     html += '</tbody></table>';
     container.innerHTML = html;
-  } catch (error) { container.innerHTML = '<div class="empty-state"><p>Error loading users</p></div>'; }
+  } catch (error) {
+    container.innerHTML = '<div class="empty-state"><p>Error loading users</p></div>';
+  }
 }
 
 // QUESTIONS
@@ -1259,15 +1706,24 @@ async function loadQuestions() {
   try {
     const response = await fetch('/admin/api/questions', { headers: getAuthHeaders() });
     const data = await response.json();
-    if (data.questions.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">❓</div><p>No questions found</p></div>'; return; }
+    if (data.questions.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">❓</div><p>No questions found</p></div>';
+      return;
+    }
     let html = '<table><thead><tr><th>ID</th><th>Question</th><th>Difficulty</th><th>Category</th><th>Answer</th><th>Status</th></tr></thead><tbody>';
-    data.questions.forEach(q => { html += `<tr><td>${q.id}</td><td>${q.question_text.substring(0, 80)}${q.question_text.length > 80 ? '...' : ''}</td><td>Q${q.difficulty}</td><td>${q.category}</td><td><strong>${q.correct_answer}</strong></td><td><span class="status-badge ${q.is_active ? 'status-approved' : 'status-pending'}">${q.is_active ? 'Active' : 'Inactive'}</span></td></tr>`; });
+    data.questions.forEach(q => {
+      html += `<tr><td>${q.id}</td><td>${q.question_text.substring(0, 80)}${q.question_text.length > 80 ? '...' : ''}</td><td>Q${q.difficulty}</td><td>${q.category}</td><td><strong>${q.correct_answer}</strong></td><td><span class="status-badge ${q.is_active ? 'status-approved' : 'status-pending'}">${q.is_active ? 'Active' : 'Inactive'}</span></td></tr>`;
+    });
     html += '</tbody></table>';
     container.innerHTML = html;
-  } catch (error) { container.innerHTML = '<div class="empty-state"><p>Error loading questions</p></div>'; }
+  } catch (error) {
+    container.innerHTML = '<div class="empty-state"><p>Error loading questions</p></div>';
+  }
 }
 
-function showAddQuestionModal() { document.getElementById('addQuestionModal').classList.add('show'); }
+function showAddQuestionModal() {
+  document.getElementById('addQuestionModal').classList.add('show');
+}
 
 async function submitAddQuestion(event) {
   event.preventDefault();
@@ -1283,10 +1739,24 @@ async function submitAddQuestion(event) {
     fun_fact: document.getElementById('funFact').value || null
   };
   try {
-    const response = await fetch('/admin/api/questions', { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(questionData) });
+    const response = await fetch('/admin/api/questions', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(questionData)
+    });
     const result = await response.json();
-    if (result.success) { showAlert('✅ Question added successfully!', 'success'); closeModal('addQuestionModal'); loadQuestions(); loadStats(); document.getElementById('addQuestionForm').reset(); } else { showAlert('❌ ' + (result.error || 'Error adding question'), 'error'); }
-  } catch (error) { showAlert('❌ Error adding question', 'error'); }
+    if (result.success) {
+      showAlert('✅ Question added successfully!', 'success');
+      closeModal('addQuestionModal');
+      loadQuestions();
+      loadEnhancedStats();
+      document.getElementById('addQuestionForm').reset();
+    } else {
+      showAlert('❌ ' + (result.error || 'Error adding question'), 'error');
+    }
+  } catch (error) {
+    showAlert('❌ Error adding question', 'error');
+  }
 }
 
 // ACTIVITY LOG
@@ -1296,15 +1766,26 @@ async function loadActivityLog() {
   try {
     const response = await fetch('/admin/api/activity-log', { headers: getAuthHeaders() });
     const data = await response.json();
-    if (data.activities.length === 0) { container.innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>No activity logged</p></div>'; return; }
+    if (data.activities.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>No activity logged</p></div>';
+      return;
+    }
     let html = '<table><thead><tr><th>Timestamp</th><th>Action</th><th>Details</th><th>IP Address</th></tr></thead><tbody>';
     data.activities.forEach(activity => {
-      const actionIcon = { 'login': '🔐', 'logout': '🚪', 'view_stats': '📊', 'view_payouts': '💰', 'approve_payout': '✅', 'mark_paid': '💵', 'reverify_payout': '🔄', 'add_question': '➕', 'update_question': '✏️', 'delete_question': '🗑️', 'view_analytics': '📈' }[activity.action_type] || '📝';
-      html += `<tr><td>${new Date(activity.created_at).toLocaleString()}</td><td>${actionIcon} ${activity.action_type}</td><td><small>${JSON.stringify(activity.action_details || {})}</small></td><td><small>${activity.ip_address || 'N/A'}</small></td></tr>`;
+      const actionIcons = {
+        login: '🔐', logout: '🚪', view_stats: '📊', view_payouts: '💰',
+        approve_payout: '✅', mark_paid: '💵', reverify_payout: '🔄',
+        add_question: '➕', update_question: '✏️', delete_question: '🗑️',
+        view_analytics: '📈'
+      };
+      const icon = actionIcons[activity.action_type] || '📝';
+      html += `<tr><td>${new Date(activity.created_at).toLocaleString()}</td><td>${icon} ${activity.action_type}</td><td><small>${JSON.stringify(activity.action_details || {})}</small></td><td><small>${activity.ip_address || 'N/A'}</small></td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
-  } catch (error) { container.innerHTML = '<div class="empty-state"><p>Error loading activity log</p></div>'; }
+  } catch (error) {
+    container.innerHTML = '<div class="empty-state"><p>Error loading activity log</p></div>';
+  }
 }
 
 // UTILITIES
@@ -1313,6 +1794,8 @@ function switchTab(tab) {
   event.target.classList.add('active');
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`${tab}Tab`).classList.add('active');
+  
+  // Load data for tab if needed
   if (tab === 'analytics' && !charts.dailyGames) loadAnalytics();
   if (tab === 'payouts') loadPayouts();
   if (tab === 'users' && allUsers.length === 0) loadUsers();
@@ -1321,8 +1804,8 @@ function switchTab(tab) {
   if (tab === 'activity' && !document.getElementById('activityTableContainer').innerHTML.includes('table')) loadActivityLog();
 }
 
-function closeModal(modalId) { 
-  document.getElementById(modalId).classList.remove('show'); 
+function closeModal(modalId) {
+  document.getElementById(modalId).classList.remove('show');
 }
 
 function showAlert(message, type) {
@@ -1332,15 +1815,15 @@ function showAlert(message, type) {
   const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
   alert.innerHTML = `<span>${icon}</span><span>${message}</span>`;
   container.appendChild(alert);
-  setTimeout(() => { 
-    alert.style.animation = 'fadeOut 0.3s'; 
-    setTimeout(() => alert.remove(), 300); 
+  setTimeout(() => {
+    alert.style.animation = 'fadeOut 0.3s';
+    setTimeout(() => alert.remove(), 300);
   }, 5000);
 }
 
 // Auto-refresh stats every 30 seconds
-setInterval(() => { 
-  if (sessionToken) loadStats(); 
+setInterval(() => {
+  if (sessionToken) loadEnhancedStats();
 }, 30000);
 
 </script>
@@ -1348,12 +1831,6 @@ setInterval(() => {
 </body>
 </html>
 
-<!-- ========== COMPLETE FILE ENDS HERE ========== -->
-<!-- 
-ASSEMBLY ORDER:
-1. PART 1 (HTML head, CSS)
-2. PART 2 (HTML body structure)
-3. PART 3A (JavaScript section 1)
-4. PART 3B (JavaScript section 2 + closing tags) - THIS FILE
-
-The file is now complete and ready to use!
+<!-- ========================================== -->
+<!-- COMPLETE ADMIN DASHBOARD FILE ENDS HERE -->
+<!-- ========================================== -->
