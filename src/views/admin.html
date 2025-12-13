@@ -90,6 +90,24 @@
       75% { transform: translateX(10px); }
     }
 
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .tab-btn:hover { color: var(--primary); }
+    .tab-btn.active {
+      border-bottom-color: var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
     #dashboardPage { display: none; }
     #dashboardPage.active { display: block; }
 
@@ -479,6 +497,11 @@
 </head>
 <body>
 
+<!-- ========== PART 1 ENDS HERE ========== -->
+<!-- Copy everything above this line as PART 1 -->
+ <!-- ========== PART 2 STARTS HERE ========== -->
+<!-- Paste PART 1 first, then add this below it -->
+
 <!-- LOGIN PAGE -->
 <div id="loginPage">
   <div class="login-container">
@@ -486,21 +509,44 @@
     <h1>Admin Dashboard</h1>
     <p>What's Up Trivia - Akwa Ibom Edition</p>
     <div class="login-error" id="loginError"></div>
-    <form class="login-form" id="loginForm">
+    
+    <!-- Toggle Between Token and Username/Password -->
+    <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0;">
+      <button type="button" class="tab-btn active" id="tokenTab" onclick="switchLoginTab('token')">
+        Token Login
+      </button>
+      <button type="button" class="tab-btn" id="usernameTab" onclick="switchLoginTab('username')">
+        Username/Password
+      </button>
+    </div>
+
+    <!-- Token Login Form -->
+    <form class="login-form" id="tokenLoginForm" style="display: block;">
       <div class="form-group">
         <label>Admin Access Token</label>
         <input type="password" id="adminToken" placeholder="Enter admin token" required autofocus>
       </div>
-      <button type="submit" class="login-btn" id="loginBtn">🔐 Sign In</button>
+      <button type="submit" class="login-btn" id="tokenLoginBtn">🔐 Sign In</button>
     </form>
+
+    <!-- Username/Password Login Form -->
+    <form class="login-form" id="usernameLoginForm" style="display: none;">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="adminUsername" placeholder="Enter username" required>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="adminPassword" placeholder="Enter password" required>
+      </div>
+      <button type="submit" class="login-btn" id="usernameLoginBtn">🔐 Sign In</button>
+    </form>
+
     <p style="margin-top: 20px; font-size: 12px; color: #999;">
       Secure access only • All activity is logged
     </p>
   </div>
 </div>
-
-<!-- PART 1 ENDS HERE - CONTINUE TO PART 2 -->
- <!-- PART 2 STARTS HERE - THIS GOES AFTER PART 1 -->
 
 <!-- MAIN DASHBOARD -->
 <div id="dashboardPage">
@@ -772,8 +818,10 @@
   </div>
 </div>
 
-<!-- PART 2 ENDS HERE - CONTINUE TO PART 3 -->
- <!-- PART 3 STARTS HERE - THIS GOES AFTER PART 2 -->
+<!-- ========== PART 2 ENDS HERE ========== -->
+<!-- Continue to PART 3 for JavaScript -->
+ <!-- ========== PART 3A STARTS HERE ========== -->
+<!-- Paste PART 1, then PART 2, then add this below them -->
 
 <script>
 // State
@@ -784,6 +832,31 @@ let charts = {};
 
 // Initialize
 checkSession();
+
+// Switch between token and username/password login
+function switchLoginTab(tabType) {
+  const tokenTab = document.getElementById('tokenTab');
+  const usernameTab = document.getElementById('usernameTab');
+  const tokenForm = document.getElementById('tokenLoginForm');
+  const usernameForm = document.getElementById('usernameLoginForm');
+  const errorDiv = document.getElementById('loginError');
+  
+  errorDiv.classList.remove('show');
+  
+  if (tabType === 'token') {
+    tokenTab.classList.add('active');
+    usernameTab.classList.remove('active');
+    tokenForm.style.display = 'block';
+    usernameForm.style.display = 'none';
+    document.getElementById('adminToken').focus();
+  } else {
+    usernameTab.classList.add('active');
+    tokenTab.classList.remove('active');
+    usernameForm.style.display = 'block';
+    tokenForm.style.display = 'none';
+    document.getElementById('adminUsername').focus();
+  }
+}
 
 // AUTHENTICATION
 function checkSession() {
@@ -813,21 +886,27 @@ function showDashboard() {
   loadAnalytics();
 }
 
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
+// Token login form
+document.getElementById('tokenLoginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  
   const token = document.getElementById('adminToken').value;
-  const loginBtn = document.getElementById('loginBtn');
+  const loginBtn = document.getElementById('tokenLoginBtn');
   const errorDiv = document.getElementById('loginError');
+  
   loginBtn.disabled = true;
   loginBtn.textContent = '🔄 Signing in...';
   errorDiv.classList.remove('show');
+  
   try {
     const response = await fetch('/admin/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token })
     });
+    
     const result = await response.json();
+    
     if (result.success) {
       sessionToken = result.sessionToken;
       sessionExpiry = result.expiresAt;
@@ -848,6 +927,54 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   }
 });
 
+// Username/Password login form
+document.getElementById('usernameLoginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const username = document.getElementById('adminUsername').value;
+  const password = document.getElementById('adminPassword').value;
+  const loginBtn = document.getElementById('usernameLoginBtn');
+  const errorDiv = document.getElementById('loginError');
+  
+  loginBtn.disabled = true;
+  loginBtn.textContent = '🔄 Signing in...';
+  errorDiv.classList.remove('show');
+  
+  try {
+    const response = await fetch('/admin/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      sessionToken = result.sessionToken;
+      sessionExpiry = result.expiresAt;
+      localStorage.setItem('adminSessionToken', sessionToken);
+      localStorage.setItem('adminSessionExpiry', sessionExpiry);
+      
+      if (result.admin) {
+        localStorage.setItem('adminInfo', JSON.stringify(result.admin));
+      }
+      
+      showDashboard();
+      startSessionTimer();
+    } else {
+      errorDiv.textContent = '❌ ' + (result.error || 'Invalid credentials');
+      errorDiv.classList.add('show');
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    errorDiv.textContent = '❌ Login failed. Please try again.';
+    errorDiv.classList.add('show');
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = '🔐 Sign In';
+  }
+});
+
 async function logout() {
   if (!confirm('Are you sure you want to logout?')) return;
   try {
@@ -860,6 +987,7 @@ async function logout() {
   }
   localStorage.removeItem('adminSessionToken');
   localStorage.removeItem('adminSessionExpiry');
+  localStorage.removeItem('adminInfo');
   sessionToken = null;
   sessionExpiry = null;
   showLogin();
@@ -1087,6 +1215,11 @@ async function submitMarkPaid(event) {
   } catch (error) { showAlert('❌ Error processing request', 'error'); }
 }
 
+// ========== PART 3A ENDS HERE ==========
+// Continue to PART 3B -->
+//<!-- ========== PART 3B STARTS HERE (FINAL SECTION) ========== -->
+//<!-- Paste PART 1, PART 2, PART 3A, then add this below them -->
+
 // HISTORY
 async function loadHistory() {
   const container = document.getElementById('historyTableContainer');
@@ -1188,7 +1321,9 @@ function switchTab(tab) {
   if (tab === 'activity' && !document.getElementById('activityTableContainer').innerHTML.includes('table')) loadActivityLog();
 }
 
-function closeModal(modalId) { document.getElementById(modalId).classList.remove('show'); }
+function closeModal(modalId) { 
+  document.getElementById(modalId).classList.remove('show'); 
+}
 
 function showAlert(message, type) {
   const container = document.getElementById('alertContainer');
@@ -1197,14 +1332,28 @@ function showAlert(message, type) {
   const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
   alert.innerHTML = `<span>${icon}</span><span>${message}</span>`;
   container.appendChild(alert);
-  setTimeout(() => { alert.style.animation = 'fadeOut 0.3s'; setTimeout(() => alert.remove(), 300); }, 5000);
+  setTimeout(() => { 
+    alert.style.animation = 'fadeOut 0.3s'; 
+    setTimeout(() => alert.remove(), 300); 
+  }, 5000);
 }
 
 // Auto-refresh stats every 30 seconds
-setInterval(() => { if (sessionToken) loadStats(); }, 30000);
+setInterval(() => { 
+  if (sessionToken) loadStats(); 
+}, 30000);
+
 </script>
 
 </body>
 </html>
 
-<!-- PART 3 ENDS HERE - FILE IS NOW COMPLETE -->
+<!-- ========== COMPLETE FILE ENDS HERE ========== -->
+<!-- 
+ASSEMBLY ORDER:
+1. PART 1 (HTML head, CSS)
+2. PART 2 (HTML body structure)
+3. PART 3A (JavaScript section 1)
+4. PART 3B (JavaScript section 2 + closing tags) - THIS FILE
+
+The file is now complete and ready to use!

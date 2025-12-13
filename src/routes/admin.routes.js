@@ -52,20 +52,37 @@ router.get('/', (req, res) => {
   res.sendFile('admin.html', { root: './src/views' });
 });
 
-// Login endpoint
+// Login endpoint - supports BOTH token and username/password
 router.post('/api/login', async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, username, password } = req.body;
     const ipAddress = getIpAddress(req);
     const userAgent = req.headers['user-agent'];
 
-    const result = await adminAuthService.login(token, ipAddress, userAgent);
+    let result;
+
+    // Method 1: Token-based login (backward compatible)
+    if (token) {
+      result = await adminAuthService.loginWithToken(token, ipAddress, userAgent);
+    }
+    // Method 2: Username/Password login (new RBAC)
+    else if (username && password) {
+      result = await adminAuthService.login(username, password, ipAddress, userAgent);
+    }
+    // Neither provided
+    else {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Please provide either token or username/password' 
+      });
+    }
 
     if (result.success) {
       res.json({
         success: true,
         sessionToken: result.sessionToken,
-        expiresAt: result.expiresAt
+        expiresAt: result.expiresAt,
+        admin: result.admin // Include admin info for RBAC
       });
     } else {
       res.status(401).json({ success: false, error: result.error });
