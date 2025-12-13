@@ -1063,5 +1063,144 @@ router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch retention metrics' });
   }
 });
+// Add to your admin.analytics.routes.js file
+
+/**
+ * GET /admin/api/analytics/user-activity
+ * User activity metrics (DAU, retention, conversion)
+ */
+router.get('/user-activity', authenticateAdmin, async (req, res) => {
+  try {
+    // Daily Active Users (today)
+    const dauQuery = await pool.query(
+      `SELECT COUNT(DISTINCT user_id) as daily_active_users
+       FROM game_sessions
+       WHERE DATE(created_at) = CURRENT_DATE`
+    );
+    const dailyActiveUsers = parseInt(dauQuery.rows[0].daily_active_users) || 0;
+
+    // DAU Yesterday for comparison
+    const dauYesterdayQuery = await pool.query(
+      `SELECT COUNT(DISTINCT user_id) as dau_yesterday
+       FROM game_sessions
+       WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1 day'`
+    );
+    const dauYesterday = parseInt(dauYesterdayQuery.rows[0].dau_yesterday) || 0;
+    const dauChange = dauYesterday > 0 ? (((dailyActiveUsers - dauYesterday) / dauYesterday) * 100).toFixed(1) : 0;
+
+    // 7-Day Retention Rate
+    const retentionQuery = await pool.query(
+      `WITH cohort AS (
+         SELECT user_id, MIN(DATE(created_at)) as first_game_date
+         FROM game_sessions
+         WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
+         GROUP BY user_id
+       ),
+       returned AS (
+         SELECT c.user_id
+         FROM cohort c
+         JOIN game_sessions gs ON c.user_id = gs.user_id
+         WHERE c.first_game_date <= CURRENT_DATE - INTERVAL '7 days'
+         AND DATE(gs.created_at) >= c.first_game_date + INTERVAL '7 days'
+         AND DATE(gs.created_at) <= c.first_game_date + INTERVAL '14 days'
+         GROUP BY c.user_id
+       )
+       SELECT 
+         COUNT(DISTINCT c.user_id) as total_users,
+         COUNT(DISTINCT r.user_id) as returned_users
+       FROM cohort c
+       LEFT JOIN returned r ON c.user_id = r.user_id
+       WHERE c.first_game_date <= CURRENT_DATE - INTERVAL '7 days'`
+    );
+    
+    const totalUsers = parseInt(retentionQuery.rows[0].total_users) || 0;
+    const returnedUsers = parseInt(retentionQuery.rows[0].returned_users) || 0;
+    const retentionRate = totalUsers > 0 ? ((returnedUsers / totalUsers) * 100).toFixed(1) : 0;
+
+    // Conversion Rate (registered → won prize)
+    const conversionQuery = await pool.query(
+      `SELECT 
+         COUNT(DISTINCT u.id) as total_registered,
+         COUNT(DISTINCT CASE WHEN t.user_id IS NOT NULL THEN u.id END) as won_prize
+       FROM users u
+       LEFT JOIN transactions t ON u.id = t.user_id AND t.transaction_type = 'prize_won'
+       WHERE u.created_at >= CURRENT_DATE - INTERVAL '30 days'`
+    );
+    
+    const totalRegistered = parseInt(conversionQuery.rows[0].total_registered) || 0;
+    const wonPrize = parseInt(conversionQuery.rows[0].won_prize) || 0;
+    const conversionRate = totalRegistered > 0 ? ((wonPrize / totalRegistered) * 100).toFixed(1) : 0;
+
+    res.json({
+      daily_active_users: dailyActiveUsers,
+      dau_change: dauChange,
+      retention_rate: retentionRate,
+      retention_change: 0, // Can calculate vs previous week if needed
+      conversion_rate: conversionRate,
+      conversion_change: 0 // Can calculate vs previous period if needed
+    });
+
+  } catch (error) {
+    logger.error('Error fetching user activity metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch user activity metrics' });
+  }
+});
+
+/**
+ * GET /admin/api/analytics/lga-performance
+ * LGA performance rankings
+ */
+router.get('/lga-performance', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+         u.lga,
+         COUNT(DISTINCT u.id) as total_users,
+         COUNT(DISTINCT gs.id) as total_games,
+         COALESCE(SUM(t.amount), 0) as total_winnings
+       FROM users u
+       LEFT JOIN game_sessions gs ON u.id = gs.user_id
+       LEFT JOIN transactions t ON u.id = t.user_id AND t.transaction_type = 'prize_won'
+       WHERE u.lga IS NOT NULL AND u.lga != ''
+       GROUP BY u.lga
+       ORDER BY total_games DESC
+       LIMIT 20`
+    );
+
+    res.json(result.rows);
+
+  } catch (error) {
+    logger.error('Error fetching LGA performance:', error);
+    res.status(500).json({ error: 'Failed to fetch LGA performance' });
+  }
+});
+
+/**
+ * GET /admin/api/analytics/conversion-funnel
+ * User conversion funnel data
+ */
+router.get('/conversion-funnel', authenticateAdmin, async (req, res) => {
+  try {
+    const funnelQuery = await pool.query(
+      `SELECT 
+         COUNT(DISTINCT u.id) as total_registered,
+         COUNT(DISTINCT gs.user_id) as played_game,
+         COUNT(DISTINCT t1.user_id) as won_prize,
+         COUNT(DISTINCT t2.user_id) as claimed_payout
+       FROM users u
+       LEFT JOIN game_sessions gs ON u.id = gs.user_id
+       LEFT JOIN transactions t1 ON u.id = t1.user_id AND t1.transaction_type = 'prize_won'
+       LEFT JOIN transactions t2 ON u.id = t2.user_id 
+         AND t2.transaction_type = 'payout' 
+         AND t2.payout_status IN ('paid', 'confirmed')`
+    );
+
+    res.json(funnelQuery.rows[0]);
+
+  } catch (error) {
+    logger.error('Error fetching conversion funnel:', error);
+    res.status(500).json({ error: 'Failed to fetch conversion funnel' });
+  }
+});
 
 module.exports = router;
