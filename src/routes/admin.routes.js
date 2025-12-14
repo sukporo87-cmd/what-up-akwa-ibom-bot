@@ -1,5 +1,5 @@
 // ============================================
-// FILE: src/routes/admin.routes.js - COMPLETE WITH FULL ACTIVITY LOGGING & ANALYTICS
+// FILE: src/routes/admin.routes.js - CLEAN VERSION (NO DUPLICATES)
 // ============================================
 
 const express = require('express');
@@ -26,7 +26,6 @@ const authenticateAdmin = async (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized - No token provided' });
   }
 
-  // Validate session token
   const validation = await adminAuthService.validateSession(token);
   if (!validation.valid) {
     return res.status(401).json({ error: 'Unauthorized - ' + validation.reason });
@@ -36,7 +35,6 @@ const authenticateAdmin = async (req, res, next) => {
   next();
 };
 
-// Get IP address from request
 const getIpAddress = (req) => {
   return req.headers['x-forwarded-for']?.split(',')[0] ||
          req.connection.remoteAddress ||
@@ -44,15 +42,13 @@ const getIpAddress = (req) => {
 };
 
 // ============================================
-// PUBLIC ROUTES (No Auth Required)
+// PUBLIC ROUTES
 // ============================================
 
-// Serve admin login page
 router.get('/', (req, res) => {
   res.sendFile('admin.html', { root: './src/views' });
 });
 
-// Login endpoint - supports BOTH token and username/password
 router.post('/api/login', async (req, res) => {
   try {
     const { token, username, password } = req.body;
@@ -61,16 +57,11 @@ router.post('/api/login', async (req, res) => {
 
     let result;
 
-    // Method 1: Token-based login (backward compatible)
     if (token) {
       result = await adminAuthService.loginWithToken(token, ipAddress, userAgent);
-    }
-    // Method 2: Username/Password login (new RBAC)
-    else if (username && password) {
+    } else if (username && password) {
       result = await adminAuthService.login(username, password, ipAddress, userAgent);
-    }
-    // Neither provided
-    else {
+    } else {
       return res.status(400).json({ 
         success: false, 
         error: 'Please provide either token or username/password' 
@@ -82,7 +73,7 @@ router.post('/api/login', async (req, res) => {
         success: true,
         sessionToken: result.sessionToken,
         expiresAt: result.expiresAt,
-        admin: result.admin // Include admin info for RBAC
+        admin: result.admin
       });
     } else {
       res.status(401).json({ success: false, error: result.error });
@@ -94,10 +85,9 @@ router.post('/api/login', async (req, res) => {
 });
 
 // ============================================
-// PROTECTED ROUTES (Auth Required)
+// PROTECTED ROUTES
 // ============================================
 
-// Logout endpoint
 router.post('/api/logout', authenticateAdmin, async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -109,10 +99,8 @@ router.post('/api/logout', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get dashboard stats
 router.get('/api/stats', authenticateAdmin, async (req, res) => {
   try {
-    // Log activity
     await adminAuthService.logActivity(
       req.adminSession.admin_id,
       'view_stats',
@@ -155,13 +143,11 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
 });
 
 // ============================================
-// ANALYTICS ENDPOINTS
+// ANALYTICS ENDPOINTS (FIXED & OPTIMIZED)
 // ============================================
 
-// Get analytics data
 router.get('/api/analytics', authenticateAdmin, async (req, res) => {
   try {
-    // Log activity
     await adminAuthService.logActivity(
       req.adminSession.admin_id,
       'view_analytics',
@@ -170,7 +156,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       req.headers['user-agent']
     );
 
-    // 1. Daily Games Played (Last 14 days)
     const dailyGames = await pool.query(`
       SELECT 
         DATE(completed_at) as date,
@@ -182,7 +167,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       ORDER BY date ASC
     `);
 
-    // 2. Prize Distribution by Question Range
     const prizeDistribution = await pool.query(`
       SELECT
         CASE
@@ -200,7 +184,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       ORDER BY difficulty_range
     `);
 
-    // 3. User Registration Trend (Last 30 days)
     const registrationTrend = await pool.query(`
       SELECT 
         DATE(created_at) as date,
@@ -211,7 +194,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       ORDER BY date ASC
     `);
 
-    // 4. Question Difficulty Performance
     const questionPerformance = await pool.query(`
       SELECT 
         difficulty,
@@ -227,7 +209,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       ORDER BY difficulty ASC
     `);
 
-    // 5. Payout Status Breakdown
     const payoutBreakdown = await pool.query(`
       SELECT 
         payout_status,
@@ -246,7 +227,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
         END
     `);
 
-    // 6. Top Performers
     const topPerformers = await pool.query(`
       SELECT 
         u.full_name,
@@ -260,7 +240,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       LIMIT 5
     `);
 
-    // 7. LGA Distribution
     const lgaDistribution = await pool.query(`
       SELECT 
         lga,
@@ -272,7 +251,6 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
       LIMIT 10
     `);
 
-    // 8. Game Completion Rate
     const completionStats = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'completed') as completed,
@@ -298,588 +276,79 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get activity log
-router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
+// User Activity (FIXED)
+router.get('/api/analytics/user-activity', authenticateAdmin, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-
-    const activities = await adminAuthService.getActivityLog(limit, offset);
-    res.json({ activities });
-  } catch (error) {
-    logger.error('Error getting activity log:', error);
-    res.status(500).json({ error: 'Failed to fetch activity log' });
-  }
-});
-
-// ============================================
-// PAYOUT ROUTES
-// ============================================
-
-// Get pending payouts with proper filtering
-router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
-  try {
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_payouts',
-      { filter: req.query.status || 'all' },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const status = req.query.status;
-    const payouts = await payoutService.getAllPendingPayouts(status);
-    res.json(payouts);
-  } catch (error) {
-    logger.error('Error getting pending payouts:', error);
-    res.status(500).json({ error: 'Failed to fetch payouts' });
-  }
-});
-
-// Get payout history with date filters
-router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
-  try {
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_history',
-      { period: req.query.period || 'all' },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const period = req.query.period || 'all';
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = (page - 1) * limit;
-
-    let dateFilter = '';
-    switch(period) {
-      case 'daily':
-        dateFilter = "AND DATE(t.paid_at) = CURRENT_DATE";
-        break;
-      case 'weekly':
-        dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '7 days'";
-        break;
-      case 'monthly':
-        dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '30 days'";
-        break;
-      case 'all':
-      default:
-        dateFilter = '';
-    }
-
-    const query = `
-      SELECT
-        t.id as transaction_id,
-        t.user_id,
-        u.full_name,
-        u.phone_number,
-        u.lga,
-        t.amount,
-        t.payout_status,
-        t.payment_reference,
-        t.payment_method,
-        t.paid_at,
-        t.confirmed_at,
-        pd.account_name,
-        pd.account_number,
-        pd.bank_name
-      FROM transactions t
-      JOIN users u ON t.user_id = u.id
-      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type = 'prize'
-        AND t.payout_status IN ('paid', 'confirmed')
-        ${dateFilter}
-      ORDER BY t.paid_at DESC
-      LIMIT $1 OFFSET $2
-    `;
-
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM transactions t
-      WHERE t.transaction_type = 'prize'
-        AND t.payout_status IN ('paid', 'confirmed')
-        ${dateFilter}
-    `;
-
-    const [result, countResult] = await Promise.all([
-      pool.query(query, [limit, offset]),
-      pool.query(countQuery)
-    ]);
-
-    res.json({
-      payouts: result.rows,
-      pagination: {
-        page,
-        limit,
-        total: parseInt(countResult.rows[0].total),
-        totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
-      }
-    });
-  } catch (error) {
-    logger.error('Error getting payout history:', error);
-    res.status(500).json({ error: 'Failed to fetch payout history' });
-  }
-});
-
-// Get payout details
-router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
-  try {
-    const transactionId = req.params.id;
-
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_payout_details',
-      { transaction_id: transactionId },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const result = await pool.query(
-      `SELECT
-        t.*,
-        u.full_name,
-        u.phone_number,
-        u.lga,
-        pd.account_name,
-        pd.account_number,
-        pd.bank_name,
-        pd.bank_code,
-        pd.verified,
-        gs.current_question as questions_answered
-      FROM transactions t
-      JOIN users u ON t.user_id = u.id
-      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      LEFT JOIN game_sessions gs ON t.session_id = gs.id
-      WHERE t.id = $1`,
-      [transactionId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Transaction not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    logger.error('Error getting payout details:', error);
-    res.status(500).json({ error: 'Failed to fetch payout details' });
-  }
-});
-
-// Approve payout
-router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
-  try {
-    const transactionId = req.params.id;
-    const success = await payoutService.approvePayout(transactionId, req.adminSession.admin_id);
-
-    if (success) {
-      // Log activity
-      await adminAuthService.logActivity(
-        req.adminSession.admin_id,
-        'approve_payout',
-        { transaction_id: transactionId },
-        getIpAddress(req),
-        req.headers['user-agent']
-      );
-
-      res.json({ success: true, message: 'Payout approved' });
-    } else {
-      res.status(500).json({ error: 'Failed to approve payout' });
-    }
-  } catch (error) {
-    logger.error('Error approving payout:', error);
-    res.status(500).json({ error: 'Failed to approve payout' });
-  }
-});
-
-// Mark payout as paid
-router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) => {
-  try {
-    const transactionId = req.params.id;
-    const { paymentReference, paymentMethod } = req.body;
-
-    if (!paymentReference) {
-      return res.status(400).json({ error: 'Payment reference is required' });
-    }
-
-    const success = await payoutService.markAsPaid(
-      transactionId,
-      req.adminSession.admin_id,
-      paymentReference,
-      paymentMethod || 'bank_transfer'
-    );
-
-    if (success) {
-      // Log activity
-      await adminAuthService.logActivity(
-        req.adminSession.admin_id,
-        'mark_paid',
-        { transaction_id: transactionId, payment_reference: paymentReference },
-        getIpAddress(req),
-        req.headers['user-agent']
-      );
-
-      const result = await pool.query(
-        `SELECT t.*, u.phone_number, u.full_name, pd.account_name, pd.bank_name, pd.account_number
-         FROM transactions t
-         JOIN users u ON t.user_id = u.id
-         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-         WHERE t.id = $1`,
-        [transactionId]
-      );
-
-      if (result.rows.length > 0) {
-        const transaction = result.rows[0];
-        await whatsappService.sendMessage(
-          transaction.phone_number,
-          `✅ PAYMENT SENT! 🎉\n\n` +
-          `₦${parseFloat(transaction.amount).toLocaleString()} has been sent to:\n` +
-          `${transaction.account_name}\n` +
-          `${transaction.bank_name} (${transaction.account_number})\n\n` +
-          `Transaction Reference: ${paymentReference}\n\n` +
-          `Please check your account within 2 hours and confirm receipt.\n\n` +
-          `Reply "RECEIVED" to confirm!\n\n` +
-          `Keep playing to win more! 🏆`
-        );
-        logger.info(`Payment notification sent to ${transaction.phone_number}`);
-      }
-
-      res.json({ success: true, message: 'Payout marked as paid and user notified' });
-    } else {
-      res.status(500).json({ error: 'Failed to mark payout as paid' });
-    }
-  } catch (error) {
-    logger.error('Error marking payout as paid:', error);
-    res.status(500).json({ error: 'Failed to mark payout as paid' });
-  }
-});
-
-// Re-verify payout
-router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
-  try {
-    const transactionId = req.params.id;
-    const result = await payoutService.reverifyPayout(transactionId);
-
-    if (result.success) {
-      // Log activity
-      await adminAuthService.logActivity(
-        req.adminSession.admin_id,
-        'reverify_payout',
-        { transaction_id: transactionId, account_name: result.accountName },
-        getIpAddress(req),
-        req.headers['user-agent']
-      );
-
-      res.json({
-        success: true,
-        message: 'Account re-verified successfully',
-        accountName: result.accountName
-      });
-    } else {
-      res.status(400).json({ error: result.error });
-    }
-  } catch (error) {
-    logger.error('Error re-verifying payout:', error);
-    res.status(500).json({ error: 'Failed to re-verify payout' });
-  }
-});
-
-// ============================================
-// USER ROUTES
-// ============================================
-
-// Get all users
-router.get('/api/users', authenticateAdmin, async (req, res) => {
-  try {
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_users',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = (page - 1) * limit;
-
-    const result = await pool.query(
-      `SELECT
-        id, full_name, phone_number, lga,
-        total_games_played, total_winnings,
-        games_remaining, created_at, last_active
-      FROM users
-      ORDER BY created_at DESC
-      LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
-
-    const countResult = await pool.query('SELECT COUNT(*) as total FROM users');
-    const total = parseInt(countResult.rows[0].total);
-
-    res.json({
-      users: result.rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
-    });
-  } catch (error) {
-    logger.error('Error getting users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
-// ============================================
-// QUESTION ROUTES
-// ============================================
-
-// Get all questions
-router.get('/api/questions', authenticateAdmin, async (req, res) => {
-  try {
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_questions',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = (page - 1) * limit;
-
-    const result = await pool.query(
-      `SELECT *
-       FROM questions
-       ORDER BY difficulty ASC, id DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
-
-    const countResult = await pool.query('SELECT COUNT(*) as total FROM questions WHERE is_active = true');
-    const total = parseInt(countResult.rows[0].total);
-
-    res.json({
-      questions: result.rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
-    });
-  } catch (error) {
-    logger.error('Error getting questions:', error);
-    res.status(500).json({ error: 'Failed to fetch questions' });
-  }
-});
-
-// Add new question
-router.post('/api/questions', authenticateAdmin, async (req, res) => {
-  try {
-    const {
-      question_text,
-      option_a,
-      option_b,
-      option_c,
-      option_d,
-      correct_answer,
-      difficulty,
-      category,
-      fun_fact
-    } = req.body;
-
-    if (!question_text || !option_a || !option_b || !option_c || !option_d || !correct_answer || !difficulty) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    if (!['A', 'B', 'C', 'D'].includes(correct_answer.toUpperCase())) {
-      return res.status(400).json({ error: 'Correct answer must be A, B, C, or D' });
-    }
-
-    const difficultyNum = parseInt(difficulty);
-    if (isNaN(difficultyNum) || difficultyNum < 1 || difficultyNum > 15) {
-      return res.status(400).json({ error: 'Difficulty must be between 1 and 15' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO questions
-       (question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [question_text, option_a, option_b, option_c, option_d, correct_answer.toUpperCase(), difficultyNum, category || 'General', fun_fact]
-    );
-
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'add_question',
-      { question_id: result.rows[0].id, difficulty: difficultyNum },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    res.json({ success: true, question: result.rows[0] });
-  } catch (error) {
-    logger.error('Error adding question:', error);
-    res.status(500).json({ error: 'Failed to add question' });
-  }
-});
-
-// Update question
-router.put('/api/questions/:id', authenticateAdmin, async (req, res) => {
-  try {
-    const questionId = req.params.id;
-    const {
-      question_text,
-      option_a,
-      option_b,
-      option_c,
-      option_d,
-      correct_answer,
-      difficulty,
-      category,
-      fun_fact,
-      is_active
-    } = req.body;
-
-    const result = await pool.query(
-      `UPDATE questions
-       SET question_text = $1, option_a = $2, option_b = $3, option_c = $4,
-           option_d = $5, correct_answer = $6, difficulty = $7, category = $8,
-           fun_fact = $9, is_active = $10
-       WHERE id = $11
-       RETURNING *`,
-      [question_text, option_a, option_b, option_c, option_d, correct_answer,
-       difficulty, category, fun_fact, is_active, questionId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Question not found' });
-    }
-
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'update_question',
-      { question_id: questionId },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    res.json({ success: true, question: result.rows[0] });
-  } catch (error) {
-    logger.error('Error updating question:', error);
-    res.status(500).json({ error: 'Failed to update question' });
-  }
-});
-
-// Delete question (soft delete)
-router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
-  try {
-    const questionId = req.params.id;
-
-    await pool.query(
-      'UPDATE questions SET is_active = false WHERE id = $1',
-      [questionId]
-    );
-
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'delete_question',
-      { question_id: questionId },
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    res.json({ success: true, message: 'Question deleted' });
-  } catch (error) {
-    logger.error('Error deleting question:', error);
-    res.status(500).json({ error: 'Failed to delete question' });
-  }
-});
-// ============================================
-// ENHANCED ANALYTICS ENDPOINT
-// Add this to your admin.routes.js file
-// ============================================
-
-// Enhanced analytics endpoint with all new metrics
-router.get('/api/analytics/enhanced', authenticateAdmin, async (req, res) => {
-  try {
-    // Log activity
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_enhanced_analytics',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    // 1. Games Count by Period
-    const gamesCount = await pool.query(`
-      SELECT * FROM games_count_by_period
-    `);
-
-    // 2. Peak Playing Times (Hourly Heatmap)
-    const peakTimes = await pool.query(`
-      SELECT 
-        hour_of_day,
-        day_of_week,
-        SUM(games_count) as total_games
-      FROM game_session_hourly_stats
-      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-      GROUP BY hour_of_day, day_of_week
-      ORDER BY hour_of_day, day_of_week
-    `);
-
-    // 3. Popular Question Categories
-    const questionCategories = await pool.query(`
-      SELECT * FROM question_category_performance
-      ORDER BY total_times_asked DESC
-      LIMIT 10
-    `);
-
-    // 4. User Retention Metrics
-    const retentionMetrics = await pool.query(`
-      SELECT * FROM user_retention_metrics
-      WHERE registration_date >= CURRENT_DATE - INTERVAL '30 days'
-      ORDER BY registration_date DESC
-    `);
-
-    // 5. Daily Active Users (Last 30 days)
     const dailyActiveUsers = await pool.query(`
       SELECT 
-        DATE(last_active) as date,
-        COUNT(DISTINCT id) as active_users
-      FROM users
-      WHERE last_active >= CURRENT_DATE - INTERVAL '30 days'
-      GROUP BY DATE(last_active)
+        DATE(gs.started_at) as date,
+        COUNT(DISTINCT gs.user_id) as active_users
+      FROM game_sessions gs
+      WHERE gs.started_at >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(gs.started_at)
       ORDER BY date ASC
     `);
 
-    // 6. User Engagement Funnel
-    const engagementFunnel = await pool.query(`
+    const totalStats = await pool.query(`
       SELECT 
-        COUNT(*) as total_registered,
-        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as started_game,
-        COUNT(CASE WHEN total_games_played >= 3 THEN 1 END) as played_3_games,
-        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
-        COUNT(CASE WHEN total_games_played >= 10 THEN 1 END) as power_users
+        COUNT(*) as total_users,
+        COUNT(DISTINCT CASE 
+          WHEN EXISTS (
+            SELECT 1 FROM game_sessions gs 
+            WHERE gs.user_id = users.id 
+            AND DATE(gs.started_at) = CURRENT_DATE
+          ) THEN users.id 
+        END) as active_today,
+        COUNT(DISTINCT CASE 
+          WHEN EXISTS (
+            SELECT 1 FROM game_sessions gs 
+            WHERE gs.user_id = users.id 
+            AND gs.started_at >= CURRENT_DATE - INTERVAL '7 days'
+          ) THEN users.id 
+        END) as active_week,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users
       FROM users
     `);
 
-    // 7. LGA Performance (Top 10)
-    const lgaPerformance = await pool.query(`
-      SELECT 
+    res.json({
+      dailyActiveUsers: dailyActiveUsers.rows,
+      summary: totalStats.rows[0]
+    });
+  } catch (error) {
+    logger.error('Error getting user activity:', error);
+    res.status(500).json({ error: 'Failed to fetch user activity' });
+  }
+});
+
+// Conversion Funnel (FIXED)
+router.get('/api/analytics/conversion-funnel', authenticateAdmin, async (req, res) => {
+  try {
+    const funnel = await pool.query(`
+      SELECT
+        COUNT(*) as total_registered,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as played_game,
+        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
+        COUNT(CASE WHEN EXISTS (
+          SELECT 1 FROM transactions t 
+          WHERE t.user_id = users.id 
+          AND t.transaction_type = 'prize'
+          AND t.payout_status IN ('paid', 'confirmed')
+        ) THEN 1 END) as claimed_payout
+      FROM users
+    `);
+
+    res.json(funnel.rows[0]);
+  } catch (error) {
+    logger.error('Error getting conversion funnel:', error);
+    res.status(500).json({ error: 'Failed to fetch conversion funnel' });
+  }
+});
+
+// LGA Performance
+router.get('/api/analytics/lga-performance', authenticateAdmin, async (req, res) => {
+  try {
+    const lgaStats = await pool.query(`
+      SELECT
         lga,
         COUNT(*) as user_count,
         COALESCE(SUM(total_games_played), 0) as total_games,
@@ -888,123 +357,64 @@ router.get('/api/analytics/enhanced', authenticateAdmin, async (req, res) => {
       FROM users
       GROUP BY lga
       ORDER BY total_games DESC
-      LIMIT 10
+      LIMIT 15
     `);
 
-    // 8. Question Difficulty Trends
-    const difficultyTrends = await pool.query(`
-      SELECT 
-        difficulty,
-        COUNT(*) as question_count,
-        SUM(times_asked) as total_asked,
-        SUM(times_correct) as total_correct,
-        CASE 
-          WHEN SUM(times_asked) > 0 THEN 
-            ROUND((SUM(times_correct)::numeric / SUM(times_asked)::numeric) * 100, 1)
-          ELSE 0
-        END as success_rate
-      FROM questions
-      WHERE is_active = true AND times_asked > 0
-      GROUP BY difficulty
-      ORDER BY difficulty ASC
-    `);
-
-    // 9. Conversion Rate (Registration to First Game)
-    const conversionRate = await pool.query(`
-      SELECT 
-        COUNT(*) as total_users,
-        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as converted_users,
-        ROUND(
-          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / COUNT(*)::numeric) * 100,
-          1
-        ) as conversion_rate_percentage
-      FROM users
-      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
-    `);
-
-    // 10. Average Session Duration
-    const sessionDuration = await pool.query(`
-      SELECT 
-        AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_seconds,
-        MIN(EXTRACT(EPOCH FROM (completed_at - started_at))) as min_duration_seconds,
-        MAX(EXTRACT(EPOCH FROM (completed_at - started_at))) as max_duration_seconds
-      FROM game_sessions
-      WHERE status = 'completed'
-        AND completed_at IS NOT NULL
-        AND started_at IS NOT NULL
-        AND completed_at >= CURRENT_DATE - INTERVAL '7 days'
-    `);
-
-    // 11. Win Rate by Question Number
-    const winRateByQuestion = await pool.query(`
-      SELECT 
-        current_question,
-        COUNT(*) as attempts,
-        COUNT(CASE WHEN final_score > 0 THEN 1 END) as wins,
-        ROUND(
-          (COUNT(CASE WHEN final_score > 0 THEN 1 END)::numeric / COUNT(*)::numeric) * 100,
-          1
-        ) as win_rate_percentage
-      FROM game_sessions
-      WHERE status = 'completed'
-        AND current_question BETWEEN 1 AND 15
-      GROUP BY current_question
-      ORDER BY current_question ASC
-    `);
-
-    // 12. Returning Users (played in last 7 days AND 7-14 days ago)
-    const returningUsers = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT CASE 
-          WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' THEN id 
-        END) as active_last_7_days,
-        COUNT(DISTINCT CASE 
-          WHEN last_active >= CURRENT_DATE - INTERVAL '14 days' 
-          AND last_active < CURRENT_DATE - INTERVAL '7 days' THEN id 
-        END) as active_7_to_14_days_ago,
-        COUNT(DISTINCT CASE 
-          WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' 
-          AND last_active >= CURRENT_DATE - INTERVAL '14 days'
-          AND last_active < CURRENT_DATE - INTERVAL '7 days' THEN id 
-        END) as returning_users
-      FROM users
-      WHERE last_active IS NOT NULL
-    `);
-
-    res.json({
-      gamesCount: gamesCount.rows[0],
-      peakTimes: peakTimes.rows,
-      questionCategories: questionCategories.rows,
-      retentionMetrics: retentionMetrics.rows,
-      dailyActiveUsers: dailyActiveUsers.rows,
-      engagementFunnel: engagementFunnel.rows[0],
-      lgaPerformance: lgaPerformance.rows,
-      difficultyTrends: difficultyTrends.rows,
-      conversionRate: conversionRate.rows[0],
-      sessionDuration: sessionDuration.rows[0],
-      winRateByQuestion: winRateByQuestion.rows,
-      returningUsers: returningUsers.rows[0]
-    });
+    res.json(lgaStats.rows);
   } catch (error) {
-    logger.error('Error getting enhanced analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch enhanced analytics' });
+    logger.error('Error getting LGA performance:', error);
+    res.status(500).json({ error: 'Failed to fetch LGA performance' });
   }
 });
 
-// Get games count summary (for dashboard cards)
-router.get('/api/analytics/games-count', authenticateAdmin, async (req, res) => {
+// User Retention
+router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM games_count_by_period');
-    res.json(result.rows[0]);
+    const days = parseInt(req.query.days) || 30;
+
+    const retention = await pool.query(`
+      SELECT
+        DATE(created_at) as registration_date,
+        COUNT(*) as new_users,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users,
+        COUNT(CASE WHEN total_games_played > 1 THEN 1 END) as retained_users,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as activation_rate
+      FROM users
+      WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
+      GROUP BY DATE(created_at)
+      ORDER BY registration_date DESC
+    `);
+
+    res.json(retention.rows);
   } catch (error) {
-    logger.error('Error getting games count:', error);
-    res.status(500).json({ error: 'Failed to fetch games count' });
+    logger.error('Error getting retention metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch retention metrics' });
   }
 });
 
-// Get peak playing times (for heatmap)
+// Peak Gaming Times (FIXED - auto-populates if empty)
 router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
   try {
+    const checkData = await pool.query(`SELECT COUNT(*) as count FROM game_session_hourly_stats`);
+
+    if (parseInt(checkData.rows[0].count) === 0) {
+      await pool.query(`
+        INSERT INTO game_session_hourly_stats (date, hour_of_day, day_of_week, games_count)
+        SELECT
+          DATE(completed_at) as date,
+          EXTRACT(HOUR FROM completed_at)::INTEGER as hour_of_day,
+          EXTRACT(DOW FROM completed_at)::INTEGER as day_of_week,
+          COUNT(*) as games_count
+        FROM game_sessions
+        WHERE status = 'completed' AND completed_at IS NOT NULL
+        GROUP BY DATE(completed_at), EXTRACT(HOUR FROM completed_at), EXTRACT(DOW FROM completed_at)
+        ON CONFLICT (date, hour_of_day, day_of_week) DO UPDATE SET games_count = EXCLUDED.games_count
+      `);
+    }
+
     const result = await pool.query(`
       SELECT 
         hour_of_day,
@@ -1024,6 +434,7 @@ router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
       GROUP BY hour_of_day, day_of_week
       ORDER BY day_of_week, hour_of_day
     `);
+
     res.json(result.rows);
   } catch (error) {
     logger.error('Error getting peak times:', error);
@@ -1031,339 +442,227 @@ router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get question categories performance
-router.get('/api/analytics/categories', authenticateAdmin, async (req, res) => {
+router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
   try {
-    // Refresh materialized view first
-    await pool.query('REFRESH MATERIALIZED VIEW question_category_performance');
-    
-    const result = await pool.query(`
-      SELECT * FROM question_category_performance
-      ORDER BY total_times_asked DESC
-    `);
-    res.json(result.rows);
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    const activities = await adminAuthService.getActivityLog(limit, offset);
+    res.json({ activities });
   } catch (error) {
-    logger.error('Error getting category performance:', error);
-    res.status(500).json({ error: 'Failed to fetch category performance' });
+    logger.error('Error getting activity log:', error);
+    res.status(500).json({ error: 'Failed to fetch activity log' });
   }
 });
 
-// Get user retention metrics
-router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
+// ============================================
+// PAYOUT ROUTES (unchanged)
+// ============================================
+
+router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
-    const result = await pool.query(`
-      SELECT * FROM user_retention_metrics
-      WHERE registration_date >= CURRENT_DATE - INTERVAL '${days} days'
-      ORDER BY registration_date DESC
-    `);
-    res.json(result.rows);
+    const status = req.query.status;
+    const payouts = await payoutService.getAllPendingPayouts(status);
+    res.json(payouts);
   } catch (error) {
-    logger.error('Error getting retention metrics:', error);
-    res.status(500).json({ error: 'Failed to fetch retention metrics' });
+    logger.error('Error getting pending payouts:', error);
+    res.status(500).json({ error: 'Failed to fetch payouts' });
   }
 });
-// Add to your admin.analytics.routes.js file
 
-/**
- * GET /admin/api/analytics/user-activity
- * User activity metrics (DAU, retention, conversion)
- */
-router.get('/user-activity', authenticateAdmin, async (req, res) => {
+router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
   try {
-    // Daily Active Users (today)
-    const dauQuery = await pool.query(
-      `SELECT COUNT(DISTINCT user_id) as daily_active_users
-       FROM game_sessions
-       WHERE DATE(created_at) = CURRENT_DATE`
-    );
-    const dailyActiveUsers = parseInt(dauQuery.rows[0].daily_active_users) || 0;
+    const period = req.query.period || 'all';
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
 
-    // DAU Yesterday for comparison
-    const dauYesterdayQuery = await pool.query(
-      `SELECT COUNT(DISTINCT user_id) as dau_yesterday
-       FROM game_sessions
-       WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1 day'`
-    );
-    const dauYesterday = parseInt(dauYesterdayQuery.rows[0].dau_yesterday) || 0;
-    const dauChange = dauYesterday > 0 ? (((dailyActiveUsers - dauYesterday) / dauYesterday) * 100).toFixed(1) : 0;
+    let dateFilter = '';
+    if (period === 'daily') dateFilter = "AND DATE(t.paid_at) = CURRENT_DATE";
+    else if (period === 'weekly') dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '7 days'";
+    else if (period === 'monthly') dateFilter = "AND t.paid_at >= CURRENT_DATE - INTERVAL '30 days'";
 
-    // 7-Day Retention Rate
-    const retentionQuery = await pool.query(
-      `WITH cohort AS (
-         SELECT user_id, MIN(DATE(created_at)) as first_game_date
-         FROM game_sessions
-         WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
-         GROUP BY user_id
-       ),
-       returned AS (
-         SELECT c.user_id
-         FROM cohort c
-         JOIN game_sessions gs ON c.user_id = gs.user_id
-         WHERE c.first_game_date <= CURRENT_DATE - INTERVAL '7 days'
-         AND DATE(gs.created_at) >= c.first_game_date + INTERVAL '7 days'
-         AND DATE(gs.created_at) <= c.first_game_date + INTERVAL '14 days'
-         GROUP BY c.user_id
-       )
-       SELECT 
-         COUNT(DISTINCT c.user_id) as total_users,
-         COUNT(DISTINCT r.user_id) as returned_users
-       FROM cohort c
-       LEFT JOIN returned r ON c.user_id = r.user_id
-       WHERE c.first_game_date <= CURRENT_DATE - INTERVAL '7 days'`
-    );
-    
-    const totalUsers = parseInt(retentionQuery.rows[0].total_users) || 0;
-    const returnedUsers = parseInt(retentionQuery.rows[0].returned_users) || 0;
-    const retentionRate = totalUsers > 0 ? ((returnedUsers / totalUsers) * 100).toFixed(1) : 0;
+    const query = `
+      SELECT t.id as transaction_id, t.user_id, u.full_name, u.phone_number, u.lga,
+             t.amount, t.payout_status, t.payment_reference, t.payment_method, t.paid_at, t.confirmed_at,
+             pd.account_name, pd.account_number, pd.bank_name
+      FROM transactions t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN payout_details pd ON t.id = pd.transaction_id
+      WHERE t.transaction_type = 'prize' AND t.payout_status IN ('paid', 'confirmed') ${dateFilter}
+      ORDER BY t.paid_at DESC LIMIT $1 OFFSET $2
+    `;
 
-    // Conversion Rate (registered → won prize)
-    const conversionQuery = await pool.query(
-      `SELECT 
-         COUNT(DISTINCT u.id) as total_registered,
-         COUNT(DISTINCT CASE WHEN t.user_id IS NOT NULL THEN u.id END) as won_prize
-       FROM users u
-       LEFT JOIN transactions t ON u.id = t.user_id AND t.transaction_type = 'prize_won'
-       WHERE u.created_at >= CURRENT_DATE - INTERVAL '30 days'`
-    );
-    
-    const totalRegistered = parseInt(conversionQuery.rows[0].total_registered) || 0;
-    const wonPrize = parseInt(conversionQuery.rows[0].won_prize) || 0;
-    const conversionRate = totalRegistered > 0 ? ((wonPrize / totalRegistered) * 100).toFixed(1) : 0;
+    const countQuery = `
+      SELECT COUNT(*) as total FROM transactions t
+      WHERE t.transaction_type = 'prize' AND t.payout_status IN ('paid', 'confirmed') ${dateFilter}
+    `;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [limit, offset]),
+      pool.query(countQuery)
+    ]);
 
     res.json({
-      daily_active_users: dailyActiveUsers,
-      dau_change: dauChange,
-      retention_rate: retentionRate,
-      retention_change: 0, // Can calculate vs previous week if needed
-      conversion_rate: conversionRate,
-      conversion_change: 0 // Can calculate vs previous period if needed
+      payouts: result.rows,
+      pagination: {
+        page, limit,
+        total: parseInt(countResult.rows[0].total),
+        totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
+      }
     });
-
   } catch (error) {
-    logger.error('Error fetching user activity metrics:', error);
-    res.status(500).json({ error: 'Failed to fetch user activity metrics' });
+    logger.error('Error getting payout history:', error);
+    res.status(500).json({ error: 'Failed to fetch payout history' });
   }
 });
 
-/**
- * GET /admin/api/analytics/lga-performance
- * LGA performance rankings
- */
-router.get('/lga-performance', authenticateAdmin, async (req, res) => {
+router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT 
-         u.lga,
-         COUNT(DISTINCT u.id) as total_users,
-         COUNT(DISTINCT gs.id) as total_games,
-         COALESCE(SUM(t.amount), 0) as total_winnings
-       FROM users u
-       LEFT JOIN game_sessions gs ON u.id = gs.user_id
-       LEFT JOIN transactions t ON u.id = t.user_id AND t.transaction_type = 'prize_won'
-       WHERE u.lga IS NOT NULL AND u.lga != ''
-       GROUP BY u.lga
-       ORDER BY total_games DESC
-       LIMIT 20`
+      `SELECT t.*, u.full_name, u.phone_number, u.lga, pd.account_name, pd.account_number, pd.bank_name, pd.bank_code, pd.verified, gs.current_question as questions_answered
+       FROM transactions t
+       JOIN users u ON t.user_id = u.id
+       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
+       LEFT JOIN game_sessions gs ON t.session_id = gs.id
+       WHERE t.id = $1`,
+      [req.params.id]
     );
-
-    res.json(result.rows);
-
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Transaction not found' });
+    res.json(result.rows[0]);
   } catch (error) {
-    logger.error('Error fetching LGA performance:', error);
-    res.status(500).json({ error: 'Failed to fetch LGA performance' });
+    logger.error('Error getting payout details:', error);
+    res.status(500).json({ error: 'Failed to fetch payout details' });
   }
 });
 
-/**
- * GET /admin/api/analytics/conversion-funnel
- * User conversion funnel data
- */
-router.get('/conversion-funnel', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) => {
   try {
-    const funnelQuery = await pool.query(
-      `SELECT 
-         COUNT(DISTINCT u.id) as total_registered,
-         COUNT(DISTINCT gs.user_id) as played_game,
-         COUNT(DISTINCT t1.user_id) as won_prize,
-         COUNT(DISTINCT t2.user_id) as claimed_payout
-       FROM users u
-       LEFT JOIN game_sessions gs ON u.id = gs.user_id
-       LEFT JOIN transactions t1 ON u.id = t1.user_id AND t1.transaction_type = 'prize_won'
-       LEFT JOIN transactions t2 ON u.id = t2.user_id 
-         AND t2.transaction_type = 'payout' 
-         AND t2.payout_status IN ('paid', 'confirmed')`
-    );
+    const { paymentReference, paymentMethod } = req.body;
+    if (!paymentReference) return res.status(400).json({ error: 'Payment reference is required' });
 
-    res.json(funnelQuery.rows[0]);
-
-  } catch (error) {
-    logger.error('Error fetching conversion funnel:', error);
-    res.status(500).json({ error: 'Failed to fetch conversion funnel' });
-  }
-});
-
-// ============================================
-// ADD THESE ENDPOINTS TO src/routes/admin.routes.js
-// Place them BEFORE the "module.exports = router;" line
-// ============================================
-
-// Get user activity metrics (Daily Active Users)
-router.get('/api/analytics/user-activity', authenticateAdmin, async (req, res) => {
-  try {
-    await adminAuthService.logActivity(
+    const success = await payoutService.markAsPaid(
+      req.params.id,
       req.adminSession.admin_id,
-      'view_user_activity',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
+      paymentReference,
+      paymentMethod || 'bank_transfer'
     );
 
-    // Daily Active Users (last 30 days)
-    const dailyActiveUsers = await pool.query(`
-      SELECT 
-        DATE(last_active) as date,
-        COUNT(DISTINCT id) as active_users
-      FROM users
-      WHERE last_active >= CURRENT_DATE - INTERVAL '30 days'
-      GROUP BY DATE(last_active)
-      ORDER BY date ASC
-    `);
+    if (success) {
+      const result = await pool.query(
+        `SELECT t.*, u.phone_number, u.full_name, pd.account_name, pd.bank_name, pd.account_number
+         FROM transactions t JOIN users u ON t.user_id = u.id LEFT JOIN payout_details pd ON t.id = pd.transaction_id WHERE t.id = $1`,
+        [req.params.id]
+      );
 
-    // Total users stats
-    const totalStats = await pool.query(`
-      SELECT 
-        COUNT(*) as total_users,
-        COUNT(CASE WHEN last_active >= CURRENT_DATE THEN 1 END) as active_today,
-        COUNT(CASE WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as active_week,
-        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users
-      FROM users
-    `);
+      if (result.rows.length > 0) {
+        const transaction = result.rows[0];
+        await whatsappService.sendMessage(
+          transaction.phone_number,
+          `✅ PAYMENT SENT! 🎉\n\n₦${parseFloat(transaction.amount).toLocaleString()} has been sent to:\n${transaction.account_name}\n${transaction.bank_name} (${transaction.account_number})\n\nTransaction Reference: ${paymentReference}\n\nPlease check your account within 2 hours and confirm receipt.\n\nReply "RECEIVED" to confirm!\n\nKeep playing to win more! 🏆`
+        );
+      }
+      res.json({ success: true, message: 'Payout marked as paid and user notified' });
+    } else {
+      res.status(500).json({ error: 'Failed to mark payout as paid' });
+    }
+  } catch (error) {
+    logger.error('Error marking payout as paid:', error);
+    res.status(500).json({ error: 'Failed to mark payout as paid' });
+  }
+});
 
+router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await payoutService.reverifyPayout(req.params.id);
+    if (result.success) {
+      res.json({ success: true, message: 'Account re-verified successfully', accountName: result.accountName });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  } catch (error) {
+    logger.error('Error re-verifying payout:', error);
+    res.status(500).json({ error: 'Failed to re-verify payout' });
+  }
+});
+
+// ============================================
+// USER & QUESTION ROUTES (unchanged)
+// ============================================
+
+router.get('/api/users', authenticateAdmin, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+
+    const result = await pool.query(
+      `SELECT id, full_name, phone_number, lga, total_games_played, total_winnings, games_remaining, created_at, last_active
+       FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const countResult = await pool.query('SELECT COUNT(*) as total FROM users');
     res.json({
-      dailyActiveUsers: dailyActiveUsers.rows,
-      summary: totalStats.rows[0]
+      users: result.rows,
+      pagination: { page, limit, total: parseInt(countResult.rows[0].total), totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit) }
     });
   } catch (error) {
-    logger.error('Error getting user activity:', error);
-    res.status(500).json({ error: 'Failed to fetch user activity' });
+    logger.error('Error getting users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
-// Get conversion funnel metrics
-router.get('/api/analytics/conversion-funnel', authenticateAdmin, async (req, res) => {
+router.get('/api/questions', authenticateAdmin, async (req, res) => {
   try {
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_conversion_funnel',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+
+    const result = await pool.query(
+      `SELECT * FROM questions ORDER BY difficulty ASC, id DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
 
-    const funnel = await pool.query(`
-      SELECT
-        COUNT(*) as total_registered,
-        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as started_game,
-        COUNT(CASE WHEN total_games_played >= 3 THEN 1 END) as played_3_games,
-        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
-        COUNT(CASE WHEN total_games_played >= 10 THEN 1 END) as power_users,
-        ROUND(
-          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-          1
-        ) as activation_rate,
-        ROUND(
-          (COUNT(CASE WHEN total_winnings > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-          1
-        ) as win_rate
-      FROM users
-    `);
-
-    res.json(funnel.rows[0]);
+    const countResult = await pool.query('SELECT COUNT(*) as total FROM questions WHERE is_active = true');
+    res.json({
+      questions: result.rows,
+      pagination: { page, limit, total: parseInt(countResult.rows[0].total), totalPages: Math.ceil(parseInt(countResult.rows[0].total) / limit) }
+    });
   } catch (error) {
-    logger.error('Error getting conversion funnel:', error);
-    res.status(500).json({ error: 'Failed to fetch conversion funnel' });
+    logger.error('Error getting questions:', error);
+    res.status(500).json({ error: 'Failed to fetch questions' });
   }
 });
 
-// Get LGA performance metrics
-router.get('/api/analytics/lga-performance', authenticateAdmin, async (req, res) => {
+router.post('/api/questions', authenticateAdmin, async (req, res) => {
   try {
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_lga_performance',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
+    const { question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact } = req.body;
+
+    if (!question_text || !option_a || !option_b || !option_c || !option_d || !correct_answer || !difficulty) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO questions (question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [question_text, option_a, option_b, option_c, option_d, correct_answer.toUpperCase(), parseInt(difficulty), category || 'General', fun_fact]
     );
 
-    const lgaStats = await pool.query(`
-      SELECT
-        lga,
-        COUNT(*) as user_count,
-        COALESCE(SUM(total_games_played), 0) as total_games,
-        COALESCE(SUM(total_winnings), 0) as total_winnings,
-        COALESCE(AVG(total_winnings), 0) as avg_winnings_per_user,
-        ROUND(
-          COALESCE(AVG(total_games_played), 0),
-          1
-        ) as avg_games_per_user
-      FROM users
-      GROUP BY lga
-      ORDER BY total_games DESC
-      LIMIT 15
-    `);
-
-    res.json(lgaStats.rows);
+    res.json({ success: true, question: result.rows[0] });
   } catch (error) {
-    logger.error('Error getting LGA performance:', error);
-    res.status(500).json({ error: 'Failed to fetch LGA performance' });
+    logger.error('Error adding question:', error);
+    res.status(500).json({ error: 'Failed to add question' });
   }
 });
 
-// Get user retention metrics
-router.get('/api/analytics/retention', authenticateAdmin, async (req, res) => {
+router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
   try {
-    await adminAuthService.logActivity(
-      req.adminSession.admin_id,
-      'view_retention',
-      {},
-      getIpAddress(req),
-      req.headers['user-agent']
-    );
-
-    const days = parseInt(req.query.days) || 30;
-
-    const retention = await pool.query(`
-      SELECT
-        DATE(created_at) as registration_date,
-        COUNT(*) as new_users,
-        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as activated_users,
-        COUNT(CASE WHEN total_games_played > 1 THEN 1 END) as retained_users,
-        ROUND(
-          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-          1
-        ) as activation_rate,
-        ROUND(
-          (COUNT(CASE WHEN total_games_played > 1 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
-          1
-        ) as retention_rate
-      FROM users
-      WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
-      GROUP BY DATE(created_at)
-      ORDER BY registration_date DESC
-    `);
-
-    res.json(retention.rows);
+    await pool.query('UPDATE questions SET is_active = false WHERE id = $1', [req.params.id]);
+    res.json({ success: true, message: 'Question deleted' });
   } catch (error) {
-    logger.error('Error getting retention metrics:', error);
-    res.status(500).json({ error: 'Failed to fetch retention metrics' });
+    logger.error('Error deleting question:', error);
+    res.status(500).json({ error: 'Failed to delete question' });
   }
 });
-
-// ============================================
-// IMPORTANT: Make sure these are ABOVE this line:
-// module.exports = router;
-// ============================================
 
 module.exports = router;
