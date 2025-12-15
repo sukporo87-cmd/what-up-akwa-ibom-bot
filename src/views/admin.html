@@ -1362,35 +1362,37 @@ function renderPrizeDistChart(data) {
   });
 }
 
-// Chart: Peak Times (24-Hour Heatmap) - FIXED VERSION
+// Chart: Peak Times (24-Hour Heatmap) - COMPLETE VERSION WITH LABELS & LEGEND
 function renderPeakTimesChart(data) {
   const ctx = document.getElementById('peakTimesChart');
-  if (!ctx) return;
+  if (!ctx) {
+    console.error('Canvas element not found');
+    return;
+  }
   
-  console.log('Peak times raw data:', data); // DEBUG
+  console.log('Rendering peak times with', data.length, 'records');
   
   if (!data || data.length === 0) {
-    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No peak time data available. Games will appear here as users play.</p></div>';
+    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No peak time data available yet</p></div>';
     return;
   }
   
   // Days of week
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   
   // Transform data into matrix format
   const matrixData = [];
   data.forEach(item => {
     if (item.hour_of_day !== null && item.day_of_week !== null) {
       matrixData.push({
-        x: item.hour_of_day,           // Hour (0-23)
-        y: item.day_of_week,            // Day (0-6)
-        v: parseInt(item.total_games) || 0  // Value (games count)
+        x: parseInt(item.hour_of_day),           // Hour (0-23)
+        y: parseInt(item.day_of_week),            // Day (0-6)
+        v: parseInt(item.total_games) || 0        // Value (games count)
       });
     }
   });
   
-  console.log('Matrix data points:', matrixData.length); // DEBUG
-  console.log('Sample matrix data:', matrixData.slice(0, 5)); // DEBUG
+  console.log('Matrix data points:', matrixData.length);
   
   if (matrixData.length === 0) {
     ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No valid peak time data</p></div>';
@@ -1399,7 +1401,45 @@ function renderPeakTimesChart(data) {
   
   // Find max value for color scaling
   const maxGames = Math.max(...matrixData.map(d => d.v));
-  console.log('Max games in any hour:', maxGames); // DEBUG
+  const minGames = Math.min(...matrixData.filter(d => d.v > 0).map(d => d.v));
+  console.log('Games range:', minGames, 'to', maxGames);
+  
+  // Destroy existing chart if it exists
+  if (charts.peakTimes) {
+    charts.peakTimes.destroy();
+  }
+  
+  // Add legend before chart
+  const container = ctx.parentElement;
+  const existingLegend = container.querySelector('.heatmap-legend');
+  if (existingLegend) existingLegend.remove();
+  
+  const legend = document.createElement('div');
+  legend.className = 'heatmap-legend';
+  legend.style.cssText = 'display: flex; justify-content: center; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;';
+  legend.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 5px; font-size: 12px;">
+      <div style="width: 20px; height: 20px; background: rgba(229, 231, 235, 0.5); border: 1px solid #ddd; border-radius: 3px;"></div>
+      <span>No games</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 5px; font-size: 12px;">
+      <div style="width: 20px; height: 20px; background: rgba(59, 130, 246, 0.6); border: 1px solid #ddd; border-radius: 3px;"></div>
+      <span>Low (1-${Math.ceil(maxGames * 0.25)})</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 5px; font-size: 12px;">
+      <div style="width: 20px; height: 20px; background: rgba(34, 197, 94, 0.7); border: 1px solid #ddd; border-radius: 3px;"></div>
+      <span>Moderate (${Math.ceil(maxGames * 0.25)}-${Math.ceil(maxGames * 0.5)})</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 5px; font-size: 12px;">
+      <div style="width: 20px; height: 20px; background: rgba(251, 191, 36, 0.8); border: 1px solid #ddd; border-radius: 3px;"></div>
+      <span>High (${Math.ceil(maxGames * 0.5)}-${Math.ceil(maxGames * 0.75)})</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 5px; font-size: 12px;">
+      <div style="width: 20px; height: 20px; background: rgba(239, 68, 68, 0.9); border: 1px solid #ddd; border-radius: 3px;"></div>
+      <span>Very High (${Math.ceil(maxGames * 0.75)}+)</span>
+    </div>
+  `;
+  container.insertBefore(legend, ctx.parentElement);
   
   charts.peakTimes = new Chart(ctx, {
     type: 'matrix',
@@ -1411,33 +1451,28 @@ function renderPeakTimesChart(data) {
           const value = context.dataset.data[context.dataIndex]?.v || 0;
           if (value === 0) return 'rgba(229, 231, 235, 0.5)'; // Gray for no games
           
-          // Color intensity based on value
+          // Color intensity based on value (blue → green → yellow → red)
           const intensity = maxGames > 0 ? (value / maxGames) : 0;
           
-          // Gradient from blue (low) to red (high)
           if (intensity < 0.25) {
-            const alpha = 0.3 + (intensity * 4 * 0.4);
-            return `rgba(59, 130, 246, ${alpha})`; // Blue
+            return 'rgba(59, 130, 246, 0.6)'; // Blue (low activity)
           } else if (intensity < 0.5) {
-            const alpha = 0.5 + ((intensity - 0.25) * 4 * 0.3);
-            return `rgba(34, 197, 94, ${alpha})`; // Green
+            return 'rgba(34, 197, 94, 0.7)'; // Green (moderate)
           } else if (intensity < 0.75) {
-            const alpha = 0.6 + ((intensity - 0.5) * 4 * 0.3);
-            return `rgba(251, 191, 36, ${alpha})`; // Yellow/Orange
+            return 'rgba(251, 191, 36, 0.8)'; // Yellow/Orange (high)
           } else {
-            const alpha = 0.7 + ((intensity - 0.75) * 4 * 0.3);
-            return `rgba(239, 68, 68, ${alpha})`; // Red
+            return 'rgba(239, 68, 68, 0.9)'; // Red (very high)
           }
         },
-        borderColor: 'rgba(255, 255, 255, 0.5)',
-        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.8)',
+        borderWidth: 2,
         width(context) {
           const a = context.chart.chartArea || {};
-          return (a.right - a.left) / 24 - 2;
+          return (a.right - a.left) / 24 - 3;
         },
         height(context) {
           const a = context.chart.chartArea || {};
-          return (a.bottom - a.top) / 7 - 2;
+          return (a.bottom - a.top) / 7 - 3;
         }
       }]
     },
@@ -1459,7 +1494,7 @@ function renderPeakTimesChart(data) {
               const hour12 = hour % 12 || 12;
               const ampm = hour < 12 ? 'AM' : 'PM';
               const dayName = days[d.y];
-              return `${dayName} at ${hour12}:00 ${ampm}: ${d.v} games`;
+              return `${dayName} at ${hour12}:00 ${ampm}: ${d.v} game${d.v !== 1 ? 's' : ''}`;
             }
           }
         }
@@ -1470,14 +1505,29 @@ function renderPeakTimesChart(data) {
           position: 'bottom',
           min: -0.5,
           max: 23.5,
+          title: {
+            display: true,
+            text: 'Hour of Day',
+            font: {
+              size: 13,
+              weight: 'bold'
+            }
+          },
           ticks: {
             stepSize: 1,
             callback(value) {
               if (value < 0 || value > 23) return '';
-              const hour = value % 12 || 12;
-              const ampm = value < 12 ? 'AM' : 'PM';
-              // Show labels for every 3 hours
-              return value % 3 === 0 ? `${hour}${ampm}` : '';
+              const hour = Math.round(value);
+              const hour12 = hour % 12 || 12;
+              const ampm = hour < 12 ? 'AM' : 'PM';
+              // Show every 2 hours
+              if (hour % 2 === 0) {
+                return `${hour12}${ampm}`;
+              }
+              return '';
+            },
+            font: {
+              size: 11
             }
           },
           grid: {
@@ -1489,20 +1539,46 @@ function renderPeakTimesChart(data) {
           position: 'left',
           min: -0.5,
           max: 6.5,
+          offset: true,
+          title: {
+            display: true,
+            text: 'Day of Week',
+            font: {
+              size: 13,
+              weight: 'bold'
+            }
+          },
           ticks: {
             stepSize: 1,
             callback(value) {
-              if (value < 0 || value > 6) return '';
-              return days[value];
-            }
+              const index = Math.round(value);
+              if (index < 0 || index > 6) return '';
+              return days[index];
+            },
+            font: {
+              size: 12,
+              weight: '500'
+            },
+            padding: 5
           },
           grid: {
-            display: false
+            display: false,
+            drawBorder: true
           }
+        }
+      },
+      layout: {
+        padding: {
+          left: 10,
+          right: 10,
+          top: 10,
+          bottom: 10
         }
       }
     }
   });
+  
+  console.log('Peak times heatmap rendered successfully!');
 }
 
 // Chart: Category Performance
