@@ -550,7 +550,11 @@
       .chart-grid { grid-template-columns: 1fr; }
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Chart.js Core -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- Chart.js Matrix Plugin for Heatmaps -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 </head>
 <body>
 
@@ -1358,30 +1362,146 @@ function renderPrizeDistChart(data) {
   });
 }
 
-// Chart: Peak Times (24-Hour Heatmap)
+// Chart: Peak Times (24-Hour Heatmap) - FIXED VERSION
 function renderPeakTimesChart(data) {
   const ctx = document.getElementById('peakTimesChart');
   if (!ctx) return;
   
-  const hourlyData = {};
+  console.log('Peak times raw data:', data); // DEBUG
+  
+  if (!data || data.length === 0) {
+    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No peak time data available. Games will appear here as users play.</p></div>';
+    return;
+  }
+  
+  // Days of week
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  
+  // Transform data into matrix format
+  const matrixData = [];
   data.forEach(item => {
-    hourlyData[item.hour_of_day] = (hourlyData[item.hour_of_day] || 0) + parseInt(item.games_count);
+    if (item.hour_of_day !== null && item.day_of_week !== null) {
+      matrixData.push({
+        x: item.hour_of_day,           // Hour (0-23)
+        y: item.day_of_week,            // Day (0-6)
+        v: parseInt(item.total_games) || 0  // Value (games count)
+      });
+    }
   });
   
-  const labels = Array.from({length: 24}, (_, i) => {
-    return i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i-12} PM`;
-  });
-  const values = Array.from({length: 24}, (_, i) => hourlyData[i] || 0);
-  const maxValue = Math.max(...values);
-  const backgroundColor = values.map(v => {
-    const intensity = maxValue > 0 ? v / maxValue : 0;
-    return `rgba(239, 68, 68, ${0.3 + intensity * 0.7})`;
-  });
+  console.log('Matrix data points:', matrixData.length); // DEBUG
+  console.log('Sample matrix data:', matrixData.slice(0, 5)); // DEBUG
+  
+  if (matrixData.length === 0) {
+    ctx.parentElement.innerHTML = '<div class="empty-state" style="padding: 40px;"><p>No valid peak time data</p></div>';
+    return;
+  }
+  
+  // Find max value for color scaling
+  const maxGames = Math.max(...matrixData.map(d => d.v));
+  console.log('Max games in any hour:', maxGames); // DEBUG
   
   charts.peakTimes = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: 'Games Played', data: values, backgroundColor, borderRadius: 4 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} games` } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    type: 'matrix',
+    data: {
+      datasets: [{
+        label: 'Games Played',
+        data: matrixData,
+        backgroundColor(context) {
+          const value = context.dataset.data[context.dataIndex]?.v || 0;
+          if (value === 0) return 'rgba(229, 231, 235, 0.5)'; // Gray for no games
+          
+          // Color intensity based on value
+          const intensity = maxGames > 0 ? (value / maxGames) : 0;
+          
+          // Gradient from blue (low) to red (high)
+          if (intensity < 0.25) {
+            const alpha = 0.3 + (intensity * 4 * 0.4);
+            return `rgba(59, 130, 246, ${alpha})`; // Blue
+          } else if (intensity < 0.5) {
+            const alpha = 0.5 + ((intensity - 0.25) * 4 * 0.3);
+            return `rgba(34, 197, 94, ${alpha})`; // Green
+          } else if (intensity < 0.75) {
+            const alpha = 0.6 + ((intensity - 0.5) * 4 * 0.3);
+            return `rgba(251, 191, 36, ${alpha})`; // Yellow/Orange
+          } else {
+            const alpha = 0.7 + ((intensity - 0.75) * 4 * 0.3);
+            return `rgba(239, 68, 68, ${alpha})`; // Red
+          }
+        },
+        borderColor: 'rgba(255, 255, 255, 0.5)',
+        borderWidth: 1,
+        width(context) {
+          const a = context.chart.chartArea || {};
+          return (a.right - a.left) / 24 - 2;
+        },
+        height(context) {
+          const a = context.chart.chartArea || {};
+          return (a.bottom - a.top) / 7 - 2;
+        }
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          callbacks: {
+            title() {
+              return '';
+            },
+            label(context) {
+              const d = context.dataset.data[context.dataIndex];
+              const hour = d.x;
+              const hour12 = hour % 12 || 12;
+              const ampm = hour < 12 ? 'AM' : 'PM';
+              const dayName = days[d.y];
+              return `${dayName} at ${hour12}:00 ${ampm}: ${d.v} games`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          position: 'bottom',
+          min: -0.5,
+          max: 23.5,
+          ticks: {
+            stepSize: 1,
+            callback(value) {
+              if (value < 0 || value > 23) return '';
+              const hour = value % 12 || 12;
+              const ampm = value < 12 ? 'AM' : 'PM';
+              // Show labels for every 3 hours
+              return value % 3 === 0 ? `${hour}${ampm}` : '';
+            }
+          },
+          grid: {
+            display: false
+          }
+        },
+        y: {
+          type: 'linear',
+          position: 'left',
+          min: -0.5,
+          max: 6.5,
+          ticks: {
+            stepSize: 1,
+            callback(value) {
+              if (value < 0 || value > 6) return '';
+              return days[value];
+            }
+          },
+          grid: {
+            display: false
+          }
+        }
+      }
+    }
   });
 }
 
