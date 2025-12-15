@@ -627,43 +627,49 @@ Would you like to share your win on WhatsApp Status? Reply YES to get your victo
     await redis.setex(`session:${session.session_key}`, 3600, JSON.stringify(session));
   }
 
-  async getLeaderboard(period = 'daily', limit = 10) {
-    try {
-      let dateCondition;
-      switch(period.toLowerCase()) {
-        case 'daily':
-          dateCondition = 'CURRENT_DATE';
-          break;
-        case 'weekly':
-          dateCondition = "CURRENT_DATE - INTERVAL '7 days'";
-          break;
-        case 'monthly':
-          dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
-          break;
-        case 'all':
-          dateCondition = "'1970-01-01'";
-          break;
-        default:
-          dateCondition = 'CURRENT_DATE';
-      }
+  // ============================================
+// FILE: src/services/game.service.js
+// ADD THIS METHOD (Replace existing getLeaderboard method)
+// ============================================
 
-      const result = await pool.query(
-        `SELECT u.full_name, u.lga, t.amount as score
-         FROM transactions t
-         JOIN users u ON t.user_id = u.id
-         WHERE t.created_at >= ${dateCondition}
-           AND t.transaction_type = 'prize'
-         ORDER BY t.amount DESC, t.created_at DESC
-         LIMIT $1`,
-        [limit]
-      );
+async getLeaderboard(period = 'daily', limit = 10) {
+  try {
+    let dateCondition;
 
-      return result.rows;
-    } catch (error) {
-      logger.error('Error fetching leaderboard:', error);
-      throw error;
+    switch(period.toLowerCase()) {
+      case 'daily':
+        dateCondition = 'CURRENT_DATE';
+        break;
+      case 'weekly':
+        dateCondition = "CURRENT_DATE - INTERVAL '7 days'";
+        break;
+      case 'monthly':
+        dateCondition = "CURRENT_DATE - INTERVAL '30 days'";
+        break;
+      case 'all':
+        dateCondition = "'1970-01-01'";
+        break;
+      default:
+        dateCondition = 'CURRENT_DATE';
     }
+
+    const result = await pool.query(
+      `SELECT u.full_name, u.username, u.city, t.amount as score
+       FROM transactions t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.created_at >= ${dateCondition}
+       AND t.transaction_type = 'prize'
+       ORDER BY t.amount DESC, t.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    return result.rows;
+  } catch (error) {
+    logger.error('Error fetching leaderboard:', error);
+    throw error;
   }
+}
 }
 
 module.exports = GameService;

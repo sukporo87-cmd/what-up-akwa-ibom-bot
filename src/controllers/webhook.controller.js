@@ -1,3 +1,8 @@
+// ============================================
+// FILE: src/controllers/webhook.controller.js
+// UPDATED: Multi-platform ready, Fixed menu overlap, New registration
+// ============================================
+
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const WhatsAppService = require('../services/whatsapp.service');
@@ -12,16 +17,6 @@ const gameService = new GameService();
 const userService = new UserService();
 const paymentService = new PaymentService();
 const payoutService = new PayoutService();
-
-const LGA_LIST = [
-  'Abak', 'Eastern Obolo', 'Eket', 'Esit Eket', 'Essien Udim',
-  'Etim Ekpo', 'Etinan', 'Ibeno', 'Ibesikpo Asutan', 'Ibiono-Ibom',
-  'Ika', 'Ikono', 'Ikot Abasi', 'Ikot Ekpene', 'Ini',
-  'Itu', 'Mbo', 'Mkpat-Enin', 'Nsit-Atai', 'Nsit-Ibom',
-  'Nsit-Ubium', 'Obot Akara', 'Okobo', 'Onna', 'Oron',
-  'Oruk Anam', 'Udung-Uko', 'Ukanafun', 'Uruan', 'Urue-Offong/Oruko', 'Uyo',
-  'Other'
-];
 
 class WebhookController {
   async verify(req, res) {
@@ -66,170 +61,152 @@ class WebhookController {
   }
 
   async routeMessage(phone, message) {
-  try {
-    const input = message.trim().toUpperCase();
+    try {
+      const input = message.trim().toUpperCase();
 
-    // Handle RESET command first
-    if (input === 'RESET' || input === 'RESTART') {
+      // ===================================
+      // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
+      // ===================================
+      if (input === 'RESET' || input === 'RESTART') {
+        let user = await userService.getUserByPhone(phone);
+        if (user) {
+          await this.handleReset(user);
+        } else {
+          await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
+        }
+        return;
+      }
+
       let user = await userService.getUserByPhone(phone);
-      if (user) {
-        await this.handleReset(user);
-      } else {
-        await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
-      }
-      return;
-    }
+      const userState = await userService.getUserState(phone);
 
-    let user = await userService.getUserByPhone(phone);
-    const userState = await userService.getUserState(phone);
-
-    // Registration states
-    if (userState && userState.state === 'REGISTRATION_NAME') {
-      await this.handleRegistrationName(phone, message);
-      return;
-    }
-
-    if (userState && userState.state === 'REGISTRATION_LGA') {
-      await this.handleRegistrationLGA(phone, message, userState.data.name);
-      return;
-    }
-
-    // Payment states
-    if (userState && userState.state === 'SELECT_PACKAGE') {
-      await this.handlePackageSelection(user, message, userState.data);
-      return;
-    }
-
-    // Leaderboard states
-    if (userState && userState.state === 'SELECT_LEADERBOARD') {
-      await this.handleLeaderboardSelection(phone, message);
-      return;
-    }
-
-    // Bank details confirmation state
-    if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
-      await this.handleBankDetailsConfirmation(phone, message, userState.data);
-      return;
-    }
-
-    // Payout collection states
-    if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
-      await this.handleAccountNameInput(phone, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
-      await this.handleAccountNumberInput(phone, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_BANK_NAME') {
-      await this.handleBankNameInput(phone, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
-      await this.handleCustomBankInput(phone, message, userState);
-      return;
-    }
-
-    if (!user) {
-      await this.handleNewUser(phone);
-      return;
-    }
-
-    const activeSession = await gameService.getActiveSession(user.id);
-
-    // ===== CRITICAL FIX: Detect and cancel zombie sessions =====
-    if (activeSession) {
-      const sessionAge = Date.now() - new Date(activeSession.started_at).getTime();
-      const isZombie = sessionAge > 3600000; // 1 hour in milliseconds
-
-      // If session is a zombie (older than 1 hour), cancel it
-      if (isZombie) {
-        logger.warn(`🧟 ZOMBIE SESSION DETECTED: Session ${activeSession.id} is ${Math.round(sessionAge/60000)} minutes old - CANCELLING`);
-        
-        await pool.query(
-          `UPDATE game_sessions SET status = 'cancelled', completed_at = NOW() WHERE id = $1`,
-          [activeSession.id]
-        );
-        
-        // Clean up related Redis states
-        await redis.del(`game_ready:${user.id}`);
-        await redis.del(`session:${activeSession.session_key}`);
-        await redis.del(`asked_questions:${activeSession.session_key}`);
-        
-        logger.info(`✅ Zombie session ${activeSession.id} cancelled`);
-        
-        // Route to menu instead
-        await this.handleMenuInput(user, message);
-        return;
+      // ===================================
+      // PRIORITY 1: REGISTRATION STATES
+      // ===================================
+      if (userState && userState.state === 'REGISTRATION_NAME') {
+        await this.handleRegistrationName(phone, message);
+        return; // EXIT - Don't process further
       }
 
-      // Check if user is trying to use menu commands while in an active game
-      const isMenuCommand = 
-        input.includes('HELLO') || 
-        input.includes('HI') || 
-        input.includes('MENU') ||
-        input === 'CLAIM' ||
-        input === 'STATS' ||
-        input === 'BUY' ||
-        input === 'LEADERBOARD';
-
-      if (isMenuCommand) {
-        logger.info(`User ${user.id} tried menu command "${input}" during active game - offering reset`);
-        await whatsappService.sendMessage(
-          user.phone_number,
-          '⚠️ You have an active game in progress.\n\n' +
-          'Reply:\n' +
-          '• A, B, C, or D to answer\n' +
-          '• "50" to use 50:50 lifeline\n' +
-          '• "Skip" to skip question\n' +
-          '• "RESET" to cancel and start over'
-        );
-        return;
+      if (userState && userState.state === 'REGISTRATION_CITY') {
+        await this.handleRegistrationCity(phone, message, userState.data.name);
+        return; // EXIT
       }
-    }
 
-    // Clean up stale game_ready state if no active session
-    if (!activeSession) {
-      const gameReady = await redis.get(`game_ready:${user.id}`);
-      if (gameReady) {
-        logger.info(`Cleaning stale game_ready state for user ${user.id}`);
-        await redis.del(`game_ready:${user.id}`);
+      if (userState && userState.state === 'REGISTRATION_USERNAME') {
+        await this.handleRegistrationUsername(phone, message, userState.data);
+        return; // EXIT
       }
-    }
 
-    // Route based on active session
-    if (activeSession) {
-      await this.handleGameInput(user, activeSession, message);
-    } else {
+      if (userState && userState.state === 'REGISTRATION_AGE') {
+        await this.handleRegistrationAge(phone, message, userState.data);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 2: PAYMENT STATES
+      // ===================================
+      if (userState && userState.state === 'SELECT_PACKAGE') {
+        await this.handlePackageSelection(user, message, userState.data);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 3: LEADERBOARD STATES
+      // ===================================
+      if (userState && userState.state === 'SELECT_LEADERBOARD') {
+        await this.handleLeaderboardSelection(phone, message);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 4: BANK DETAILS CONFIRMATION
+      // ===================================
+      if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
+        await this.handleBankDetailsConfirmation(phone, message, userState.data);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 5: PAYOUT COLLECTION STATES
+      // ===================================
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
+        await this.handleAccountNameInput(phone, message, userState);
+        return; // EXIT
+      }
+
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
+        await this.handleAccountNumberInput(phone, message, userState);
+        return; // EXIT
+      }
+
+      if (userState && userState.state === 'COLLECT_BANK_NAME') {
+        await this.handleBankNameInput(phone, message, userState);
+        return; // EXIT
+      }
+
+      if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
+        await this.handleCustomBankInput(phone, message, userState);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 6: NEW USER (NO STATE, NO USER)
+      // ===================================
+      if (!user) {
+        await this.handleNewUser(phone);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 7: ACTIVE GAME SESSION
+      // ===================================
+      const activeSession = await gameService.getActiveSession(user.id);
+
+      // Clean up stale Redis state if no DB session
+      if (!activeSession) {
+        const gameReady = await redis.get(`game_ready:${user.id}`);
+        if (gameReady) {
+          logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+          await redis.del(`game_ready:${user.id}`);
+        }
+      }
+
+      if (activeSession) {
+        await this.handleGameInput(user, activeSession, message);
+        return; // EXIT
+      }
+
+      // ===================================
+      // PRIORITY 8: MAIN MENU (DEFAULT)
+      // ===================================
       await this.handleMenuInput(user, message);
-    }
 
-  } catch (error) {
-    logger.error('Error routing message:', error);
-    await whatsappService.sendMessage(
-      phone,
-      '❌ Sorry, something went wrong. Type RESET to start over.'
-    );
+    } catch (error) {
+      logger.error('Error routing message:', error);
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Sorry, something went wrong. Type RESET to start over.'
+      );
+    }
   }
-}
+
+  // ============================================
+  // REGISTRATION HANDLERS (NEW)
+  // ============================================
 
   async handleNewUser(phone) {
     await whatsappService.sendMessage(
       phone,
-      `🎉 Welcome to WHAT'S UP TRIVIA GAME - AKWA IBOM EDITION! 🎉
+      `🎉 *WELCOME TO WHAT'S UP TRIVIA GAME!* 🎉
 
-The ultimate trivia game about our great state!
+The ultimate trivia game for you!
 
 Test your knowledge and win amazing prizes! 🏆
 
-Developed by SummerIsland Systems
+_Developed & Proudly brought to you by SummerIsland Systems._
 
-This Akwa Ibom Edition proudly brought to you by the Department of Brand Management & Marketing, Office of the Governor.
-
-🎄 Merry Christmas! 🎄
+🎄 *Merry Christmas!* 🎄
 
 Let's get you registered! What's your full name?`
     );
@@ -239,38 +216,137 @@ Let's get you registered! What's your full name?`
 
   async handleRegistrationName(phone, name) {
     if (!name || name.trim().length < 2) {
-      await whatsappService.sendMessage(phone, 'Please enter a valid name.');
+      await whatsappService.sendMessage(phone, '❌ Please enter a valid name (at least 2 characters).');
       return;
     }
 
-    await userService.setUserState(phone, 'REGISTRATION_LGA', { name: name.trim() });
-
-    let lgaMessage = `Nice to meet you, ${name}! 👋\n\nWhich Local Government Area are you from? Select "Other" if not from Akwa Ibom.\n\nReply with the number:\n\n`;
-
-    LGA_LIST.forEach((lga, idx) => {
-      lgaMessage += `${idx + 1}. ${lga}\n`;
+    await userService.setUserState(phone, 'REGISTRATION_CITY', { 
+      name: name.trim() 
     });
 
-    await whatsappService.sendMessage(phone, lgaMessage);
+    await whatsappService.sendMessage(
+      phone,
+      `Nice to meet you, ${name}! 👋
+
+Which city are you from?
+
+📍 Examples: Lagos, Abuja, Uyo, Port Harcourt, Kano, London, New York
+
+Type your city name:`
+    );
   }
 
-  async handleRegistrationLGA(phone, message, name) {
-    const lgaIndex = parseInt(message.trim()) - 1;
-
-    if (lgaIndex < 0 || lgaIndex >= LGA_LIST.length) {
-      await whatsappService.sendMessage(phone, 'Please reply with a valid number from the list.');
+  async handleRegistrationCity(phone, city, name) {
+    if (!city || city.trim().length < 2) {
+      await whatsappService.sendMessage(phone, '❌ Please enter a valid city name.');
       return;
     }
 
-    const lga = LGA_LIST[lgaIndex];
+    // Capitalize first letter of each word
+    const formattedCity = city.trim()
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
 
-    await userService.createUser(phone, name, lga);
+    await userService.setUserState(phone, 'REGISTRATION_USERNAME', { 
+      name: name,
+      city: formattedCity
+    });
+
+    await whatsappService.sendMessage(
+      phone,
+      `Great! You're from ${formattedCity}! 🌍
+
+Now, choose a *username* for the game.
+
+This will be displayed on leaderboards and victory cards for privacy.
+
+✅ Requirements:
+• 3-20 characters
+• Letters, numbers, underscores only
+• No spaces
+
+Examples: cool_player, trivia_king, sarah2024
+
+Your username:`
+    );
+  }
+
+  async handleRegistrationUsername(phone, username, stateData) {
+    const { name, city } = stateData;
+    
+    // Validate username
+    const cleanUsername = username.trim().toLowerCase();
+    
+    if (cleanUsername.length < 3 || cleanUsername.length > 20) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Username must be 3-20 characters long.\n\nTry again:'
+      );
+      return;
+    }
+
+    if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Username can only contain letters, numbers, and underscores.\n\nNo spaces or special characters.\n\nTry again:'
+      );
+      return;
+    }
+
+    // Check if username is already taken
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE LOWER(username) = $1',
+      [cleanUsername]
+    );
+
+    if (existingUser.rows.length > 0) {
+      await whatsappService.sendMessage(
+        phone,
+        `❌ Username "@${cleanUsername}" is already taken!\n\nTry a different one:`
+      );
+      return;
+    }
+
+    await userService.setUserState(phone, 'REGISTRATION_AGE', { 
+      name: name,
+      city: city,
+      username: cleanUsername
+    });
+
+    await whatsappService.sendMessage(
+      phone,
+      `Perfect! Your username is @${cleanUsername} ✨
+
+Finally, how old are you?
+
+Type your age (e.g., 25):`
+    );
+  }
+
+  async handleRegistrationAge(phone, ageInput, stateData) {
+    const { name, city, username } = stateData;
+    
+    const age = parseInt(ageInput.trim());
+
+    if (isNaN(age) || age < 13 || age > 120) {
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Please enter a valid age (13-120).\n\nYour age:'
+      );
+      return;
+    }
+
+    // Create user with new fields
+    await userService.createUser(phone, name, city, username, age);
     await userService.clearUserState(phone);
 
     const isPaymentEnabled = paymentService.isEnabled();
 
-    let welcomeMsg = `✅ Registration complete!\n\n`;
-    welcomeMsg += `You're all set, ${name} from ${lga}!\n\n`;
+    let welcomeMsg = `✅ *REGISTRATION COMPLETE!* ✅\n\n`;
+    welcomeMsg += `Welcome to the game, @${username}! 🎮\n\n`;
+    welcomeMsg += `📍 Location: ${city}\n`;
+    welcomeMsg += `🎂 Age: ${age}\n\n`;
 
     if (isPaymentEnabled) {
       welcomeMsg += `💎 Games Remaining: 0\n\n`;
@@ -289,6 +365,11 @@ Let's get you registered! What's your full name?`
 
     await whatsappService.sendMessage(phone, welcomeMsg);
   }
+
+  
+  // ============================================
+  // PAYMENT HANDLERS
+  // ============================================
 
   async handleBuyGames(user) {
     try {
@@ -351,6 +432,10 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  // ============================================
+  // STATS HANDLER
+  // ============================================
+
   async handleStatsRequest(user) {
     try {
       const stats = await userService.getUserStats(user.id);
@@ -363,18 +448,19 @@ Let's get you registered! What's your full name?`
         return;
       }
 
-      let message = `📊 YOUR STATS - ${stats.fullName} 📊\n\n`;
-      
-      message += `📍 Location: ${stats.lga}\n`;
+      let message = `📊 YOUR STATS - @${stats.username} 📊\n\n`;
+      message += `👤 Name: ${stats.fullName}\n`;
+      message += `📍 Location: ${stats.city}\n`;
+      message += `🎂 Age: ${stats.age}\n`;
       message += `🏆 Overall Rank: #${stats.rank}\n\n`;
-      
+
       message += `🎮 GAME STATISTICS\n`;
       message += `━━━━━━━━━━━━━━━━\n`;
       message += `Total Games: ${stats.totalGamesPlayed}\n`;
       message += `Games Won: ${stats.gamesWon}\n`;
       message += `Win Rate: ${stats.winRate}%\n`;
       message += `Highest Question: Q${stats.highestQuestionReached}\n\n`;
-      
+
       message += `💰 EARNINGS\n`;
       message += `━━━━━━━━━━━━━━━━\n`;
       message += `Total Winnings: ₦${stats.totalWinnings.toLocaleString()}\n`;
@@ -389,7 +475,6 @@ Let's get you registered! What's your full name?`
       }
 
       message += `📅 Member Since: ${new Date(stats.joinedDate).toLocaleDateString()}\n\n`;
-      
       message += `Keep playing to climb the ranks! 🚀\n\n`;
       message += `1️⃣ Play Now\n`;
       message += `2️⃣ View Leaderboard\n`;
@@ -405,10 +490,14 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  // ============================================
+  // PAYOUT HANDLERS
+  // ============================================
+
   async handleClaimPrize(user) {
     try {
       const transaction = await payoutService.getPendingTransaction(user.id);
-      
+
       if (!transaction) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -418,7 +507,7 @@ Let's get you registered! What's your full name?`
       }
 
       const existingDetails = await payoutService.getPayoutDetails(transaction.id);
-      
+
       if (existingDetails) {
         await whatsappService.sendMessage(
           user.phone_number,
@@ -431,13 +520,11 @@ Let's get you registered! What's your full name?`
         return;
       }
 
-      // Check if user has bank details on file
       const hasBankDetails = await payoutService.hasBankDetails(user.id);
-      
+
       if (hasBankDetails) {
         const userBankDetails = await payoutService.getUserBankDetails(user.id);
-        
-        // Show confirmation message with existing details
+
         await userService.setUserState(user.phone_number, 'CONFIRM_BANK_DETAILS', {
           transactionId: transaction.id,
           amount: transaction.amount,
@@ -459,12 +546,12 @@ Let's get you registered! What's your full name?`
           `🔄 UPDATE - Enter new details\n` +
           `❌ CANCEL - Cancel claim`
         );
-        
+
         logger.info(`Showing existing bank details to user ${user.id} for transaction ${transaction.id}`);
         return;
       }
 
-      // No bank details on file - start collection
+      // No bank details - start collection
       await userService.setUserState(user.phone_number, 'COLLECT_ACCOUNT_NAME', {
         transactionId: transaction.id,
         amount: transaction.amount
@@ -498,7 +585,6 @@ Let's get you registered! What's your full name?`
     const user = await userService.getUserByPhone(phone);
 
     if (input === 'YES' || input === 'Y' || input === '✅') {
-      // User confirmed - link existing details to transaction
       const success = await payoutService.linkBankDetailsToTransaction(
         user.id,
         stateData.transactionId
@@ -506,7 +592,7 @@ Let's get you registered! What's your full name?`
 
       if (success) {
         await userService.clearUserState(phone);
-        
+
         await whatsappService.sendMessage(
           phone,
           `✅ PAYMENT DETAILS CONFIRMED! ✅\n\n` +
@@ -529,7 +615,6 @@ Let's get you registered! What's your full name?`
         );
       }
     } else if (input === 'UPDATE' || input === '🔄') {
-      // User wants to update - start collection
       await userService.setUserState(phone, 'COLLECT_ACCOUNT_NAME', {
         transactionId: stateData.transactionId,
         amount: stateData.amount,
@@ -558,6 +643,7 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  
   async handleAccountNameInput(phone, message, stateData) {
     const accountName = message.trim();
 
@@ -644,7 +730,6 @@ Let's get you registered! What's your full name?`
     const input = message.trim();
     let bankName;
 
-    // Bank selection mapping
     const bankMap = {
       '1': 'Access Bank',
       '2': 'GTBank',
@@ -659,9 +744,7 @@ Let's get you registered! What's your full name?`
     };
 
     if (input === '11' || input.toUpperCase() === 'OTHERS' || input.toUpperCase() === 'OTHER') {
-      // User selected "Others", ask them to type bank name
       await userService.setUserState(phone, 'COLLECT_CUSTOM_BANK', stateData.data);
-      
       await whatsappService.sendMessage(
         phone,
         `Please type your bank name:\n\n` +
@@ -671,15 +754,12 @@ Let's get you registered! What's your full name?`
       return;
     }
 
-    // Check if it's a number selection
     if (bankMap[input]) {
       bankName = bankMap[input];
     } else {
-      // User typed a bank name directly
       bankName = input;
     }
 
-    // Validate bank name length
     if (bankName.length < 3) {
       await whatsappService.sendMessage(
         phone,
@@ -757,11 +837,11 @@ Let's get you registered! What's your full name?`
   async handlePaymentConfirmation(user) {
     try {
       const result = await pool.query(
-        `SELECT * FROM transactions 
-         WHERE user_id = $1 
-           AND transaction_type = 'prize' 
-           AND payout_status = 'paid'
-         ORDER BY paid_at DESC 
+        `SELECT * FROM transactions
+         WHERE user_id = $1
+         AND transaction_type = 'prize'
+         AND payout_status = 'paid'
+         ORDER BY paid_at DESC
          LIMIT 1`,
         [user.id]
       );
@@ -775,7 +855,6 @@ Let's get you registered! What's your full name?`
       }
 
       const transaction = result.rows[0];
-
       await payoutService.confirmPayout(transaction.id);
 
       await whatsappService.sendMessage(
@@ -793,139 +872,140 @@ Let's get you registered! What's your full name?`
     }
   }
 
+  // ============================================
+  // MENU INPUT HANDLER
+  // ============================================
+
   async handleMenuInput(user, message) {
-  const input = message.trim().toUpperCase();
+    const input = message.trim().toUpperCase();
 
-  // ===== NEW: Extra safety check - clean game_ready if it exists =====
-  const gameReady = await redis.get(`game_ready:${user.id}`);
-  if (gameReady) {
-    logger.warn(`handleMenuInput called but game_ready exists for user ${user.id} - cleaning up`);
-    await redis.del(`game_ready:${user.id}`);
-  }
+    // Handle CLAIM command
+    if (input === 'CLAIM' || input.includes('CLAIM')) {
+      await this.handleClaimPrize(user);
+      return;
+    }
 
-  // Handle CLAIM command
-  if (input === 'CLAIM' || input.includes('CLAIM')) {
-    await this.handleClaimPrize(user);
-    return;
-  }
+    // Handle RECEIVED confirmation
+    if (input === 'RECEIVED' || input.includes('CONFIRM')) {
+      await this.handlePaymentConfirmation(user);
+      return;
+    }
 
-  // Handle RECEIVED confirmation
-  if (input === 'RECEIVED' || input.includes('CONFIRM')) {
-    await this.handlePaymentConfirmation(user);
-    return;
-  }
+    // Check for stats request
+    if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
+      await this.handleStatsRequest(user);
+      return;
+    }
 
-  // Check for stats request
-  if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
-    await this.handleStatsRequest(user);
-    return;
-  }
+    // Check for win sharing response
+    const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+    if (winSharePending && (input === 'YES' || input === 'Y')) {
+      await this.handleWinShare(user, JSON.parse(winSharePending));
+      await redis.del(`win_share_pending:${user.id}`);
+      return;
+    }
 
-  // Check for win sharing response
-  const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-  if (winSharePending && (input === 'YES' || input === 'Y')) {
-    await this.handleWinShare(user, JSON.parse(winSharePending));
-    await redis.del(`win_share_pending:${user.id}`);
-    return;
-  }
+    // Handle BUY command
+    if (input.includes('BUY')) {
+      await this.handleBuyGames(user);
+      return;
+    }
 
-  // Handle BUY command
-  if (input.includes('BUY')) {
-    await this.handleBuyGames(user);
-    return;
-  }
+    // Check if payment is enabled and user has games
+    if (paymentService.isEnabled()) {
+      const hasGames = await paymentService.hasGamesRemaining(user.id);
+      if (!hasGames && (input === '1' || input.includes('PLAY'))) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '❌ You have no games remaining!\n\n' +
+          'Buy games to continue playing.\n\n' +
+          'Type BUY to see packages.'
+        );
+        return;
+      }
+    }
 
-  // Check if payment is enabled and user has games
-  if (paymentService.isEnabled()) {
-    const hasGames = await paymentService.hasGamesRemaining(user.id);
-    if (!hasGames && (input === '1' || input.includes('PLAY'))) {
-      await whatsappService.sendMessage(
-        user.phone_number,
-        '❌ You have no games remaining!\n\n' +
-        'Buy games to continue playing.\n\n' +
-        'Type BUY to see packages.'
+    // Check if this is first interaction after coming back
+    const lastActiveMinutesAgo = user.last_active ?
+      (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
+
+    if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
+      let welcomeMessage = `Hello again @${user.username}! 👋\n\nWelcome back to What's Up Trivia Game! 🎉\n\n`;
+
+      if (paymentService.isEnabled()) {
+        const gamesRemaining = await paymentService.getGamesRemaining(user.id);
+        welcomeMessage += `💎 Games Remaining: ${gamesRemaining}\n\n`;
+      }
+
+      welcomeMessage += `The ultimate trivia game for you!\n\n`;
+      welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
+      welcomeMessage += `What would you like to do?\n\n`;
+      welcomeMessage += `1️⃣ Play Now\n`;
+      welcomeMessage += `2️⃣ How to Play\n`;
+      welcomeMessage += `3️⃣ View Leaderboard\n`;
+
+      if (paymentService.isEnabled()) {
+        welcomeMessage += `4️⃣ Buy Games\n`;
+        welcomeMessage += `5️⃣ My Stats`;
+      } else {
+        welcomeMessage += `4️⃣ My Stats`;
+      }
+
+      await whatsappService.sendMessage(user.phone_number, welcomeMessage);
+      await pool.query(
+        'UPDATE users SET last_active = NOW() WHERE id = $1',
+        [user.id]
       );
       return;
     }
-  }
 
-  // Check if this is first interaction after coming back
-  const lastActiveMinutesAgo = user.last_active ?
-    (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
-
-  if (lastActiveMinutesAgo > 5 && !input.includes('PLAY') && input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
-    let welcomeMessage = `Hello again ${user.full_name} from ${user.lga}! 👋\n\nWelcome back to What's Up Trivia Game - Akwa Ibom Edition! 🎉\n\n`;
-
-    if (paymentService.isEnabled()) {
-      const gamesRemaining = await paymentService.getGamesRemaining(user.id);
-      welcomeMessage += `💎 Games Remaining: ${gamesRemaining}\n\n`;
-    }
-
-    welcomeMessage += `The ultimate trivia game about our great state!\n\n`;
-    welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
-    welcomeMessage += `What would you like to do?\n\n`;
-    welcomeMessage += `1️⃣ Play Now\n`;
-    welcomeMessage += `2️⃣ How to Play\n`;
-    welcomeMessage += `3️⃣ View Leaderboard\n`;
-
-    if (paymentService.isEnabled()) {
-      welcomeMessage += `4️⃣ Buy Games\n`;
-      welcomeMessage += `5️⃣ My Stats`;
-    } else {
-      welcomeMessage += `4️⃣ My Stats`;
-    }
-
-    await whatsappService.sendMessage(user.phone_number, welcomeMessage);
-
-    await pool.query(
-      'UPDATE users SET last_active = NOW() WHERE id = $1',
+    // Handle post-game menu selections
+    const recentGame = await pool.query(
+      `SELECT * FROM game_sessions
+       WHERE user_id = $1 AND status = 'completed'
+       AND completed_at > NOW() - INTERVAL '2 minutes'
+       ORDER BY completed_at DESC LIMIT 1`,
       [user.id]
     );
-    return;
-  }
 
-  // Handle post-game menu selections
-  const recentGame = await pool.query(
-    `SELECT * FROM game_sessions
-    WHERE user_id = $1 AND status = 'completed'
-    AND completed_at > NOW() - INTERVAL '2 minutes'
-    ORDER BY completed_at DESC LIMIT 1`,
-    [user.id]
-  );
+    if (recentGame.rows.length > 0) {
+      if (input === '1' || input.includes('PLAY')) {
+        await gameService.startNewGame(user);
+        return;
+      } else if (input === '2' || input.includes('LEADERBOARD')) {
+        await this.sendLeaderboardMenu(user.phone_number);
+        return;
+      } else if (input === '3' || input.includes('CLAIM')) {
+        await this.handleClaimPrize(user);
+        return;
+      } else if (input === '4') {
+        const winSharePending = await redis.get(`win_share_pending:${user.id}`);
+        if (winSharePending) {
+          await this.handleWinShare(user, JSON.parse(winSharePending));
+          await redis.del(`win_share_pending:${user.id}`);
+        }
+        return;
+      }
+    }
 
-  if (recentGame.rows.length > 0) {
+    // Regular menu handling
     if (input === '1' || input.includes('PLAY')) {
       await gameService.startNewGame(user);
-      return;
-    } else if (input === '2' || input.includes('LEADERBOARD')) {
+    } else if (input === '2' || input.includes('HOW')) {
+      await this.sendHowToPlay(user.phone_number);
+    } else if (input === '3' || input.includes('LEADERBOARD')) {
       await this.sendLeaderboardMenu(user.phone_number);
-      return;
-    } else if (input === '3' || input.includes('CLAIM')) {
-      await this.handleClaimPrize(user);
-      return;
-    } else if (input === '4') {
-      const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-      if (winSharePending) {
-        await this.handleWinShare(user, JSON.parse(winSharePending));
-        await redis.del(`win_share_pending:${user.id}`);
-      }
-      return;
+    } else if (input === 'RESET' || input === 'RESTART') {
+      await this.handleReset(user);
+    } else {
+      await this.sendMainMenu(user.phone_number);
     }
   }
 
-  // Regular menu handling
-  if (input === '1' || input.includes('PLAY')) {
-    await gameService.startNewGame(user);
-  } else if (input === '2' || input.includes('HOW')) {
-    await this.sendHowToPlay(user.phone_number);
-  } else if (input === '3' || input.includes('LEADERBOARD')) {
-    await this.sendLeaderboardMenu(user.phone_number);
-  } else if (input === 'RESET' || input === 'RESTART') {
-    await this.handleReset(user);
-  } else {
-    await this.sendMainMenu(user.phone_number);
-  }
-}
+  
+  // ============================================
+  // RESET HANDLER
+  // ============================================
 
   async handleReset(user) {
     try {
@@ -935,8 +1015,6 @@ Let's get you registered! What's your full name?`
       );
 
       await userService.clearUserState(user.phone_number);
-      
-      // Clear any leftover Redis game state
       await redis.del(`game_ready:${user.id}`);
 
       await whatsappService.sendMessage(
@@ -961,14 +1039,16 @@ Ready to start fresh?
     }
   }
 
+  // ============================================
+  // GAME INPUT HANDLER
+  // ============================================
+
   async handleGameInput(user, session, message) {
     const input = message.trim().toUpperCase();
-
     const gameReady = await redis.get(`game_ready:${user.id}`);
 
     if (gameReady && input === 'START') {
       await redis.del(`game_ready:${user.id}`);
-
       await whatsappService.sendMessage(
         user.phone_number,
         '🎮 LET\'S GO! 🎮\n\nStarting in 3... 2... 1...'
@@ -977,7 +1057,6 @@ Ready to start fresh?
       setTimeout(async () => {
         await gameService.sendQuestion(session, user);
       }, 2000);
-
       return;
     }
 
@@ -1009,8 +1088,13 @@ Ready to start fresh?
     }
   }
 
+  // ============================================
+  // MENU SENDERS
+  // ============================================
+
   async sendMainMenu(phone) {
     const isPaymentEnabled = paymentService.isEnabled();
+
     let message = '🏠 MAIN MENU 🏠\n\n';
 
     if (isPaymentEnabled) {
@@ -1042,7 +1126,7 @@ Ready to start fresh?
       phone,
       `📖 HOW TO PLAY 📖
 
-🎯 Answer 15 questions about Akwa Ibom & others
+🎯 Answer 15 questions about various topics
 
 ⏱️ 15 seconds per question
 
@@ -1083,7 +1167,6 @@ Reply with your choice:`
 
   async handleLeaderboardSelection(phone, message) {
     const input = message.trim();
-
     let period = 'daily';
     let periodName = 'TODAY';
 
@@ -1126,7 +1209,8 @@ Reply with your choice:`
     } else {
       leaderboard.forEach((player, index) => {
         const medal = index === 0 ? '🏆' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
-        message += `${index + 1}. ${player.full_name} (${player.lga}) - ₦${parseFloat(player.score).toLocaleString()} ${medal}\n`;
+        // Use username instead of full_name for privacy
+        message += `${index + 1}. @${player.username} (${player.city}) - ₦${parseFloat(player.score).toLocaleString()} ${medal}\n`;
       });
     }
 
@@ -1134,6 +1218,10 @@ Reply with your choice:`
 
     await whatsappService.sendMessage(phone, message);
   }
+
+  // ============================================
+  // VICTORY CARD HANDLER
+  // ============================================
 
   async handleWinShare(user, winData) {
     const ImageService = require('../services/image.service');
@@ -1148,7 +1236,8 @@ Reply with your choice:`
 
       const imagePath = await imageService.generateWinImage({
         name: user.full_name,
-        lga: user.lga,
+        username: user.username,
+        city: user.city,
         amount: winData.amount,
         questionsAnswered: winData.questionsAnswered,
         totalQuestions: winData.totalQuestions
@@ -1157,7 +1246,7 @@ Reply with your choice:`
       await whatsappService.sendImage(
         user.phone_number,
         imagePath,
-        `🏆 ${user.full_name} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game - Akwa Ibom Edition! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
+        `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
       );
 
       await whatsappService.sendMessage(

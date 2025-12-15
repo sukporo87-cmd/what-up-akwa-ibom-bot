@@ -960,6 +960,11 @@ router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => 
 // USER ROUTES
 // ============================================
 
+// ============================================
+// FILE: src/routes/admin.routes.js
+// REPLACE THE /api/users ENDPOINT WITH THIS
+// ============================================
+
 router.get('/api/users', authenticateAdmin, async (req, res) => {
   try {
     await adminAuthService.logActivity(
@@ -976,12 +981,12 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
 
     const result = await pool.query(
       `SELECT
-        id, full_name, phone_number, lga,
+        id, full_name, username, phone_number, city, age,
         total_games_played, total_winnings,
         games_remaining, created_at, last_active
-      FROM users
-      ORDER BY created_at DESC
-      LIMIT $1 OFFSET $2`,
+       FROM users
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
