@@ -1,6 +1,6 @@
 // ============================================
 // FILE: src/services/user.service.js
-// UPDATED: Added username, city, age support
+// UPDATED: Added referral support
 // ============================================
 
 const pool = require('../config/database');
@@ -21,21 +21,70 @@ class UserService {
     }
   }
 
-  async createUser(phoneNumber, fullName, city, username, age) {
+  /**
+   * Create user with referral support
+   */
+  async createUser(phoneNumber, fullName, city, username, age, referrerId = null) {
+    const client = await pool.connect();
+    
     try {
-      const result = await pool.query(
-        `INSERT INTO users (phone_number, full_name, city, username, age)
-         VALUES ($1, $2, $3, $4, $5)
+      await client.query('BEGIN');
+
+      // Generate referral code
+      const referralCode = this.generateReferralCode();
+
+      // Create user
+      const userResult = await client.query(
+        `INSERT INTO users (phone_number, full_name, city, username, age, referral_code, referred_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [phoneNumber, fullName, city, username, age]
+        [phoneNumber, fullName, city, username, age, referralCode, referrerId]
       );
+
+      const user = userResult.rows[0];
+
+      // If referred, create referral record
+      if (referrerId) {
+        const referrerResult = await client.query(
+          'SELECT referral_code FROM users WHERE id = $1',
+          [referrerId]
+        );
+
+        if (referrerResult.rows.length > 0) {
+          await client.query(
+            `INSERT INTO referrals (referrer_id, referred_user_id, referral_code)
+             VALUES ($1, $2, $3)`,
+            [referrerId, user.id, referrerResult.rows[0].referral_code]
+          );
+
+          logger.info(`Referral created: User ${user.id} referred by ${referrerId}`);
+        }
+      }
+
+      await client.query('COMMIT');
       
-      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}`);
-      return result.rows[0];
+      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}. Referral code: ${referralCode}`);
+      
+      return user;
     } catch (error) {
+      await client.query('ROLLBACK');
       logger.error('Error creating user:', error);
       throw error;
+    } finally {
+      client.release();
     }
+  }
+
+  /**
+   * Generate unique referral code
+   */
+  generateReferralCode() {
+    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No confusing chars
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+      code += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    return code;
   }
 
   async setUserState(phone, state, data = {}) {
@@ -72,7 +121,6 @@ class UserService {
 
   async getUserStats(userId) {
     try {
-      // Get user basic info
       const userResult = await pool.query(
         'SELECT * FROM users WHERE id = $1',
         [userId]
@@ -84,7 +132,6 @@ class UserService {
 
       const user = userResult.rows[0];
 
-      // Get total games and win rate
       const gamesResult = await pool.query(
         `SELECT
           COUNT(*) as total_games,
@@ -98,7 +145,6 @@ class UserService {
 
       const gameStats = gamesResult.rows[0];
 
-      // Get highest question reached details
       const bestGameResult = await pool.query(
         `SELECT current_question, final_score, completed_at
          FROM game_sessions
@@ -110,7 +156,6 @@ class UserService {
 
       const bestGame = bestGameResult.rows[0];
 
-      // Get ranking position
       const rankResult = await pool.query(
         `SELECT COUNT(*) + 1 as rank
          FROM users
@@ -120,7 +165,6 @@ class UserService {
 
       const rank = rankResult.rows[0].rank;
 
-      // Calculate win rate
       const totalGames = parseInt(gameStats.total_games) || 0;
       const gamesWon = parseInt(gameStats.games_won) || 0;
       const winRate = totalGames > 0 ? ((gamesWon / totalGames) * 100).toFixed(1) : 0;

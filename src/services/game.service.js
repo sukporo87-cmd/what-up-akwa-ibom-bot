@@ -139,69 +139,87 @@ class GameService {
   // GAME LIFECYCLE
   // ============================================
 
-  async startNewGame(user) {
-    try {
-      // Check if payment is enabled and user has games
-      if (paymentService.isEnabled()) {
-        const hasGames = await paymentService.hasGamesRemaining(user.id);
-        if (!hasGames) {
-          await whatsappService.sendMessage(
-            user.phone_number,
-            '❌ You have no games remaining!\n\n' +
-            'Type BUY to purchase more games.'
-          );
-          return;
-        }
-
-        const gamesLeft = await paymentService.deductGame(user.id);
-        logger.info(`Game started for user ${user.id} - Games remaining: ${gamesLeft}`);
-      }
-
-      // Check for existing active session
-      const existingSession = await this.getActiveSession(user.id);
-      if (existingSession) {
+  async startNewGame(user, gameMode = 'classic', tournamentId = null) {
+  try {
+    // Check if payment is enabled and user has games
+    if (paymentService.isEnabled()) {
+      const hasGames = await paymentService.hasGamesRemaining(user.id);
+      if (!hasGames) {
         await whatsappService.sendMessage(
           user.phone_number,
-          '⚠️ You already have an active game! Complete it first.'
+          '❌ You have no games remaining!\n\n' +
+          'Type BUY to purchase more games.'
         );
         return;
       }
 
-      const sessionKey = `game_${user.id}_${Date.now()}`;
-      const result = await pool.query(
-        `INSERT INTO game_sessions (user_id, session_key, current_question, current_score)
-         VALUES ($1, $2, 1, 0)
-         RETURNING *`,
-        [user.id, sessionKey]
-      );
+      const gamesLeft = await paymentService.deductGame(user.id);
+      logger.info(`Game started for user ${user.id} - Games remaining: ${gamesLeft}`);
+    }
 
-      const session = result.rows[0];
-      await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
-
+    // Check for existing active session
+    const existingSession = await this.getActiveSession(user.id);
+    if (existingSession) {
       await whatsappService.sendMessage(
         user.phone_number,
-        `🎮 GAME INSTRUCTIONS 🎮
-
-📋 RULES:
-- 15 questions about Akwa Ibom & Others
-- 15 seconds per question
-- Win up to ₦50,000!
-
-💎 LIFELINES:
-5️⃣0️⃣ 50:50 - Remove 2 wrong answers (Type '50' to activate)
-⏭️ Skip - Replace with new question (Type 'Skip' to activate)
-
-Safe points: Q5 (₦1,000) & Q10 (₦10,000)
-
-When you're ready, reply START to begin! 🚀`
+        '⚠️ You already have an active game! Complete it first.'
       );
-
-      await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
-    } catch (error) {
-      logger.error('Error starting game:', error);
-      throw error;
+      return;
     }
+
+    const sessionKey = `game_${user.id}_${Date.now()}`;
+    
+    const result = await pool.query(
+      `INSERT INTO game_sessions (user_id, session_key, current_question, current_score, game_mode, tournament_id)
+       VALUES ($1, $2, 1, 0, $3, $4)
+       RETURNING *`,
+      [user.id, sessionKey, gameMode, tournamentId]
+    );
+
+    const session = result.rows[0];
+
+    await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
+
+    let gameModeText = '';
+    switch(gameMode) {
+      case 'classic':
+        gameModeText = '🎮 CLASSIC MODE';
+        break;
+      case 'akwa_ibom':
+        gameModeText = '🏛️ AKWA IBOM EDITION';
+        break;
+      case 'world':
+        gameModeText = '🌍 WORLD EDITION';
+        break;
+      case 'tournament':
+        gameModeText = '🏆 TOURNAMENT MODE';
+        break;
+      default:
+        gameModeText = '🎮 GAME MODE';
+    }
+
+    await whatsappService.sendMessage(
+      user.phone_number,
+      `${gameModeText}\n\n` +
+      `🎮 GAME INSTRUCTIONS 🎮\n\n` +
+      `📋 RULES:\n` +
+      `- 15 questions\n` +
+      `- 15 seconds per question\n` +
+      `- Win up to ₦50,000!\n\n` +
+      `💎 LIFELINES:\n` +
+      `5️⃣0️⃣ 50:50 - Remove 2 wrong answers (Type '50' to activate)\n` +
+      `⏭️ Skip - Replace with new question (Type 'Skip' to activate)\n\n` +
+      `Safe points: Q5 (₦1,000) & Q10 (₦10,000)\n\n` +
+      `_Proudly brought to you by SummerIsland Systems._\n\n` +
+      `When you're ready, reply START to begin! 🚀`
+    );
+
+    await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
+  } catch (error) {
+    logger.error('Error starting game:', error);
+    throw error;
   }
+}
 
   async completeGame(session, user, wonGrandPrize) {
     try {
