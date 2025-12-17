@@ -1,5 +1,6 @@
 // ============================================
 // FILE: src/routes/admin.routes.js - COMPLETE VERSION WITH ALL FEATURES
+// Part 1 of 5: Imports, Middleware, Login, Stats, and Basic Analytics
 // ============================================
 
 const express = require('express');
@@ -275,6 +276,9 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch analytics' });
   }
 });
+// ============================================
+// Part 2 of 5: Advanced Analytics Endpoints
+// ============================================
 
 // FIXED: User Activity
 router.get('/api/analytics/user-activity', authenticateAdmin, async (req, res) => {
@@ -692,9 +696,8 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch activity log' });
   }
 });
-
 // ============================================
-// PAYOUT ROUTES
+// Part 3 of 5: Payout Management Routes
 // ============================================
 
 router.get('/api/payouts/pending', authenticateAdmin, async (req, res) => {
@@ -960,11 +963,6 @@ router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => 
 // USER ROUTES
 // ============================================
 
-// ============================================
-// FILE: src/routes/admin.routes.js
-// REPLACE THE /api/users ENDPOINT WITH THIS
-// ============================================
-
 router.get('/api/users', authenticateAdmin, async (req, res) => {
   try {
     await adminAuthService.logActivity(
@@ -1007,9 +1005,8 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
-
 // ============================================
-// QUESTION ROUTES
+// Part 4 of 5: Question Management Routes
 // ============================================
 
 router.get('/api/questions', authenticateAdmin, async (req, res) => {
@@ -1170,6 +1167,412 @@ router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
     logger.error('Error deleting question:', error);
     res.status(500).json({ error: 'Failed to delete question' });
   }
+});
+// ============================================
+// Part 5 of 5: Tournament Management and Question Bank Routes
+// ============================================
+
+// ============================================
+// TOURNAMENT MANAGEMENT ROUTES
+// ============================================
+
+router.get('/api/tournaments', authenticateAdmin, async (req, res) => {
+    try {
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'view_tournaments',
+            {},
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        const result = await pool.query(`
+            SELECT 
+                t.*,
+                COUNT(DISTINCT tp.user_id) as participant_count,
+                COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_entries,
+                COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) as total_revenue
+            FROM tournaments t
+            LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
+            LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
+            GROUP BY t.id
+            ORDER BY t.created_at DESC
+        `);
+        
+        res.json({ tournaments: result.rows });
+    } catch (error) {
+        logger.error('Error getting tournaments:', error);
+        res.status(500).json({ error: 'Failed to fetch tournaments' });
+    }
+});
+
+router.get('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        
+        const result = await pool.query(`
+            SELECT 
+                t.*,
+                COUNT(DISTINCT tp.user_id) as participant_count,
+                COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_entries,
+                ti.welcome_message,
+                ti.instructions,
+                ti.prize_structure,
+                ti.sponsor_branding,
+                ti.rules
+            FROM tournaments t
+            LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
+            LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
+            LEFT JOIN tournament_instructions ti ON t.id = ti.tournament_id
+            WHERE t.id = $1
+            GROUP BY t.id, ti.id
+        `, [tournamentId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        res.json(result.rows[0]);
+    } catch (error) {
+        logger.error('Error getting tournament:', error);
+        res.status(500).json({ error: 'Failed to fetch tournament' });
+    }
+});
+
+router.post('/api/tournaments', authenticateAdmin, async (req, res) => {
+    try {
+        const {
+            tournamentName,
+            tournamentType,
+            sponsorName,
+            sponsorLogoUrl,
+            description,
+            paymentType,
+            usesTokens,
+            tokensPerEntry,
+            unlimitedPlays,
+            entryFee,
+            prizePool,
+            maxParticipants,
+            startDate,
+            endDate,
+            questionCategory,
+            customInstructions,
+            customBranding,
+            status
+        } = req.body;
+        
+        // Validation
+        if (!tournamentName || !startDate || !endDate || !prizePool) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        if (paymentType === 'paid' && !entryFee) {
+            return res.status(400).json({ error: 'Entry fee required for paid tournaments' });
+        }
+        
+        if (usesTokens && !tokensPerEntry) {
+            return res.status(400).json({ error: 'Tokens per entry required when using token system' });
+        }
+        
+        // Create tournament
+        const result = await pool.query(`
+            INSERT INTO tournaments (
+                tournament_name, tournament_type, sponsor_name, sponsor_logo_url,
+                description, payment_type, uses_tokens, tokens_per_entry, 
+                unlimited_plays, entry_fee, prize_pool, max_participants,
+                start_date, end_date, question_category, custom_instructions,
+                custom_branding, status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            RETURNING *
+        `, [
+            tournamentName, tournamentType || 'sponsored', sponsorName, sponsorLogoUrl,
+            description, paymentType || 'free', usesTokens || false, tokensPerEntry,
+            unlimitedPlays !== false, entryFee || 0, prizePool, maxParticipants,
+            startDate, endDate, questionCategory, customInstructions,
+            customBranding, status || 'upcoming'
+        ]);
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'create_tournament',
+            { tournament_id: result.rows[0].id, tournament_name: tournamentName },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        logger.info(`Tournament created: ${result.rows[0].id} - ${tournamentName}`);
+        
+        res.json({ success: true, tournament: result.rows[0] });
+    } catch (error) {
+        logger.error('Error creating tournament:', error);
+        res.status(500).json({ error: 'Failed to create tournament' });
+    }
+});
+
+router.put('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        const {
+            tournamentName,
+            tournamentType,
+            sponsorName,
+            sponsorLogoUrl,
+            description,
+            paymentType,
+            usesTokens,
+            tokensPerEntry,
+            unlimitedPlays,
+            entryFee,
+            prizePool,
+            maxParticipants,
+            startDate,
+            endDate,
+            questionCategory,
+            customInstructions,
+            customBranding,
+            status
+        } = req.body;
+        
+        const result = await pool.query(`
+            UPDATE tournaments
+            SET tournament_name = $1,
+                tournament_type = $2,
+                sponsor_name = $3,
+                sponsor_logo_url = $4,
+                description = $5,
+                payment_type = $6,
+                uses_tokens = $7,
+                tokens_per_entry = $8,
+                unlimited_plays = $9,
+                entry_fee = $10,
+                prize_pool = $11,
+                max_participants = $12,
+                start_date = $13,
+                end_date = $14,
+                question_category = $15,
+                custom_instructions = $16,
+                custom_branding = $17,
+                status = $18
+            WHERE id = $19
+            RETURNING *
+        `, [
+            tournamentName, tournamentType, sponsorName, sponsorLogoUrl,
+            description, paymentType, usesTokens, tokensPerEntry,
+            unlimitedPlays, entryFee, prizePool, maxParticipants,
+            startDate, endDate, questionCategory, customInstructions,
+            customBranding, status, tournamentId
+        ]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'update_tournament',
+            { tournament_id: tournamentId },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        res.json({ success: true, tournament: result.rows[0] });
+    } catch (error) {
+        logger.error('Error updating tournament:', error);
+        res.status(500).json({ error: 'Failed to update tournament' });
+    }
+});
+
+router.delete('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        
+        // Check if tournament has participants
+        const participantCheck = await pool.query(
+            'SELECT COUNT(*) as count FROM tournament_participants WHERE tournament_id = $1',
+            [tournamentId]
+        );
+        
+        if (parseInt(participantCheck.rows[0].count) > 0) {
+            return res.status(400).json({ 
+                error: 'Cannot delete tournament with participants. Set status to cancelled instead.' 
+            });
+        }
+        
+        await pool.query('DELETE FROM tournaments WHERE id = $1', [tournamentId]);
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'delete_tournament',
+            { tournament_id: tournamentId },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error deleting tournament:', error);
+        res.status(500).json({ error: 'Failed to delete tournament' });
+    }
+});
+
+router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        
+        const result = await pool.query(`
+            SELECT 
+                tp.*,
+                u.full_name,
+                u.username,
+                u.phone_number,
+                u.city,
+                tep.payment_status,
+                tep.paid_at,
+                tep.amount as paid_amount
+            FROM tournament_participants tp
+            JOIN users u ON tp.user_id = u.id
+            LEFT JOIN tournament_entry_payments tep 
+                ON tp.tournament_id = tep.tournament_id 
+                AND tp.user_id = tep.user_id
+            WHERE tp.tournament_id = $1
+            ORDER BY tp.rank ASC NULLS LAST, tp.best_score DESC
+        `, [tournamentId]);
+        
+        res.json({ participants: result.rows });
+    } catch (error) {
+        logger.error('Error getting tournament participants:', error);
+        res.status(500).json({ error: 'Failed to fetch participants' });
+    }
+});
+
+router.post('/api/tournaments/:id/end', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        const TournamentService = require('../services/tournament.service');
+        const tournamentService = new TournamentService();
+        
+        const result = await tournamentService.endTournament(tournamentId);
+        
+        if (result.success) {
+            await adminAuthService.logActivity(
+                req.adminSession.admin_id,
+                'end_tournament',
+                { tournament_id: tournamentId, winners: result.winnersCount },
+                getIpAddress(req),
+                req.headers['user-agent']
+            );
+            
+            res.json({ success: true, message: `Tournament ended. ${result.winnersCount} winners.` });
+        } else {
+            res.status(400).json({ error: result.error });
+        }
+    } catch (error) {
+        logger.error('Error ending tournament:', error);
+        res.status(500).json({ error: 'Failed to end tournament' });
+    }
+});
+
+// ============================================
+// QUESTION BANK MANAGEMENT
+// ============================================
+
+router.get('/api/question-banks', authenticateAdmin, async (req, res) => {
+    try {
+        const QuestionService = require('../services/question.service');
+        const questionService = new QuestionService();
+        
+        const banks = await questionService.getQuestionBanks();
+        res.json({ banks });
+    } catch (error) {
+        logger.error('Error getting question banks:', error);
+        res.status(500).json({ error: 'Failed to fetch question banks' });
+    }
+});
+
+router.post('/api/question-banks', authenticateAdmin, async (req, res) => {
+    try {
+        const { bankName, displayName, description, forGameMode, forTournamentId } = req.body;
+        
+        if (!bankName || !displayName) {
+            return res.status(400).json({ error: 'Bank name and display name required' });
+        }
+        
+        const QuestionService = require('../services/question.service');
+        const questionService = new QuestionService();
+        
+        const result = await questionService.createQuestionBank(
+            bankName, displayName, description, forGameMode, forTournamentId
+        );
+        
+        if (result.success) {
+            await adminAuthService.logActivity(
+                req.adminSession.admin_id,
+                'create_question_bank',
+                { bank_name: bankName },
+                getIpAddress(req),
+                req.headers['user-agent']
+            );
+            
+            res.json(result);
+        } else {
+            res.status(400).json(result);
+        }
+    } catch (error) {
+        logger.error('Error creating question bank:', error);
+        res.status(500).json({ error: 'Failed to create question bank' });
+    }
+});
+
+router.post('/api/question-banks/:id/assign-questions', authenticateAdmin, async (req, res) => {
+    try {
+        const bankId = req.params.id;
+        const { questionIds } = req.body;
+        
+        if (!questionIds || !Array.isArray(questionIds) || questionIds.length === 0) {
+            return res.status(400).json({ error: 'Question IDs array required' });
+        }
+        
+        const QuestionService = require('../services/question.service');
+        const questionService = new QuestionService();
+        
+        const result = await questionService.assignQuestionsToBank(questionIds, bankId);
+        
+        if (result.success) {
+            await adminAuthService.logActivity(
+                req.adminSession.admin_id,
+                'assign_questions_to_bank',
+                { bank_id: bankId, count: questionIds.length },
+                getIpAddress(req),
+                req.headers['user-agent']
+            );
+            
+            res.json({ success: true, message: `${questionIds.length} questions assigned` });
+        } else {
+            res.status(400).json(result);
+        }
+    } catch (error) {
+        logger.error('Error assigning questions:', error);
+        res.status(500).json({ error: 'Failed to assign questions' });
+    }
+});
+
+router.get('/api/question-banks/:id/questions', authenticateAdmin, async (req, res) => {
+    try {
+        const bankId = req.params.id;
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const QuestionService = require('../services/question.service');
+        const questionService = new QuestionService();
+        
+        const questions = await questionService.getQuestionsByBank(bankId, limit, offset);
+        res.json({ questions });
+    } catch (error) {
+        logger.error('Error getting bank questions:', error);
+        res.status(500).json({ error: 'Failed to fetch questions' });
+    }
 });
 
 module.exports = router;
