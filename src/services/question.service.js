@@ -328,4 +328,4 @@ class QuestionService {
   }
 }
 
-module.exports = new QuestionService();
+module.exports =  QuestionService();
