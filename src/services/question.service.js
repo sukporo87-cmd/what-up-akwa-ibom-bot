@@ -1,283 +1,331 @@
-// ============================================
-// FILE: src/services/question.service.js
-// UPDATED: Support for multiple question banks
-// Batch 7: Question Service
-// ============================================
+// src/services/question.service.js - FIXED VERSION
 
 const pool = require('../config/database');
-const { logger } = require('../utils/logger');
+const logger = require('../utils/logger');
 
 class QuestionService {
-    /**
-     * Get question by difficulty with question bank support
-     * @param {number} difficulty - Question number (1-15)
-     * @param {array} excludeIds - Already asked question IDs
-     * @param {string} gameMode - Game mode ('classic', 'practice', 'tournament')
-     * @param {number} tournamentId - Tournament ID (if tournament game)
-     */
-    async getQuestionByDifficulty(difficulty, excludeIds = [], gameMode = 'classic', tournamentId = null) {
-        try {
-            let minDifficulty, maxDifficulty;
-            
-            // Questions 1-5: Easy (difficulty 1-7)
-            if (difficulty >= 1 && difficulty <= 5) {
-                minDifficulty = 1;
-                maxDifficulty = 7;
-            }
-            // Questions 6-10: Medium (difficulty 6-12)
-            else if (difficulty >= 6 && difficulty <= 10) {
-                minDifficulty = 6;
-                maxDifficulty = 12;
-            }
-            // Questions 11-15: Hard (difficulty 11-15)
-            else if (difficulty >= 11 && difficulty <= 15) {
-                minDifficulty = 11;
-                maxDifficulty = 15;
-            }
-            else {
-                minDifficulty = 1;
-                maxDifficulty = 15;
-            }
-            
-            // Determine question bank
-            let questionBankCondition = '';
-            let params = [minDifficulty, maxDifficulty];
-            let paramIndex = 3;
-            
-            if (gameMode === 'practice') {
-                // Practice mode - use practice bank or classic bank
-                questionBankCondition = `AND (qb.bank_name = 'practice_mode' OR qb.bank_name = 'classic_mode' OR q.is_practice = true)`;
-            } else if (gameMode === 'tournament' && tournamentId) {
-                // Tournament mode - check if tournament has custom question bank
-                const tournament = await pool.query(
-                    'SELECT question_category FROM tournaments WHERE id = $1',
-                    [tournamentId]
-                );
-                
-                if (tournament.rows.length > 0 && tournament.rows[0].question_category) {
-                    const category = tournament.rows[0].question_category;
-                    
-                    // Try to find tournament-specific bank
-                    const bankCheck = await pool.query(
-                        `SELECT id FROM question_banks 
-                         WHERE bank_name = $1 OR for_tournament_id = $2`,
-                        [category, tournamentId]
-                    );
-                    
-                    if (bankCheck.rows.length > 0) {
-                        // Use tournament-specific bank
-                        questionBankCondition = `AND q.question_bank_id = $${paramIndex}`;
-                        params.push(bankCheck.rows[0].id);
-                        paramIndex++;
-                    } else {
-                        // Fallback to category matching or tournament bank
-                        questionBankCondition = `AND (q.category = $${paramIndex} OR qb.bank_name = 'tournaments')`;
-                        params.push(category);
-                        paramIndex++;
-                    }
-                } else {
-                    // Use general tournament question bank
-                    questionBankCondition = `AND qb.bank_name = 'tournaments'`;
-                }
-            } else {
-                // Classic mode or other modes - use classic bank
-                questionBankCondition = `AND qb.bank_name = 'classic_mode'`;
-            }
-            
-            // Build query
-            let query;
-            if (excludeIds.length > 0) {
-                const placeholders = excludeIds.map((_, i) => `$${i + paramIndex}`).join(',');
-                query = `
-                    SELECT q.* 
-                    FROM questions q
-                    LEFT JOIN question_banks qb ON q.question_bank_id = qb.id
-                    WHERE q.difficulty BETWEEN $1 AND $2
-                    AND q.is_active = true
-                    ${questionBankCondition}
-                    AND q.id NOT IN (${placeholders})
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                `;
-                params = [...params, ...excludeIds];
-            } else {
-                query = `
-                    SELECT q.* 
-                    FROM questions q
-                    LEFT JOIN question_banks qb ON q.question_bank_id = qb.id
-                    WHERE q.difficulty BETWEEN $1 AND $2
-                    AND q.is_active = true
-                    ${questionBankCondition}
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                `;
-            }
-            
-            const result = await pool.query(query, params);
-            
-            // If no question found, try fallback
-            if (!result.rows[0]) {
-                logger.warn(`No questions found for difficulty ${minDifficulty}-${maxDifficulty} in ${gameMode} mode, trying fallback`);
-                
-                let fallbackQuery;
-                if (excludeIds.length > 0) {
-                    const placeholders = excludeIds.map((_, i) => `$${i + 3}`).join(',');
-                    fallbackQuery = `
-                        SELECT * FROM questions
-                        WHERE is_active = true
-                        AND id NOT IN (${placeholders})
-                        ORDER BY RANDOM()
-                        LIMIT 1
-                    `;
-                    const fallbackResult = await pool.query(fallbackQuery, [minDifficulty, maxDifficulty, ...excludeIds]);
-                    return fallbackResult.rows[0] || null;
-                } else {
-                    fallbackQuery = `
-                        SELECT * FROM questions
-                        WHERE is_active = true
-                        ORDER BY RANDOM()
-                        LIMIT 1
-                    `;
-                    const fallbackResult = await pool.query(fallbackQuery);
-                    return fallbackResult.rows[0] || null;
-                }
-            }
-            
-            return result.rows[0];
-            
-        } catch (error) {
-            logger.error('Error fetching question:', error);
-            throw error;
-        }
-    }
+  /**
+   * Get a random question by difficulty level with tournament support
+   * @param {number} difficulty - The difficulty level (1-15)
+   * @param {Array<number>} excludeIds - Array of question IDs to exclude
+   * @param {string|null} tournamentCategory - Optional tournament category/bank
+   * @returns {Promise<Object>} Question object
+   */
+  async getQuestionByDifficulty(difficulty, excludeIds = [], tournamentCategory = null) {
+    try {
+      let query;
+      let params;
 
-    async getQuestionById(id) {
-        try {
-            const result = await pool.query(
-                'SELECT * FROM questions WHERE id = $1',
-                [id]
-            );
-            return result.rows[0] || null;
-        } catch (error) {
-            logger.error('Error fetching question by ID:', error);
-            throw error;
-        }
-    }
+      // TOURNAMENT MODE: Use tournament-specific questions if category is provided
+      if (tournamentCategory) {
+        logger.info(`Fetching tournament question for category: ${tournamentCategory}, difficulty: ${difficulty}`);
+        
+        // Build exclude clause
+        const excludeClause = excludeIds.length > 0 
+          ? `AND id != ALL($3::int[])` 
+          : '';
 
-    async updateQuestionStats(questionId, wasCorrect) {
-        try {
-            const updateQuery = wasCorrect
-                ? 'UPDATE questions SET times_asked = times_asked + 1, times_correct = times_correct + 1 WHERE id = $1'
-                : 'UPDATE questions SET times_asked = times_asked + 1 WHERE id = $1';
-            
-            await pool.query(updateQuery, [questionId]);
-        } catch (error) {
-            logger.error('Error updating question stats:', error);
-        }
-    }
+        query = `
+          SELECT id, question_text, option_a, option_b, option_c, option_d, 
+                 correct_answer, difficulty, category, fun_fact
+          FROM questions
+          WHERE difficulty = $1 
+            AND category = $2 
+            AND is_active = true
+            ${excludeClause}
+          ORDER BY RANDOM()
+          LIMIT 1
+        `;
+        
+        params = excludeIds.length > 0 
+          ? [difficulty, tournamentCategory, excludeIds]
+          : [difficulty, tournamentCategory];
 
-    /**
-     * Get all question banks
-     */
-    async getQuestionBanks() {
-        try {
-            const result = await pool.query(`
-                SELECT 
-                    qb.*,
-                    COUNT(q.id) as question_count
-                FROM question_banks qb
-                LEFT JOIN questions q ON qb.id = q.question_bank_id
-                WHERE qb.is_active = true
-                GROUP BY qb.id
-                ORDER BY qb.for_game_mode, qb.bank_name
-            `);
-            
-            return result.rows;
-        } catch (error) {
-            logger.error('Error getting question banks:', error);
-            return [];
-        }
-    }
+        const result = await pool.query(query, params);
 
-    /**
-     * Create new question bank
-     */
-    async createQuestionBank(bankName, displayName, description, forGameMode, forTournamentId = null) {
-        try {
-            const result = await pool.query(`
-                INSERT INTO question_banks 
-                    (bank_name, display_name, description, for_game_mode, for_tournament_id)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *
-            `, [bankName, displayName, description, forGameMode, forTournamentId]);
-            
-            logger.info(`Question bank created: ${bankName}`);
-            return { success: true, bank: result.rows[0] };
-        } catch (error) {
-            logger.error('Error creating question bank:', error);
-            return { success: false, error: error.message };
+        // If no tournament-specific question found, try general fallback
+        if (result.rows.length === 0) {
+          logger.warn(`No tournament questions found for category: ${tournamentCategory}, difficulty: ${difficulty}. Trying general questions.`);
+          
+          // Fallback to general questions (no category filter)
+          query = `
+            SELECT id, question_text, option_a, option_b, option_c, option_d, 
+                   correct_answer, difficulty, category, fun_fact
+            FROM questions
+            WHERE difficulty = $1 
+              AND is_active = true
+              ${excludeIds.length > 0 ? `AND id != ALL($2::int[])` : ''}
+            ORDER BY RANDOM()
+            LIMIT 1
+          `;
+          
+          params = excludeIds.length > 0 ? [difficulty, excludeIds] : [difficulty];
+          const fallbackResult = await pool.query(query, params);
+          
+          if (fallbackResult.rows.length === 0) {
+            throw new Error(`No questions available for difficulty ${difficulty}`);
+          }
+          
+          return fallbackResult.rows[0];
         }
-    }
 
-    /**
-     * Assign questions to a question bank
-     */
-    async assignQuestionsToBank(questionIds, bankId) {
-        try {
-            await pool.query(
-                'UPDATE questions SET question_bank_id = $1 WHERE id = ANY($2)',
-                [bankId, questionIds]
-            );
-            
-            logger.info(`Assigned ${questionIds.length} questions to bank ${bankId}`);
-            return { success: true };
-        } catch (error) {
-            logger.error('Error assigning questions to bank:', error);
-            return { success: false, error: error.message };
-        }
-    }
+        return result.rows[0];
+      }
 
-    /**
-     * Get questions by bank
-     */
-    async getQuestionsByBank(bankId, limit = 100, offset = 0) {
-        try {
-            const result = await pool.query(`
-                SELECT * FROM questions
-                WHERE question_bank_id = $1
-                ORDER BY difficulty ASC, id DESC
-                LIMIT $2 OFFSET $3
-            `, [bankId, limit, offset]);
-            
-            return result.rows;
-        } catch (error) {
-            logger.error('Error getting questions by bank:', error);
-            return [];
-        }
-    }
+      // REGULAR MODE: Standard question fetching (no tournament)
+      const excludeClause = excludeIds.length > 0 
+        ? `AND id != ALL($2::int[])` 
+        : '';
 
-    /**
-     * Get question count by category for a bank
-     */
-    async getQuestionCountByCategory(bankId) {
-        try {
-            const result = await pool.query(`
-                SELECT 
-                    category,
-                    COUNT(*) as count,
-                    AVG(difficulty) as avg_difficulty
-                FROM questions
-                WHERE question_bank_id = $1 AND is_active = true
-                GROUP BY category
-                ORDER BY count DESC
-            `, [bankId]);
-            
-            return result.rows;
-        } catch (error) {
-            logger.error('Error getting question count by category:', error);
-            return [];
-        }
+      query = `
+        SELECT id, question_text, option_a, option_b, option_c, option_d, 
+               correct_answer, difficulty, category, fun_fact
+        FROM questions
+        WHERE difficulty = $1 
+          AND is_active = true
+          ${excludeClause}
+        ORDER BY RANDOM()
+        LIMIT 1
+      `;
+
+      params = excludeIds.length > 0 ? [difficulty, excludeIds] : [difficulty];
+
+      const result = await pool.query(query, params);
+
+      if (result.rows.length === 0) {
+        throw new Error(`No questions available for difficulty ${difficulty}`);
+      }
+
+      return result.rows[0];
+
+    } catch (error) {
+      logger.error('Error fetching question:', error);
+      throw error;
     }
+  }
+
+  /**
+   * Get questions for a specific difficulty range
+   * Used for tournament initialization to verify question availability
+   */
+  async getQuestionsForDifficultyRange(minDifficulty, maxDifficulty, category = null) {
+    try {
+      let query;
+      let params;
+
+      if (category) {
+        query = `
+          SELECT COUNT(*) as count, difficulty
+          FROM questions
+          WHERE difficulty BETWEEN $1 AND $2
+            AND category = $3
+            AND is_active = true
+          GROUP BY difficulty
+          ORDER BY difficulty
+        `;
+        params = [minDifficulty, maxDifficulty, category];
+      } else {
+        query = `
+          SELECT COUNT(*) as count, difficulty
+          FROM questions
+          WHERE difficulty BETWEEN $1 AND $2
+            AND is_active = true
+          GROUP BY difficulty
+          ORDER BY difficulty
+        `;
+        params = [minDifficulty, maxDifficulty];
+      }
+
+      const result = await pool.query(query, params);
+      return result.rows;
+
+    } catch (error) {
+      logger.error('Error checking question availability:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a question by ID (for answer verification)
+   */
+  async getQuestionById(questionId) {
+    try {
+      const query = `
+        SELECT id, question_text, option_a, option_b, option_c, option_d, 
+               correct_answer, difficulty, category, fun_fact
+        FROM questions
+        WHERE id = $1 AND is_active = true
+      `;
+
+      const result = await pool.query(query, [questionId]);
+
+      if (result.rows.length === 0) {
+        throw new Error(`Question not found: ${questionId}`);
+      }
+
+      return result.rows[0];
+
+    } catch (error) {
+      logger.error('Error fetching question by ID:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add a new question (for admin)
+   */
+  async addQuestion(questionData) {
+    const {
+      question_text,
+      option_a,
+      option_b,
+      option_c,
+      option_d,
+      correct_answer,
+      difficulty,
+      category = 'General',
+      fun_fact = null
+    } = questionData;
+
+    try {
+      const query = `
+        INSERT INTO questions 
+        (question_text, option_a, option_b, option_c, option_d, correct_answer, difficulty, category, fun_fact, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+        RETURNING *
+      `;
+
+      const result = await pool.query(query, [
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        correct_answer,
+        difficulty,
+        category,
+        fun_fact
+      ]);
+
+      logger.info(`New question added: ID ${result.rows[0].id}`);
+      return result.rows[0];
+
+    } catch (error) {
+      logger.error('Error adding question:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all questions (for admin)
+   */
+  async getAllQuestions() {
+    try {
+      const query = `
+        SELECT id, question_text, option_a, option_b, option_c, option_d, 
+               correct_answer, difficulty, category, fun_fact, is_active, created_at
+        FROM questions
+        ORDER BY difficulty ASC, created_at DESC
+      `;
+
+      const result = await pool.query(query);
+      return result.rows;
+
+    } catch (error) {
+      logger.error('Error fetching all questions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update question (for admin)
+   */
+  async updateQuestion(questionId, questionData) {
+    const {
+      question_text,
+      option_a,
+      option_b,
+      option_c,
+      option_d,
+      correct_answer,
+      difficulty,
+      category,
+      fun_fact,
+      is_active
+    } = questionData;
+
+    try {
+      const query = `
+        UPDATE questions
+        SET question_text = $1,
+            option_a = $2,
+            option_b = $3,
+            option_c = $4,
+            option_d = $5,
+            correct_answer = $6,
+            difficulty = $7,
+            category = $8,
+            fun_fact = $9,
+            is_active = $10,
+            updated_at = NOW()
+        WHERE id = $11
+        RETURNING *
+      `;
+
+      const result = await pool.query(query, [
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        correct_answer,
+        difficulty,
+        category,
+        fun_fact,
+        is_active,
+        questionId
+      ]);
+
+      if (result.rows.length === 0) {
+        throw new Error('Question not found');
+      }
+
+      logger.info(`Question updated: ID ${questionId}`);
+      return result.rows[0];
+
+    } catch (error) {
+      logger.error('Error updating question:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete question (soft delete by setting is_active to false)
+   */
+  async deleteQuestion(questionId) {
+    try {
+      const query = `
+        UPDATE questions
+        SET is_active = false,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING id
+      `;
+
+      const result = await pool.query(query, [questionId]);
+
+      if (result.rows.length === 0) {
+        throw new Error('Question not found');
+      }
+
+      logger.info(`Question deleted: ID ${questionId}`);
+      return true;
+
+    } catch (error) {
+      logger.error('Error deleting question:', error);
+      throw error;
+    }
+  }
 }
 
-module.exports = QuestionService;
+module.exports = new QuestionService();

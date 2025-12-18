@@ -480,84 +480,147 @@ Play as many times as allowed!`;
     // QUESTION MANAGEMENT
     // ============================================
 
-    async sendQuestion(session, user) {
-        try {
-            const questionNumber = session.current_question;
-            const prizeAmount = PRIZE_LADDER[questionNumber];
-            const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
-            const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-            
-            // Clear any existing timeout for this question
-            this.clearQuestionTimeout(timeoutKey);
-            
-            const askedQuestionsKey = `asked_questions:${session.session_key}`;
-            const askedQuestionsJson = await redis.get(askedQuestionsKey);
-            const askedQuestions = askedQuestionsJson ? JSON.parse(askedQuestionsJson) : [];
-            
-            // Get question with proper game mode and tournament context
-            const question = await questionService.getQuestionByDifficulty(
-                questionNumber, 
-                askedQuestions,
-                session.game_mode,
-                session.tournament_id
-            );
-            
-            if (!question) {
-                throw new Error('No question found');
-            }
-            
-            askedQuestions.push(question.id);
-            await redis.setex(askedQuestionsKey, 3600, JSON.stringify(askedQuestions));
-            
-            session.current_question_id = question.id;
-            await this.updateSession(session);
-            
-            let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
-            if (isSafe) message += ' (SAFE) 🔒';
-            message += `\n\n${question.question_text}\n\n`;
-            message += `A) ${question.option_a}\n`;
-            message += `B) ${question.option_b}\n`;
-            message += `C) ${question.option_c}\n`;
-            message += `D) ${question.option_d}\n\n`;
-            message += `⏱️ 15 seconds...\n\n`;
-            
-            const lifelines = [];
-            if (!session.lifeline_5050_used) lifelines.push('50:50');
-            if (!session.lifeline_skip_used) lifelines.push('Skip');
-            
-            if (lifelines.length > 0) {
-                message += `💎 Lifelines: ${lifelines.join(' | ')}`;
-            }
-            
-            await whatsappService.sendMessage(user.phone_number, message);
-            
-            // Set timeout in Redis
-            await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
-            
-            // Set JavaScript timeout
-            const timeoutId = setTimeout(async () => {
-                try {
-                    const timeout = await redis.get(timeoutKey);
-                    if (timeout) {
-                        const currentSession = await this.getActiveSession(user.id);
-                        if (currentSession && currentSession.current_question === questionNumber) {
-                            await redis.del(timeoutKey);
-                            activeTimeouts.delete(timeoutKey);
-                            await this.handleTimeout(currentSession, user);
-                        }
-                    }
-                } catch (error) {
-                    logger.error('Error in timeout handler:', error);
-                }
-            }, 15000);
-            
-            activeTimeouts.set(timeoutKey, timeoutId);
-            
-        } catch (error) {
-            logger.error('Error sending question:', error);
-            throw error;
-        }
+    async sendQuestion(phoneNumber) {
+  try {
+    const gameState = activeGames.get(phoneNumber);
+    if (!gameState) {
+      logger.warn(`No active game found for ${phoneNumber}`);
+      return;
     }
+
+    const currentQuestionNumber = gameState.currentQuestion;
+    const totalQuestions = gameState.totalQuestions;
+
+    // Determine difficulty based on question number
+    let difficulty;
+    if (currentQuestionNumber <= 5) {
+      difficulty = currentQuestionNumber; // Questions 1-5: Difficulty 1-5
+    } else if (currentQuestionNumber <= 10) {
+      difficulty = currentQuestionNumber; // Questions 6-10: Difficulty 6-10
+    } else {
+      difficulty = currentQuestionNumber; // Questions 11-15: Difficulty 11-15
+    }
+
+    logger.info(`Fetching question ${currentQuestionNumber}/${totalQuestions} with difficulty ${difficulty} for ${phoneNumber}`);
+
+    // Get tournament category if in tournament mode
+    const tournamentCategory = gameState.tournamentId ? gameState.tournamentCategory : null;
+
+    // FIX: Ensure we're passing the correct parameters
+    // The key fix is ensuring tournamentCategory is either a string or null, never undefined
+    const question = await questionService.getQuestionByDifficulty(
+      difficulty, 
+      gameState.askedQuestions || [],
+      tournamentCategory || null  // FIXED: Explicitly convert undefined to null
+    );
+
+    if (!question) {
+      logger.error(`Failed to get question for difficulty ${difficulty}`);
+      await this.sendWhatsAppMessage(
+        phoneNumber,
+        '❌ Sorry, we encountered an error fetching the next question. Your game progress has been saved.'
+      );
+      return;
+    }
+
+    // Store question in game state
+    gameState.currentQuestionId = question.id;
+    gameState.currentQuestionAnswer = question.correct_answer;
+    gameState.questionStartTime = Date.now();
+    gameState.askedQuestions.push(question.id);
+
+    // Calculate prize money for this question
+    const prizeAmount = this.calculatePrizeForQuestion(currentQuestionNumber);
+
+    // Build question message
+    let questionMessage = `*Question ${currentQuestionNumber}/${totalQuestions}*\n`;
+    questionMessage += `💰 *Prize: ₦${prizeAmount.toLocaleString()}*\n\n`;
+    questionMessage += `${question.question_text}\n\n`;
+    questionMessage += `*A)* ${question.option_a}\n`;
+    questionMessage += `*B)* ${question.option_b}\n`;
+    questionMessage += `*C)* ${question.option_c}\n`;
+    questionMessage += `*D)* ${question.option_d}\n\n`;
+    questionMessage += `Reply with *A*, *B*, *C*, or *D*\n`;
+    questionMessage += `⏱️ You have *30 seconds* to answer`;
+
+    // Add lifeline options if available
+    if (gameState.lifelines) {
+      const availableLifelines = [];
+      if (gameState.lifelines.fiftyFifty > 0) {
+        availableLifelines.push(`50:50 (${gameState.lifelines.fiftyFifty} left)`);
+      }
+      if (gameState.lifelines.skipQuestion > 0) {
+        availableLifelines.push(`Skip (${gameState.lifelines.skipQuestion} left)`);
+      }
+
+      if (availableLifelines.length > 0) {
+        questionMessage += `\n\n🆘 *Lifelines Available:*\n`;
+        questionMessage += availableLifelines.join(' | ');
+        questionMessage += `\n_Type "5050" or "SKIP" to use a lifeline_`;
+      }
+    }
+
+    // Tournament branding if applicable
+    if (gameState.tournamentId && gameState.tournamentBranding) {
+      questionMessage += `\n\n${gameState.tournamentBranding}`;
+    }
+
+    await this.sendWhatsAppMessage(phoneNumber, questionMessage);
+
+    // Start timer for answer timeout
+    if (gameState.answerTimer) {
+      clearTimeout(gameState.answerTimer);
+    }
+
+    gameState.answerTimer = setTimeout(async () => {
+      await this.handleAnswerTimeout(phoneNumber);
+    }, 30000); // 30 seconds
+
+    activeGames.set(phoneNumber, gameState);
+
+  } catch (error) {
+    logger.error('Error sending question:', error);
+    
+    // Better error handling
+    const gameState = activeGames.get(phoneNumber);
+    if (gameState) {
+      await this.sendWhatsAppMessage(
+        phoneNumber,
+        `❌ Sorry, we encountered an error: ${error.message}\n\nYour game progress has been saved. Type *PLAY* to try again.`
+      );
+      
+      // Clean up the game state
+      if (gameState.answerTimer) clearTimeout(gameState.answerTimer);
+      activeGames.delete(phoneNumber);
+    }
+  }
+}
+
+/**
+ * Calculate prize money for a specific question number
+ */
+calculatePrizeForQuestion(questionNumber) {
+  // Prize structure matches your existing game logic
+  const prizeStructure = [
+    1000,   // Q1
+    2000,   // Q2
+    5000,   // Q3
+    10000,  // Q4
+    20000,  // Q5
+    30000,  // Q6
+    50000,  // Q7
+    75000,  // Q8
+    100000, // Q9
+    150000, // Q10
+    250000, // Q11
+    500000, // Q12
+    750000, // Q13
+    1000000, // Q14
+    2000000  // Q15
+  ];
+
+  return prizeStructure[questionNumber - 1] || 1000;
+}
 
     // ============================================
     // ANSWER PROCESSING
