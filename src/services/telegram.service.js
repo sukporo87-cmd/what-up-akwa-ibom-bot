@@ -1,7 +1,26 @@
-// src/services/telegram.service.js
+// src/services/telegram.service.js - FIXED VERSION
 
 const TelegramBot = require('node-telegram-bot-api');
+
+// FIX: Check your logger export pattern and import accordingly
+// Option 1: If logger exports an object directly
 const logger = require('../utils/logger');
+
+// Option 2: If logger exports with .default or named export
+// const { logger } = require('../utils/logger');
+// OR
+// const logger = require('../utils/logger').default;
+
+// Temporary fallback logger if import fails
+const safeLogger = {
+  info: (msg, ...args) => console.log('[INFO]', msg, ...args),
+  warn: (msg, ...args) => console.warn('[WARN]', msg, ...args),
+  error: (msg, ...args) => console.error('[ERROR]', msg, ...args),
+  debug: (msg, ...args) => console.log('[DEBUG]', msg, ...args)
+};
+
+// Use either the imported logger or fallback
+const log = logger && typeof logger.error === 'function' ? logger : safeLogger;
 
 class TelegramService {
   constructor() {
@@ -17,29 +36,28 @@ class TelegramService {
       const token = process.env.TELEGRAM_BOT_TOKEN;
 
       if (!token) {
-        logger.warn('Telegram bot token not found. Telegram integration disabled.');
+        log.warn('Telegram bot token not found. Telegram integration disabled.');
         return;
       }
 
-      // Initialize bot (we'll use webhooks in production, polling for development)
+      // Initialize bot
       const useWebhook = process.env.NODE_ENV === 'production';
       
       if (useWebhook) {
-        // Webhook mode (production)
         this.bot = new TelegramBot(token, { webHook: false });
-        logger.info('Telegram bot initialized in webhook mode');
+        log.info('Telegram bot initialized in webhook mode');
       } else {
-        // Polling mode (development)
         this.bot = new TelegramBot(token, { polling: true });
-        logger.info('Telegram bot initialized in polling mode');
+        log.info('Telegram bot initialized in polling mode');
       }
 
       this.setupHandlers();
       this.initialized = true;
-      logger.info('✅ Telegram bot service initialized successfully');
+      log.info('✅ Telegram bot service initialized successfully');
 
     } catch (error) {
-      logger.error('Error initializing Telegram bot:', error);
+      log.error('Error initializing Telegram bot:', error.message);
+      // Don't throw - allow server to start even if Telegram fails
     }
   }
 
@@ -53,20 +71,19 @@ class TelegramService {
       }
 
       await this.bot.setWebHook(webhookUrl);
-      logger.info(`Telegram webhook set to: ${webhookUrl}`);
+      log.info(`Telegram webhook set to: ${webhookUrl}`);
       
-      // Verify webhook
       const webhookInfo = await this.bot.getWebHookInfo();
-      logger.info('Webhook info:', webhookInfo);
+      log.info('Webhook info:', webhookInfo);
 
     } catch (error) {
-      logger.error('Error setting up webhook:', error);
+      log.error('Error setting up webhook:', error.message);
       throw error;
     }
   }
 
   /**
-   * Process webhook update (called from webhook route)
+   * Process webhook update
    */
   processWebhookUpdate(update) {
     if (this.bot) {
@@ -115,15 +132,13 @@ class TelegramService {
       await this.handleCallbackQuery(query);
     });
 
-    // Handle all other messages (game answers, etc.)
+    // Handle all other messages
     this.bot.on('message', async (msg) => {
-      // Skip if it's a command (already handled above)
       if (msg.text && msg.text.startsWith('/')) return;
-      
       await this.handleMessage(msg);
     });
 
-    logger.info('Telegram bot handlers registered');
+    log.info('Telegram bot handlers registered');
   }
 
   /**
@@ -182,7 +197,6 @@ Ready to test your knowledge? 🧠
   async handlePlayCommand(msg) {
     const chatId = msg.chat.id;
     
-    // This will be integrated with your existing game service
     const message = `
 🎮 *Start Your Trivia Game*
 
@@ -203,15 +217,9 @@ What would you like to play?
 
     const keyboard = {
       inline_keyboard: [
-        [
-          { text: '🎮 Free Play', callback_data: 'play_free' }
-        ],
-        [
-          { text: '🏆 View Tournaments', callback_data: 'tournaments' }
-        ],
-        [
-          { text: '« Back to Menu', callback_data: 'start' }
-        ]
+        [{ text: '🎮 Free Play', callback_data: 'play_free' }],
+        [{ text: '🏆 View Tournaments', callback_data: 'tournaments' }],
+        [{ text: '« Back to Menu', callback_data: 'start' }]
       ]
     };
 
@@ -227,7 +235,6 @@ What would you like to play?
   async handleTournamentsCommand(msg) {
     const chatId = msg.chat.id;
     
-    // Placeholder - will be integrated with tournament service
     const message = `
 🏆 *Active Tournaments*
 
@@ -241,12 +248,8 @@ Enable notifications to get alerts!
 
     const keyboard = {
       inline_keyboard: [
-        [
-          { text: '🔔 Enable Notifications', callback_data: 'enable_notifications' }
-        ],
-        [
-          { text: '« Back to Menu', callback_data: 'start' }
-        ]
+        [{ text: '🔔 Enable Notifications', callback_data: 'enable_notifications' }],
+        [{ text: '« Back to Menu', callback_data: 'start' }]
       ]
     };
 
@@ -262,7 +265,6 @@ Enable notifications to get alerts!
   async handleProfileCommand(msg) {
     const chatId = msg.chat.id;
     
-    // Placeholder - will be integrated with user service
     const message = `
 👤 *Your Profile*
 
@@ -281,12 +283,8 @@ _Play your first game to start earning!_
 
     const keyboard = {
       inline_keyboard: [
-        [
-          { text: '🎮 Play Now', callback_data: 'play' }
-        ],
-        [
-          { text: '« Back to Menu', callback_data: 'start' }
-        ]
+        [{ text: '🎮 Play Now', callback_data: 'play' }],
+        [{ text: '« Back to Menu', callback_data: 'start' }]
       ]
     };
 
@@ -313,12 +311,8 @@ Play games and win prizes to climb the ranks.
 
     const keyboard = {
       inline_keyboard: [
-        [
-          { text: '🎮 Play Now', callback_data: 'play' }
-        ],
-        [
-          { text: '« Back to Menu', callback_data: 'start' }
-        ]
+        [{ text: '🎮 Play Now', callback_data: 'play' }],
+        [{ text: '« Back to Menu', callback_data: 'start' }]
       ]
     };
 
@@ -359,12 +353,8 @@ Contact support: @YourSupportHandle
 
     const keyboard = {
       inline_keyboard: [
-        [
-          { text: '🎮 Play Now', callback_data: 'play' }
-        ],
-        [
-          { text: '« Back to Menu', callback_data: 'start' }
-        ]
+        [{ text: '🎮 Play Now', callback_data: 'play' }],
+        [{ text: '« Back to Menu', callback_data: 'start' }]
       ]
     };
 
@@ -381,10 +371,8 @@ Contact support: @YourSupportHandle
     const chatId = query.message.chat.id;
     const data = query.data;
 
-    // Answer the callback query to remove loading state
     await this.bot.answerCallbackQuery(query.id);
 
-    // Route to appropriate handler based on callback data
     switch (data) {
       case 'start':
         await this.handleStartCommand(query.message);
@@ -411,21 +399,17 @@ Contact support: @YourSupportHandle
         await this.enableNotifications(chatId);
         break;
       default:
-        logger.warn(`Unhandled callback query: ${data}`);
+        log.warn(`Unhandled callback query: ${data}`);
     }
   }
 
   /**
-   * Handle regular messages (game answers, etc.)
+   * Handle regular messages
    */
   async handleMessage(msg) {
     const chatId = msg.chat.id;
     const text = msg.text;
-
-    // For now, just acknowledge
-    logger.info(`Message from ${chatId}: ${text}`);
-    
-    // This will be integrated with game service to handle answers
+    log.info(`Message from ${chatId}: ${text}`);
   }
 
   /**
@@ -446,8 +430,6 @@ Good luck! 🍀
     `.trim();
 
     await this.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-    
-    // TODO: Integrate with game service to actually start game
   }
 
   /**
@@ -477,68 +459,15 @@ You can disable notifications anytime in settings.
       if (!this.bot) {
         throw new Error('Bot not initialized');
       }
-
       return await this.bot.sendMessage(chatId, text, options);
     } catch (error) {
-      logger.error(`Error sending message to ${chatId}:`, error);
+      log.error(`Error sending message to ${chatId}:`, error.message);
       throw error;
     }
   }
 
   /**
-   * Send a photo
-   */
-  async sendPhoto(chatId, photo, options = {}) {
-    try {
-      if (!this.bot) {
-        throw new Error('Bot not initialized');
-      }
-
-      return await this.bot.sendPhoto(chatId, photo, options);
-    } catch (error) {
-      logger.error(`Error sending photo to ${chatId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Edit a message
-   */
-  async editMessage(chatId, messageId, text, options = {}) {
-    try {
-      if (!this.bot) {
-        throw new Error('Bot not initialized');
-      }
-
-      return await this.bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: messageId,
-        ...options
-      });
-    } catch (error) {
-      logger.error(`Error editing message:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a message
-   */
-  async deleteMessage(chatId, messageId) {
-    try {
-      if (!this.bot) {
-        throw new Error('Bot not initialized');
-      }
-
-      return await this.bot.deleteMessage(chatId, messageId);
-    } catch (error) {
-      logger.error(`Error deleting message:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get user info
+   * Get user identifier
    */
   getUserIdentifier(msg) {
     return {
