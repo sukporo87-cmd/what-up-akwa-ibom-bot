@@ -862,20 +862,35 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // Check if payment is enabled and user has games (ONLY for regular games)
-    if (paymentService.isEnabled()) {
-      if (input === '1' || input.includes('PLAY')) {
-        // Don't check tokens here - let game mode menu handle it
-        await this.showGameModeMenu(user);
+    // 🔧 NEW: Check for explicit post-game state first
+    const postGameState = await redis.get(`post_game:${user.id}`);
+    const isInPostGameWindow = postGameState !== null;
+    
+    // If NOT in post-game window, check for active session conflicts
+    if (!isInPostGameWindow) {
+      const activeSession = await gameService.getActiveSession(user.id);
+      
+      if (activeSession) {
+        await whatsappService.sendMessage(
+          user.phone_number,
+          '⚠️ You have an active game. Complete it or type RESET.'
+        );
         return;
+      }
+      
+      // Clear any stale user state
+      const userState = await userService.getUserState(user.phone_number);
+      if (userState && !['SELECT_GAME_MODE', 'SELECT_TOURNAMENT', 'SELECT_PACKAGE', 'SELECT_LEADERBOARD'].includes(userState.state)) {
+        logger.warn(`Clearing unexpected state: ${userState.state} for user ${user.id}`);
+        await userService.clearUserState(user.phone_number);
       }
     }
 
-    // Welcome back message
+    // Welcome back message (only if NOT in post-game and not recent)
     const lastActiveMinutesAgo = user.last_active ? 
       (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
 
-    if (lastActiveMinutesAgo > 5 && 
+    if (!isInPostGameWindow && lastActiveMinutesAgo > 5 && 
         !input.includes('PLAY') && 
         input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
 
@@ -906,35 +921,36 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // Post-game menu selections
-    const recentGame = await pool.query(`
-      SELECT * FROM game_sessions
-      WHERE user_id = $1 AND status = 'completed'
-      AND completed_at > NOW() - INTERVAL '2 minutes'
-      ORDER BY completed_at DESC LIMIT 1
-    `, [user.id]);
-
-    if (recentGame.rows.length > 0) {
+    // 🔧 UPDATED: Post-game menu with explicit state check
+    if (isInPostGameWindow) {
       if (input === '1' || input.includes('PLAY')) {
+        // Clear post-game state when user chooses to play again
+        await redis.del(`post_game:${user.id}`);
         await this.showGameModeMenu(user);
         return;
       } else if (input === '2' || input.includes('LEADERBOARD')) {
         await this.sendLeaderboardMenu(user.phone_number);
         return;
       } else if (input === '3' || input.includes('CLAIM')) {
+        // Clear post-game state when claiming
+        await redis.del(`post_game:${user.id}`);
         await this.handleClaimPrize(user);
         return;
-      } else if (input === '4') {
-        const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-        if (winSharePending) {
-          await this.handleWinShare(user, JSON.parse(winSharePending));
-          await redis.del(`win_share_pending:${user.id}`);
-        }
+      } else if (input === '4' && winSharePending) {
+        await this.handleWinShare(user, JSON.parse(winSharePending));
+        await redis.del(`win_share_pending:${user.id}`);
+        await redis.del(`post_game:${user.id}`);
+        return;
+      } else if (input === 'MENU' || input.includes('MAIN')) {
+        // User explicitly wants main menu - clear post-game state
+        await redis.del(`post_game:${user.id}`);
+        await this.sendMainMenu(user.phone_number);
         return;
       }
+      // If input doesn't match post-game options, fall through to regular menu
     }
 
-    // Regular menu handling
+    // Regular menu handling (only if NOT in post-game)
     if (input === '1' || input.includes('PLAY')) {
       await this.showGameModeMenu(user);
     } else if (input === '2' || input.includes('HOW')) {
@@ -1682,33 +1698,36 @@ Ready to start fresh?
   // ============================================
 
   async sendMainMenu(phone) {
-    const isPaymentEnabled = paymentService.isEnabled();
-
-    let message = '🏠 MAIN MENU 🏠\n\n';
-
-    if (isPaymentEnabled) {
-      const user = await userService.getUserByPhone(phone);
-      if (user) {
-        message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
-      }
-    }
-
-    message += 'What would you like to do?\n\n';
-    message += '1️⃣ Play Now\n';
-    message += '2️⃣ How to Play\n';
-    message += '3️⃣ View Leaderboard\n';
-
-    if (isPaymentEnabled) {
-      message += '4️⃣ Buy Games\n';
-      message += '5️⃣ My Stats\n';
-    } else {
-      message += '4️⃣ My Stats\n';
-    }
-
-    message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
-
-    await whatsappService.sendMessage(phone, message);
+  // 🔧 ADD THIS: Clear post-game state when showing main menu
+  const user = await userService.getUserByPhone(phone);
+  if (user) {
+    await redis.del(`post_game:${user.id}`);
   }
+  
+  const isPaymentEnabled = paymentService.isEnabled();
+
+  let message = '🏠 MAIN MENU 🏠\n\n';
+
+  if (isPaymentEnabled && user) {
+    message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+  }
+
+  message += 'What would you like to do?\n\n';
+  message += '1️⃣ Play Now\n';
+  message += '2️⃣ How to Play\n';
+  message += '3️⃣ View Leaderboard\n';
+
+  if (isPaymentEnabled) {
+    message += '4️⃣ Buy Games\n';
+    message += '5️⃣ My Stats\n';
+  } else {
+    message += '4️⃣ My Stats\n';
+  }
+
+  message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
+
+  await whatsappService.sendMessage(phone, message);
+}
 
   async sendHowToPlay(phone) {
     let message = `📖 HOW TO PLAY 📖\n\n`;

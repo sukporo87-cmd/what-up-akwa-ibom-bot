@@ -355,95 +355,102 @@ Play as many times as allowed!`;
     }
 
     async completeGame(session, user, wonGrandPrize) {
-        try {
-            const finalScore = session.current_score;
-            const questionNumber = session.current_question;
-            const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-            
-            this.clearQuestionTimeout(timeoutKey);
-            this.clearAllSessionTimeouts(session.session_key);
-            
-            await pool.query(`
-                UPDATE game_sessions
-                SET status = 'completed', completed_at = NOW(), final_score = $1
-                WHERE id = $2
-            `, [finalScore, session.id]);
-            
-            // Update user stats
-            await pool.query(`
-                UPDATE users
-                SET total_games_played = total_games_played + 1,
-                    total_winnings = total_winnings + $1,
-                    highest_question_reached = GREATEST(highest_question_reached, $2),
-                    last_active = NOW()
-                WHERE id = $3
-            `, [finalScore, session.current_question, user.id]);
-            
-            // Handle prizes ONLY for non-practice games
-            if (session.game_type !== 'practice' && finalScore > 0) {
-                await pool.query(`
-                    INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
-                    VALUES ($1, $2, $3, 'prize', 'pending')
-                `, [user.id, session.id, finalScore]);
-            }
-            
-            // Record tournament game if applicable
-            if (session.is_tournament_game && session.tournament_id) {
-                const TournamentService = require('./tournament.service');
-                const tournamentService = new TournamentService();
-                
-                await tournamentService.recordTournamentGame(
-                    user.id,
-                    session.tournament_id,
-                    session.id,
-                    finalScore,
-                    session.current_question - 1
-                );
-            }
-            
-            // Clean up Redis states
-            await redis.del(`session:${session.session_key}`);
-            await redis.del(`asked_questions:${session.session_key}`);
-            await redis.del(`game_ready:${user.id}`);
-            
-            // Send completion message
-            if (session.game_type === 'practice') {
-                await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
-            } else if (wonGrandPrize) {
-                await this.sendGrandPrizeMessage(user, finalScore);
-            } else if (finalScore > 0) {
-                await this.sendWinMessage(user, finalScore, questionNumber);
-            }
-            
-            // Set win share pending for non-practice wins
-            if (session.game_type !== 'practice' && finalScore > 0) {
-                await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
-                    amount: finalScore,
-                    questionsAnswered: session.current_question - 1,
-                    totalQuestions: 15
-                }));
-            }
-            
-        } catch (error) {
-            logger.error('Error completing game:', error);
-            throw error;
-        }
+  try {
+    const finalScore = session.current_score;
+    const questionNumber = session.current_question;
+    const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+    
+    this.clearQuestionTimeout(timeoutKey);
+    this.clearAllSessionTimeouts(session.session_key);
+    
+    await pool.query(`
+      UPDATE game_sessions
+      SET status = 'completed', completed_at = NOW(), final_score = $1
+      WHERE id = $2
+    `, [finalScore, session.id]);
+    
+    // Update user stats...
+    await pool.query(`
+      UPDATE users
+      SET total_games_played = total_games_played + 1,
+          total_winnings = total_winnings + $1,
+          highest_question_reached = GREATEST(highest_question_reached, $2),
+          last_active = NOW()
+      WHERE id = $3
+    `, [finalScore, session.current_question, user.id]);
+    
+    // Handle prizes...
+    if (session.game_type !== 'practice' && finalScore > 0) {
+      await pool.query(`
+        INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
+        VALUES ($1, $2, $3, 'prize', 'pending')
+      `, [user.id, session.id, finalScore]);
     }
+    
+    // Record tournament game...
+    if (session.is_tournament_game && session.tournament_id) {
+      const TournamentService = require('./tournament.service');
+      const tournamentService = new TournamentService();
+      
+      await tournamentService.recordTournamentGame(
+        user.id,
+        session.tournament_id,
+        session.id,
+        finalScore,
+        session.current_question - 1
+      );
+    }
+    
+    // ⚠️ CRITICAL FIX: Clear ALL Redis states INCLUDING user_state
+    await redis.del(`session:${session.session_key}`);
+    await redis.del(`asked_questions:${session.session_key}`);
+    await redis.del(`game_ready:${user.id}`);
+    
+    // 🔧 ADD THIS LINE - Clear user state to prevent menu conflicts
+    await redis.del(`user_state:${user.phone_number}`);
+    
+    // Set win share pending for non-practice wins
+    if (session.game_type !== 'practice' && finalScore > 0) {
+      await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
+        amount: finalScore,
+        questionsAnswered: session.current_question - 1,
+        totalQuestions: 15
+      }));
+    }
+    
+    // Send completion messages...
+    if (session.game_type === 'practice') {
+      await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
+    } else if (wonGrandPrize) {
+      await this.sendGrandPrizeMessage(user, finalScore);
+    } else if (finalScore > 0) {
+      await this.sendWinMessage(user, finalScore, questionNumber);
+    }
+    
+    // 🔧 ADD THIS: Set explicit post-game state with timestamp
+    await redis.setex(`post_game:${user.id}`, 45, Date.now().toString()); // 45 second window
+    
+  } catch (error) {
+    logger.error('Error completing game:', error);
+    throw error;
+  }
+}
 
     async sendPracticeCompleteMessage(user, score, questionNumber) {
-        let message = `🎓 PRACTICE COMPLETE! 🎓\n\n`;
-        message += `Great job, ${user.full_name}!\n\n`;
-        message += `You answered ${questionNumber - 1}/15 questions correctly.\n`;
-        message += `Potential Score: ₦${score.toLocaleString()}\n\n`;
-        message += `⚠️ This was practice mode - no real prizes.\n\n`;
-        message += `Ready to play for REAL prizes?\n\n`;
-        message += `1️⃣ Play Classic Mode (Win real money!)\n`;
-        message += `2️⃣ Practice Again\n`;
-        message += `3️⃣ View Leaderboard\n`;
-        message += `4️⃣ Main Menu`;
-        
-        await whatsappService.sendMessage(user.phone_number, message);
-    }
+  let message = `🎓 PRACTICE COMPLETE! 🎓\n\n`;
+  message += `Great job, ${user.full_name}!\n\n`;
+  message += `You answered ${questionNumber - 1}/15 questions correctly.\n`;
+  message += `Potential Score: ₦${score.toLocaleString()}\n\n`;
+  message += `⚠️ This was practice mode - no real prizes.\n\n`;
+  message += `Ready to play for REAL prizes?\n\n`;
+  message += `1️⃣ Play Classic Mode (Win real money!)\n`;
+  message += `2️⃣ Practice Again\n`;
+  message += `3️⃣ View Leaderboard\n`;
+  message += `4️⃣ Main Menu\n\n`;  // 🔧 CHANGED: Make option 4 = Main Menu
+  message += `Or type MENU for all options.`;  // 🔧 ADDED
+  
+  await whatsappService.sendMessage(user.phone_number, message);
+}
 
     async sendGrandPrizeMessage(user, finalScore) {
         let message = `🎊 INCREDIBLE! 🎊\n`;
@@ -462,16 +469,17 @@ Play as many times as allowed!`;
     }
 
     async sendWinMessage(user, finalScore, questionNumber) {
-        let message = `Congratulations ${user.full_name}! 🎉\n\n`;
-        message += `You won ₦${finalScore.toLocaleString()}!\n\n`;
-        message += `Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸\n\n`;
-        message += `1️⃣ Play Again\n`;
-        message += `2️⃣ View Leaderboard\n`;
-        message += `3️⃣ Claim Prize\n`;
-        message += `4️⃣ Print your victory card`;
-        
-        await whatsappService.sendMessage(user.phone_number, message);
-    }
+  let message = `Congratulations ${user.full_name}! 🎉\n\n`;
+  message += `You won ₦${finalScore.toLocaleString()}!\n\n`;
+  message += `Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸\n\n`;
+  message += `1️⃣ Play Again\n`;
+  message += `2️⃣ View Leaderboard\n`;
+  message += `3️⃣ Claim Prize\n`;
+  message += `4️⃣ Share Victory Card\n\n`;  // 🔧 CHANGED: More explicit
+  message += `Type MENU for more options.`;  // 🔧 ADDED
+  
+  await whatsappService.sendMessage(user.phone_number, message);
+}
     // ============================================
 // Part 3 of 4: Question Management and Answer Processing (UPDATED)
 // ============================================
