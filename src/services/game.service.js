@@ -1,7 +1,7 @@
 // ============================================
 // FILE: src/services/game.service.js
 // COMPLETE: Game Service with Tournament and Payment Integration
-// Part 1 of 4: Imports, Constants, Constructor, and Cleanup Methods
+// Part 1 of 3: Imports, Constants, Constructor, and Cleanup Methods
 // ============================================
 
 const pool = require('../config/database');
@@ -131,29 +131,29 @@ class GameService {
             logger.info(`Cleared ${cleared} timeouts for session ${sessionKey}`);
         }
     }
-    // ============================================
-// Part 2 of 4: Game Lifecycle Methods
-// ============================================
 
     // ============================================
-    // GAME LIFECYCLE
+    // GAME LIFECYCLE - FIXED METHODS
     // ============================================
 
+    /**
+     * Start a new game with proper token deduction
+     * CRITICAL FIX: Deducts tokens BEFORE creating session
+     */
     async startNewGame(user, gameMode = 'classic', tournamentId = null) {
         try {
             // Determine game type
             const isTournamentGame = tournamentId !== null;
             const isPracticeMode = gameMode === 'practice';
             const gameType = isPracticeMode ? 'practice' : (isTournamentGame ? 'tournament' : 'regular');
-            
+
             let shouldDeductToken = false;
             let tokenDeducted = false;
-            
+
             // TOKEN LOGIC - CRITICAL SECTION
             if (paymentService.isEnabled() && !isPracticeMode && !isTournamentGame) {
                 // Only deduct for REGULAR games
                 const hasGames = await paymentService.hasGamesRemaining(user.id);
-                
                 if (!hasGames) {
                     await whatsappService.sendMessage(
                         user.phone_number,
@@ -162,15 +162,31 @@ class GameService {
                     );
                     return;
                 }
-                
                 shouldDeductToken = true;
             }
+
+            // 🔧 FIXED: Check tournament eligibility and get token info BEFORE creating session
+            let tournamentUsesTokens = false;
+            let hasTokensRemaining = true;
             
-            // Check tournament eligibility if tournament game
             if (isTournamentGame) {
                 const TournamentService = require('./tournament.service');
                 const tournamentService = new TournamentService();
                 
+                // Get tournament details to check if it uses tokens
+                const tournament = await tournamentService.getTournamentById(tournamentId);
+                
+                if (!tournament) {
+                    await whatsappService.sendMessage(
+                        user.phone_number,
+                        '❌ Tournament not found!'
+                    );
+                    return;
+                }
+                
+                tournamentUsesTokens = tournament.uses_tokens;
+                
+                // Check if user can play (has tokens or unlimited)
                 const canPlay = await tournamentService.canUserPlay(user.id, tournamentId);
                 
                 if (!canPlay) {
@@ -199,8 +215,46 @@ class GameService {
                     }
                     return;
                 }
+                
+                // If tournament uses tokens, we need to deduct BEFORE game starts
+                if (tournamentUsesTokens) {
+                    const status = await tournamentService.getUserTournamentStatus(user.id, tournamentId);
+                    
+                    if (!status || status.tokens_remaining <= 0) {
+                        await whatsappService.sendMessage(
+                            user.phone_number,
+                            '❌ No tokens remaining for this tournament!'
+                        );
+                        return;
+                    }
+                    
+                    // 🔧 CRITICAL: Deduct token NOW before game starts
+                    const deductResult = await pool.query(`
+                        UPDATE tournament_participants
+                        SET tokens_remaining = tokens_remaining - 1,
+                            tokens_used = tokens_used + 1,
+                            games_played_in_tournament = games_played_in_tournament + 1
+                        WHERE user_id = $1 AND tournament_id = $2
+                        AND tokens_remaining > 0
+                        RETURNING tokens_remaining
+                    `, [user.id, tournamentId]);
+                    
+                    if (deductResult.rows.length === 0) {
+                        await whatsappService.sendMessage(
+                            user.phone_number,
+                            '❌ Failed to deduct token. Please try again.'
+                        );
+                        return;
+                    }
+                    
+                    const tokensLeft = deductResult.rows[0].tokens_remaining;
+                    logger.info(`🎟️ Tournament token deducted for user ${user.id} in tournament ${tournamentId}. Tokens remaining: ${tokensLeft}`);
+                    
+                    // Mark that token was deducted for this game
+                    tokenDeducted = true;
+                }
             }
-            
+
             // Check for existing active session
             const existingSession = await this.getActiveSession(user.id);
             if (existingSession) {
@@ -210,49 +264,47 @@ class GameService {
                 );
                 return;
             }
-            
+
             // Deduct regular game token NOW (before creating session)
             if (shouldDeductToken) {
                 const gamesLeft = await paymentService.deductGame(user.id);
                 tokenDeducted = true;
                 logger.info(`Regular game token deducted for user ${user.id} - Games remaining: ${gamesLeft}`);
             }
-            
+
             const sessionKey = `game_${user.id}_${Date.now()}`;
-            
+
             // Create game session
             const result = await pool.query(`
                 INSERT INTO game_sessions (
-                    user_id, session_key, current_question, current_score, 
-                    game_mode, tournament_id, is_tournament_game, 
+                    user_id, session_key, current_question, current_score,
+                    game_mode, tournament_id, is_tournament_game,
                     token_deducted, game_type
                 )
                 VALUES ($1, $2, 1, 0, $3, $4, $5, $6, $7)
                 RETURNING *
             `, [
-                user.id, sessionKey, gameMode, tournamentId, 
+                user.id, sessionKey, gameMode, tournamentId,
                 isTournamentGame, tokenDeducted, gameType
             ]);
-            
+
             const session = result.rows[0];
-            
             await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
-            
+
             // Get game mode display and instructions
             let gameModeText = '';
             let instructions = '';
             let branding = 'Proudly brought to you by SummerIsland Systems.';
-            
+
             if (isPracticeMode) {
                 gameModeText = '🎓 PRACTICE MODE';
                 instructions = await this.getPracticeModeInstructions();
             } else if (isTournamentGame) {
                 const TournamentService = require('./tournament.service');
                 const tournamentService = new TournamentService();
-                
                 const tournament = await tournamentService.getTournamentById(tournamentId);
                 const customInstructions = await tournamentService.getTournamentInstructions(tournamentId);
-                
+
                 gameModeText = `🏆 ${tournament.tournament_name.toUpperCase()}`;
                 
                 if (customInstructions && customInstructions.instructions) {
@@ -262,6 +314,14 @@ class GameService {
                     instructions = await this.getDefaultTournamentInstructions(tournament);
                     if (tournament.custom_branding) {
                         branding = tournament.custom_branding;
+                    }
+                }
+                
+                // 🔧 ADDED: Show tokens remaining if using token system
+                if (tournamentUsesTokens) {
+                    const status = await tournamentService.getUserTournamentStatus(user.id, tournamentId);
+                    if (status && status.tokens_remaining !== null) {
+                        instructions += `\n\n🎟️ TOKENS REMAINING: ${status.tokens_remaining}`;
                     }
                 }
             } else {
@@ -280,19 +340,22 @@ class GameService {
                 }
                 instructions = await this.getDefaultGameInstructions();
             }
-            
+
             await whatsappService.sendMessage(
                 user.phone_number,
                 `${gameModeText}\n\n${instructions}\n\n${branding}\n\nWhen you're ready, reply START to begin! 🚀`
             );
-            
+
             await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
-            
+
         } catch (error) {
             logger.error('Error starting game:', error);
             throw error;
         }
     }
+    // ============================================
+    // INSTRUCTION METHODS
+    // ============================================
 
     async getPracticeModeInstructions() {
         return `🎓 PRACTICE MODE INSTRUCTIONS 🎓
@@ -354,103 +417,131 @@ Your BEST score counts!
 Play as many times as allowed!`;
     }
 
+    /**
+     * Complete game with proper tournament token tracking
+     * CRITICAL FIX: Properly tracks token deduction in tournament games
+     */
     async completeGame(session, user, wonGrandPrize) {
-  try {
-    const finalScore = session.current_score;
-    const questionNumber = session.current_question;
-    const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
-    
-    this.clearQuestionTimeout(timeoutKey);
-    this.clearAllSessionTimeouts(session.session_key);
-    
-    await pool.query(`
-      UPDATE game_sessions
-      SET status = 'completed', completed_at = NOW(), final_score = $1
-      WHERE id = $2
-    `, [finalScore, session.id]);
-    
-    // Update user stats...
-    await pool.query(`
-      UPDATE users
-      SET total_games_played = total_games_played + 1,
-          total_winnings = total_winnings + $1,
-          highest_question_reached = GREATEST(highest_question_reached, $2),
-          last_active = NOW()
-      WHERE id = $3
-    `, [finalScore, session.current_question, user.id]);
-    
-    // Handle prizes...
-    if (session.game_type !== 'practice' && finalScore > 0) {
-      await pool.query(`
-        INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
-        VALUES ($1, $2, $3, 'prize', 'pending')
-      `, [user.id, session.id, finalScore]);
+        try {
+            const finalScore = session.current_score;
+            const questionNumber = session.current_question;
+            
+            const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
+            this.clearQuestionTimeout(timeoutKey);
+            this.clearAllSessionTimeouts(session.session_key);
+
+            // Update game session
+            await pool.query(`
+                UPDATE game_sessions
+                SET status = 'completed', completed_at = NOW(), final_score = $1
+                WHERE id = $2
+            `, [finalScore, session.id]);
+
+            // Update user stats
+            await pool.query(`
+                UPDATE users
+                SET total_games_played = total_games_played + 1,
+                    total_winnings = total_winnings + $1,
+                    highest_question_reached = GREATEST(highest_question_reached, $2),
+                    last_active = NOW()
+                WHERE id = $3
+            `, [finalScore, session.current_question, user.id]);
+
+            // Handle prizes
+            if (session.game_type !== 'practice' && finalScore > 0) {
+                await pool.query(`
+                    INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
+                    VALUES ($1, $2, $3, 'prize', 'pending')
+                `, [user.id, session.id, finalScore]);
+            }
+
+            // 🔧 FIXED: Record tournament game with proper token tracking
+            if (session.is_tournament_game && session.tournament_id) {
+                const TournamentService = require('./tournament.service');
+                const tournamentService = new TournamentService();
+                
+                // Record the game in tournament_game_sessions
+                await pool.query(`
+                    INSERT INTO tournament_game_sessions
+                    (tournament_id, user_id, game_session_id, score, questions_answered, completed, token_deducted)
+                    VALUES ($1, $2, $3, $4, $5, true, $6)
+                `, [
+                    session.tournament_id, 
+                    user.id, 
+                    session.id, 
+                    finalScore, 
+                    session.current_question - 1,
+                    session.token_deducted  // 🔧 Use the token_deducted flag from session
+                ]);
+                
+                // Update participant's best score
+                await tournamentService.updateParticipantScore(
+                    user.id,
+                    session.tournament_id,
+                    finalScore
+                );
+                
+                // Get updated token count
+                const tokenStatus = await pool.query(`
+                    SELECT tokens_remaining, uses_tokens
+                    FROM tournament_participants tp
+                    JOIN tournaments t ON tp.tournament_id = t.id
+                    WHERE tp.user_id = $1 AND tp.tournament_id = $2
+                `, [user.id, session.tournament_id]);
+                
+                if (tokenStatus.rows.length > 0 && tokenStatus.rows[0].uses_tokens) {
+                    logger.info(`✅ Tournament game completed. User ${user.id} has ${tokenStatus.rows[0].tokens_remaining} tokens remaining`);
+                }
+            }
+
+            // Clear Redis states
+            await redis.del(`session:${session.session_key}`);
+            await redis.del(`asked_questions:${session.session_key}`);
+            await redis.del(`game_ready:${user.id}`);
+            await redis.del(`user_state:${user.phone_number}`);
+
+            // Set win share pending for non-practice wins
+            if (session.game_type !== 'practice' && finalScore > 0) {
+                await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
+                    amount: finalScore,
+                    questionsAnswered: session.current_question - 1,
+                    totalQuestions: 15
+                }));
+            }
+
+            // Send completion messages
+            if (session.game_type === 'practice') {
+                await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
+            } else if (wonGrandPrize) {
+                await this.sendGrandPrizeMessage(user, finalScore);
+            } else if (finalScore > 0) {
+                await this.sendWinMessage(user, finalScore, questionNumber);
+            }
+
+            // Set explicit post-game state
+            await redis.setex(`post_game:${user.id}`, 45, Date.now().toString());
+
+        } catch (error) {
+            logger.error('Error completing game:', error);
+            throw error;
+        }
     }
-    
-    // Record tournament game...
-    if (session.is_tournament_game && session.tournament_id) {
-      const TournamentService = require('./tournament.service');
-      const tournamentService = new TournamentService();
-      
-      await tournamentService.recordTournamentGame(
-        user.id,
-        session.tournament_id,
-        session.id,
-        finalScore,
-        session.current_question - 1
-      );
-    }
-    
-    // ⚠️ CRITICAL FIX: Clear ALL Redis states INCLUDING user_state
-    await redis.del(`session:${session.session_key}`);
-    await redis.del(`asked_questions:${session.session_key}`);
-    await redis.del(`game_ready:${user.id}`);
-    
-    // 🔧 ADD THIS LINE - Clear user state to prevent menu conflicts
-    await redis.del(`user_state:${user.phone_number}`);
-    
-    // Set win share pending for non-practice wins
-    if (session.game_type !== 'practice' && finalScore > 0) {
-      await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
-        amount: finalScore,
-        questionsAnswered: session.current_question - 1,
-        totalQuestions: 15
-      }));
-    }
-    
-    // Send completion messages...
-    if (session.game_type === 'practice') {
-      await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
-    } else if (wonGrandPrize) {
-      await this.sendGrandPrizeMessage(user, finalScore);
-    } else if (finalScore > 0) {
-      await this.sendWinMessage(user, finalScore, questionNumber);
-    }
-    
-    // 🔧 ADD THIS: Set explicit post-game state with timestamp
-    await redis.setex(`post_game:${user.id}`, 45, Date.now().toString()); // 45 second window
-    
-  } catch (error) {
-    logger.error('Error completing game:', error);
-    throw error;
-  }
-}
 
     async sendPracticeCompleteMessage(user, score, questionNumber) {
-  let message = `🎓 PRACTICE COMPLETE! 🎓\n\n`;
-  message += `Great job, ${user.full_name}!\n\n`;
-  message += `You answered ${questionNumber - 1}/15 questions correctly.\n`;
-  message += `Potential Score: ₦${score.toLocaleString()}\n\n`;
-  message += `⚠️ This was practice mode - no real prizes.\n\n`;
-  message += `Ready to play for REAL prizes?\n\n`;
-  message += `1️⃣ Play Classic Mode (Win real money!)\n`;
-  message += `2️⃣ Practice Again\n`;
-  message += `3️⃣ View Leaderboard\n`;
-  message += `4️⃣ Main Menu\n\n`;  // 🔧 CHANGED: Make option 4 = Main Menu
-  message += `Or type MENU for all options.`;  // 🔧 ADDED
-  
-  await whatsappService.sendMessage(user.phone_number, message);
-}
+        let message = `🎓 PRACTICE COMPLETE! 🎓\n\n`;
+        message += `Great job, ${user.full_name}!\n\n`;
+        message += `You answered ${questionNumber - 1}/15 questions correctly.\n`;
+        message += `Potential Score: ₦${score.toLocaleString()}\n\n`;
+        message += `⚠️ This was practice mode - no real prizes.\n\n`;
+        message += `Ready to play for REAL prizes?\n\n`;
+        message += `1️⃣ Play Classic Mode (Win real money!)\n`;
+        message += `2️⃣ Practice Again\n`;
+        message += `3️⃣ View Leaderboard\n`;
+        message += `4️⃣ Main Menu\n\n`;
+        message += `Or type MENU for all options.`;
+        
+        await whatsappService.sendMessage(user.phone_number, message);
+    }
 
     async sendGrandPrizeMessage(user, finalScore) {
         let message = `🎊 INCREDIBLE! 🎊\n`;
@@ -469,20 +560,17 @@ Play as many times as allowed!`;
     }
 
     async sendWinMessage(user, finalScore, questionNumber) {
-  let message = `Congratulations ${user.full_name}! 🎉\n\n`;
-  message += `You won ₦${finalScore.toLocaleString()}!\n\n`;
-  message += `Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸\n\n`;
-  message += `1️⃣ Play Again\n`;
-  message += `2️⃣ View Leaderboard\n`;
-  message += `3️⃣ Claim Prize\n`;
-  message += `4️⃣ Share Victory Card\n\n`;  // 🔧 CHANGED: More explicit
-  message += `Type MENU for more options.`;  // 🔧 ADDED
-  
-  await whatsappService.sendMessage(user.phone_number, message);
-}
-    // ============================================
-// Part 3 of 4: Question Management and Answer Processing (UPDATED)
-// ============================================
+        let message = `Congratulations ${user.full_name}! 🎉\n\n`;
+        message += `You won ₦${finalScore.toLocaleString()}!\n\n`;
+        message += `Would you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸\n\n`;
+        message += `1️⃣ Play Again\n`;
+        message += `2️⃣ View Leaderboard\n`;
+        message += `3️⃣ Claim Prize\n`;
+        message += `4️⃣ Share Victory Card\n\n`;
+        message += `Type MENU for more options.`;
+        
+        await whatsappService.sendMessage(user.phone_number, message);
+    }
 
     // ============================================
     // QUESTION MANAGEMENT
@@ -697,10 +785,6 @@ Play as many times as allowed!`;
         session.current_score = guaranteedAmount;
         await this.completeGame(session, user, false);
     }
-    // ============================================
-// Part 4 of 4: Lifelines and Utility Methods
-// ============================================
-
     // ============================================
     // LIFELINES
     // ============================================
