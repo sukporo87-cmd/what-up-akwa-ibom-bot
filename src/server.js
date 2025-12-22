@@ -40,26 +40,35 @@ app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
 
-// Initialize Telegram bot if enabled
-const TelegramService = require('./services/telegram.service');
-
+// Initialize Telegram bot with webhook
 if (process.env.TELEGRAM_ENABLED === 'true') {
   try {
+    const TelegramService = require('./services/telegram.service');
     const telegramService = new TelegramService();
-    console.log('✅ Telegram bot started');
+    console.log('✅ Telegram bot initialized (webhook mode)');
     console.log(`📱 Telegram Bot: @${process.env.TELEGRAM_BOT_USERNAME || 'your_bot'}`);
   } catch (error) {
     console.error('❌ Failed to start Telegram bot:', error.message);
     console.log('ℹ️  Application will continue without Telegram support');
   }
 } else {
-  console.log('ℹ️  Telegram bot disabled (set TELEGRAM_ENABLED=true to enable)');
+  console.log('ℹ️  Telegram bot disabled');
 }
 
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    telegram: process.env.TELEGRAM_ENABLED === 'true' ? 'enabled' : 'disabled',
+    whatsapp: 'enabled'
+  });
 });
 
 // Start server
