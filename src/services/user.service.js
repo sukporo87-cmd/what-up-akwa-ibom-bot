@@ -1,6 +1,6 @@
 // ============================================
 // FILE: src/services/user.service.js
-// UPDATED: Added referral support
+// UPDATED: Added platform support (WhatsApp & Telegram)
 // ============================================
 
 const pool = require('../config/database');
@@ -8,6 +8,10 @@ const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 
 class UserService {
+  /**
+   * Get user by phone number or platform identifier
+   * Handles both WhatsApp phone numbers and Telegram chat IDs
+   */
   async getUserByPhone(phoneNumber) {
     try {
       const result = await pool.query(
@@ -22,9 +26,16 @@ class UserService {
   }
 
   /**
-   * Create user with referral support
+   * Create user with platform and referral support
+   * @param {string} phoneNumber - Phone number or platform identifier
+   * @param {string} fullName - User's full name
+   * @param {string} city - User's city
+   * @param {string} username - User's username
+   * @param {number} age - User's age
+   * @param {number|null} referrerId - ID of referring user
+   * @param {string} platform - Platform type: 'whatsapp' or 'telegram'
    */
-  async createUser(phoneNumber, fullName, city, username, age, referrerId = null) {
+  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, platform = 'whatsapp') {
     const client = await pool.connect();
     
     try {
@@ -33,12 +44,15 @@ class UserService {
       // Generate referral code
       const referralCode = this.generateReferralCode();
 
+      // Store platform info in phone_number field with prefix for Telegram
+      const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
+
       // Create user
       const userResult = await client.query(
         `INSERT INTO users (phone_number, full_name, city, username, age, referral_code, referred_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [phoneNumber, fullName, city, username, age, referralCode, referrerId]
+        [identifier, fullName, city, username, age, referralCode, referrerId]
       );
 
       const user = userResult.rows[0];
@@ -63,7 +77,7 @@ class UserService {
 
       await client.query('COMMIT');
       
-      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}. Referral code: ${referralCode}`);
+      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}, platform: ${platform}. Referral code: ${referralCode}`);
       
       return user;
     } catch (error) {
@@ -85,6 +99,24 @@ class UserService {
       code += characters.charAt(Math.floor(Math.random() * characters.length));
     }
     return code;
+  }
+
+  /**
+   * Extract platform from identifier
+   * @param {string} identifier - Phone number or platform identifier
+   * @returns {string} - 'telegram' or 'whatsapp'
+   */
+  getPlatformFromIdentifier(identifier) {
+    return identifier.startsWith('tg_') ? 'telegram' : 'whatsapp';
+  }
+
+  /**
+   * Strip platform prefix from identifier
+   * @param {string} identifier - Phone number or platform identifier
+   * @returns {string} - Clean identifier without prefix
+   */
+  stripPlatformPrefix(identifier) {
+    return identifier.replace(/^tg_/, '');
   }
 
   async setUserState(phone, state, data = {}) {
@@ -174,6 +206,7 @@ class UserService {
         username: user.username,
         city: user.city,
         age: user.age,
+        platform: this.getPlatformFromIdentifier(user.phone_number),
         totalGamesPlayed: user.total_games_played,
         totalWinnings: parseFloat(user.total_winnings) || 0,
         highestQuestionReached: user.highest_question_reached || 0,
