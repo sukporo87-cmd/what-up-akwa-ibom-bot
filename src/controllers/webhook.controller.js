@@ -6,7 +6,7 @@
 
 const pool = require('../config/database');
 const redis = require('../config/redis');
-const MessagingService = require('../services/messaging.service');
+const WhatsAppService = require('../services/whatsapp.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
 const PaymentService = require('../services/payment.service');
@@ -15,7 +15,7 @@ const ReferralService = require('../services/referral.service');
 const TournamentService = require('../services/tournament.service');
 const { logger } = require('../utils/logger');
 
-const messagingService = new MessagingService();
+const whatsappService = new WhatsAppService();
 const gameService = new GameService();
 const userService = new UserService();
 const paymentService = new PaymentService();
@@ -74,166 +74,162 @@ class WebhookController {
   // ============================================
   // MESSAGE ROUTER - COMPLETE WITH ALL STATES
   // ============================================
-  async routeMessage(identifier, message) {
-  try {
-    // identifier can be:
-    // - WhatsApp: "2349160363909" 
-    // - Telegram: "tg_7115117599"
-    
-    const input = message.trim().toUpperCase();
+  async routeMessage(phone, message) {
+    try {
+      const input = message.trim().toUpperCase();
 
-    // ===================================
-    // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
-    // ===================================
-    if (input === 'RESET' || input === 'RESTART') {
-      let user = await userService.getUserByPhone(identifier);
-      if (user) {
-        await this.handleReset(user);
-      } else {
-        await messagingService.sendMessage(identifier, 'No active session found. Send "Hello" to start!');
+      // ===================================
+      // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
+      // ===================================
+      if (input === 'RESET' || input === 'RESTART') {
+        let user = await userService.getUserByPhone(phone);
+        if (user) {
+          await this.handleReset(user);
+        } else {
+          await whatsappService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
+        }
+        return;
       }
-      return;
-    }
 
-    let user = await userService.getUserByPhone(identifier);
-    const userState = await userService.getUserState(identifier);
+      let user = await userService.getUserByPhone(phone);
+      const userState = await userService.getUserState(phone);
 
-    // ===================================
-    // PRIORITY 1: REGISTRATION STATES
-    // ===================================
-    if (userState && userState.state === 'REGISTRATION_NAME') {
-      await this.handleRegistrationName(identifier, message);
-      return;
-    }
-
-    if (userState && userState.state === 'REGISTRATION_CITY') {
-      await this.handleRegistrationCity(identifier, message, userState.data.name);
-      return;
-    }
-
-    if (userState && userState.state === 'REGISTRATION_USERNAME') {
-      await this.handleRegistrationUsername(identifier, message, userState.data);
-      return;
-    }
-
-    if (userState && userState.state === 'REGISTRATION_AGE') {
-      await this.handleRegistrationAge(identifier, message, userState.data);
-      return;
-    }
-
-    if (userState && userState.state === 'REGISTRATION_REFERRAL') {
-      await this.handleRegistrationReferral(identifier, message, userState.data);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 2: GAME MODE SELECTION
-    // ===================================
-    if (userState && userState.state === 'SELECT_GAME_MODE') {
-      await this.handleGameModeSelection(user, message);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 3: TOURNAMENT SELECTION & PAYMENT
-    // ===================================
-    if (userState && userState.state === 'SELECT_TOURNAMENT') {
-      await this.handleTournamentSelection(user, message, userState.data);
-      return;
-    }
-
-    if (userState && userState.state === 'CONFIRM_TOURNAMENT_PAYMENT') {
-      await this.handleTournamentPaymentConfirmation(identifier, message, userState.data);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 4: PAYMENT STATES
-    // ===================================
-    if (userState && userState.state === 'SELECT_PACKAGE') {
-      await this.handlePackageSelection(user, message, userState.data);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 5: LEADERBOARD STATES
-    // ===================================
-    if (userState && userState.state === 'SELECT_LEADERBOARD') {
-      await this.handleLeaderboardSelection(identifier, message);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 6: BANK DETAILS CONFIRMATION
-    // ===================================
-    if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
-      await this.handleBankDetailsConfirmation(identifier, message, userState.data);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 7: PAYOUT COLLECTION STATES
-    // ===================================
-    if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
-      await this.handleAccountNameInput(identifier, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
-      await this.handleAccountNumberInput(identifier, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_BANK_NAME') {
-      await this.handleBankNameInput(identifier, message, userState);
-      return;
-    }
-
-    if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
-      await this.handleCustomBankInput(identifier, message, userState);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 8: NEW USER (NO STATE, NO USER)
-    // ===================================
-    if (!user) {
-      await this.handleNewUser(identifier);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 9: ACTIVE GAME SESSION
-    // ===================================
-    const activeSession = await gameService.getActiveSession(user.id);
-
-    // Clean up stale Redis state if no DB session
-    if (!activeSession) {
-      const gameReady = await redis.get(`game_ready:${user.id}`);
-      if (gameReady) {
-        logger.info(`Cleaning stale game_ready state for user ${user.id}`);
-        await redis.del(`game_ready:${user.id}`);
+      // ===================================
+      // PRIORITY 1: REGISTRATION STATES
+      // ===================================
+      if (userState && userState.state === 'REGISTRATION_NAME') {
+        await this.handleRegistrationName(phone, message);
+        return;
       }
+
+      if (userState && userState.state === 'REGISTRATION_CITY') {
+        await this.handleRegistrationCity(phone, message, userState.data.name);
+        return;
+      }
+
+      if (userState && userState.state === 'REGISTRATION_USERNAME') {
+        await this.handleRegistrationUsername(phone, message, userState.data);
+        return;
+      }
+
+      if (userState && userState.state === 'REGISTRATION_AGE') {
+        await this.handleRegistrationAge(phone, message, userState.data);
+        return;
+      }
+
+      if (userState && userState.state === 'REGISTRATION_REFERRAL') {
+        await this.handleRegistrationReferral(phone, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 2: GAME MODE SELECTION
+      // ===================================
+      if (userState && userState.state === 'SELECT_GAME_MODE') {
+        await this.handleGameModeSelection(user, message);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 3: TOURNAMENT SELECTION & PAYMENT
+      // ===================================
+      if (userState && userState.state === 'SELECT_TOURNAMENT') {
+        await this.handleTournamentSelection(user, message, userState.data);
+        return;
+      }
+
+      if (userState && userState.state === 'CONFIRM_TOURNAMENT_PAYMENT') {
+        await this.handleTournamentPaymentConfirmation(phone, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 4: PAYMENT STATES
+      // ===================================
+      if (userState && userState.state === 'SELECT_PACKAGE') {
+        await this.handlePackageSelection(user, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 5: LEADERBOARD STATES
+      // ===================================
+      if (userState && userState.state === 'SELECT_LEADERBOARD') {
+        await this.handleLeaderboardSelection(phone, message);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 6: BANK DETAILS CONFIRMATION
+      // ===================================
+      if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
+        await this.handleBankDetailsConfirmation(phone, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 7: PAYOUT COLLECTION STATES
+      // ===================================
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
+        await this.handleAccountNameInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
+        await this.handleAccountNumberInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_BANK_NAME') {
+        await this.handleBankNameInput(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
+        await this.handleCustomBankInput(phone, message, userState);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 8: NEW USER (NO STATE, NO USER)
+      // ===================================
+      if (!user) {
+        await this.handleNewUser(phone);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 9: ACTIVE GAME SESSION
+      // ===================================
+      const activeSession = await gameService.getActiveSession(user.id);
+
+      // Clean up stale Redis state if no DB session
+      if (!activeSession) {
+        const gameReady = await redis.get(`game_ready:${user.id}`);
+        if (gameReady) {
+          logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+          await redis.del(`game_ready:${user.id}`);
+        }
+      }
+
+      if (activeSession) {
+        await this.handleGameInput(user, activeSession, message);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 10: MAIN MENU (DEFAULT)
+      // ===================================
+      await this.handleMenuInput(user, message);
+
+    } catch (error) {
+      logger.error('Error routing message:', error);
+      await whatsappService.sendMessage(
+        phone,
+        '❌ Sorry, something went wrong. Type RESET to start over.'
+      );
     }
-
-    if (activeSession) {
-      await this.handleGameInput(user, activeSession, message);
-      return;
-    }
-
-    // ===================================
-    // PRIORITY 10: MAIN MENU (DEFAULT)
-    // ===================================
-    await this.handleMenuInput(user, message);
-
-  } catch (error) {
-    logger.error('Error routing message:', error);
-    await messagingService.sendMessage(
-      identifier,
-      '❌ Sorry, something went wrong. Type RESET to start over.'
-    );
   }
-}
 
 // ============================================
 // END OF PART 1/6
@@ -248,8 +244,8 @@ class WebhookController {
   // REGISTRATION HANDLERS (WITH REFERRALS)
   // ============================================
 
-  async handleNewUser(identifier) {
-    await messagingService.sendMessage(
+  async handleNewUser(phone) {
+    await whatsappService.sendMessage(
       phone,
       `🎉 *WELCOME TO WHAT'S UP TRIVIA GAME!* 🎉
 
@@ -267,9 +263,9 @@ Let's get you registered! What's your full name?`
     await userService.setUserState(phone, 'REGISTRATION_NAME');
   }
 
-  async handleRegistrationName(identifier, name) {
+  async handleRegistrationName(phone, name) {
     if (!name || name.trim().length < 2) {
-      await messagingService.sendMessage(phone, '❌ Please enter a valid name (at least 2 characters).');
+      await whatsappService.sendMessage(phone, '❌ Please enter a valid name (at least 2 characters).');
       return;
     }
 
@@ -277,7 +273,7 @@ Let's get you registered! What's your full name?`
       name: name.trim()
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `Nice to meet you, ${name}! 👋
 
@@ -289,9 +285,9 @@ Type your city name:`
     );
   }
 
-  async handleRegistrationCity(identifier, city, name) {
+  async handleRegistrationCity(phone, city, name) {
     if (!city || city.trim().length < 2) {
-      await messagingService.sendMessage(phone, '❌ Please enter a valid city name.');
+      await whatsappService.sendMessage(phone, '❌ Please enter a valid city name.');
       return;
     }
 
@@ -305,7 +301,7 @@ Type your city name:`
       city: formattedCity
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `Great! You're from ${formattedCity}! 🌍
 
@@ -324,18 +320,18 @@ Your username:`
     );
   }
 
-  async handleRegistrationUsername(identifier, username, stateData) {
+  async handleRegistrationUsername(phone, username, stateData) {
     const { name, city } = stateData;
 
     const cleanUsername = username.trim().toLowerCase();
 
     if (cleanUsername.length < 3 || cleanUsername.length > 20) {
-      await messagingService.sendMessage(phone, '❌ Username must be 3-20 characters long.\n\nTry again:');
+      await whatsappService.sendMessage(phone, '❌ Username must be 3-20 characters long.\n\nTry again:');
       return;
     }
 
     if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
-      await messagingService.sendMessage(phone, '❌ Username can only contain letters, numbers, and underscores.\n\nNo spaces or special characters.\n\nTry again:');
+      await whatsappService.sendMessage(phone, '❌ Username can only contain letters, numbers, and underscores.\n\nNo spaces or special characters.\n\nTry again:');
       return;
     }
 
@@ -345,7 +341,7 @@ Your username:`
     );
 
     if (existingUser.rows.length > 0) {
-      await messagingService.sendMessage(phone, `❌ Username "@${cleanUsername}" is already taken!\n\nTry a different one:`);
+      await whatsappService.sendMessage(phone, `❌ Username "@${cleanUsername}" is already taken!\n\nTry a different one:`);
       return;
     }
 
@@ -355,7 +351,7 @@ Your username:`
       username: cleanUsername
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `Perfect! Your username is @${cleanUsername} ✨
 
@@ -365,13 +361,13 @@ Type your age (e.g., 25):`
     );
   }
 
-  async handleRegistrationAge(identifier, ageInput, stateData) {
+  async handleRegistrationAge(phone, ageInput, stateData) {
     const { name, city, username } = stateData;
 
     const age = parseInt(ageInput.trim());
 
     if (isNaN(age) || age < 13 || age > 120) {
-      await messagingService.sendMessage(phone, '❌ Please enter a valid age (13-120).\n\nYour age:');
+      await whatsappService.sendMessage(phone, '❌ Please enter a valid age (13-120).\n\nYour age:');
       return;
     }
 
@@ -382,7 +378,7 @@ Type your age (e.g., 25):`
       age: age
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `Great! Almost done! 🎉
 
@@ -394,7 +390,7 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleRegistrationReferral(identifier, referralCodeInput, stateData) {
+  async handleRegistrationReferral(phone, referralCodeInput, stateData) {
     const { name, city, username, age } = stateData;
     const input = referralCodeInput.trim().toUpperCase();
 
@@ -407,7 +403,7 @@ Type the code, or type SKIP to continue:`
       );
 
       if (referrerResult.rows.length === 0) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           phone,
           '❌ Invalid referral code.\n\nType the correct code or type SKIP:'
         );
@@ -461,7 +457,7 @@ Type the code, or type SKIP to continue:`
       welcomeMsg += `4️⃣ My Stats`;
     }
 
-    await messagingService.sendMessage(phone, welcomeMsg);
+    await whatsappService.sendMessage(phone, welcomeMsg);
   }
 
 // ============================================
@@ -499,7 +495,7 @@ Type the code, or type SKIP to continue:`
     message += `_Proudly brought to you by SummerIsland Systems._\n\n`;
     message += `Reply with your choice (1, 2, or 3):`;
     
-    await messagingService.sendMessage(user.phone_number, message);
+    await whatsappService.sendMessage(user.phone_number, message);
   }
 
   async handleGameModeSelection(user, message) {
@@ -509,7 +505,7 @@ Type the code, or type SKIP to continue:`
       case '1':
         // Free Play - Practice Mode
         await userService.clearUserState(user.phone_number);
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           `✅ Practice Mode selected!\n\n⚠️ Remember: No real prizes in practice mode.\n\nStarting game...`
         );
@@ -519,7 +515,7 @@ Type the code, or type SKIP to continue:`
       case '2':
         // Classic Mode
         await userService.clearUserState(user.phone_number);
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           `✅ Classic Mode selected!\n\nStarting game...`
         );
@@ -532,7 +528,7 @@ Type the code, or type SKIP to continue:`
         break;
         
       default:
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '⚠️ Please reply with 1, 2, or 3'
         );
@@ -549,7 +545,7 @@ Type the code, or type SKIP to continue:`
       const tournaments = await tournamentService.getActiveTournaments();
       
       if (tournaments.length === 0) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '❌ No active tournaments at the moment.\n\n' +
           'Check back soon for exciting tournaments!\n\n' +
@@ -611,11 +607,11 @@ Type the code, or type SKIP to continue:`
         tournaments: [...freeTournaments, ...paidTournaments]
       });
       
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
       
     } catch (error) {
       logger.error('Error showing tournaments:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error loading tournaments. Type PLAY for regular game.'
       );
@@ -635,7 +631,7 @@ Type the code, or type SKIP to continue:`
     const tournaments = stateData.tournaments;
     
     if (tournamentIndex < 0 || tournamentIndex >= tournaments.length) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Invalid selection. Reply with tournament number or MENU:'
       );
@@ -659,7 +655,7 @@ Type the code, or type SKIP to continue:`
       
       startMessage += `Starting tournament game...`;
       
-      await messagingService.sendMessage(user.phone_number, startMessage);
+      await whatsappService.sendMessage(user.phone_number, startMessage);
       await gameService.startNewGame(user, 'tournament', tournament.id);
       return;
     }
@@ -691,17 +687,17 @@ Type the code, or type SKIP to continue:`
         
         message += `Starting game...`;
         
-        await messagingService.sendMessage(user.phone_number, message);
+        await whatsappService.sendMessage(user.phone_number, message);
         await gameService.startNewGame(user, 'tournament', tournament.id);
       } else {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           `❌ ${result.error}\n\nType TOURNAMENTS to try again.`
         );
       }
     } catch (error) {
       logger.error('Error joining free tournament:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error joining tournament. Please try again.'
       );
@@ -744,7 +740,7 @@ Type the code, or type SKIP to continue:`
         entryFee: tournament.entry_fee
       });
       
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
       
     } catch (error) {
       logger.error('Error showing paid tournament info:', error);
@@ -755,7 +751,7 @@ Type the code, or type SKIP to continue:`
   // TOURNAMENT PAYMENT CONFIRMATION
   // ============================================
 
-  async handleTournamentPaymentConfirmation(identifier, message, stateData) {
+  async handleTournamentPaymentConfirmation(phone, message, stateData) {
     const input = message.trim().toUpperCase();
     const user = await userService.getUserByPhone(phone);
     
@@ -777,23 +773,23 @@ Type the code, or type SKIP to continue:`
         message += `⚠️ Link expires in 30 minutes\n\n`;
         message += `After payment, you'll be automatically added to the tournament!`;
         
-        await messagingService.sendMessage(phone, message);
+        await whatsappService.sendMessage(phone, message);
         
       } catch (error) {
         logger.error('Error initializing tournament payment:', error);
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           phone,
           '❌ Error processing payment. Please try again.\n\nType TOURNAMENTS to start over.'
         );
       }
     } else if (input === 'NO' || input === 'N') {
       await userService.clearUserState(phone);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '✅ Payment cancelled.\n\nType TOURNAMENTS to view other tournaments.'
       );
     } else {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '⚠️ Please reply YES or NO'
       );
@@ -875,7 +871,7 @@ Type the code, or type SKIP to continue:`
       const activeSession = await gameService.getActiveSession(user.id);
       
       if (activeSession) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '⚠️ You have an active game. Complete it or type RESET.'
         );
@@ -920,7 +916,7 @@ Type the code, or type SKIP to continue:`
         welcomeMessage += `4️⃣ My Stats`;
       }
 
-      await messagingService.sendMessage(user.phone_number, welcomeMessage);
+      await whatsappService.sendMessage(user.phone_number, welcomeMessage);
       await pool.query('UPDATE users SET last_active = NOW() WHERE id = $1', [user.id]);
       return;
     }
@@ -1008,11 +1004,11 @@ Type the code, or type SKIP to continue:`
       message += `_Proudly brought to you by SummerIsland Systems._\n\n`;
       message += `Type STATS for detailed statistics.`;
 
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
 
     } catch (error) {
       logger.error('Error handling profile command:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error loading profile. Please try again.'
       );
@@ -1053,11 +1049,11 @@ Type the code, or type SKIP to continue:`
       message += `Start: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}"\n\n`;
       message += `_Proudly brought to you by SummerIsland Systems._`;
 
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
 
     } catch (error) {
       logger.error('Error handling referral command:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error loading referral info. Please try again.'
       );
@@ -1074,7 +1070,7 @@ Type the code, or type SKIP to continue:`
       const referralStats = await referralService.getReferralStats(user.id);
 
       if (!stats) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '❌ Unable to retrieve your stats. Please try again later.'
         );
@@ -1120,11 +1116,11 @@ Type the code, or type SKIP to continue:`
       message += `2️⃣ View Leaderboard\n`;
       message += `3️⃣ Main Menu`;
 
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
 
     } catch (error) {
       logger.error('Error handling stats request:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error retrieving stats. Please try again later.'
       );
@@ -1138,7 +1134,7 @@ Type the code, or type SKIP to continue:`
   async handleBuyGames(user) {
     try {
       if (!paymentService.isEnabled()) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '🎉 Good news! The game is currently FREE!\n\nType PLAY to start a game.'
         );
@@ -1148,12 +1144,12 @@ Type the code, or type SKIP to continue:`
       const packages = await paymentService.getPackages();
       const message = paymentService.formatPaymentMessage(packages);
 
-      await messagingService.sendMessage(user.phone_number, message);
+      await whatsappService.sendMessage(user.phone_number, message);
       await userService.setUserState(user.phone_number, 'SELECT_PACKAGE', { packages });
 
     } catch (error) {
       logger.error('Error handling buy games:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error loading packages. Please try again later.'
       );
@@ -1166,7 +1162,7 @@ Type the code, or type SKIP to continue:`
       const packages = stateData.packages;
 
       if (packageIndex < 0 || packageIndex >= packages.length) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '❌ Invalid selection. Please reply with 1, 2, or 3.'
         );
@@ -1178,7 +1174,7 @@ Type the code, or type SKIP to continue:`
 
       await userService.clearUserState(user.phone_number);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         `💳 PAYMENT LINK 💳\n\n` +
         `Package: ${selectedPackage.name}\n` +
@@ -1191,7 +1187,7 @@ Type the code, or type SKIP to continue:`
 
     } catch (error) {
       logger.error('Error handling package selection:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error processing payment. Please try again.'
       );
@@ -1216,7 +1212,7 @@ Type the code, or type SKIP to continue:`
       const transaction = await payoutService.getPendingTransaction(user.id);
 
       if (!transaction) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '❌ No pending prizes to claim.\n\nPlay games to win prizes! 🎮\n\nType PLAY to start.'
         );
@@ -1226,7 +1222,7 @@ Type the code, or type SKIP to continue:`
       const existingDetails = await payoutService.getPayoutDetails(transaction.id);
 
       if (existingDetails) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           `✅ Payment details already received for your ₦${parseFloat(transaction.amount).toLocaleString()} prize!\n\n` +
           `Account: ${existingDetails.account_name}\n` +
@@ -1248,7 +1244,7 @@ Type the code, or type SKIP to continue:`
           existingDetails: userBankDetails
         });
 
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           `💰 PRIZE CLAIM - #WUA-${transaction.id.toString().padStart(4, '0')}\n\n` +
           `You won: ₦${parseFloat(transaction.amount).toLocaleString()}\n\n` +
@@ -1274,7 +1270,7 @@ Type the code, or type SKIP to continue:`
         amount: transaction.amount
       });
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         `💰 PRIZE CLAIM - #WUA-${transaction.id.toString().padStart(4, '0')}\n\n` +
         `Great! Let's get you paid! 💵\n\n` +
@@ -1291,14 +1287,14 @@ Type the code, or type SKIP to continue:`
 
     } catch (error) {
       logger.error('Error handling claim prize:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Error processing your claim. Please try again or contact support.'
       );
     }
   }
 
-  async handleBankDetailsConfirmation(identifier, message, stateData) {
+  async handleBankDetailsConfirmation(phone, message, stateData) {
     const input = message.trim().toUpperCase();
     const user = await userService.getUserByPhone(phone);
 
@@ -1311,7 +1307,7 @@ Type the code, or type SKIP to continue:`
       if (success) {
         await userService.clearUserState(phone);
 
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           phone,
           `✅ PAYMENT DETAILS CONFIRMED! ✅\n\n` +
           `━━━━━━━━━━━━━━━━━━━\n` +
@@ -1327,7 +1323,7 @@ Type the code, or type SKIP to continue:`
           `Reference: #WUA-${stateData.transactionId.toString().padStart(4, '0')}`
         );
       } else {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           phone,
           '❌ Error confirming details. Please try again.\n\nType CLAIM to restart.'
         );
@@ -1339,7 +1335,7 @@ Type the code, or type SKIP to continue:`
         isUpdate: true
       });
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         `🔄 UPDATE BANK DETAILS\n\n` +
         `Step 1 of 3\n\n` +
@@ -1350,23 +1346,23 @@ Type the code, or type SKIP to continue:`
     } else if (input === 'CANCEL' || input === '❌') {
       await userService.clearUserState(phone);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Claim cancelled.\n\nType CLAIM when you\'re ready to proceed.'
       );
     } else {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '⚠️ Invalid response.\n\nReply:\n✅ YES\n🔄 UPDATE\n❌ CANCEL'
       );
     }
   }
 
-  async handleAccountNameInput(identifier, message, stateData) {
+  async handleAccountNameInput(phone, message, stateData) {
     const accountName = message.trim();
 
     if (accountName.length < 3) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Account name too short. Please enter your full name as it appears on your bank account.'
       );
@@ -1374,7 +1370,7 @@ Type the code, or type SKIP to continue:`
     }
 
     if (accountName.length > 100) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Account name too long. Please enter a valid name (max 100 characters).'
       );
@@ -1382,7 +1378,7 @@ Type the code, or type SKIP to continue:`
     }
 
     if (!/[a-zA-Z]/.test(accountName)) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Invalid account name. Please enter letters only (no numbers or special characters).'
       );
@@ -1394,7 +1390,7 @@ Type the code, or type SKIP to continue:`
       accountName: accountName.toUpperCase()
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `✅ Account Name: ${accountName.toUpperCase()}\n\n` +
       `━━━━━━━━━━━━━━━━\n` +
@@ -1406,11 +1402,11 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleAccountNumberInput(identifier, message, stateData) {
+  async handleAccountNumberInput(phone, message, stateData) {
     const validation = payoutService.validateAccountNumber(message);
 
     if (!validation.valid) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         `❌ ${validation.error}\n\n` +
         `Please enter a valid 10-digit account number.`
@@ -1423,7 +1419,7 @@ Type the code, or type SKIP to continue:`
       accountNumber: validation.cleaned
     });
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `✅ Account Number: ${validation.cleaned}\n\n` +
       `━━━━━━━━━━━━━━━━\n` +
@@ -1444,7 +1440,7 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleBankNameInput(identifier, message, stateData) {
+  async handleBankNameInput(phone, message, stateData) {
     const input = message.trim();
     let bankName;
 
@@ -1464,7 +1460,7 @@ Type the code, or type SKIP to continue:`
     if (input === '11' || input.toUpperCase() === 'OTHERS' || input.toUpperCase() === 'OTHER') {
       await userService.setUserState(phone, 'COLLECT_CUSTOM_BANK', stateData.data);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         `Please type your bank name:\n\n` +
         `Example: Sterling Bank\n\n` +
@@ -1480,7 +1476,7 @@ Type the code, or type SKIP to continue:`
     }
 
     if (bankName.length < 3) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Invalid bank selection.\n\n' +
         'Please reply with a number (1-11) or type your bank name.'
@@ -1491,11 +1487,11 @@ Type the code, or type SKIP to continue:`
     await this.completePayoutCollection(phone, stateData.data, bankName);
   }
 
-  async handleCustomBankInput(identifier, message, stateData) {
+  async handleCustomBankInput(phone, message, stateData) {
     const bankName = message.trim();
 
     if (bankName.length < 3) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Bank name too short. Please enter a valid bank name.'
       );
@@ -1503,7 +1499,7 @@ Type the code, or type SKIP to continue:`
     }
 
     if (bankName.length > 100) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Bank name too long. Please enter a shorter name (max 100 characters).'
       );
@@ -1527,7 +1523,7 @@ Type the code, or type SKIP to continue:`
 
       await userService.clearUserState(phone);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         `✅ PAYMENT DETAILS RECEIVED! ✅\n\n` +
         `━━━━━━━━━━━━━━━━━━━\n` +
@@ -1547,7 +1543,7 @@ Type the code, or type SKIP to continue:`
 
     } catch (error) {
       logger.error('Error saving payout details:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         phone,
         '❌ Error saving your details. Please try again.\n\nType CLAIM to restart the process.'
       );
@@ -1567,7 +1563,7 @@ Type the code, or type SKIP to continue:`
       );
 
       if (result.rows.length === 0) {
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           user.phone_number,
           '❌ No recent payments found to confirm.'
         );
@@ -1578,7 +1574,7 @@ Type the code, or type SKIP to continue:`
 
       await payoutService.confirmPayout(transaction.id);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         `✅ PAYMENT CONFIRMED!\n\n` +
         `Thank you for confirming receipt of ₦${parseFloat(transaction.amount).toLocaleString()}!\n\n` +
@@ -1614,7 +1610,7 @@ Type the code, or type SKIP to continue:`
     if (gameReady && input === 'START') {
       await redis.del(`game_ready:${user.id}`);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '🎮 LET\'S GO! 🎮\n\nStarting in 3... 2... 1...'
       );
@@ -1627,7 +1623,7 @@ Type the code, or type SKIP to continue:`
     }
 
     if (gameReady) {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '⚠️ Reply START to begin the game!'
       );
@@ -1649,7 +1645,7 @@ Type the code, or type SKIP to continue:`
     if (['A', 'B', 'C', 'D'].includes(input)) {
       await gameService.processAnswer(session, user, input);
     } else {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '⚠️ Please reply with A, B, C, or D\n\n' +
         'Or use a lifeline:\n' +
@@ -1674,7 +1670,7 @@ Type the code, or type SKIP to continue:`
       await userService.clearUserState(user.phone_number);
       await redis.del(`game_ready:${user.id}`);
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         `🔄 Game Reset! 🔄
 
@@ -1690,7 +1686,7 @@ Ready to start fresh?
 
     } catch (error) {
       logger.error('Error resetting game:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         'Reset complete! Type 1 to start a new game.'
       );
@@ -1730,7 +1726,7 @@ Ready to start fresh?
 
   message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
 
-  await messagingService.sendMessage(phone, message);
+  await whatsappService.sendMessage(phone, message);
 }
 
   async sendHowToPlay(phone) {
@@ -1771,7 +1767,7 @@ Ready to start fresh?
     message += `Safe amounts are guaranteed!\n\n`;
     message += `Ready to play? Reply "PLAY NOW"`;
     
-    await messagingService.sendMessage(phone, message);
+    await whatsappService.sendMessage(phone, message);
   }
 
   // ============================================
@@ -1781,7 +1777,7 @@ Ready to start fresh?
   async sendLeaderboardMenu(phone) {
     await userService.setUserState(phone, 'SELECT_LEADERBOARD');
 
-    await messagingService.sendMessage(
+    await whatsappService.sendMessage(
       phone,
       `📊 SELECT LEADERBOARD 📊
 
@@ -1796,7 +1792,7 @@ Reply with your choice:`
     );
   }
 
-  async handleLeaderboardSelection(identifier, message) {
+  async handleLeaderboardSelection(phone, message) {
     const input = message.trim();
 
     let period = 'daily';
@@ -1820,7 +1816,7 @@ Reply with your choice:`
         periodName = 'ALL TIME';
         break;
       default:
-        await messagingService.sendMessage(
+        await whatsappService.sendMessage(
           phone,
           '⚠️ Please reply with 1, 2, 3, or 4'
         );
@@ -1847,7 +1843,7 @@ Reply with your choice:`
 
     message += '\n\nReply "PLAY NOW" to compete!';
 
-    await messagingService.sendMessage(phone, message);
+    await whatsappService.sendMessage(phone, message);
   }
 
   // ============================================
@@ -1860,7 +1856,7 @@ Reply with your choice:`
     const fs = require('fs');
 
     try {
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '🎨 Creating your victory card... Please wait a moment! ✨'
       );
@@ -1874,13 +1870,13 @@ Reply with your choice:`
         totalQuestions: winData.totalQuestions
       });
 
-      await messagingService.sendImage(
+      await whatsappService.sendImage(
         user.phone_number,
         imagePath,
         `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
       );
 
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         `✅ Victory card sent! 🎉
 
@@ -1896,7 +1892,7 @@ Save it and share on your WhatsApp Status to inspire others!
 
     } catch (error) {
       logger.error('Error handling win share:', error);
-      await messagingService.sendMessage(
+      await whatsappService.sendMessage(
         user.phone_number,
         '❌ Sorry, something went wrong creating your victory card. Please try again later.'
       );
