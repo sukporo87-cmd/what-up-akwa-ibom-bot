@@ -71,29 +71,16 @@ async function setupTelegramWebhook() {
 
     const webhookUrl = `${process.env.APP_URL}/webhook/telegram`;
     
-    // Check current webhook
-    const info = await telegramService.bot.getWebhookInfo();
-    
-    if (info.url === webhookUrl) {
-      console.log('✅ Telegram webhook already configured:', webhookUrl);
-      global.telegramService = telegramService;
-      return;
-    }
-
-    // Only set if different or not set
-    await telegramService.bot.setWebHook(webhookUrl);
-    console.log('✅ Telegram webhook set:', webhookUrl);
+    // Use the service's setupWebhook method
+    await telegramService.setupWebhook(webhookUrl);
     
     // Store as global instance
     global.telegramService = telegramService;
     
+    console.log('✅ Telegram webhook configured successfully');
+    
   } catch (error) {
-    // Ignore 429 rate limits - webhook is already set
-    if (error.response?.statusCode === 429) {
-      console.log('⚠️  Telegram rate limited (webhook already set)');
-    } else {
-      console.error('❌ Error setting Telegram webhook:', error.message);
-    }
+    console.error('❌ Error setting Telegram webhook:', error.message);
   }
 }
 
