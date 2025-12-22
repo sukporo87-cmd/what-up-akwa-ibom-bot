@@ -32,7 +32,12 @@ app.use(express.static(path.join(__dirname, 'views')));
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    telegram: process.env.TELEGRAM_ENABLED === 'true' ? 'enabled' : 'disabled',
+    whatsapp: 'enabled'
+  });
 });
 
 // Routes
@@ -40,11 +45,11 @@ app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
 
-// Initialize Telegram bot with webhook
+// Initialize Telegram bot with webhook (singleton)
 if (process.env.TELEGRAM_ENABLED === 'true') {
   try {
     const TelegramService = require('./services/telegram.service');
-    const telegramService = new TelegramService();
+    global.telegramService = new TelegramService();
     console.log('✅ Telegram bot initialized (webhook mode)');
     console.log(`📱 Telegram Bot: @${process.env.TELEGRAM_BOT_USERNAME || 'your_bot'}`);
   } catch (error) {
@@ -59,16 +64,6 @@ if (process.env.TELEGRAM_ENABLED === 'true') {
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    telegram: process.env.TELEGRAM_ENABLED === 'true' ? 'enabled' : 'disabled',
-    whatsapp: 'enabled'
-  });
 });
 
 // Start server

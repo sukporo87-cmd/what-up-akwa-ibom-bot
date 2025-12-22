@@ -8,17 +8,30 @@ router.get('/', webhookController.verify.bind(webhookController));
 // POST for receiving messages
 router.post('/', webhookController.handleMessage.bind(webhookController));
 
+// Initialize service once at module level
+const TelegramService = require('../services/telegram.service');
+let telegramServiceInstance = null;
+
+// Telegram webhook endpoint
 router.post('/telegram', async (req, res) => {
   try {
-    const TelegramService = require('../services/telegram.service');
-    const telegramService = new TelegramService();
+    // Use singleton instance
+    if (!telegramServiceInstance) {
+      telegramServiceInstance = new TelegramService();
+    }
     
-    await telegramService.processUpdate(req.body);
-    res.sendStatus(200);
+    // Process the update
+    if (telegramServiceInstance.bot) {
+      await telegramServiceInstance.processUpdate(req.body);
+    }
+    
+    // Always respond 200 to Telegram
+    res.status(200).json({ ok: true });
     
   } catch (error) {
     console.error('Telegram webhook error:', error);
-    res.sendStatus(500);
+    // Still respond 200 to prevent Telegram retries
+    res.status(200).json({ ok: false });
   }
 });
 

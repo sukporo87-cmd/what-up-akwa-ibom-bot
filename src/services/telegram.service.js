@@ -43,37 +43,49 @@ class TelegramService {
   }
 
   async processUpdate(update) {
-    if (!this.bot) return;
-
-    try {
-      // Handle regular messages
-      if (update.message) {
-        const chatId = update.message.chat.id;
-        const text = update.message.text || '';
-        
-        const webhookController = require('../controllers/webhook.controller');
-        const identifier = `tg_${chatId}`;
-        
-        await webhookController.routeMessage(identifier, text);
-      }
-      
-      // Handle button clicks
-      if (update.callback_query) {
-        const chatId = update.callback_query.message.chat.id;
-        const data = update.callback_query.data;
-        
-        await this.bot.answerCallbackQuery(update.callback_query.id);
-        
-        const webhookController = require('../controllers/webhook.controller');
-        const identifier = `tg_${chatId}`;
-        
-        await webhookController.routeMessage(identifier, data);
-      }
-      
-    } catch (error) {
-      logger.error('Error processing update:', error);
-    }
+  if (!this.bot) {
+    logger.warn('Bot not initialized, skipping update');
+    return;
   }
+
+  try {
+    logger.info('Processing Telegram update:', JSON.stringify(update));
+    
+    // Handle regular messages
+    if (update.message) {
+      const chatId = update.message.chat.id;
+      const text = update.message.text || '';
+      
+      logger.info(`Telegram message from ${chatId}: ${text}`);
+      
+      const webhookController = require('../controllers/webhook.controller');
+      const identifier = `tg_${chatId}`;
+      
+      await webhookController.routeMessage(identifier, text);
+    }
+    
+    // Handle button clicks
+    if (update.callback_query) {
+      const chatId = update.callback_query.message.chat.id;
+      const data = update.callback_query.data;
+      
+      logger.info(`Telegram callback from ${chatId}: ${data}`);
+      
+      await this.bot.answerCallbackQuery(update.callback_query.id);
+      
+      const webhookController = require('../controllers/webhook.controller');
+      const identifier = `tg_${chatId}`;
+      
+      await webhookController.routeMessage(identifier, data);
+    }
+    
+    logger.info('Telegram update processed successfully');
+    
+  } catch (error) {
+    logger.error('Error processing update:', error);
+    throw error;
+  }
+}
 
   async sendMessage(chatId, text) {
     if (!this.bot) {
