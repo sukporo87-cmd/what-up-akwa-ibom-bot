@@ -1,10 +1,12 @@
 // ============================================
 // FILE: src/services/telegram.service.js
-// FIXED: Proper bot initialization with webhook
+// UPDATED: Full integration with MessagingService (shared logic)
+// Removes dependency on non-existent message.handler
 // ============================================
 
 const TelegramBot = require('node-telegram-bot-api');
 const { logger } = require('../utils/logger');
+const MessagingService = require('./messaging.service');
 
 // Singleton instance
 let instance = null;
@@ -31,11 +33,14 @@ class TelegramService {
       });
 
       this.webhookSetup = false;
-      
+
+      // Instantiate MessagingService for unified handling
+      this.messagingService = new MessagingService();
+
       // Set singleton instance
       instance = this;
 
-      logger.info('✅ Telegram bot instance created');
+      logger.info('Telegram bot instance created');
       
     } catch (error) {
       logger.error('Failed to create Telegram bot:', error);
@@ -57,7 +62,7 @@ class TelegramService {
       const currentWebhook = await this.bot.getWebHookInfo();
       
       if (currentWebhook.url === webhookUrl) {
-        logger.info(`✅ Telegram webhook already configured: ${webhookUrl}`);
+        logger.info(`Telegram webhook already configured: ${webhookUrl}`);
         this.webhookSetup = true;
         return;
       }
@@ -74,7 +79,7 @@ class TelegramService {
       await this.bot.setWebHook(webhookUrl);
       this.webhookSetup = true;
       
-      logger.info(`✅ Telegram webhook set: ${webhookUrl}`);
+      logger.info(`Telegram webhook set: ${webhookUrl}`);
       
       // Verify
       const info = await this.bot.getWebHookInfo();
@@ -105,44 +110,60 @@ class TelegramService {
 
   /**
    * Process incoming webhook update
+   * Now uses MessagingService.processIncomingMessage for full shared logic
    */
   async processUpdate(update) {
     try {
       logger.info('Processing Telegram update');
 
-      if (update.message) {
-        const message = update.message;
-        const chatId = message.chat.id;
-        const text = message.text || '';
-        const from = message.from;
-
-        logger.info(`Telegram message from ${chatId}: ${text}`);
-
-        // Import handler here to avoid circular dependencies
-        const MessageHandler = require('../handlers/message.handler');
-        const messageHandler = new MessageHandler();
-
-        // Use chat ID as identifier with 'tg_' prefix
-        const identifier = `tg_${chatId}`;
-        
-        // Handle the message
-        const response = await messageHandler.handleIncomingMessage({
-          from: identifier,
-          body: text,
-          name: from.first_name || from.username || 'User',
-          platform: 'telegram'
-        });
-
-        if (response) {
-          await this.sendMessage(chatId, response);
-        }
-
-        logger.info('Telegram update processed successfully');
+      if (!update.message) {
+        logger.info('Non-message update ignored (e.g., edited message, callback, etc.)');
+        return;
       }
+
+      const message = update.message;
+      const chatId = message.chat.id;
+      const text = (message.text || '').trim();
+      const from = message.from;
+
+      if (!text) {
+        logger.info('Empty text message ignored');
+        return;
+      }
+
+      logger.info(`Telegram message from ${chatId}: ${text}`);
+
+      // Build user name
+      const userName = from.first_name 
+        ? `${from.first_name}${from.last_name ? ' ' + from.last_name : ''}`.trim()
+        : from.username || 'Telegram User';
+
+      // Delegate to shared MessagingService
+      // This gives Telegram full access to the same game flow as WhatsApp
+      await this.messagingService.processIncomingMessage({
+        from: chatId.toString(),           // Raw chat ID (MessagingService will prefix with tg_)
+        body: text,
+        name: userName,
+        platform: 'telegram',
+        telegramChatId: chatId             // Passed explicitly for identifier creation and sending
+      });
+
+      logger.info('Telegram update processed successfully');
 
     } catch (error) {
       logger.error('Error processing Telegram update:', error);
-      throw error;
+
+      // Try to send a friendly error message to the user
+      if (update.message && update.message.chat && update.message.chat.id) {
+        try {
+          await this.sendMessage(
+            update.message.chat.id,
+            "Sorry, something went wrong. Please try again in a moment."
+          );
+        } catch (sendError) {
+          logger.error('Failed to send error message to user:', sendError);
+        }
+      }
     }
   }
 
@@ -153,6 +174,7 @@ class TelegramService {
     try {
       const defaultOptions = {
         parse_mode: 'Markdown',
+        disable_web_page_preview: true,
         ...options
       };
 
@@ -184,6 +206,19 @@ class TelegramService {
    */
   async sendImage(chatId, imagePath, caption = '') {
     return this.sendPhoto(chatId, imagePath, { caption });
+  }
+
+  /**
+   * Send message with inline buttons (for future use)
+   */
+  async sendWithButtons(chatId, text, buttons) {
+    const keyboard = {
+      inline_keyboard: buttons.map(row => 
+        row.map(btn => ({ text: btn.title || btn, callback_data: btn.id || btn }))
+      )
+    };
+
+    return this.sendMessage(chatId, text, { reply_markup: keyboard });
   }
 
   /**

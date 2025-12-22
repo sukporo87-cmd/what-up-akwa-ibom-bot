@@ -2,16 +2,26 @@
 // FILE: src/services/messaging.service.js
 // Platform-Agnostic Messaging Service
 // Handles BOTH WhatsApp and Telegram
+// Now includes processIncomingMessage for unified handling
 // ============================================
 
 const WhatsAppService = require('./whatsapp.service');
 const TelegramService = require('./telegram.service');
 const { logger } = require('../utils/logger');
 
+// Import your core game/user services here (adjust paths if needed)
+const UserService = require('./user.service');
+const GameService = require('./game.service');
+// Add other services as needed: TournamentService, ReferralService, etc.
+
 class MessagingService {
   constructor() {
     this.whatsapp = new WhatsAppService();
     this.telegram = new TelegramService();
+
+    // Optional: initialize singletons for core services
+    this.userService = new UserService();
+    this.gameService = new GameService();
   }
 
   /**
@@ -84,7 +94,6 @@ class MessagingService {
    * Format phone number (WhatsApp specific)
    */
   formatPhoneNumber(phone) {
-    // Only format if it's a WhatsApp number
     if (this.getPlatform(phone) === 'whatsapp') {
       return this.whatsapp.formatPhoneNumber(phone);
     }
@@ -98,7 +107,6 @@ class MessagingService {
     if (platform === 'telegram') {
       return `tg_${id}`;
     }
-    // WhatsApp uses phone number directly
     return this.formatPhoneNumber(id);
   }
 
@@ -156,16 +164,12 @@ class MessagingService {
     
     try {
       if (platform === 'telegram') {
-        // Telegram supports inline keyboards
         return await this.telegram.sendWithButtons(id, text, buttons);
       } else {
-        // WhatsApp doesn't support buttons in bot messages
-        // Just send the text
         return await this.whatsapp.sendMessage(id, text);
       }
     } catch (error) {
       logger.error(`Error sending buttons via ${platform}:`, error);
-      // Fallback to regular message
       return await this.sendMessage(identifier, text);
     }
   }
@@ -177,7 +181,6 @@ class MessagingService {
     if (platform === 'telegram') {
       return process.env.TELEGRAM_ENABLED === 'true';
     }
-    // WhatsApp is always enabled
     return true;
   }
 
@@ -186,12 +189,65 @@ class MessagingService {
    */
   getActivePlatforms() {
     const platforms = ['whatsapp'];
-    
     if (this.isEnabled('telegram')) {
       platforms.push('telegram');
     }
-    
     return platforms;
+  }
+
+  // ============================================
+  // NEW: Unified incoming message processor
+  // Called from both WhatsApp webhook and Telegram service
+  // ============================================
+  async processIncomingMessage({ from, body, name, platform = 'whatsapp', telegramChatId }) {
+    try {
+      logger.info(`Incoming message from ${from} (${platform}): ${body}`);
+
+      // Create unified identifier (tg_ prefix for Telegram)
+      const identifier = platform === 'telegram' 
+        ? `tg_${telegramChatId || from}` 
+        : this.formatPhoneNumber(from);
+
+      // Your existing game logic goes here — reuse everything!
+      // Example flow: registration → menu → game → stats → etc.
+
+      // 1. Get or create user
+      let user = await this.userService.getUserByIdentifier(identifier);
+      if (!user) {
+        user = await this.userService.createUser({
+          identifier,
+          full_name: name,
+          platform,
+          telegram_chat_id: platform === 'telegram' ? telegramChatId : null
+        });
+        // Send welcome message
+        await this.sendMessage(identifier, this.whatsapp.getWelcomeMessage(name)); // or a unified welcome
+        return { text: null }; // Welcome already sent
+      }
+
+      // 2. Delegate to game service (or your existing command handler)
+      const response = await this.gameService.handleUserInput(user, body.trim().toUpperCase());
+
+      // response should be: { text: string, image?: string, options?: {} }
+      if (response) {
+        if (response.text) {
+          await this.sendMessage(identifier, response.text);
+        }
+        if (response.image) {
+          await this.sendImage(identifier, response.image, response.caption || '');
+        }
+        if (response.buttons) {
+          await this.sendWithButtons(identifier, response.text || '', response.buttons);
+        }
+      }
+
+      return response;
+
+    } catch (error) {
+      logger.error('Error in processIncomingMessage:', error);
+      await this.sendMessage(from, "😔 Sorry, something went wrong. Please try again later.");
+      return { text: "Error handled" };
+    }
   }
 }
 
