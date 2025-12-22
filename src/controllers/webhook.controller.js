@@ -74,162 +74,166 @@ class WebhookController {
   // ============================================
   // MESSAGE ROUTER - COMPLETE WITH ALL STATES
   // ============================================
-  async routeMessage(phone, message) {
-    try {
-      const input = message.trim().toUpperCase();
+  async routeMessage(identifier, message) {
+  try {
+    // identifier can be:
+    // - WhatsApp: "2349160363909" 
+    // - Telegram: "tg_7115117599"
+    
+    const input = message.trim().toUpperCase();
 
-      // ===================================
-      // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
-      // ===================================
-      if (input === 'RESET' || input === 'RESTART') {
-        let user = await userService.getUserByPhone(phone);
-        if (user) {
-          await this.handleReset(user);
-        } else {
-          await messagingService.sendMessage(phone, 'No active session found. Send "Hello" to start!');
-        }
-        return;
+    // ===================================
+    // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
+    // ===================================
+    if (input === 'RESET' || input === 'RESTART') {
+      let user = await userService.getUserByPhone(identifier);
+      if (user) {
+        await this.handleReset(user);
+      } else {
+        await messagingService.sendMessage(identifier, 'No active session found. Send "Hello" to start!');
       }
-
-      let user = await userService.getUserByPhone(phone);
-      const userState = await userService.getUserState(phone);
-
-      // ===================================
-      // PRIORITY 1: REGISTRATION STATES
-      // ===================================
-      if (userState && userState.state === 'REGISTRATION_NAME') {
-        await this.handleRegistrationName(phone, message);
-        return;
-      }
-
-      if (userState && userState.state === 'REGISTRATION_CITY') {
-        await this.handleRegistrationCity(phone, message, userState.data.name);
-        return;
-      }
-
-      if (userState && userState.state === 'REGISTRATION_USERNAME') {
-        await this.handleRegistrationUsername(phone, message, userState.data);
-        return;
-      }
-
-      if (userState && userState.state === 'REGISTRATION_AGE') {
-        await this.handleRegistrationAge(phone, message, userState.data);
-        return;
-      }
-
-      if (userState && userState.state === 'REGISTRATION_REFERRAL') {
-        await this.handleRegistrationReferral(phone, message, userState.data);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 2: GAME MODE SELECTION
-      // ===================================
-      if (userState && userState.state === 'SELECT_GAME_MODE') {
-        await this.handleGameModeSelection(user, message);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 3: TOURNAMENT SELECTION & PAYMENT
-      // ===================================
-      if (userState && userState.state === 'SELECT_TOURNAMENT') {
-        await this.handleTournamentSelection(user, message, userState.data);
-        return;
-      }
-
-      if (userState && userState.state === 'CONFIRM_TOURNAMENT_PAYMENT') {
-        await this.handleTournamentPaymentConfirmation(phone, message, userState.data);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 4: PAYMENT STATES
-      // ===================================
-      if (userState && userState.state === 'SELECT_PACKAGE') {
-        await this.handlePackageSelection(user, message, userState.data);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 5: LEADERBOARD STATES
-      // ===================================
-      if (userState && userState.state === 'SELECT_LEADERBOARD') {
-        await this.handleLeaderboardSelection(phone, message);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 6: BANK DETAILS CONFIRMATION
-      // ===================================
-      if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
-        await this.handleBankDetailsConfirmation(phone, message, userState.data);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 7: PAYOUT COLLECTION STATES
-      // ===================================
-      if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
-        await this.handleAccountNameInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
-        await this.handleAccountNumberInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_BANK_NAME') {
-        await this.handleBankNameInput(phone, message, userState);
-        return;
-      }
-
-      if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
-        await this.handleCustomBankInput(phone, message, userState);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 8: NEW USER (NO STATE, NO USER)
-      // ===================================
-      if (!user) {
-        await this.handleNewUser(phone);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 9: ACTIVE GAME SESSION
-      // ===================================
-      const activeSession = await gameService.getActiveSession(user.id);
-
-      // Clean up stale Redis state if no DB session
-      if (!activeSession) {
-        const gameReady = await redis.get(`game_ready:${user.id}`);
-        if (gameReady) {
-          logger.info(`Cleaning stale game_ready state for user ${user.id}`);
-          await redis.del(`game_ready:${user.id}`);
-        }
-      }
-
-      if (activeSession) {
-        await this.handleGameInput(user, activeSession, message);
-        return;
-      }
-
-      // ===================================
-      // PRIORITY 10: MAIN MENU (DEFAULT)
-      // ===================================
-      await this.handleMenuInput(user, message);
-
-    } catch (error) {
-      logger.error('Error routing message:', error);
-      await messagingService.sendMessage(
-        phone,
-        '❌ Sorry, something went wrong. Type RESET to start over.'
-      );
+      return;
     }
+
+    let user = await userService.getUserByPhone(identifier);
+    const userState = await userService.getUserState(identifier);
+
+    // ===================================
+    // PRIORITY 1: REGISTRATION STATES
+    // ===================================
+    if (userState && userState.state === 'REGISTRATION_NAME') {
+      await this.handleRegistrationName(identifier, message);
+      return;
+    }
+
+    if (userState && userState.state === 'REGISTRATION_CITY') {
+      await this.handleRegistrationCity(identifier, message, userState.data.name);
+      return;
+    }
+
+    if (userState && userState.state === 'REGISTRATION_USERNAME') {
+      await this.handleRegistrationUsername(identifier, message, userState.data);
+      return;
+    }
+
+    if (userState && userState.state === 'REGISTRATION_AGE') {
+      await this.handleRegistrationAge(identifier, message, userState.data);
+      return;
+    }
+
+    if (userState && userState.state === 'REGISTRATION_REFERRAL') {
+      await this.handleRegistrationReferral(identifier, message, userState.data);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 2: GAME MODE SELECTION
+    // ===================================
+    if (userState && userState.state === 'SELECT_GAME_MODE') {
+      await this.handleGameModeSelection(user, message);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 3: TOURNAMENT SELECTION & PAYMENT
+    // ===================================
+    if (userState && userState.state === 'SELECT_TOURNAMENT') {
+      await this.handleTournamentSelection(user, message, userState.data);
+      return;
+    }
+
+    if (userState && userState.state === 'CONFIRM_TOURNAMENT_PAYMENT') {
+      await this.handleTournamentPaymentConfirmation(identifier, message, userState.data);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 4: PAYMENT STATES
+    // ===================================
+    if (userState && userState.state === 'SELECT_PACKAGE') {
+      await this.handlePackageSelection(user, message, userState.data);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 5: LEADERBOARD STATES
+    // ===================================
+    if (userState && userState.state === 'SELECT_LEADERBOARD') {
+      await this.handleLeaderboardSelection(identifier, message);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 6: BANK DETAILS CONFIRMATION
+    // ===================================
+    if (userState && userState.state === 'CONFIRM_BANK_DETAILS') {
+      await this.handleBankDetailsConfirmation(identifier, message, userState.data);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 7: PAYOUT COLLECTION STATES
+    // ===================================
+    if (userState && userState.state === 'COLLECT_ACCOUNT_NAME') {
+      await this.handleAccountNameInput(identifier, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_ACCOUNT_NUMBER') {
+      await this.handleAccountNumberInput(identifier, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_BANK_NAME') {
+      await this.handleBankNameInput(identifier, message, userState);
+      return;
+    }
+
+    if (userState && userState.state === 'COLLECT_CUSTOM_BANK') {
+      await this.handleCustomBankInput(identifier, message, userState);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 8: NEW USER (NO STATE, NO USER)
+    // ===================================
+    if (!user) {
+      await this.handleNewUser(identifier);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 9: ACTIVE GAME SESSION
+    // ===================================
+    const activeSession = await gameService.getActiveSession(user.id);
+
+    // Clean up stale Redis state if no DB session
+    if (!activeSession) {
+      const gameReady = await redis.get(`game_ready:${user.id}`);
+      if (gameReady) {
+        logger.info(`Cleaning stale game_ready state for user ${user.id}`);
+        await redis.del(`game_ready:${user.id}`);
+      }
+    }
+
+    if (activeSession) {
+      await this.handleGameInput(user, activeSession, message);
+      return;
+    }
+
+    // ===================================
+    // PRIORITY 10: MAIN MENU (DEFAULT)
+    // ===================================
+    await this.handleMenuInput(user, message);
+
+  } catch (error) {
+    logger.error('Error routing message:', error);
+    await messagingService.sendMessage(
+      identifier,
+      '❌ Sorry, something went wrong. Type RESET to start over.'
+    );
   }
+}
 
 // ============================================
 // END OF PART 1/6
@@ -244,7 +248,7 @@ class WebhookController {
   // REGISTRATION HANDLERS (WITH REFERRALS)
   // ============================================
 
-  async handleNewUser(phone) {
+  async handleNewUser(identifier) {
     await messagingService.sendMessage(
       phone,
       `🎉 *WELCOME TO WHAT'S UP TRIVIA GAME!* 🎉
@@ -263,7 +267,7 @@ Let's get you registered! What's your full name?`
     await userService.setUserState(phone, 'REGISTRATION_NAME');
   }
 
-  async handleRegistrationName(phone, name) {
+  async handleRegistrationName(identifier, name) {
     if (!name || name.trim().length < 2) {
       await messagingService.sendMessage(phone, '❌ Please enter a valid name (at least 2 characters).');
       return;
@@ -285,7 +289,7 @@ Type your city name:`
     );
   }
 
-  async handleRegistrationCity(phone, city, name) {
+  async handleRegistrationCity(identifier, city, name) {
     if (!city || city.trim().length < 2) {
       await messagingService.sendMessage(phone, '❌ Please enter a valid city name.');
       return;
@@ -320,7 +324,7 @@ Your username:`
     );
   }
 
-  async handleRegistrationUsername(phone, username, stateData) {
+  async handleRegistrationUsername(identifier, username, stateData) {
     const { name, city } = stateData;
 
     const cleanUsername = username.trim().toLowerCase();
@@ -361,7 +365,7 @@ Type your age (e.g., 25):`
     );
   }
 
-  async handleRegistrationAge(phone, ageInput, stateData) {
+  async handleRegistrationAge(identifier, ageInput, stateData) {
     const { name, city, username } = stateData;
 
     const age = parseInt(ageInput.trim());
@@ -390,7 +394,7 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleRegistrationReferral(phone, referralCodeInput, stateData) {
+  async handleRegistrationReferral(identifier, referralCodeInput, stateData) {
     const { name, city, username, age } = stateData;
     const input = referralCodeInput.trim().toUpperCase();
 
@@ -751,7 +755,7 @@ Type the code, or type SKIP to continue:`
   // TOURNAMENT PAYMENT CONFIRMATION
   // ============================================
 
-  async handleTournamentPaymentConfirmation(phone, message, stateData) {
+  async handleTournamentPaymentConfirmation(identifier, message, stateData) {
     const input = message.trim().toUpperCase();
     const user = await userService.getUserByPhone(phone);
     
@@ -1294,7 +1298,7 @@ Type the code, or type SKIP to continue:`
     }
   }
 
-  async handleBankDetailsConfirmation(phone, message, stateData) {
+  async handleBankDetailsConfirmation(identifier, message, stateData) {
     const input = message.trim().toUpperCase();
     const user = await userService.getUserByPhone(phone);
 
@@ -1358,7 +1362,7 @@ Type the code, or type SKIP to continue:`
     }
   }
 
-  async handleAccountNameInput(phone, message, stateData) {
+  async handleAccountNameInput(identifier, message, stateData) {
     const accountName = message.trim();
 
     if (accountName.length < 3) {
@@ -1402,7 +1406,7 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleAccountNumberInput(phone, message, stateData) {
+  async handleAccountNumberInput(identifier, message, stateData) {
     const validation = payoutService.validateAccountNumber(message);
 
     if (!validation.valid) {
@@ -1440,7 +1444,7 @@ Type the code, or type SKIP to continue:`
     );
   }
 
-  async handleBankNameInput(phone, message, stateData) {
+  async handleBankNameInput(identifier, message, stateData) {
     const input = message.trim();
     let bankName;
 
@@ -1487,7 +1491,7 @@ Type the code, or type SKIP to continue:`
     await this.completePayoutCollection(phone, stateData.data, bankName);
   }
 
-  async handleCustomBankInput(phone, message, stateData) {
+  async handleCustomBankInput(identifier, message, stateData) {
     const bankName = message.trim();
 
     if (bankName.length < 3) {
@@ -1792,7 +1796,7 @@ Reply with your choice:`
     );
   }
 
-  async handleLeaderboardSelection(phone, message) {
+  async handleLeaderboardSelection(identifier, message) {
     const input = message.trim();
 
     let period = 'daily';
