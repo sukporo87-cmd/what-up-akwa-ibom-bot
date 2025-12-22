@@ -45,29 +45,60 @@ app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
 
-// Initialize Telegram bot with webhook (singleton)
-if (process.env.TELEGRAM_ENABLED === 'true') {
-  try {
-    const TelegramService = require('./services/telegram.service');
-    global.telegramService = new TelegramService();
-    console.log('✅ Telegram bot initialized (webhook mode)');
-    console.log(`📱 Telegram Bot: @${process.env.TELEGRAM_BOT_USERNAME || 'your_bot'}`);
-  } catch (error) {
-    console.error('❌ Failed to start Telegram bot:', error.message);
-    console.log('ℹ️  Application will continue without Telegram support');
-  }
-} else {
-  console.log('ℹ️  Telegram bot disabled');
-}
-
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// ============================================
+// TELEGRAM WEBHOOK SETUP - ONLY PLACE THIS HAPPENS
+// ============================================
+async function setupTelegramWebhook() {
+  if (process.env.TELEGRAM_ENABLED !== 'true') {
+    console.log('ℹ️  Telegram bot disabled');
+    return;
+  }
+
+  try {
+    const TelegramService = require('./services/telegram.service');
+    const telegramService = new TelegramService();
+    
+    if (!telegramService.bot) {
+      console.log('⚠️  Telegram bot not initialized (missing token)');
+      return;
+    }
+
+    const webhookUrl = `${process.env.APP_URL}/webhook/telegram`;
+    
+    // Check current webhook
+    const info = await telegramService.bot.getWebhookInfo();
+    
+    if (info.url === webhookUrl) {
+      console.log('✅ Telegram webhook already configured:', webhookUrl);
+      global.telegramService = telegramService;
+      return;
+    }
+
+    // Only set if different or not set
+    await telegramService.bot.setWebHook(webhookUrl);
+    console.log('✅ Telegram webhook set:', webhookUrl);
+    
+    // Store as global instance
+    global.telegramService = telegramService;
+    
+  } catch (error) {
+    // Ignore 429 rate limits - webhook is already set
+    if (error.response?.statusCode === 429) {
+      console.log('⚠️  Telegram rate limited (webhook already set)');
+    } else {
+      console.error('❌ Error setting Telegram webhook:', error.message);
+    }
+  }
+}
+
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Payment Mode: ${process.env.PAYMENT_MODE || 'free'}`);
@@ -77,7 +108,14 @@ app.listen(PORT, () => {
   // Platform status summary
   console.log('\n📊 Platform Status:');
   console.log(`   WhatsApp: ✅ Active`);
-  console.log(`   Telegram: ${process.env.TELEGRAM_ENABLED === 'true' ? '✅ Active' : '⏸️  Disabled'}`);
+  console.log(`   Telegram: ${process.env.TELEGRAM_ENABLED === 'true' ? '⏸️  Configuring...' : '⏸️  Disabled'}`);
+  
+  // Setup Telegram webhook ONCE, AFTER server is ready
+  await setupTelegramWebhook();
+  
+  if (process.env.TELEGRAM_ENABLED === 'true') {
+    console.log(`   Telegram: ✅ Active`);
+  }
 });
 
 module.exports = app;

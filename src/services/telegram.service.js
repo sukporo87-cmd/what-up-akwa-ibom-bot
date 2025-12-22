@@ -2,156 +2,117 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
 
+// Singleton instance
+let instance = null;
+
 class TelegramService {
   constructor() {
+    // Return existing instance
+    if (instance) {
+      return instance;
+    }
+
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const enabled = process.env.TELEGRAM_ENABLED === 'true';
 
     if (!enabled || !token) {
-      logger.warn('Telegram bot is disabled or token missing');
+      logger.warn('Telegram bot disabled');
       this.bot = null;
-      return;
+      instance = this;
+      return instance;
     }
 
-    // WEBHOOK MODE - NO POLLING
+    // Create bot in webhook mode - NO setup here
     this.bot = new TelegramBot(token, { polling: false });
-    this.setupWebhook();
-    logger.info('✅ Telegram bot initialized with webhook');
+    
+    instance = this;
+    logger.info('✅ Telegram bot instance created');
+    
+    return instance;
   }
 
-  async setupWebhook() {
+  // Process incoming webhook updates
+  async processUpdate(update) {
     if (!this.bot) return;
 
     try {
-      const webhookUrl = `${process.env.APP_URL}/webhook/telegram`;
+      if (update.message) {
+        const chatId = update.message.chat.id;
+        const text = update.message.text || '';
+        const identifier = `tg_${chatId}`;
+        
+        logger.info(`💬 Telegram message from ${chatId}: ${text}`);
+        
+        const webhookController = require('../controllers/webhook.controller');
+        await webhookController.routeMessage(identifier, text);
+      }
       
-      // Delete old webhook/polling first
-      await this.bot.deleteWebHook();
-      logger.info('Old webhook deleted');
-      
-      // Set new webhook
-      await this.bot.setWebHook(webhookUrl);
-      logger.info(`✅ Webhook set to: ${webhookUrl}`);
-      
-      // Verify
-      const info = await this.bot.getWebHookInfo();
-      logger.info('Webhook info:', JSON.stringify(info));
+      if (update.callback_query) {
+        const chatId = update.callback_query.message.chat.id;
+        const data = update.callback_query.data;
+        const identifier = `tg_${chatId}`;
+        
+        await this.bot.answerCallbackQuery(update.callback_query.id);
+        
+        const webhookController = require('../controllers/webhook.controller');
+        await webhookController.routeMessage(identifier, data);
+      }
       
     } catch (error) {
-      logger.error('Error setting webhook:', error);
+      logger.error('Error processing Telegram update:', error);
     }
   }
-
-  async processUpdate(update) {
-  if (!this.bot) {
-    logger.warn('Bot not initialized, skipping update');
-    return;
-  }
-
-  try {
-    logger.info('Processing Telegram update:', JSON.stringify(update));
-    
-    // Handle regular messages
-    if (update.message) {
-      const chatId = update.message.chat.id;
-      const text = update.message.text || '';
-      
-      logger.info(`Telegram message from ${chatId}: ${text}`);
-      
-      const webhookController = require('../controllers/webhook.controller');
-      const identifier = `tg_${chatId}`;
-      
-      await webhookController.routeMessage(identifier, text);
-    }
-    
-    // Handle button clicks
-    if (update.callback_query) {
-      const chatId = update.callback_query.message.chat.id;
-      const data = update.callback_query.data;
-      
-      logger.info(`Telegram callback from ${chatId}: ${data}`);
-      
-      await this.bot.answerCallbackQuery(update.callback_query.id);
-      
-      const webhookController = require('../controllers/webhook.controller');
-      const identifier = `tg_${chatId}`;
-      
-      await webhookController.routeMessage(identifier, data);
-    }
-    
-    logger.info('Telegram update processed successfully');
-    
-  } catch (error) {
-    logger.error('Error processing update:', error);
-    throw error;
-  }
-}
 
   async sendMessage(chatId, text) {
     if (!this.bot) {
-      logger.warn('Bot not initialized');
+      logger.error('Cannot send - bot not initialized');
       return;
     }
 
     try {
-      const formatted = this.convertFormatting(text);
-      
-      await this.bot.sendMessage(chatId, formatted, {
+      await this.bot.sendMessage(chatId, text, {
         parse_mode: 'Markdown'
       });
-      
-      logger.info(`Message sent to ${chatId}`);
+      logger.info(`✅ Message sent to ${chatId}`);
     } catch (error) {
-      logger.error('Error sending message:', error);
+      logger.error(`Error sending to ${chatId}:`, error.message);
       throw error;
     }
   }
 
   async sendImage(chatId, imagePath, caption = '') {
-    if (!this.bot) {
-      logger.warn('Bot not initialized');
-      return;
-    }
+    if (!this.bot) return;
 
     try {
-      const formatted = this.convertFormatting(caption);
-      
       await this.bot.sendPhoto(chatId, imagePath, {
-        caption: formatted,
+        caption: caption,
         parse_mode: 'Markdown'
       });
       
-      logger.info(`Image sent to ${chatId}`);
+      logger.info(`✅ Image sent to ${chatId}`);
       
       if (fs.existsSync(imagePath)) {
         fs.unlinkSync(imagePath);
       }
     } catch (error) {
-      logger.error('Error sending image:', error);
+      logger.error(`Error sending image to ${chatId}:`, error.message);
       throw error;
     }
-  }
-
-  convertFormatting(text) {
-    return text
-      .replace(/\*([^*]+)\*/g, '*$1*')
-      .replace(/_([^_]+)_/g, '_$1_')
-      .replace(/~([^~]+)~/g, '~$1~')
-      .replace(/```([^`]+)```/g, '```$1```');
   }
 
   async sendWithButtons(chatId, text, buttons) {
     if (!this.bot) return;
 
     try {
-      await this.bot.sendMessage(chatId, this.convertFormatting(text), {
+      await this.bot.sendMessage(chatId, text, {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: buttons
         }
       });
+      logger.info(`✅ Buttons sent to ${chatId}`);
     } catch (error) {
-      logger.error('Error sending buttons:', error);
+      logger.error(`Error sending buttons:`, error.message);
     }
   }
 }
