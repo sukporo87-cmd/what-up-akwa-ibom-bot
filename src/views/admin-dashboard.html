@@ -1093,7 +1093,7 @@
         try {
             console.log('Loading dashboard data from real APIs...');
             
-            const token = localStorage.getItem('adminSession');
+            const token = localStorage.getItem('adminSessionToken');
             if (!token) {
                 console.error('No session token found');
                 window.location.href = '/admin';
@@ -1257,7 +1257,7 @@
         console.log('🚀 Multi-Platform Admin Dashboard Initializing...');
         
         // Check authentication
-        const session = localStorage.getItem('adminSession');
+        const session = localStorage.getItem('adminSessionToken');
         if (!session) {
             console.log('No session found - redirecting to login');
             window.location.href = '/admin';
