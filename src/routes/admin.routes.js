@@ -174,18 +174,21 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
     );
 
     const result = await pool.query(`
-      SELECT
-        CASE 
-          WHEN phone_number LIKE 'tg_%' THEN 'telegram'
-          ELSE 'whatsapp'
-        END as platform,
-        COUNT(DISTINCT id) as total_users,
-        COUNT(DISTINCT CASE WHEN last_active >= NOW() - INTERVAL '7 days' THEN id END) as active_users,
-        SUM(total_games_played) as total_games,
-        SUM(total_winnings) as total_revenue
-      FROM users
-      GROUP BY platform
-    `);
+  SELECT
+    CASE 
+      WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+      ELSE 'whatsapp'
+    END as platform,
+    COUNT(DISTINCT id) as total_users,
+    COUNT(DISTINCT CASE WHEN last_active >= NOW() - INTERVAL '7 days' THEN id END) as active_users,
+    SUM(total_games_played) as total_games,
+    SUM(total_winnings) as total_revenue
+  FROM users
+  GROUP BY CASE 
+    WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+    ELSE 'whatsapp'
+  END
+`);
     
     const stats = {
       whatsapp: { users: 0, games: 0, active_rate: 0, revenue: 0 },
@@ -237,18 +240,21 @@ router.get('/api/stats/platform-comparison', authenticateAdmin, async (req, res)
     const days = parseInt(req.query.days) || 7;
     
     const query = `
-      SELECT 
-        DATE(created_at) as date,
-        CASE 
-          WHEN phone_number LIKE 'tg_%' THEN 'telegram'
-          ELSE 'whatsapp'
-        END as platform,
-        COUNT(*) as user_count
-      FROM users
-      WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
-      GROUP BY DATE(created_at), platform
-      ORDER BY date ASC
-    `;
+  SELECT 
+    DATE(created_at) as date,
+    CASE 
+      WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+      ELSE 'whatsapp'
+    END as platform,
+    COUNT(*) as user_count
+  FROM users
+  WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
+  GROUP BY DATE(created_at), CASE 
+    WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+    ELSE 'whatsapp'
+  END
+  ORDER BY date ASC
+`;
     
     const result = await pool.query(query);
     
@@ -320,19 +326,22 @@ router.get('/api/activity/live', authenticateAdmin, async (req, res) => {
 router.get('/api/health/platforms', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        CASE 
-          WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-          ELSE 'whatsapp'
-        END as platform,
-        COUNT(*) as message_count,
-        MAX(gs.started_at) as last_message,
-        AVG(EXTRACT(EPOCH FROM (gs.completed_at - gs.started_at))) as avg_response_time
-      FROM game_sessions gs
-      JOIN users u ON gs.user_id = u.id
-      WHERE gs.started_at >= NOW() - INTERVAL '24 hours'
-      GROUP BY platform
-    `);
+  SELECT 
+    CASE 
+      WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      ELSE 'whatsapp'
+    END as platform,
+    COUNT(*) as message_count,
+    MAX(gs.started_at) as last_message,
+    AVG(EXTRACT(EPOCH FROM (gs.completed_at - gs.started_at))) as avg_response_time
+  FROM game_sessions gs
+  JOIN users u ON gs.user_id = u.id
+  WHERE gs.started_at >= NOW() - INTERVAL '24 hours'
+  GROUP BY CASE 
+    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    ELSE 'whatsapp'
+  END
+`);
     
     const health = {
       whatsapp: {
