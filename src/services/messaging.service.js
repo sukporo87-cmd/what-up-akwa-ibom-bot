@@ -1,195 +1,250 @@
 // ============================================
 // FILE: src/services/messaging.service.js
-// FIXED: Lazy loading to avoid circular dependency
-// Unified messaging for WhatsApp & Telegram
+// FIXED: Platform-Agnostic Messaging Service
+// Handles BOTH WhatsApp and Telegram WITHOUT breaking WhatsApp
 // ============================================
 
 const WhatsAppService = require('./whatsapp.service');
+const TelegramService = require('./telegram.service');
 const { logger } = require('../utils/logger');
-
-// Import core services (adjust paths if needed)
-const UserService = require('./user.service');
-const GameService = require('./game.service');
 
 class MessagingService {
   constructor() {
-    this.whatsapp = new WhatsAppService();
-    this.telegram = null; // Lazy-loaded
-
-    // Core services
-    this.userService = new UserService();
-    this.gameService = new GameService();
-  }
-
-  // Lazy getter for TelegramService
-  getTelegramService() {
-    if (!this.telegram && process.env.TELEGRAM_ENABLED === 'true') {
+    console.log('🔧 Initializing MessagingService...');
+    
+    // ALWAYS initialize WhatsApp (primary platform)
+    try {
+      this.whatsapp = new WhatsAppService();
+      console.log('✅ WhatsApp service initialized');
+    } catch (error) {
+      console.error('❌ CRITICAL: WhatsApp service failed to initialize:', error);
+      throw error; // WhatsApp is critical, fail if it doesn't work
+    }
+    
+    // Initialize Telegram ONLY if enabled (optional platform)
+    this.telegram = null;
+    if (process.env.TELEGRAM_ENABLED === 'true') {
       try {
-        const TelegramService = require('./telegram.service');
         this.telegram = new TelegramService();
+        console.log('✅ Telegram service initialized');
       } catch (error) {
-        logger.error('Failed to lazy-load TelegramService:', error);
+        console.error('⚠️ Telegram service failed to initialize (continuing with WhatsApp only):', error);
+        // Don't throw - Telegram is optional, WhatsApp should still work
         this.telegram = null;
       }
+    } else {
+      console.log('ℹ️ Telegram disabled (WhatsApp only mode)');
     }
-    return this.telegram;
+    
+    console.log('✅ MessagingService ready');
   }
 
   /**
    * Determine platform from identifier
+   * WhatsApp: numeric (234916...)
+   * Telegram: starts with 'tg_' (tg_123456789)
    */
   getPlatform(identifier) {
-    if (!identifier) return 'whatsapp';
+    if (!identifier) {
+      console.log('⚠️ No identifier provided, defaulting to WhatsApp');
+      return 'whatsapp';
+    }
+    
     const id = identifier.toString();
-    return id.startsWith('tg_') ? 'telegram' : 'whatsapp';
+    if (id.startsWith('tg_')) {
+      return 'telegram';
+    }
+    return 'whatsapp';
   }
 
   /**
-   * Extract raw ID
+   * Extract platform-specific ID from identifier
    */
   extractId(identifier) {
     const platform = this.getPlatform(identifier);
-    return platform === 'telegram' ? identifier.toString().replace('tg_', '') : identifier.toString();
+    if (platform === 'telegram') {
+      return identifier.toString().replace('tg_', '');
+    }
+    return identifier.toString();
   }
 
   /**
-   * Send text message
+   * Send text message to any platform
    */
   async sendMessage(identifier, text) {
     const platform = this.getPlatform(identifier);
     const id = this.extractId(identifier);
+    
+    console.log(`📨 Sending message via ${platform} to ${id.substring(0, 10)}...`);
 
     try {
       if (platform === 'telegram') {
-        const tg = this.getTelegramService();
-        if (!tg) throw new Error('Telegram disabled');
-        return await tg.sendMessage(id, text);
+        if (!this.telegram) {
+          console.error('❌ Telegram service not available');
+          throw new Error('Telegram service not initialized');
+        }
+        console.log('   Using Telegram service...');
+        return await this.telegram.sendMessage(id, text);
+      } else {
+        if (!this.whatsapp) {
+          console.error('❌ WhatsApp service not available');
+          throw new Error('WhatsApp service not initialized');
+        }
+        console.log('   Using WhatsApp service...');
+        return await this.whatsapp.sendMessage(id, text);
       }
-      return await this.whatsapp.sendMessage(id, text);
     } catch (error) {
-      logger.error(`Send message error (${platform}):`, error);
+      console.error(`❌ Failed to send message via ${platform}:`, error.message);
+      logger.error(`Error sending message via ${platform}:`, error);
       throw error;
     }
   }
 
   /**
-   * Send image
+   * Send image with caption to any platform
    */
   async sendImage(identifier, imagePath, caption = '') {
     const platform = this.getPlatform(identifier);
     const id = this.extractId(identifier);
+    
+    console.log(`📸 Sending image via ${platform} to ${id.substring(0, 10)}...`);
 
     try {
       if (platform === 'telegram') {
-        const tg = this.getTelegramService();
-        if (!tg) throw new Error('Telegram disabled');
-        return await tg.sendImage(id, imagePath, caption);
+        if (!this.telegram) {
+          throw new Error('Telegram service not initialized');
+        }
+        return await this.telegram.sendImage(id, imagePath, caption);
+      } else {
+        if (!this.whatsapp) {
+          throw new Error('WhatsApp service not initialized');
+        }
+        return await this.whatsapp.sendImage(id, imagePath, caption);
       }
-      return await this.whatsapp.sendImage(id, imagePath, caption);
     } catch (error) {
-      logger.error(`Send image error (${platform}):`, error);
+      console.error(`❌ Failed to send image via ${platform}:`, error.message);
+      logger.error(`Error sending image via ${platform}:`, error);
       throw error;
     }
   }
 
   /**
-   * Send with buttons (Telegram inline)
+   * Format phone number (WhatsApp specific)
+   */
+  formatPhoneNumber(phone) {
+    // Only format if it's a WhatsApp number
+    if (this.getPlatform(phone) === 'whatsapp') {
+      return this.whatsapp.formatPhoneNumber(phone);
+    }
+    return phone;
+  }
+
+  /**
+   * Create unified identifier for database storage
+   */
+  createIdentifier(platform, id) {
+    if (platform === 'telegram') {
+      return `tg_${id}`;
+    }
+    // WhatsApp uses phone number directly
+    return this.formatPhoneNumber(id);
+  }
+
+  /**
+   * Parse identifier back to platform and ID
+   */
+  parseIdentifier(identifier) {
+    if (!identifier) {
+      return { platform: 'whatsapp', id: '' };
+    }
+
+    const id = identifier.toString();
+    if (id.startsWith('tg_')) {
+      return {
+        platform: 'telegram',
+        id: id.replace('tg_', '')
+      };
+    }
+
+    return {
+      platform: 'whatsapp',
+      id: id
+    };
+  }
+
+  /**
+   * Check if identifier is from Telegram
+   */
+  isTelegram(identifier) {
+    return this.getPlatform(identifier) === 'telegram';
+  }
+
+  /**
+   * Check if identifier is from WhatsApp
+   */
+  isWhatsApp(identifier) {
+    return this.getPlatform(identifier) === 'whatsapp';
+  }
+
+  /**
+   * Get platform display name
+   */
+  getPlatformName(identifier) {
+    const platform = this.getPlatform(identifier);
+    return platform === 'telegram' ? 'Telegram' : 'WhatsApp';
+  }
+
+  /**
+   * Send platform-specific buttons (if supported)
    */
   async sendWithButtons(identifier, text, buttons) {
     const platform = this.getPlatform(identifier);
     const id = this.extractId(identifier);
 
     try {
-      if (platform === 'telegram') {
-        const tg = this.getTelegramService();
-        if (!tg) return await this.sendMessage(identifier, text);
-        return await tg.sendWithButtons(id, text, buttons);
+      if (platform === 'telegram' && this.telegram) {
+        // Telegram supports inline keyboards
+        return await this.telegram.sendWithButtons(id, text, buttons);
+      } else if (platform === 'whatsapp' && this.whatsapp) {
+        // WhatsApp doesn't support buttons in bot messages
+        // Just send the text
+        return await this.whatsapp.sendMessage(id, text);
+      } else {
+        throw new Error(`${platform} service not available`);
       }
-      return await this.whatsapp.sendMessage(id, text);
     } catch (error) {
-      logger.error(`Send buttons error (${platform}):`, error);
+      console.error(`❌ Error sending buttons via ${platform}:`, error.message);
+      // Fallback to regular message
       return await this.sendMessage(identifier, text);
     }
   }
 
   /**
-   * Format phone (WhatsApp only)
+   * Check if platform is enabled
    */
-  formatPhoneNumber(phone) {
-    return this.getPlatform(phone) === 'whatsapp' ? this.whatsapp.formatPhoneNumber(phone) : phone;
-  }
-
-  /**
-   * Create unified identifier
-   */
-  createIdentifier(platform, id) {
-    return platform === 'telegram' ? `tg_${id}` : this.formatPhoneNumber(id);
-  }
-
-  /**
-   * Parse identifier
-   */
-  parseIdentifier(identifier) {
-    if (!identifier) return { platform: 'whatsapp', id: '' };
-    const id = identifier.toString();
-    if (id.startsWith('tg_')) return { platform: 'telegram', id: id.replace('tg_', '') };
-    return { platform: 'whatsapp', id: id };
-  }
-
-  // Other helpers
-  isTelegram(identifier) { return this.getPlatform(identifier) === 'telegram'; }
-  isWhatsApp(identifier) { return this.getPlatform(identifier) === 'whatsapp'; }
-  getPlatformName(identifier) { return this.getPlatform(identifier) === 'telegram' ? 'Telegram' : 'WhatsApp'; }
-  isEnabled(platform) { return platform === 'telegram' ? process.env.TELEGRAM_ENABLED === 'true' : true; }
-
-  /**
-   * Unified incoming message handler
-   */
-  async processIncomingMessage({ from, body, name, platform = 'whatsapp', telegramChatId }) {
-    try {
-      logger.info(`Incoming message from ${from} (${platform}): ${body}`);
-
-      const identifier = platform === 'telegram'
-        ? `tg_${telegramChatId || from}`
-        : this.formatPhoneNumber(from);
-
-      // Get or create user
-      let user = await this.userService.getUserByIdentifier(identifier);
-      if (!user) {
-        user = await this.userService.createUser({
-          identifier,
-          full_name: name,
-          platform,
-          telegram_chat_id: platform === 'telegram' ? telegramChatId : null
-        });
-
-        const welcomeMsg = this.whatsapp.getWelcomeMessage(name); // Reuse WhatsApp welcome or make unified
-        await this.sendMessage(identifier, welcomeMsg);
-        return { sentWelcome: true };
-      }
-
-      // Handle user input via game service
-      const response = await this.gameService.handleUserInput(user, body.trim().toUpperCase());
-
-      if (response) {
-        if (response.text) await this.sendMessage(identifier, response.text);
-        if (response.image) await this.sendImage(identifier, response.image, response.caption || '');
-        if (response.buttons) await this.sendWithButtons(identifier, response.text || '', response.buttons);
-      }
-
-      return response;
-
-    } catch (error) {
-      logger.error('Error in processIncomingMessage:', error);
-      const fallback = "😔 Sorry, something went wrong. Please try again later.";
-      if (platform === 'telegram' && telegramChatId) {
-        const tg = this.getTelegramService();
-        if (tg) await tg.sendMessage(telegramChatId, fallback);
-      } else {
-        await this.sendMessage(from, fallback);
-      }
-      return { error: true };
+  isEnabled(platform) {
+    if (platform === 'telegram') {
+      return process.env.TELEGRAM_ENABLED === 'true' && this.telegram !== null;
     }
+    // WhatsApp is always enabled (primary platform)
+    return this.whatsapp !== null;
+  }
+
+  /**
+   * Get active platforms
+   */
+  getActivePlatforms() {
+    const platforms = [];
+    
+    if (this.whatsapp) {
+      platforms.push('whatsapp');
+    }
+    
+    if (this.telegram) {
+      platforms.push('telegram');
+    }
+    
+    return platforms;
   }
 }
 
