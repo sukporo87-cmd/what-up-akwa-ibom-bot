@@ -1,7 +1,6 @@
 // ============================================
 // FILE: src/services/user.service.js
-// FIXED: Added getUserByIdentifier + simplified create for Telegram
-// Full multi-platform support (WhatsApp + Telegram)
+// UPDATED: Added platform support (WhatsApp & Telegram)
 // ============================================
 
 const pool = require('../config/database');
@@ -10,36 +9,33 @@ const { logger } = require('../utils/logger');
 
 class UserService {
   /**
-   * Get user by unified identifier (phone or tg_ prefixed)
-   * This is the CRITICAL method needed by MessagingService
+   * Get user by phone number or platform identifier
+   * Handles both WhatsApp phone numbers and Telegram chat IDs
    */
-  async getUserByIdentifier(identifier) {
-    if (!identifier) return null;
-
+  async getUserByPhone(phoneNumber) {
     try {
       const result = await pool.query(
         'SELECT * FROM users WHERE phone_number = $1',
-        [identifier]
+        [phoneNumber]
       );
       return result.rows[0] || null;
     } catch (error) {
-      logger.error('Error fetching user by identifier:', error);
+      logger.error('Error fetching user by phone:', error);
       throw error;
     }
   }
 
   /**
-   * Get user by phone number (legacy WhatsApp support)
+   * Create user with platform and referral support
+   * @param {string} phoneNumber - Phone number or platform identifier
+   * @param {string} fullName - User's full name
+   * @param {string} city - User's city
+   * @param {string} username - User's username
+   * @param {number} age - User's age
+   * @param {number|null} referrerId - ID of referring user
+   * @param {string} platform - Platform type: 'whatsapp' or 'telegram'
    */
-  async getUserByPhone(phoneNumber) {
-    return this.getUserByIdentifier(phoneNumber);
-  }
-
-  /**
-   * Create new user — simplified for initial Telegram flow
-   * Full registration (city, username, age) can happen later via game flow
-   */
-  async createUser({ identifier, full_name, platform = 'whatsapp', telegram_chat_id = null, referrerId = null }) {
+  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, platform = 'whatsapp') {
     const client = await pool.connect();
     
     try {
@@ -48,24 +44,20 @@ class UserService {
       // Generate referral code
       const referralCode = this.generateReferralCode();
 
-      // Insert user with minimal data
+      // Store platform info in phone_number field with prefix for Telegram
+      const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
+
+      // Create user
       const userResult = await client.query(
-        `INSERT INTO users (
-          phone_number, 
-          full_name, 
-          referral_code, 
-          referred_by, 
-          platform,
-          telegram_chat_id,
-          created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        `INSERT INTO users (phone_number, full_name, city, username, age, referral_code, referred_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [identifier, full_name || 'Player', referralCode, referrerId, platform, telegram_chat_id]
+        [identifier, fullName, city, username, age, referralCode, referrerId]
       );
 
       const user = userResult.rows[0];
 
-      // Handle referral if provided
+      // If referred, create referral record
       if (referrerId) {
         const referrerResult = await client.query(
           'SELECT referral_code FROM users WHERE id = $1',
@@ -78,13 +70,14 @@ class UserService {
              VALUES ($1, $2, $3)`,
             [referrerId, user.id, referrerResult.rows[0].referral_code]
           );
+
           logger.info(`Referral created: User ${user.id} referred by ${referrerId}`);
         }
       }
 
       await client.query('COMMIT');
       
-      logger.info(`New user created: ${full_name || 'Player'} (${identifier}), platform: ${platform}`);
+      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}, platform: ${platform}. Referral code: ${referralCode}`);
       
       return user;
     } catch (error) {
@@ -97,24 +90,10 @@ class UserService {
   }
 
   /**
-   * Legacy createUser with full registration fields (for WhatsApp flow)
-   */
-  async createFullUser(phoneNumber, fullName, city, username, age, referrerId = null, platform = 'whatsapp') {
-    const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
-    
-    return this.createUser({
-      identifier,
-      full_name: fullName,
-      platform,
-      referrerId
-    });
-  }
-
-  /**
-   * Generate unique 8-character referral code
+   * Generate unique referral code
    */
   generateReferralCode() {
-    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No confusing chars
     let code = '';
     for (let i = 0; i < 8; i++) {
       code += characters.charAt(Math.floor(Math.random() * characters.length));
@@ -124,51 +103,64 @@ class UserService {
 
   /**
    * Extract platform from identifier
+   * @param {string} identifier - Phone number or platform identifier
+   * @returns {string} - 'telegram' or 'whatsapp'
    */
   getPlatformFromIdentifier(identifier) {
-    return identifier?.startsWith('tg_') ? 'telegram' : 'whatsapp';
+    return identifier.startsWith('tg_') ? 'telegram' : 'whatsapp';
   }
 
   /**
-   * Strip tg_ prefix
+   * Strip platform prefix from identifier
+   * @param {string} identifier - Phone number or platform identifier
+   * @returns {string} - Clean identifier without prefix
    */
   stripPlatformPrefix(identifier) {
-    return identifier?.replace(/^tg_/, '') || '';
+    return identifier.replace(/^tg_/, '');
   }
 
-  // === State Management (Redis) ===
-  async setUserState(identifier, state, data = {}) {
+  async setUserState(phone, state, data = {}) {
     try {
-      const stateData = { state, data, timestamp: Date.now() };
-      await redis.setex(`user_state:${identifier}`, 1800, JSON.stringify(stateData));
+      const stateData = {
+        state,
+        data,
+        timestamp: Date.now()
+      };
+      await redis.setex(`user_state:${phone}`, 1800, JSON.stringify(stateData));
     } catch (error) {
       logger.error('Error setting user state:', error);
     }
   }
 
-  async getUserState(identifier) {
+  async getUserState(phone) {
     try {
-      const stateJson = await redis.get(`user_state:${identifier}`);
-      return stateJson ? JSON.parse(stateJson) : null;
+      const stateJson = await redis.get(`user_state:${phone}`);
+      if (!stateJson) return null;
+      return JSON.parse(stateJson);
     } catch (error) {
       logger.error('Error getting user state:', error);
       return null;
     }
   }
 
-  async clearUserState(identifier) {
+  async clearUserState(phone) {
     try {
-      await redis.del(`user_state:${identifier}`);
+      await redis.del(`user_state:${phone}`);
     } catch (error) {
       logger.error('Error clearing user state:', error);
     }
   }
 
-  // === Stats ===
   async getUserStats(userId) {
     try {
-      const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
-      if (userResult.rows.length === 0) return null;
+      const userResult = await pool.query(
+        'SELECT * FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        return null;
+      }
 
       const user = userResult.rows[0];
 
@@ -185,32 +177,47 @@ class UserService {
 
       const gameStats = gamesResult.rows[0];
 
+      const bestGameResult = await pool.query(
+        `SELECT current_question, final_score, completed_at
+         FROM game_sessions
+         WHERE user_id = $1 AND status = 'completed'
+         ORDER BY current_question DESC, final_score DESC
+         LIMIT 1`,
+        [userId]
+      );
+
+      const bestGame = bestGameResult.rows[0];
+
       const rankResult = await pool.query(
         `SELECT COUNT(*) + 1 as rank
          FROM users
          WHERE total_winnings > $1`,
-        [user.total_winnings || 0]
+        [user.total_winnings]
       );
+
+      const rank = rankResult.rows[0].rank;
 
       const totalGames = parseInt(gameStats.total_games) || 0;
       const gamesWon = parseInt(gameStats.games_won) || 0;
       const winRate = totalGames > 0 ? ((gamesWon / totalGames) * 100).toFixed(1) : 0;
 
       return {
-        fullName: user.full_name || 'Player',
-        username: user.username || '@unknown',
-        city: user.city || 'Unknown',
-        age: user.age || '??',
+        fullName: user.full_name,
+        username: user.username,
+        city: user.city,
+        age: user.age,
         platform: this.getPlatformFromIdentifier(user.phone_number),
-        totalGamesPlayed: user.total_games_played || 0,
+        totalGamesPlayed: user.total_games_played,
         totalWinnings: parseFloat(user.total_winnings) || 0,
         highestQuestionReached: user.highest_question_reached || 0,
         gamesRemaining: user.games_remaining || 0,
-        gamesWon,
-        winRate,
+        totalGamesPurchased: user.total_games_purchased || 0,
+        gamesWon: gamesWon,
+        winRate: winRate,
         highestWin: parseFloat(gameStats.highest_win) || 0,
         avgScore: parseFloat(gameStats.avg_score) || 0,
-        rank: parseInt(rankResult.rows[0].rank),
+        rank: parseInt(rank),
+        bestGameDate: bestGame ? bestGame.completed_at : null,
         joinedDate: user.created_at
       };
     } catch (error) {

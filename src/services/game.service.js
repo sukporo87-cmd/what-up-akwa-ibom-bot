@@ -6,12 +6,12 @@
 
 const pool = require('../config/database');
 const redis = require('../config/redis');
-const WhatsAppService = require('./whatsapp.service');
+const MessagingService = require('./messaging.service');
 const QuestionService = require('./question.service');
 const PaymentService = require('./payment.service');
 const { logger } = require('../utils/logger');
 
-const whatsappService = new WhatsAppService();
+const messagingService = new MessagingService();
 const questionService = new QuestionService();
 const paymentService = new PaymentService();
 
@@ -155,7 +155,7 @@ class GameService {
                 // Only deduct for REGULAR games
                 const hasGames = await paymentService.hasGamesRemaining(user.id);
                 if (!hasGames) {
-                    await whatsappService.sendMessage(
+                    await messagingService.sendMessage(
                         user.phone_number,
                         '❌ You have no games remaining!\n\n' +
                         'Type BUY to purchase more games.'
@@ -177,7 +177,7 @@ class GameService {
                 const tournament = await tournamentService.getTournamentById(tournamentId);
                 
                 if (!tournament) {
-                    await whatsappService.sendMessage(
+                    await messagingService.sendMessage(
                         user.phone_number,
                         '❌ Tournament not found!'
                     );
@@ -193,20 +193,20 @@ class GameService {
                     const status = await tournamentService.getUserTournamentStatus(user.id, tournamentId);
                     
                     if (!status) {
-                        await whatsappService.sendMessage(
+                        await messagingService.sendMessage(
                             user.phone_number,
                             '❌ You have not joined this tournament!\n\n' +
                             'Type TOURNAMENTS to view available tournaments.'
                         );
                     } else if (status.uses_tokens && status.tokens_remaining <= 0) {
-                        await whatsappService.sendMessage(
+                        await messagingService.sendMessage(
                             user.phone_number,
                             '❌ You have no tournament tokens remaining!\n\n' +
                             `You've used all ${status.tokens_per_entry} attempts for this tournament.\n\n` +
                             'Type TOURNAMENTS to view other tournaments.'
                         );
                     } else if (status.payment_status !== 'success') {
-                        await whatsappService.sendMessage(
+                        await messagingService.sendMessage(
                             user.phone_number,
                             '❌ Payment not completed!\n\n' +
                             'Complete payment to access this tournament.\n\n' +
@@ -221,7 +221,7 @@ class GameService {
                     const status = await tournamentService.getUserTournamentStatus(user.id, tournamentId);
                     
                     if (!status || status.tokens_remaining <= 0) {
-                        await whatsappService.sendMessage(
+                        await messagingService.sendMessage(
                             user.phone_number,
                             '❌ No tokens remaining for this tournament!'
                         );
@@ -240,7 +240,7 @@ class GameService {
                     `, [user.id, tournamentId]);
                     
                     if (deductResult.rows.length === 0) {
-                        await whatsappService.sendMessage(
+                        await messagingService.sendMessage(
                             user.phone_number,
                             '❌ Failed to deduct token. Please try again.'
                         );
@@ -258,7 +258,7 @@ class GameService {
             // Check for existing active session
             const existingSession = await this.getActiveSession(user.id);
             if (existingSession) {
-                await whatsappService.sendMessage(
+                await messagingService.sendMessage(
                     user.phone_number,
                     '⚠️ You already have an active game! Complete it first or type RESET.'
                 );
@@ -341,7 +341,7 @@ class GameService {
                 instructions = await this.getDefaultGameInstructions();
             }
 
-            await whatsappService.sendMessage(
+            await messagingService.sendMessage(
                 user.phone_number,
                 `${gameModeText}\n\n${instructions}\n\n${branding}\n\nWhen you're ready, reply START to begin! 🚀`
             );
@@ -540,7 +540,7 @@ Play as many times as allowed!`;
         message += `4️⃣ Main Menu\n\n`;
         message += `Or type MENU for all options.`;
         
-        await whatsappService.sendMessage(user.phone_number, message);
+        await messagingService.sendMessage(user.phone_number, message);
     }
 
     async sendGrandPrizeMessage(user, finalScore) {
@@ -556,7 +556,7 @@ Play as many times as allowed!`;
         message += `3️⃣ Claim Prize\n`;
         message += `4️⃣ Print your victory card`;
         
-        await whatsappService.sendMessage(user.phone_number, message);
+        await messagingService.sendMessage(user.phone_number, message);
     }
 
     async sendWinMessage(user, finalScore, questionNumber) {
@@ -569,7 +569,7 @@ Play as many times as allowed!`;
         message += `4️⃣ Share Victory Card\n\n`;
         message += `Type MENU for more options.`;
         
-        await whatsappService.sendMessage(user.phone_number, message);
+        await messagingService.sendMessage(user.phone_number, message);
     }
 
     // ============================================
@@ -625,7 +625,7 @@ Play as many times as allowed!`;
                 message += `💎 Lifelines: ${lifelines.join(' | ')}`;
             }
             
-            await whatsappService.sendMessage(user.phone_number, message);
+            await messagingService.sendMessage(user.phone_number, message);
             
             // Set timeout in Redis
             await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
@@ -674,7 +674,7 @@ Play as many times as allowed!`;
             this.clearQuestionTimeout(timeoutKey);
             
             if (!session.current_question_id) {
-                await whatsappService.sendMessage(
+                await messagingService.sendMessage(
                     user.phone_number,
                     '❌ Session error. Type RESET to start a new game.'
                 );
@@ -684,7 +684,7 @@ Play as many times as allowed!`;
             const question = await questionService.getQuestionById(session.current_question_id);
             
             if (!question) {
-                await whatsappService.sendMessage(
+                await messagingService.sendMessage(
                     user.phone_number,
                     '❌ Question error. Type RESET to start a new game.'
                 );
@@ -707,7 +707,7 @@ Play as many times as allowed!`;
                     message += `\n🔒 SAFE! ₦${prizeAmount.toLocaleString()} guaranteed!\n`;
                 }
                 
-                await whatsappService.sendMessage(user.phone_number, message);
+                await messagingService.sendMessage(user.phone_number, message);
                 
                 if (questionNumber === 15) {
                     await this.completeGame(session, user, true);
@@ -764,12 +764,12 @@ Play as many times as allowed!`;
         message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
         if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
         
-        await whatsappService.sendMessage(user.phone_number, message);
+        await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false);
     }
 
     async handleTimeout(session, user) {
-        await whatsappService.sendMessage(
+        await messagingService.sendMessage(
             user.phone_number,
             `⏰ TIME'S UP! 😢\n\nYou didn't answer in time.\n\nGame Over!`
         );
@@ -794,7 +794,7 @@ Play as many times as allowed!`;
             const currentSession = await this.getActiveSession(user.id);
             
             if (!currentSession) {
-                await whatsappService.sendMessage(user.phone_number, '❌ No active game found.');
+                await messagingService.sendMessage(user.phone_number, '❌ No active game found.');
                 return;
             }
             
@@ -806,7 +806,7 @@ Play as many times as allowed!`;
             
             if (lifeline === 'fifty_fifty') {
                 if (currentSession.lifeline_5050_used) {
-                    await whatsappService.sendMessage(user.phone_number, '❌ You already used 50:50!');
+                    await messagingService.sendMessage(user.phone_number, '❌ You already used 50:50!');
                     return;
                 }
                 
@@ -842,11 +842,11 @@ Play as many times as allowed!`;
                     message += `💎 Lifelines: ${lifelines.join(' | ')}`;
                 }
                 
-                await whatsappService.sendMessage(user.phone_number, message);
+                await messagingService.sendMessage(user.phone_number, message);
                 
             } else if (lifeline === 'skip') {
                 if (currentSession.lifeline_skip_used) {
-                    await whatsappService.sendMessage(user.phone_number, '❌ You already used Skip!');
+                    await messagingService.sendMessage(user.phone_number, '❌ You already used Skip!');
                     return;
                 }
                 
@@ -861,7 +861,7 @@ Play as many times as allowed!`;
                     [currentSession.id]
                 );
                 
-                await whatsappService.sendMessage(
+                await messagingService.sendMessage(
                     user.phone_number,
                     `⏭️ SKIP USED! ⏭️\n\nGetting a new question at the same level...`
                 );

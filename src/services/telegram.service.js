@@ -1,12 +1,7 @@
-// ============================================
-// FILE: src/services/telegram.service.js
-// UPDATED: Safe lazy access to MessagingService
-// ============================================
-
 const TelegramBot = require('node-telegram-bot-api');
 const { logger } = require('../utils/logger');
 
-// Singleton
+// Singleton instance
 let instance = null;
 
 class TelegramService {
@@ -17,47 +12,46 @@ class TelegramService {
     }
 
     const token = process.env.TELEGRAM_BOT_TOKEN;
+    
     if (!token) {
       logger.error('TELEGRAM_BOT_TOKEN not provided');
-      throw new Error('TELEGRAM_BOT_TOKEN is required');
+      this.bot = null;
+      instance = this;
+      return instance;
     }
 
     try {
-      this.bot = new TelegramBot(token, { polling: false, webHook: false });
+      this.bot = new TelegramBot(token, {
+        polling: false,
+        webHook: false
+      });
+      
       this.webhookSetup = false;
-      this.messagingService = null; // Lazy-loaded
-
       instance = this;
-      logger.info('Telegram bot instance created');
+      
+      logger.info('✅ Telegram bot instance created');
     } catch (error) {
       logger.error('Failed to create Telegram bot:', error);
-      throw error;
+      this.bot = null;
+      instance = this;
     }
-  }
-
-  getMessagingService() {
-    if (!this.messagingService) {
-      const MessagingService = require('./messaging.service');
-      this.messagingService = new MessagingService();
-    }
-    return this.messagingService;
   }
 
   async setupWebhook(webhookUrl) {
-    if (this.webhookSetup) {
-      logger.info('Webhook already configured');
+    if (this.webhookSetup || !this.bot) {
       return;
     }
 
     try {
-      const current = await this.bot.getWebHookInfo();
-      if (current.url === webhookUrl) {
-        logger.info(`Telegram webhook already set: ${webhookUrl}`);
+      const currentWebhook = await this.bot.getWebHookInfo();
+      
+      if (currentWebhook.url === webhookUrl) {
+        logger.info(`✅ Telegram webhook already configured: ${webhookUrl}`);
         this.webhookSetup = true;
         return;
       }
 
-      if (current.url) {
+      if (currentWebhook.url) {
         await this.bot.deleteWebHook();
         logger.info('Old webhook deleted');
         await this.sleep(1000);
@@ -65,16 +59,21 @@ class TelegramService {
 
       await this.bot.setWebHook(webhookUrl);
       this.webhookSetup = true;
-      logger.info(`Telegram webhook set: ${webhookUrl}`);
-
+      
+      logger.info(`✅ Telegram webhook set: ${webhookUrl}`);
+      
       const info = await this.bot.getWebHookInfo();
-      logger.info('Webhook info:', info);
+      logger.info('Webhook info:', {
+        url: info.url,
+        pending_update_count: info.pending_update_count
+      });
+      
     } catch (error) {
       if (error.response?.statusCode === 429) {
+        logger.warn('Rate limited by Telegram (webhook already set)');
         this.webhookSetup = true;
       } else {
-        logger.error('Webhook setup error:', error.message);
-        throw error;
+        logger.error('Error setting webhook:', error.message);
       }
     }
   }
@@ -84,60 +83,78 @@ class TelegramService {
   }
 
   async processUpdate(update) {
+    if (!this.bot) {
+      logger.warn('Bot not initialized');
+      return;
+    }
+
     try {
-      logger.info('Processing Telegram update');
-
-      if (!update.message?.text) {
-        logger.info('Ignored non-text message');
-        return;
+      logger.info('📥 Processing Telegram update');
+      
+      if (update.message) {
+        const chatId = update.message.chat.id;
+        const text = update.message.text || '';
+        const identifier = `tg_${chatId}`;
+        
+        logger.info(`💬 Telegram message from ${chatId}: ${text}`);
+        
+        // Route through webhook controller
+        const webhookController = require('../controllers/webhook.controller');
+        await webhookController.routeMessage(identifier, text);
+        
+        logger.info('✅ Message routed successfully');
       }
-
-      const { chat: { id: chatId }, text, from } = update.message;
-
-      const userName = from.first_name 
-        ? `${from.first_name}${from.last_name ? ' ' + from.last_name : ''}`.trim()
-        : from.username || 'Telegram User';
-
-      logger.info(`Telegram message from ${chatId}: ${text}`);
-
-      await this.getMessagingService().processIncomingMessage({
-        from: chatId.toString(),
-        body: text.trim(),
-        name: userName,
-        platform: 'telegram',
-        telegramChatId: chatId
-      });
-
+      
+      if (update.callback_query) {
+        const chatId = update.callback_query.message.chat.id;
+        const data = update.callback_query.data;
+        const identifier = `tg_${chatId}`;
+        
+        logger.info(`🔘 Telegram callback from ${chatId}: ${data}`);
+        
+        await this.bot.answerCallbackQuery(update.callback_query.id);
+        
+        const webhookController = require('../controllers/webhook.controller');
+        await webhookController.routeMessage(identifier, data);
+        
+        logger.info('✅ Callback routed successfully');
+      }
+      
     } catch (error) {
-      logger.error('Error processing Telegram update:', error);
-      if (update.message?.chat?.id) {
-        await this.sendMessage(update.message.chat.id, "Sorry, an error occurred. Try again later.");
-      }
+      logger.error('❌ Error processing Telegram update:', error);
     }
   }
 
   async sendMessage(chatId, text, options = {}) {
+    if (!this.bot) {
+      logger.error('Cannot send message - bot not initialized');
+      return false;
+    }
+
     try {
-      await this.bot.sendMessage(chatId, text, {
+      const defaultOptions = {
         parse_mode: 'Markdown',
-        disable_web_page_preview: true,
         ...options
-      });
-      logger.info(`Sent message to ${chatId}`);
+      };
+
+      await this.bot.sendMessage(chatId, text, defaultOptions);
+      logger.info(`✅ Message sent to ${chatId}`);
       return true;
     } catch (error) {
-      logger.error(`Send message error to ${chatId}:`, error);
+      logger.error(`Error sending message to ${chatId}:`, error.message);
       return false;
     }
   }
 
   async sendPhoto(chatId, photo, options = {}) {
+    if (!this.bot) return false;
+
     try {
       await this.bot.sendPhoto(chatId, photo, options);
-      logger.info(`Sent photo to ${chatId}`);
+      logger.info(`✅ Photo sent to ${chatId}`);
       return true;
     } catch (error) {
-      logger.error(`Send photo error to ${chatId}:`, error);
+      logger.error(`Error sending photo to ${chatId}:`, error.message);
       return false;
     }
   }
@@ -147,16 +164,27 @@ class TelegramService {
   }
 
   async sendWithButtons(chatId, text, buttons) {
-    const keyboard = {
-      inline_keyboard: buttons.map(row =>
-        row.map(btn => ({ text: btn.title || btn, callback_data: btn.id || btn }))
-      )
-    };
-    return this.sendMessage(chatId, text, { reply_markup: keyboard });
+    if (!this.bot) return false;
+
+    try {
+      await this.bot.sendMessage(chatId, text, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: buttons
+        }
+      });
+      logger.info(`✅ Buttons sent to ${chatId}`);
+      return true;
+    } catch (error) {
+      logger.error(`Error sending buttons:`, error.message);
+      return false;
+    }
   }
 
   static getInstance() {
-    if (!instance) throw new Error('TelegramService not initialized');
+    if (!instance) {
+      new TelegramService();
+    }
     return instance;
   }
 
