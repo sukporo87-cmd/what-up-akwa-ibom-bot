@@ -1167,26 +1167,178 @@
     // Update stats every 30 seconds
     setInterval(updateStats, 30000);
 
-    // ====================================
-    // LOAD DASHBOARD DATA
-    // ====================================
-    async function loadDashboardData() {
-        try {
-            console.log('Loading dashboard data...');
-            
-            // In production, make actual API calls
-            // const response = await fetch('/admin/api/stats/platform-comparison');
-            // const data = await response.json();
-            
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            console.log('Dashboard data loaded successfully');
-        } catch (error) {
-            console.error('Error loading dashboard data:', error);
-            alert('Failed to load dashboard data. Please refresh the page.');
+    // ============================================
+// REPLACE THE loadDashboardData() FUNCTION
+// In admin-dashboard.html (Batch 4 JavaScript)
+// ============================================
+
+async function loadDashboardData() {
+    try {
+        console.log('Loading dashboard data...');
+        
+        const token = localStorage.getItem('adminSession');
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        };
+        
+        // Load all data in parallel
+        const [overviewRes, comparisonRes, activityRes, healthRes] = await Promise.all([
+            fetch('/admin/api/stats/platform-overview', { headers }),
+            fetch('/admin/api/stats/platform-comparison?days=7', { headers }),
+            fetch('/admin/api/activity/live?limit=10', { headers }),
+            fetch('/admin/api/health/platforms', { headers })
+        ]);
+        
+        // Platform Overview Stats
+        if (overviewRes.ok) {
+            const overview = await overviewRes.json();
+            updateOverviewStats(overview);
         }
+        
+        // Platform Comparison Chart
+        if (comparisonRes.ok) {
+            const comparison = await comparisonRes.json();
+            updateChart(comparison);
+        }
+        
+        // Live Activity Feed
+        if (activityRes.ok) {
+            const activity = await activityRes.json();
+            updateActivityFeed(activity.activities);
+        }
+        
+        // Platform Health
+        if (healthRes.ok) {
+            const health = await healthRes.json();
+            updateHealthMonitor(health);
+        }
+        
+        console.log('Dashboard data loaded successfully');
+    } catch (error) {
+        console.error('Error loading dashboard data:', error);
+        // Don't alert on every error, just log it
+        console.log('Using cached/demo data');
     }
+}
+
+// ============================================
+// UPDATE OVERVIEW STATS
+// ============================================
+function updateOverviewStats(stats) {
+    // WhatsApp stats
+    document.getElementById('whatsapp-users').textContent = stats.whatsapp.users;
+    document.getElementById('whatsapp-games').textContent = stats.whatsapp.games.toLocaleString();
+    document.getElementById('whatsapp-active').textContent = stats.whatsapp.active_rate + '%';
+    document.getElementById('whatsapp-revenue').textContent = formatCurrency(stats.whatsapp.revenue);
+    
+    // Telegram stats
+    document.getElementById('telegram-users').textContent = stats.telegram.users;
+    document.getElementById('telegram-games').textContent = stats.telegram.games.toLocaleString();
+    document.getElementById('telegram-active').textContent = stats.telegram.active_rate + '%';
+    document.getElementById('telegram-revenue').textContent = formatCurrency(stats.telegram.revenue);
+    
+    // Total stats
+    document.getElementById('total-users').textContent = stats.total.users;
+    document.getElementById('total-games').textContent = stats.total.games.toLocaleString();
+    document.getElementById('total-active').textContent = stats.total.active_rate + '%';
+    document.getElementById('total-revenue').textContent = formatCurrency(stats.total.revenue);
+}
+
+// ============================================
+// UPDATE CHART WITH REAL DATA
+// ============================================
+function updateChart(data) {
+    platformChart.data.labels = data.labels;
+    platformChart.data.datasets[0].data = data.whatsapp;
+    platformChart.data.datasets[1].data = data.telegram;
+    platformChart.update();
+}
+
+// ============================================
+// UPDATE ACTIVITY FEED WITH REAL DATA
+// ============================================
+function updateActivityFeed(activities) {
+    const feed = document.querySelector('.activity-feed');
+    feed.innerHTML = ''; // Clear existing
+    
+    activities.forEach(activity => {
+        const item = document.createElement('div');
+        item.className = 'activity-item';
+        
+        const platform = activity.platform;
+        const iconClass = platform === 'whatsapp' ? 'whatsapp' : 'telegram';
+        const icon = platform === 'whatsapp' ? '📱' : '💬';
+        const timeAgo = getTimeAgo(activity.completed_at || activity.started_at);
+        
+        item.innerHTML = `
+            <div class="activity-icon ${iconClass}">${icon}</div>
+            <div class="activity-details">
+                <div class="activity-text">
+                    <strong>@${activity.username}</strong> ${activity.action}
+                </div>
+                <div class="activity-time">${timeAgo}</div>
+            </div>
+        `;
+        
+        feed.appendChild(item);
+    });
+}
+
+// ============================================
+// UPDATE HEALTH MONITOR
+// ============================================
+function updateHealthMonitor(health) {
+    // You can update the health metrics here
+    console.log('Platform health:', health);
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+function formatCurrency(amount) {
+    if (amount >= 1000000) {
+        return '₦' + (amount / 1000000).toFixed(1) + 'M';
+    } else if (amount >= 1000) {
+        return '₦' + (amount / 1000).toFixed(0) + 'k';
+    }
+    return '₦' + amount.toLocaleString();
+}
+
+function getTimeAgo(dateString) {
+    const now = new Date();
+    const then = new Date(dateString);
+    const seconds = Math.floor((now - then) / 1000);
+    
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' minutes ago';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
+    return Math.floor(seconds / 86400) + ' days ago';
+}
+
+// ============================================
+// UPDATE THE changePeriod FUNCTION TOO
+// ============================================
+async function changePeriod(days) {
+    console.log('Changing period to:', days, 'days');
+    
+    try {
+        const token = localStorage.getItem('adminSession');
+        const response = await fetch(`/admin/api/stats/platform-comparison?days=${days}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            updateChart(data);
+        }
+    } catch (error) {
+        console.error('Error changing period:', error);
+    }
+}
 
     // ====================================
     // INITIALIZE DASHBOARD
