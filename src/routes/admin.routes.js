@@ -803,6 +803,372 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch activity log' });
   }
 });
+// ============================================
+// MISSING ANALYTICS ENDPOINTS - ADD AFTER BATCH 3
+// Insert these BEFORE the payout routes in your admin.routes.js
+// ============================================
+
+// ============================================
+// GAMES COUNT BY PERIOD
+// ============================================
+router.get('/api/analytics/games-count', authenticateAdmin, async (req, res) => {
+  try {
+    // Try to get from materialized view first
+    const viewResult = await pool.query(`
+      SELECT * FROM games_count_by_period LIMIT 1
+    `).catch(() => null);
+    
+    if (viewResult && viewResult.rows.length > 0) {
+      return res.json(viewResult.rows[0]);
+    }
+    
+    // Fallback: Calculate directly
+    const result = await pool.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE) as today,
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '7 days') as this_week,
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '30 days') as this_month,
+        COUNT(*) as all_time
+      FROM game_sessions
+      WHERE status = 'completed'
+    `);
+    
+    res.json(result.rows[0] || { today: 0, this_week: 0, this_month: 0, all_time: 0 });
+  } catch (error) {
+    logger.error('Error getting games count:', error);
+    res.status(500).json({ error: 'Failed to fetch games count' });
+  }
+});
+
+// ============================================
+// PEAK TIMES ANALYTICS
+// ============================================
+router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
+  try {
+    // Check if hourly stats table exists and has data
+    const checkData = await pool.query(`
+      SELECT COUNT(*) as count FROM game_session_hourly_stats
+    `).catch(() => ({ rows: [{ count: 0 }] }));
+
+    if (parseInt(checkData.rows[0].count) === 0) {
+      logger.info('Populating hourly stats for the first time...');
+      
+      // Try to create the table if it doesn't exist
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS game_session_hourly_stats (
+          id SERIAL PRIMARY KEY,
+          date DATE NOT NULL,
+          hour_of_day INTEGER NOT NULL,
+          day_of_week INTEGER NOT NULL,
+          games_count INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(date, hour_of_day, day_of_week)
+        )
+      `).catch(err => logger.warn('Table might already exist:', err.message));
+      
+      // Populate with historical data
+      await pool.query(`
+        INSERT INTO game_session_hourly_stats (date, hour_of_day, day_of_week, games_count)
+        SELECT
+          DATE(completed_at) as date,
+          EXTRACT(HOUR FROM completed_at)::INTEGER as hour_of_day,
+          EXTRACT(DOW FROM completed_at)::INTEGER as day_of_week,
+          COUNT(*) as games_count
+        FROM game_sessions
+        WHERE status = 'completed'
+        AND completed_at IS NOT NULL
+        GROUP BY DATE(completed_at), EXTRACT(HOUR FROM completed_at), EXTRACT(DOW FROM completed_at)
+        ON CONFLICT (date, hour_of_day, day_of_week) 
+        DO UPDATE SET games_count = EXCLUDED.games_count
+      `).catch(err => logger.error('Error populating hourly stats:', err));
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        hour_of_day,
+        day_of_week,
+        SUM(games_count) as total_games,
+        CASE day_of_week
+          WHEN 0 THEN 'Sunday'
+          WHEN 1 THEN 'Monday'
+          WHEN 2 THEN 'Tuesday'
+          WHEN 3 THEN 'Wednesday'
+          WHEN 4 THEN 'Thursday'
+          WHEN 5 THEN 'Friday'
+          WHEN 6 THEN 'Saturday'
+        END as day_name
+      FROM game_session_hourly_stats
+      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY hour_of_day, day_of_week
+      ORDER BY day_of_week, hour_of_day
+    `).catch(() => ({ rows: [] }));
+
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error getting peak times:', error);
+    res.status(500).json({ error: 'Failed to fetch peak times' });
+  }
+});
+
+// ============================================
+// LGA/CITY PERFORMANCE
+// ============================================
+router.get('/api/analytics/lga-performance', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_lga_performance',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    // Use 'city' field since that's what exists in your schema
+    const lgaStats = await pool.query(`
+      SELECT
+        city as lga,
+        COUNT(*) as user_count,
+        COALESCE(SUM(total_games_played), 0) as total_games,
+        COALESCE(SUM(total_winnings), 0) as total_winnings,
+        COALESCE(AVG(total_winnings), 0) as avg_winnings_per_user,
+        ROUND(
+          COALESCE(AVG(total_games_played), 0),
+          1
+        ) as avg_games_per_user
+      FROM users
+      WHERE city IS NOT NULL
+      GROUP BY city
+      ORDER BY total_games DESC
+      LIMIT 15
+    `);
+
+    res.json(lgaStats.rows);
+  } catch (error) {
+    logger.error('Error getting LGA performance:', error);
+    res.status(500).json({ error: 'Failed to fetch LGA performance' });
+  }
+});
+
+// ============================================
+// ENHANCED ANALYTICS (COMPREHENSIVE)
+// ============================================
+router.get('/api/analytics/enhanced', authenticateAdmin, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'view_enhanced_analytics',
+      {},
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+
+    // Games count by period
+    const gamesCount = await pool.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE) as today,
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '7 days') as this_week,
+        COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '30 days') as this_month,
+        COUNT(*) as all_time
+      FROM game_sessions
+      WHERE status = 'completed'
+    `);
+    
+    // Peak times (simplified)
+    const peakTimes = await pool.query(`
+      SELECT 
+        EXTRACT(HOUR FROM started_at)::INTEGER as hour_of_day,
+        EXTRACT(DOW FROM started_at)::INTEGER as day_of_week,
+        COUNT(*) as total_games
+      FROM game_sessions
+      WHERE started_at >= CURRENT_DATE - INTERVAL '30 days'
+      AND status = 'completed'
+      GROUP BY hour_of_day, day_of_week
+      ORDER BY hour_of_day, day_of_week
+    `).catch(() => ({ rows: [] }));
+
+    // Question categories (if exists)
+    const questionCategories = await pool.query(`
+      SELECT 
+        category,
+        COUNT(*) as question_count,
+        SUM(times_asked) as total_times_asked,
+        SUM(times_correct) as total_times_correct,
+        CASE 
+          WHEN SUM(times_asked) > 0 THEN
+            ROUND((SUM(times_correct)::numeric / SUM(times_asked)::numeric) * 100, 1)
+          ELSE 0
+        END as success_rate
+      FROM questions
+      WHERE is_active = true
+      GROUP BY category
+      ORDER BY total_times_asked DESC
+      LIMIT 10
+    `).catch(() => ({ rows: [] }));
+
+    // Daily active users
+    const dailyActiveUsers = await pool.query(`
+      SELECT 
+        DATE(last_active) as date,
+        COUNT(DISTINCT id) as active_users
+      FROM users
+      WHERE last_active >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(last_active)
+      ORDER BY date ASC
+    `);
+
+    // Engagement funnel
+    const engagementFunnel = await pool.query(`
+      SELECT 
+        COUNT(*) as total_registered,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as started_game,
+        COUNT(CASE WHEN total_games_played >= 3 THEN 1 END) as played_3_games,
+        COUNT(CASE WHEN total_winnings > 0 THEN 1 END) as won_prize,
+        COUNT(CASE WHEN total_games_played >= 10 THEN 1 END) as power_users
+      FROM users
+    `);
+
+    // City performance
+    const lgaPerformance = await pool.query(`
+      SELECT 
+        city as lga,
+        COUNT(*) as user_count,
+        COALESCE(SUM(total_games_played), 0) as total_games,
+        COALESCE(SUM(total_winnings), 0) as total_winnings,
+        COALESCE(AVG(total_winnings), 0) as avg_winnings_per_user
+      FROM users
+      WHERE city IS NOT NULL
+      GROUP BY city
+      ORDER BY total_games DESC
+      LIMIT 10
+    `);
+
+    // Difficulty trends
+    const difficultyTrends = await pool.query(`
+      SELECT 
+        difficulty,
+        COUNT(*) as question_count,
+        SUM(times_asked) as total_asked,
+        SUM(times_correct) as total_correct,
+        CASE 
+          WHEN SUM(times_asked) > 0 THEN 
+            ROUND((SUM(times_correct)::numeric / SUM(times_asked)::numeric) * 100, 1)
+          ELSE 0
+        END as success_rate
+      FROM questions
+      WHERE is_active = true AND times_asked > 0
+      GROUP BY difficulty
+      ORDER BY difficulty ASC
+    `);
+
+    // Conversion rate
+    const conversionRate = await pool.query(`
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(CASE WHEN total_games_played > 0 THEN 1 END) as converted_users,
+        ROUND(
+          (COUNT(CASE WHEN total_games_played > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as conversion_rate_percentage
+      FROM users
+      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+    `);
+
+    // Session duration
+    const sessionDuration = await pool.query(`
+      SELECT 
+        AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_seconds,
+        MIN(EXTRACT(EPOCH FROM (completed_at - started_at))) as min_duration_seconds,
+        MAX(EXTRACT(EPOCH FROM (completed_at - started_at))) as max_duration_seconds
+      FROM game_sessions
+      WHERE status = 'completed'
+        AND completed_at IS NOT NULL
+        AND started_at IS NOT NULL
+        AND completed_at >= CURRENT_DATE - INTERVAL '7 days'
+    `).catch(() => ({ rows: [{ avg_duration_seconds: 0, min_duration_seconds: 0, max_duration_seconds: 0 }] }));
+
+    // Win rate by question
+    const winRateByQuestion = await pool.query(`
+      SELECT 
+        current_question,
+        COUNT(*) as attempts,
+        COUNT(CASE WHEN final_score > 0 THEN 1 END) as wins,
+        ROUND(
+          (COUNT(CASE WHEN final_score > 0 THEN 1 END)::numeric / NULLIF(COUNT(*), 0)::numeric) * 100,
+          1
+        ) as win_rate_percentage
+      FROM game_sessions
+      WHERE status = 'completed'
+        AND current_question BETWEEN 1 AND 15
+      GROUP BY current_question
+      ORDER BY current_question ASC
+    `);
+
+    // Returning users
+    const returningUsers = await pool.query(`
+      SELECT 
+        COUNT(DISTINCT CASE 
+          WHEN last_active >= CURRENT_DATE - INTERVAL '7 days' THEN id 
+        END) as active_last_7_days,
+        COUNT(DISTINCT CASE 
+          WHEN last_active >= CURRENT_DATE - INTERVAL '14 days' 
+          AND last_active < CURRENT_DATE - INTERVAL '7 days' THEN id 
+        END) as active_7_to_14_days_ago
+      FROM users
+      WHERE last_active IS NOT NULL
+    `);
+
+    res.json({
+      gamesCount: gamesCount.rows[0],
+      peakTimes: peakTimes.rows,
+      questionCategories: questionCategories.rows,
+      dailyActiveUsers: dailyActiveUsers.rows,
+      engagementFunnel: engagementFunnel.rows[0],
+      lgaPerformance: lgaPerformance.rows,
+      difficultyTrends: difficultyTrends.rows,
+      conversionRate: conversionRate.rows[0],
+      sessionDuration: sessionDuration.rows[0],
+      winRateByQuestion: winRateByQuestion.rows,
+      returningUsers: returningUsers.rows[0]
+    });
+  } catch (error) {
+    logger.error('Error getting enhanced analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch enhanced analytics' });
+  }
+});
+
+// ============================================
+// QUESTION CATEGORIES ANALYTICS
+// ============================================
+router.get('/api/analytics/categories', authenticateAdmin, async (req, res) => {
+  try {
+    // Try materialized view first, fallback to direct query
+    const result = await pool.query(`
+      SELECT 
+        category,
+        COUNT(*) as question_count,
+        SUM(times_asked) as total_times_asked,
+        SUM(times_correct) as total_times_correct,
+        CASE 
+          WHEN SUM(times_asked) > 0 THEN
+            ROUND((SUM(times_correct)::numeric / SUM(times_asked)::numeric) * 100, 1)
+          ELSE 0
+        END as success_rate
+      FROM questions
+      WHERE is_active = true
+      GROUP BY category
+      ORDER BY total_times_asked DESC
+    `);
+    
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error getting category performance:', error);
+    res.status(500).json({ error: 'Failed to fetch category performance' });
+  }
+});
+
+// ============================================
+// END OF MISSING ENDPOINTS
+// ============================================
 
 // ============================================
 // END OF BATCH 3
