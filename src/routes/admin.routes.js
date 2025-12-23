@@ -52,7 +52,7 @@ router.get('/', (req, res) => {
 });
 
 // NEW: Multi-platform analytics dashboard
-router.get('/dashboard', authenticateAdmin, (req, res) => {
+router.get('/dashboard', (req, res) => {
   res.sendFile('admin-dashboard.html', { root: './src/views' });
 });
 
