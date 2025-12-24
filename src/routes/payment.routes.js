@@ -1,7 +1,6 @@
 // ============================================
 // FILE: src/routes/payment.routes.js
-// UPDATED: Add tournament payment callback
-// Batch 6: Payment Routes
+// UPDATED: Add multi-platform support
 // ============================================
 
 const express = require('express');
@@ -9,13 +8,13 @@ const crypto = require('crypto');
 const router = express.Router();
 const PaymentService = require('../services/payment.service');
 const TournamentService = require('../services/tournament.service');
-const WhatsAppService = require('../services/whatsapp.service');
+const MessagingService = require('../services/messaging.service'); // CHANGED
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
 const paymentService = new PaymentService();
 const tournamentService = new TournamentService();
-const whatsappService = new WhatsAppService();
+const messagingService = new MessagingService(); // CHANGED
 
 // ============================================
 // EXISTING REGULAR PAYMENT WEBHOOK
@@ -60,7 +59,8 @@ router.post('/webhook', async (req, res) => {
                     
                     logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
                     
-                    await whatsappService.sendMessage(
+                    // CHANGED: Use messagingService instead of whatsappService
+                    await messagingService.sendMessage(
                         user.phone_number,
                         `✅ PAYMENT SUCCESSFUL! ✅\n\n` +
                         `${verification.games} games have been credited to your account!\n\n` +
@@ -121,7 +121,8 @@ async function handleTournamentPaymentWebhook(reference, metadata) {
         
         message += `Ready to compete? Type PLAY to start! 🏆`;
         
-        await whatsappService.sendMessage(user.phone_number, message);
+        // CHANGED: Use messagingService instead of whatsappService
+        await messagingService.sendMessage(user.phone_number, message);
         
         logger.info(`Tournament payment successful: User ${user.id} joined tournament ${tournament.id}`);
         
@@ -129,6 +130,23 @@ async function handleTournamentPaymentWebhook(reference, metadata) {
         logger.error('Error handling tournament payment webhook:', error);
         throw error;
     }
+}
+
+// ============================================
+// HELPER: Get redirect URL based on platform
+// ============================================
+function getRedirectUrl(phoneNumber) {
+    if (phoneNumber.startsWith('tg_')) {
+        // Telegram user - return to Telegram bot
+        return `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`;
+    } else {
+        // WhatsApp user
+        return `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+    }
+}
+
+function getPlatformName(phoneNumber) {
+    return phoneNumber.startsWith('tg_') ? 'Telegram' : 'WhatsApp';
 }
 
 // ============================================
@@ -143,7 +161,17 @@ router.get('/callback', async (req, res) => {
     }
     
     try {
-        await paymentService.verifyPayment(reference);
+        const verification = await paymentService.verifyPayment(reference);
+        
+        // Get user to determine platform
+        const userResult = await pool.query(
+            'SELECT phone_number FROM users WHERE id = $1',
+            [verification.metadata.user_id]
+        );
+        
+        const phoneNumber = userResult.rows[0]?.phone_number || '';
+        const redirectUrl = getRedirectUrl(phoneNumber);
+        const platformName = getPlatformName(phoneNumber);
         
         res.send(`
 <!DOCTYPE html>
@@ -151,7 +179,7 @@ router.get('/callback', async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="4;url=https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">
+    <meta http-equiv="refresh" content="4;url=${redirectUrl}">
     <title>Payment Successful</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -189,7 +217,7 @@ router.get('/callback', async (req, res) => {
             display: inline-block;
             margin-top: 30px;
             padding: 18px 50px;
-            background: #25D366;
+            background: ${platformName === 'Telegram' ? '#0088cc' : '#25D366'};
             color: white;
             text-decoration: none;
             border-radius: 50px;
@@ -199,7 +227,7 @@ router.get('/callback', async (req, res) => {
             box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);
         }
         .btn:hover {
-            background: #128C7E;
+            background: ${platformName === 'Telegram' ? '#006699' : '#128C7E'};
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(37, 211, 102, 0.6);
         }
@@ -211,8 +239,8 @@ router.get('/callback', async (req, res) => {
         <h1>Payment Successful!</h1>
         <p>Your games have been credited.</p>
         <div class="countdown" id="countdown">3</div>
-        <p><strong>Redirecting to WhatsApp...</strong></p>
-        <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Go to WhatsApp Now</a>
+        <p><strong>Redirecting to ${platformName}...</strong></p>
+        <a href="${redirectUrl}" class="btn">Go to ${platformName} Now</a>
     </div>
     <script>
         (function() {
@@ -225,7 +253,7 @@ router.get('/callback', async (req, res) => {
                 }
                 if (seconds <= 0) {
                     clearInterval(interval);
-                    window.location.href = 'https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}';
+                    window.location.href = '${redirectUrl}';
                 }
             }, 1000);
         })();
@@ -262,7 +290,7 @@ router.get('/callback', async (req, res) => {
             display: inline-block;
             margin-top: 20px;
             padding: 15px 30px;
-            background: #25D366;
+            background: #667eea;
             color: white;
             text-decoration: none;
             border-radius: 5px;
@@ -273,7 +301,7 @@ router.get('/callback', async (req, res) => {
     <div class="container">
         <h1>❌ Payment Failed</h1>
         <p>Something went wrong. Please try again.</p>
-        <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">Return to WhatsApp</a>
+        <a href="javascript:history.back()">Go Back</a>
     </div>
 </body>
 </html>
@@ -296,13 +324,23 @@ router.get('/tournament-callback', async (req, res) => {
         const verification = await tournamentService.verifyTournamentPayment(reference);
         const tournament = await tournamentService.getTournamentById(verification.payment.tournament_id);
         
+        // Get user to determine platform
+        const userResult = await pool.query(
+            'SELECT phone_number FROM users WHERE id = $1',
+            [verification.payment.user_id]
+        );
+        
+        const phoneNumber = userResult.rows[0]?.phone_number || '';
+        const redirectUrl = getRedirectUrl(phoneNumber);
+        const platformName = getPlatformName(phoneNumber);
+        
         res.send(`
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="5;url=https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">
+    <meta http-equiv="refresh" content="5;url=${redirectUrl}">
     <title>Tournament Payment Successful</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -346,7 +384,7 @@ router.get('/tournament-callback', async (req, res) => {
             display: inline-block;
             margin-top: 30px;
             padding: 18px 50px;
-            background: #25D366;
+            background: ${platformName === 'Telegram' ? '#0088cc' : '#25D366'};
             color: white;
             text-decoration: none;
             border-radius: 50px;
@@ -356,7 +394,7 @@ router.get('/tournament-callback', async (req, res) => {
             box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);
         }
         .btn:hover {
-            background: #128C7E;
+            background: ${platformName === 'Telegram' ? '#006699' : '#128C7E'};
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(37, 211, 102, 0.6);
         }
@@ -369,8 +407,8 @@ router.get('/tournament-callback', async (req, res) => {
         <div class="tournament-name">${tournament.tournament_name}</div>
         <p>You're now registered to compete!</p>
         <div class="countdown" id="countdown">5</div>
-        <p><strong>Redirecting to WhatsApp...</strong></p>
-        <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}" class="btn">Start Playing Now!</a>
+        <p><strong>Redirecting to ${platformName}...</strong></p>
+        <a href="${redirectUrl}" class="btn">Start Playing Now!</a>
     </div>
     <script>
         (function() {
@@ -383,7 +421,7 @@ router.get('/tournament-callback', async (req, res) => {
                 }
                 if (seconds <= 0) {
                     clearInterval(interval);
-                    window.location.href = 'https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}';
+                    window.location.href = '${redirectUrl}';
                 }
             }, 1000);
         })();
@@ -420,7 +458,7 @@ router.get('/tournament-callback', async (req, res) => {
             display: inline-block;
             margin-top: 20px;
             padding: 15px 30px;
-            background: #25D366;
+            background: #667eea;
             color: white;
             text-decoration: none;
             border-radius: 5px;
@@ -431,7 +469,7 @@ router.get('/tournament-callback', async (req, res) => {
     <div class="container">
         <h1>❌ Tournament Payment Failed</h1>
         <p>Something went wrong. Please try again.</p>
-        <a href="https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}">Return to WhatsApp</a>
+        <a href="javascript:history.back()">Go Back</a>
     </div>
 </body>
 </html>
