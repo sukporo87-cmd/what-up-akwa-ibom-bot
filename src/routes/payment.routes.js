@@ -163,10 +163,13 @@ router.get('/callback', async (req, res) => {
     try {
         const verification = await paymentService.verifyPayment(reference);
         
+        // Extract user_id from reference (format: WUAIB-{user_id}-{timestamp}-{random})
+        const userId = reference.split('-')[1];
+        
         // Get user to determine platform
         const userResult = await pool.query(
             'SELECT phone_number FROM users WHERE id = $1',
-            [verification.metadata.user_id]
+            [userId]  // ✅ FIXED
         );
         
         const phoneNumber = userResult.rows[0]?.phone_number || '';
@@ -322,13 +325,16 @@ router.get('/tournament-callback', async (req, res) => {
     
     try {
         const verification = await tournamentService.verifyTournamentPayment(reference);
-        const tournament = await tournamentService.getTournamentById(verification.payment.tournament_id);
-        
-        // Get user to determine platform
-        const userResult = await pool.query(
-            'SELECT phone_number FROM users WHERE id = $1',
-            [verification.payment.user_id]
-        );
+const tournament = await tournamentService.getTournamentById(verification.payment.tournament_id);
+
+// Extract user_id from reference (format: TRN-{user_id}-{timestamp}-{random})
+const userId = reference.split('-')[1];
+
+// Get user to determine platform
+const userResult = await pool.query(
+    'SELECT phone_number FROM users WHERE id = $1',
+    [userId]  // ✅ FIXED
+);
         
         const phoneNumber = userResult.rows[0]?.phone_number || '';
         const redirectUrl = getRedirectUrl(phoneNumber);
