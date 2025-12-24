@@ -1,6 +1,7 @@
 // ============================================
 // FILE: src/services/user.service.js
-// UPDATED: Added platform support (WhatsApp & Telegram)
+// COMPLETE FILE - READY TO PASTE AND REPLACE
+// CHANGES: Added platform tracking to user creation and referrals
 // ============================================
 
 const pool = require('../config/database');
@@ -8,10 +9,6 @@ const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 
 class UserService {
-  /**
-   * Get user by phone number or platform identifier
-   * Handles both WhatsApp phone numbers and Telegram chat IDs
-   */
   async getUserByPhone(phoneNumber) {
     try {
       const result = await pool.query(
@@ -25,16 +22,6 @@ class UserService {
     }
   }
 
-  /**
-   * Create user with platform and referral support
-   * @param {string} phoneNumber - Phone number or platform identifier
-   * @param {string} fullName - User's full name
-   * @param {string} city - User's city
-   * @param {string} username - User's username
-   * @param {number} age - User's age
-   * @param {number|null} referrerId - ID of referring user
-   * @param {string} platform - Platform type: 'whatsapp' or 'telegram'
-   */
   async createUser(phoneNumber, fullName, city, username, age, referrerId = null, platform = 'whatsapp') {
     const client = await pool.connect();
     
@@ -47,37 +34,47 @@ class UserService {
       // Store platform info in phone_number field with prefix for Telegram
       const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
 
-      // Create user
+      // 🔧 UPDATED: Create user WITH explicit platform column
       const userResult = await client.query(
-        `INSERT INTO users (phone_number, full_name, city, username, age, referral_code, referred_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [identifier, fullName, city, username, age, referralCode, referrerId]
+        `INSERT INTO users (
+            phone_number, full_name, city, username, age, 
+            referral_code, referred_by, platform
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *`,
+        [identifier, fullName, city, username, age, referralCode, referrerId, platform]
       );
 
       const user = userResult.rows[0];
 
-      // If referred, create referral record
+      // If referred, create referral record WITH PLATFORMS
       if (referrerId) {
         const referrerResult = await client.query(
-          'SELECT referral_code FROM users WHERE id = $1',
+          'SELECT referral_code, phone_number FROM users WHERE id = $1',
           [referrerId]
         );
 
         if (referrerResult.rows.length > 0) {
+          const referrer = referrerResult.rows[0];
+          const referrerPlatform = this.getPlatformFromIdentifier(referrer.phone_number);
+          
+          // 🔧 UPDATED: Insert referral with both platforms
           await client.query(
-            `INSERT INTO referrals (referrer_id, referred_user_id, referral_code)
-             VALUES ($1, $2, $3)`,
-            [referrerId, user.id, referrerResult.rows[0].referral_code]
+            `INSERT INTO referrals (
+                referrer_id, referred_user_id, referral_code,
+                referrer_platform, referee_platform
+            )
+            VALUES ($1, $2, $3, $4, $5)`,
+            [referrerId, user.id, referrerResult.rows[0].referral_code, referrerPlatform, platform]
           );
 
-          logger.info(`Referral created: User ${user.id} referred by ${referrerId}`);
+          logger.info(`Referral created: User ${user.id} (${platform}) referred by ${referrerId} (${referrerPlatform})`);
         }
       }
 
       await client.query('COMMIT');
       
-      logger.info(`New user created: @${username} (${fullName}) from ${city}, age ${age}, platform: ${platform}. Referral code: ${referralCode}`);
+      logger.info(`✅ New user created: @${username} (${fullName}) from ${city}, age ${age}, platform: ${platform}. Referral code: ${referralCode}`);
       
       return user;
     } catch (error) {
@@ -89,11 +86,8 @@ class UserService {
     }
   }
 
-  /**
-   * Generate unique referral code
-   */
   generateReferralCode() {
-    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No confusing chars
+    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 8; i++) {
       code += characters.charAt(Math.floor(Math.random() * characters.length));
@@ -101,22 +95,22 @@ class UserService {
     return code;
   }
 
-  /**
-   * Extract platform from identifier
-   * @param {string} identifier - Phone number or platform identifier
-   * @returns {string} - 'telegram' or 'whatsapp'
-   */
   getPlatformFromIdentifier(identifier) {
     return identifier.startsWith('tg_') ? 'telegram' : 'whatsapp';
   }
 
-  /**
-   * Strip platform prefix from identifier
-   * @param {string} identifier - Phone number or platform identifier
-   * @returns {string} - Clean identifier without prefix
-   */
   stripPlatformPrefix(identifier) {
     return identifier.replace(/^tg_/, '');
+  }
+
+  getUserPlatformFromObject(user) {
+    // First check explicit platform column
+    if (user.platform) {
+      return user.platform;
+    }
+    
+    // Fallback to phone_number check
+    return this.getPlatformFromIdentifier(user.phone_number);
   }
 
   async setUserState(phone, state, data = {}) {

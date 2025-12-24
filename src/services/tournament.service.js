@@ -1,6 +1,7 @@
 // ============================================
 // FILE: src/services/tournament.service.js
-// COMPLETE: Tournament Service with Payment Integration
+// COMPLETE FILE - READY TO PASTE AND REPLACE
+// CHANGES: Added platform tracking to tournament joins and payments
 // ============================================
 
 const pool = require('../config/database');
@@ -151,6 +152,7 @@ class TournamentService {
 
     /**
      * Join tournament (FREE)
+     * 🔧 UPDATED: Added platform tracking
      */
     async joinFreeTournament(userId, tournamentId) {
         try {
@@ -184,17 +186,25 @@ class TournamentService {
                 return { success: false, error: 'Tournament is full' };
             }
             
+            // 🔧 NEW: Get user to determine platform
+            const userResult = await pool.query(
+                'SELECT phone_number FROM users WHERE id = $1',
+                [userId]
+            );
+            const platform = userResult.rows[0].phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            
             // Join tournament
             const tokensRemaining = tournament.uses_tokens ? tournament.tokens_per_entry : null;
             
+            // 🔧 UPDATED: Added platform to INSERT
             const result = await pool.query(`
                 INSERT INTO tournament_participants 
-                    (tournament_id, user_id, entry_paid, tokens_remaining, can_play)
-                VALUES ($1, $2, true, $3, true)
+                    (tournament_id, user_id, entry_paid, tokens_remaining, can_play, platform)
+                VALUES ($1, $2, true, $3, true, $4)
                 RETURNING *
-            `, [tournamentId, userId, tokensRemaining]);
+            `, [tournamentId, userId, tokensRemaining, platform]);
             
-            logger.info(`User ${userId} joined free tournament ${tournamentId}`);
+            logger.info(`User ${userId} (${platform}) joined free tournament ${tournamentId}`);
             
             return { 
                 success: true, 
@@ -209,6 +219,7 @@ class TournamentService {
 
     /**
      * Initialize payment for paid tournament
+     * 🔧 UPDATED: Added platform tracking
      */
     async initializeTournamentPayment(userId, tournamentId) {
         const PaymentService = require('./payment.service');
@@ -244,10 +255,13 @@ class TournamentService {
             
             const user = userResult.rows[0];
             
+            // 🔧 NEW: Get platform from user
+            const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            
             // Generate payment reference
             const reference = `TRN-${tournamentId}-${userId}-${Date.now()}`;
             
-            // Initialize Paystack payment
+            // 🔧 UPDATED: Initialize Paystack payment with platform in metadata
             const payment = await paymentService.paystack.transaction.initialize({
                 email: `${user.phone_number}@whatsuptrivia.com`,
                 amount: tournament.entry_fee * 100, // Convert to kobo
@@ -260,32 +274,36 @@ class TournamentService {
                     entry_fee: tournament.entry_fee,
                     user_name: user.full_name,
                     user_phone: user.phone_number,
+                    platform: platform,  // 🔧 ADDED platform
                     custom_fields: [
                         { display_name: "Tournament", variable_name: "tournament", value: tournament.tournament_name },
-                        { display_name: "User", variable_name: "user", value: user.full_name }
+                        { display_name: "User", variable_name: "user", value: user.full_name },
+                        { display_name: "Platform", variable_name: "platform", value: platform }  // 🔧 ADDED
                     ]
                 }
             });
             
-            // Save payment record
+            // 🔧 UPDATED: Save payment record with platform
             await pool.query(`
                 INSERT INTO tournament_entry_payments 
-                    (tournament_id, user_id, amount, payment_reference, payment_status)
-                VALUES ($1, $2, $3, $4, 'pending')
+                    (tournament_id, user_id, amount, payment_reference, payment_status, platform)
+                VALUES ($1, $2, $3, $4, 'pending', $5)
                 ON CONFLICT (tournament_id, user_id) 
                 DO UPDATE SET 
                     payment_reference = EXCLUDED.payment_reference,
-                    payment_status = 'pending'
-            `, [tournamentId, userId, tournament.entry_fee, reference]);
+                    payment_status = 'pending',
+                    platform = EXCLUDED.platform
+            `, [tournamentId, userId, tournament.entry_fee, reference, platform]);
             
-            logger.info(`Tournament payment initialized: ${reference}`);
+            logger.info(`Tournament payment initialized (${platform}): ${reference}`);
             
             return {
                 success: true,
                 authorization_url: payment.data.authorization_url,
                 access_code: payment.data.access_code,
                 reference: reference,
-                amount: tournament.entry_fee
+                amount: tournament.entry_fee,
+                platform: platform
             };
         } catch (error) {
             logger.error('Error initializing tournament payment:', error);
@@ -295,6 +313,7 @@ class TournamentService {
 
     /**
      * Verify tournament payment
+     * 🔧 UPDATED: Added platform tracking
      */
     async verifyTournamentPayment(reference) {
         const PaymentService = require('./payment.service');
@@ -346,28 +365,34 @@ class TournamentService {
                 WHERE payment_reference = $3
             `, [paymentData.reference, paymentData.channel, reference]);
             
+            // 🔧 NEW: Get platform from metadata
+            const platform = paymentData.metadata.platform || payment.platform || 'whatsapp';
+            
             // Add user to tournament participants
             const tournament = await this.getTournamentById(payment.tournament_id);
             const tokensRemaining = tournament.uses_tokens ? tournament.tokens_per_entry : null;
             
+            // 🔧 UPDATED: Add platform to tournament_participants
             await pool.query(`
                 INSERT INTO tournament_participants 
-                    (tournament_id, user_id, entry_paid, entry_fee_paid, tokens_remaining, can_play)
-                VALUES ($1, $2, true, $3, $4, true)
+                    (tournament_id, user_id, entry_paid, entry_fee_paid, tokens_remaining, can_play, platform)
+                VALUES ($1, $2, true, $3, $4, true, $5)
                 ON CONFLICT (tournament_id, user_id) 
                 DO UPDATE SET 
                     entry_paid = true,
                     entry_fee_paid = EXCLUDED.entry_fee_paid,
                     tokens_remaining = EXCLUDED.tokens_remaining,
-                    can_play = true
-            `, [payment.tournament_id, payment.user_id, payment.amount, tokensRemaining]);
+                    can_play = true,
+                    platform = EXCLUDED.platform
+            `, [payment.tournament_id, payment.user_id, payment.amount, tokensRemaining, platform]);
             
-            logger.info(`Tournament payment verified: ${reference} - User ${payment.user_id} can now play`);
+            logger.info(`Tournament payment verified (${platform}): ${reference} - User ${payment.user_id} can now play`);
             
             return {
                 success: true,
                 payment,
-                tokensRemaining
+                tokensRemaining,
+                platform
             };
         } catch (error) {
             logger.error('Error verifying tournament payment:', error);
