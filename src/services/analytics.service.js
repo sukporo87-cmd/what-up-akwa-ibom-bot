@@ -334,7 +334,7 @@ class AnalyticsService {
                 FROM tournaments t
                 LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
                 LEFT JOIN users u ON tp.user_id = u.id
-                GROUP BY t.id
+                GROUP BY t.id, t.tournament_name, t.entry_fee, t.prize_pool, t.start_date, t.end_date, t.status
                 ORDER BY t.start_date DESC
             `);
             
@@ -412,23 +412,29 @@ class AnalyticsService {
     
     async getRevenueStats(days = 30) {
         try {
+            // First, let's get ALL transactions to see what we have
             const result = await pool.query(`
                 SELECT 
                     COUNT(*) as total_transactions,
-                    SUM(amount) as total_revenue,
-                    AVG(amount) as avg_transaction,
-                    SUM(CASE 
+                    COALESCE(SUM(amount), 0) as total_revenue,
+                    COALESCE(AVG(amount), 0) as avg_transaction,
+                    COALESCE(SUM(CASE 
                         WHEN u.phone_number LIKE 'tg_%' THEN amount 
                         ELSE 0 
-                    END) as telegram_revenue,
-                    SUM(CASE 
+                    END), 0) as telegram_revenue,
+                    COALESCE(SUM(CASE 
                         WHEN u.phone_number NOT LIKE 'tg_%' THEN amount 
                         ELSE 0 
-                    END) as whatsapp_revenue,
-                    COUNT(DISTINCT user_id) as paying_users
+                    END), 0) as whatsapp_revenue,
+                    COUNT(DISTINCT t.user_id) as paying_users
                 FROM transactions t
                 JOIN users u ON t.user_id = u.id
-                WHERE t.payment_status = 'success'
+                WHERE (
+                    t.payment_status IN ('success', 'completed', 'paid', 'confirmed')
+                    OR (t.transaction_type = 'payment' AND t.completed_at IS NOT NULL)
+                    OR (t.payment_reference IS NOT NULL AND t.payment_reference != '')
+                )
+                AND t.amount > 0
                 AND t.created_at >= CURRENT_DATE - INTERVAL '${days} days'
             `);
             
@@ -445,10 +451,15 @@ class AnalyticsService {
                 SELECT 
                     DATE(created_at) as date,
                     COUNT(*) as transactions,
-                    SUM(amount) as revenue,
+                    COALESCE(SUM(amount), 0) as revenue,
                     COUNT(DISTINCT user_id) as unique_users
                 FROM transactions
-                WHERE payment_status = 'success'
+                WHERE (
+                    payment_status IN ('success', 'completed', 'paid', 'confirmed')
+                    OR (transaction_type = 'payment' AND completed_at IS NOT NULL)
+                    OR (payment_reference IS NOT NULL AND payment_reference != '')
+                )
+                AND amount > 0
                 AND created_at >= CURRENT_DATE - INTERVAL '${days} days'
                 GROUP BY DATE(created_at)
                 ORDER BY date DESC
