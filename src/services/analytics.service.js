@@ -119,7 +119,7 @@ class AnalyticsService {
                     id,
                     username,
                     full_name,
-                    city as lga,
+                    COALESCE(lga, city) as lga,
                     phone_number,
                     CASE 
                         WHEN phone_number LIKE 'tg_%' THEN 'telegram'
@@ -147,7 +147,7 @@ class AnalyticsService {
                         u.id,
                         u.username,
                         u.full_name,
-                        u.city as lga,
+                        COALESCE(u.lga, u.city) as lga,
                         u.phone_number,
                         CASE 
                             WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
@@ -181,7 +181,7 @@ class AnalyticsService {
                     u.id,
                     u.username,
                     u.full_name,
-                    u.city as lga,
+                    COALESCE(u.lga, u.city) as lga,
                     u.phone_number,
                     CASE 
                         WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
@@ -241,7 +241,7 @@ class AnalyticsService {
                     u.id,
                     u.username,
                     u.full_name,
-                    u.city as lga,
+                    COALESCE(u.lga, u.city) as lga,
                     u.phone_number,
                     CASE 
                         WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
@@ -256,7 +256,7 @@ class AnalyticsService {
                 WHERE gs.status = 'completed'
                 ${dateFilter}
                 ${platformFilter}
-                GROUP BY u.id, u.username, u.full_name, u.city, u.phone_number, u.total_winnings
+                GROUP BY u.id, u.username, u.full_name, u.lga, u.city, u.phone_number, u.total_winnings
                 ORDER BY total_score DESC
                 LIMIT $1
             `, [limit]);
@@ -313,35 +313,50 @@ class AnalyticsService {
     
     async getTournamentsWithStats() {
         try {
+            // First check if tournaments table has any data
+            const countCheck = await pool.query(`
+                SELECT COUNT(*) as count FROM tournaments
+            `);
+            
+            if (parseInt(countCheck.rows[0].count) === 0) {
+                logger.info('No tournaments in database');
+                return [];
+            }
+            
             const result = await pool.query(`
                 SELECT 
                     t.id,
                     t.tournament_name,
-                    t.entry_fee,
-                    t.prize_pool,
+                    COALESCE(t.entry_fee, 0) as entry_fee,
+                    COALESCE(t.prize_pool, 0) as prize_pool,
                     t.start_date,
                     t.end_date,
-                    t.status,
+                    COALESCE(t.status, 'upcoming') as status,
                     COUNT(DISTINCT tp.user_id) as total_participants,
                     COUNT(DISTINCT CASE 
-                        WHEN u.phone_number LIKE 'tg_%' THEN tp.user_id 
+                        WHEN u.platform = 'telegram' THEN tp.user_id 
+                        WHEN u.phone_number LIKE 'tg_%' THEN tp.user_id
                     END) as telegram_participants,
                     COUNT(DISTINCT CASE 
+                        WHEN u.platform = 'whatsapp' OR u.platform IS NULL THEN tp.user_id
                         WHEN u.phone_number NOT LIKE 'tg_%' THEN tp.user_id 
                     END) as whatsapp_participants,
-                    MAX(tp.total_score) as highest_score,
-                    AVG(tp.total_score) as avg_score
+                    COALESCE(MAX(tp.total_score), 0) as highest_score,
+                    COALESCE(AVG(tp.total_score), 0) as avg_score
                 FROM tournaments t
                 LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
                 LEFT JOIN users u ON tp.user_id = u.id
-                GROUP BY t.id, t.tournament_name, t.entry_fee, t.prize_pool, t.start_date, t.end_date, t.status
+                GROUP BY t.id, t.tournament_name, t.entry_fee, t.prize_pool, 
+                         t.start_date, t.end_date, t.status
                 ORDER BY t.start_date DESC
             `);
             
             return result.rows;
         } catch (error) {
             logger.error('Error getting tournaments with stats:', error);
-            throw error;
+            logger.error('SQL Error details:', error.message);
+            // Return empty array instead of throwing to prevent dashboard breaking
+            return [];
         }
     }
     
