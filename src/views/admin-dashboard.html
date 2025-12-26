@@ -229,6 +229,8 @@
             border-radius: 5px;
             border: 1px solid var(--primary-color);
             transition: all 0.3s;
+            cursor: pointer;
+            background: transparent;
         }
 
         .card-action:hover {
@@ -467,6 +469,31 @@
         .status-badge.pending {
             background: rgba(237, 137, 54, 0.2);
             color: var(--warning-color);
+        }
+
+        /* Analytics Tab Buttons */
+        .analytics-tab-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: var(--bg-dark);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .analytics-tab-btn.active {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .analytics-tab-btn:hover {
+            opacity: 0.8;
+        }
+        
+        .analytics-tab-content {
+            padding: 20px;
         }
 
         /* Responsive */
@@ -789,6 +816,163 @@
             </table>
         </div>
     </div>
+
+    <!-- ============================================ -->
+    <!-- NEW ANALYTICS SECTION -->
+    <!-- ============================================ -->
+    
+    <!-- Analytics Navigation Tabs -->
+    <div class="card" style="margin-top: 30px;">
+        <div class="card-header">
+            <div class="card-title">📊 Advanced Analytics</div>
+        </div>
+        
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; padding: 20px; background: var(--bg-card); border-radius: 10px; margin-bottom: 20px;">
+            <button class="analytics-tab-btn active" onclick="switchAnalyticsTab('user-growth')">📈 User Growth</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('leaderboards')">🏆 Leaderboards</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('tournaments')">🎮 Tournaments</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('referrals')">👥 Referrals</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('revenue')">💰 Revenue</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('games')">🎯 Game Stats</button>
+        </div>
+        
+        <!-- Tab Contents -->
+        
+        <!-- User Growth Tab -->
+        <div id="user-growth-tab" class="analytics-tab-content">
+            <h3 style="margin-bottom: 20px;">📈 User Growth Analytics</h3>
+            <div class="chart-container" style="height: 400px;">
+                <canvas id="userGrowthChart"></canvas>
+            </div>
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <button onclick="loadUserGrowth('daily')" class="card-action">Daily</button>
+                <button onclick="loadUserGrowth('weekly')" class="card-action">Weekly</button>
+                <button onclick="loadUserGrowth('monthly')" class="card-action">Monthly</button>
+            </div>
+        </div>
+        
+        <!-- Leaderboards Tab -->
+        <div id="leaderboards-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🏆 Global Leaderboard</h3>
+            <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <button onclick="loadLeaderboard('global')" class="card-action">All Platforms</button>
+                <button onclick="loadLeaderboard('whatsapp')" class="card-action">WhatsApp Only</button>
+                <button onclick="loadLeaderboard('telegram')" class="card-action">Telegram Only</button>
+                <button onclick="loadLeaderboard('daily')" class="card-action">Daily</button>
+                <button onclick="loadLeaderboard('weekly')" class="card-action">Weekly</button>
+                <button onclick="loadLeaderboard('monthly')" class="card-action">Monthly</button>
+            </div>
+            <div class="table-container">
+                <table id="leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Username</th>
+                            <th>Platform</th>
+                            <th>Games</th>
+                            <th>Total Score</th>
+                            <th>Highest Score</th>
+                            <th>Earnings</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="7" style="text-align: center; padding: 20px;">Click a button above to load leaderboard</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Tournaments Tab -->
+        <div id="tournaments-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🎮 Tournament Analytics</h3>
+            <div id="tournament-list" style="margin-bottom: 20px;">
+                <p style="text-align: center; padding: 20px;">Loading tournaments...</p>
+            </div>
+        </div>
+        
+        <!-- Referrals Tab -->
+        <div id="referrals-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">👥 Referral Analytics</h3>
+            <div class="stats-grid" id="referral-stats">
+                <div class="stat-card">
+                    <div class="stat-card-value" id="total-referrals">0</div>
+                    <div class="stat-card-label">Total Referrals</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="active-referrers">0</div>
+                    <div class="stat-card-label">Active Referrers</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="conversion-rate">0%</div>
+                    <div class="stat-card-label">Conversion Rate</div>
+                </div>
+            </div>
+            <h4 style="margin: 30px 0 15px 0;">Top Referrers</h4>
+            <div class="table-container">
+                <table id="top-referrers-table">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Platform</th>
+                            <th>Total Referrals</th>
+                            <th>Active Referrals</th>
+                            <th>Referral Code</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="5" style="text-align: center; padding: 20px;">Loading referrers...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Revenue Tab -->
+        <div id="revenue-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">💰 Revenue Analytics</h3>
+            <div class="stats-grid" id="revenue-stats">
+                <div class="stat-card">
+                    <div class="stat-card-value" id="total-revenue-value">₦0</div>
+                    <div class="stat-card-label">Total Revenue (30 days)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="avg-transaction">₦0</div>
+                    <div class="stat-card-label">Avg Transaction</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="paying-users">0</div>
+                    <div class="stat-card-label">Paying Users</div>
+                </div>
+            </div>
+            <h4 style="margin: 30px 0 15px 0;">Daily Revenue Trend</h4>
+            <div class="chart-container" style="height: 400px;">
+                <canvas id="revenueChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Games Tab -->
+        <div id="games-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🎯 Game Statistics</h3>
+            <div class="stats-grid" id="game-stats">
+                <div class="stat-card">
+                    <div class="stat-card-value" id="total-games-stat">0</div>
+                    <div class="stat-card-label">Total Games</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="unique-players">0</div>
+                    <div class="stat-card-label">Unique Players</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="completion-rate">0%</div>
+                    <div class="stat-card-label">Completion Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="avg-score">0</div>
+                    <div class="stat-card-label">Average Score</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
 <script>
     // ====================================
@@ -862,6 +1046,10 @@
         }
     });
 
+    // Initialize other charts as null
+    let userGrowthChart = null;
+    let revenueChart = null;
+
     // ====================================
     // HELPER FUNCTIONS
     // ====================================
@@ -886,7 +1074,7 @@
     }
 
     // ====================================
-    // UPDATE FUNCTIONS
+    // UPDATE FUNCTIONS - EXISTING DASHBOARD
     // ====================================
     function updateOverviewStats(stats) {
         // WhatsApp stats
@@ -917,7 +1105,7 @@
 
     function updateActivityFeed(activities) {
         const feed = document.querySelector('.activity-feed');
-        feed.innerHTML = ''; // Clear existing
+        feed.innerHTML = '';
         
         if (!activities || activities.length === 0) {
             feed.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No recent activity</p>';
@@ -948,7 +1136,6 @@
     }
 
     function updateHealthMonitor(health) {
-        // Update WhatsApp health metrics
         const whatsappMetrics = document.querySelectorAll('.health-card')[0]?.querySelectorAll('.health-metric-value');
         if (whatsappMetrics && health.whatsapp) {
             whatsappMetrics[1].textContent = health.whatsapp.webhook_success;
@@ -956,7 +1143,6 @@
             whatsappMetrics[3].textContent = health.whatsapp.last_message;
         }
         
-        // Update Telegram health metrics
         const telegramMetrics = document.querySelectorAll('.health-card')[1]?.querySelectorAll('.health-metric-value');
         if (telegramMetrics && health.telegram) {
             telegramMetrics[1].textContent = health.telegram.webhook_success;
@@ -965,7 +1151,6 @@
         }
     }
 
-    // NEW: Update Quick Stats
     function updateQuickStats(stats) {
         const statCards = document.querySelectorAll('.stat-card');
         if (statCards.length >= 4) {
@@ -974,7 +1159,6 @@
             statCards[2].querySelector('.stat-card-value').textContent = (stats.uptime_percentage || 99.2) + '%';
             statCards[3].querySelector('.stat-card-value').textContent = stats.cross_platform_users || 0;
             
-            // Update change indicators
             const change1 = statCards[0].querySelector('.stat-card-change');
             if (change1) change1.textContent = '↓ ' + (stats.pending_payouts_change || 0) + ' from yesterday';
             
@@ -989,9 +1173,9 @@
         }
     }
 
-    // NEW: Update Recent Users Table
     function updateRecentUsers(users) {
-        const tbody = document.querySelector('.card:nth-of-type(6) tbody');
+        const tables = document.querySelectorAll('table');
+        const tbody = tables[0]?.querySelector('tbody');
         if (!tbody) return;
         
         tbody.innerHTML = '';
@@ -1019,9 +1203,9 @@
         });
     }
 
-    // NEW: Update Recent Payouts Table
     function updateRecentPayouts(payouts) {
-        const tbody = document.querySelector('.card:last-of-type tbody');
+        const tables = document.querySelectorAll('table');
+        const tbody = tables[1]?.querySelector('tbody');
         if (!tbody) return;
         
         tbody.innerHTML = '';
@@ -1054,6 +1238,370 @@
             `;
             tbody.appendChild(tr);
         });
+    }
+    // ====================================
+    // ANALYTICS TAB SWITCHING
+    // ====================================
+    function switchAnalyticsTab(tabName) {
+        // Hide all tabs
+        document.querySelectorAll('.analytics-tab-content').forEach(tab => {
+            tab.style.display = 'none';
+        });
+        
+        // Remove active class from all buttons
+        document.querySelectorAll('.analytics-tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        // Show selected tab
+        document.getElementById(tabName + '-tab').style.display = 'block';
+        event.target.classList.add('active');
+        
+        // Load data for the tab
+        loadTabData(tabName);
+    }
+    
+    async function loadTabData(tabName) {
+        const token = localStorage.getItem('adminSessionToken');
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        };
+        
+        try {
+            switch(tabName) {
+                case 'user-growth':
+                    await loadUserGrowth('daily');
+                    break;
+                case 'referrals':
+                    const [refStats, topRefs] = await Promise.all([
+                        fetch('/admin/api/analytics/referrals/stats', { headers }).then(r => r.json()),
+                        fetch('/admin/api/analytics/referrals/top?limit=20', { headers }).then(r => r.json())
+                    ]);
+                    updateReferralStats(refStats.data);
+                    updateTopReferrers(topRefs.data);
+                    break;
+                case 'revenue':
+                    const [revStats, dailyRev] = await Promise.all([
+                        fetch('/admin/api/analytics/revenue/stats?days=30', { headers }).then(r => r.json()),
+                        fetch('/admin/api/analytics/revenue/daily?days=30', { headers }).then(r => r.json())
+                    ]);
+                    updateRevenueStats(revStats.data);
+                    updateRevenueChart(dailyRev.data);
+                    break;
+                case 'games':
+                    const gameStats = await fetch('/admin/api/analytics/games/stats', { headers }).then(r => r.json());
+                    updateGameStats(gameStats.data);
+                    break;
+                case 'tournaments':
+                    const tournaments = await fetch('/admin/api/tournaments/stats', { headers }).then(r => r.json());
+                    updateTournamentList(tournaments.data);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error loading tab data:', error);
+        }
+    }
+    
+    // ====================================
+    // USER GROWTH ANALYTICS
+    // ====================================
+    async function loadUserGrowth(period) {
+        const token = localStorage.getItem('adminSessionToken');
+        const endpoint = `/admin/api/analytics/users/${period}?${period === 'daily' ? 'days=30' : period === 'weekly' ? 'weeks=12' : 'months=12'}`;
+        
+        try {
+            const response = await fetch(endpoint, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const result = await response.json();
+            updateUserGrowthChart(result.data, period);
+        } catch (error) {
+            console.error('Error loading user growth:', error);
+        }
+    }
+    
+    function updateUserGrowthChart(data, period) {
+        const ctx = document.getElementById('userGrowthChart');
+        if (!ctx) return;
+        
+        if (userGrowthChart) userGrowthChart.destroy();
+        
+        const labels = data.map(d => {
+            const date = new Date(d.date || d.week_start || d.month_start);
+            return date.toLocaleDateString('en-US', period === 'monthly' ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' });
+        });
+        
+        userGrowthChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'WhatsApp Users',
+                        data: data.map(d => d.whatsapp_users),
+                        backgroundColor: 'rgba(37, 211, 102, 0.7)',
+                        borderColor: '#25D366',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Telegram Users',
+                        data: data.map(d => d.telegram_users),
+                        backgroundColor: 'rgba(0, 136, 204, 0.7)',
+                        borderColor: '#0088cc',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#ffffff', font: { size: 12 } } },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff'
+                    }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: true,
+                        ticks: { color: '#a0aec0' }, 
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' } 
+                    },
+                    x: { ticks: { color: '#a0aec0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                }
+            }
+        });
+    }
+    
+    // ====================================
+    // LEADERBOARD ANALYTICS
+    // ====================================
+    async function loadLeaderboard(type) {
+        const token = localStorage.getItem('adminSessionToken');
+        let endpoint;
+        
+        if (type === 'global') {
+            endpoint = '/admin/api/leaderboard/global?limit=50';
+        } else if (type === 'whatsapp' || type === 'telegram') {
+            endpoint = `/admin/api/leaderboard/${type}?limit=50`;
+        } else if (['daily', 'weekly', 'monthly'].includes(type)) {
+            endpoint = `/admin/api/leaderboard/timeframe/${type}?limit=50`;
+        }
+        
+        try {
+            const response = await fetch(endpoint, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const result = await response.json();
+            updateLeaderboardTable(result.data);
+        } catch (error) {
+            console.error('Error loading leaderboard:', error);
+        }
+    }
+    
+    function updateLeaderboardTable(data) {
+        const tbody = document.querySelector('#leaderboard-table tbody');
+        if (!tbody) return;
+        
+        tbody.innerHTML = '';
+        
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px;">No data available</td></tr>';
+            return;
+        }
+        
+        data.forEach(player => {
+            const platformBadge = player.platform === 'whatsapp'
+                ? '<span class="platform-badge whatsapp">📱 WhatsApp</span>'
+                : '<span class="platform-badge telegram">💬 Telegram</span>';
+            
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>#${player.rank}</strong></td>
+                <td>@${player.username || 'Anonymous'}</td>
+                <td>${platformBadge}</td>
+                <td>${player.total_games_played || player.games_played || 0}</td>
+                <td>${parseInt(player.total_score || 0).toLocaleString()}</td>
+                <td>${parseInt(player.highest_score || 0).toLocaleString()}</td>
+                <td>${formatCurrency(player.total_earnings || 0)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+    
+    // ====================================
+    // TOURNAMENT ANALYTICS
+    // ====================================
+    function updateTournamentList(tournaments) {
+        const container = document.getElementById('tournament-list');
+        if (!container) return;
+        
+        container.innerHTML = '';
+        
+        if (!tournaments || tournaments.length === 0) {
+            container.innerHTML = '<p style="text-align: center; padding: 20px;">No tournaments found</p>';
+            return;
+        }
+        
+        tournaments.forEach(t => {
+            const card = document.createElement('div');
+            card.className = 'stat-card';
+            card.style.marginBottom = '15px';
+            card.innerHTML = `
+                <h4 style="margin-bottom: 10px;">${t.tournament_name}</h4>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 20px; font-weight: bold;">${t.total_participants || 0}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">Total</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 20px; font-weight: bold; color: var(--telegram-color);">${t.telegram_participants || 0}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">Telegram</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 20px; font-weight: bold; color: var(--whatsapp-color);">${t.whatsapp_participants || 0}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">WhatsApp</div>
+                    </div>
+                </div>
+                <button onclick="viewTournamentLeaderboard(${t.id})" class="card-action" style="margin-top: 15px; width: 100%;">View Leaderboard</button>
+            `;
+            container.appendChild(card);
+        });
+    }
+    
+    async function viewTournamentLeaderboard(tournamentId) {
+        const token = localStorage.getItem('adminSessionToken');
+        
+        try {
+            const response = await fetch(`/admin/api/tournaments/${tournamentId}/leaderboard`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const result = await response.json();
+            
+            // Switch to leaderboards tab and show tournament leaderboard
+            document.querySelectorAll('.analytics-tab-content').forEach(tab => tab.style.display = 'none');
+            document.querySelectorAll('.analytics-tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('leaderboards-tab').style.display = 'block';
+            document.querySelectorAll('.analytics-tab-btn')[1].classList.add('active');
+            
+            updateLeaderboardTable(result.data);
+        } catch (error) {
+            console.error('Error loading tournament leaderboard:', error);
+            alert('Failed to load tournament leaderboard');
+        }
+    }
+    
+    // ====================================
+    // REFERRAL ANALYTICS
+    // ====================================
+    function updateReferralStats(stats) {
+        document.getElementById('total-referrals').textContent = stats.total_referrals || 0;
+        document.getElementById('active-referrers').textContent = stats.active_referrers || 0;
+        document.getElementById('conversion-rate').textContent = (stats.conversion_rate || 0) + '%';
+    }
+    
+    function updateTopReferrers(data) {
+        const tbody = document.querySelector('#top-referrers-table tbody');
+        if (!tbody) return;
+        
+        tbody.innerHTML = '';
+        
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">No referrers found</td></tr>';
+            return;
+        }
+        
+        data.forEach(ref => {
+            const platformBadge = ref.platform === 'whatsapp'
+                ? '<span class="platform-badge whatsapp">📱</span>'
+                : '<span class="platform-badge telegram">💬</span>';
+            
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>@${ref.username}</td>
+                <td>${platformBadge}</td>
+                <td>${ref.total_referrals}</td>
+                <td>${ref.active_referrals}</td>
+                <td><code style="background: var(--bg-card); padding: 4px 8px; border-radius: 4px;">${ref.referral_code}</code></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+    
+    // ====================================
+    // REVENUE ANALYTICS
+    // ====================================
+    function updateRevenueStats(stats) {
+        document.getElementById('total-revenue-value').textContent = formatCurrency(stats.total_revenue || 0);
+        document.getElementById('avg-transaction').textContent = formatCurrency(stats.avg_transaction || 0);
+        document.getElementById('paying-users').textContent = stats.paying_users || 0;
+    }
+    
+    function updateRevenueChart(data) {
+        const ctx = document.getElementById('revenueChart');
+        if (!ctx) return;
+        
+        if (revenueChart) revenueChart.destroy();
+        
+        const labels = data.map(d => new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+        
+        revenueChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Daily Revenue',
+                    data: data.map(d => d.revenue),
+                    borderColor: '#48bb78',
+                    backgroundColor: 'rgba(72, 187, 120, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { 
+                    legend: { labels: { color: '#ffffff', font: { size: 12 } } },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff'
+                    }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: true,
+                        ticks: { 
+                            color: '#a0aec0',
+                            callback: value => '₦' + value.toLocaleString()
+                        }, 
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' } 
+                    },
+                    x: { ticks: { color: '#a0aec0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                }
+            }
+        });
+    }
+    
+    // ====================================
+    // GAME ANALYTICS
+    // ====================================
+    function updateGameStats(stats) {
+        document.getElementById('total-games-stat').textContent = (stats.total_games || 0).toLocaleString();
+        document.getElementById('unique-players').textContent = (stats.unique_players || 0).toLocaleString();
+        document.getElementById('completion-rate').textContent = (stats.completion_rate || 0) + '%';
+        document.getElementById('avg-score').textContent = parseInt(stats.avg_score || 0).toLocaleString();
     }
     // ====================================
     // LOAD DASHBOARD DATA (REAL API CALLS)
@@ -1278,6 +1826,9 @@
         
         // Start auto-refresh
         startAutoRefresh();
+        
+        // Load default analytics tab (user growth)
+        loadUserGrowth('daily');
         
         console.log('✅ Dashboard initialized');
     });
