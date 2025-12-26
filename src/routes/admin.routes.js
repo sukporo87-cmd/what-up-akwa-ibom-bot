@@ -10,6 +10,7 @@ const PayoutService = require('../services/payout.service');
 const WhatsAppService = require('../services/whatsapp.service');
 const AdminAuthService = require('../services/admin-auth.service');
 const { logger } = require('../utils/logger');
+const analyticsService = require('../services/analytics.service');
 
 const payoutService = new PayoutService();
 const whatsappService = new WhatsAppService();
@@ -2089,6 +2090,210 @@ router.post('/api/tournaments/:id/end', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to end tournament' });
     }
 });
+// ============================================
+// ANALYTICS ENDPOINTS - ADD BEFORE module.exports
+// ============================================
+
+// Get daily user growth
+router.get('/api/analytics/users/daily', authenticateAdmin, async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await analyticsService.getDailyUserGrowth(days);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting daily user growth:', error);
+        res.status(500).json({ error: 'Failed to get user growth data' });
+    }
+});
+
+// Get weekly user growth
+router.get('/api/analytics/users/weekly', authenticateAdmin, async (req, res) => {
+    try {
+        const weeks = parseInt(req.query.weeks) || 12;
+        const data = await analyticsService.getWeeklyUserGrowth(weeks);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting weekly user growth:', error);
+        res.status(500).json({ error: 'Failed to get user growth data' });
+    }
+});
+
+// Get monthly user growth
+router.get('/api/analytics/users/monthly', authenticateAdmin, async (req, res) => {
+    try {
+        const months = parseInt(req.query.months) || 12;
+        const data = await analyticsService.getMonthlyUserGrowth(months);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting monthly user growth:', error);
+        res.status(500).json({ error: 'Failed to get user growth data' });
+    }
+});
+
+// Get user growth summary (all periods)
+router.get('/api/analytics/users/growth-summary', authenticateAdmin, async (req, res) => {
+    try {
+        const data = await analyticsService.getUserGrowthSummary();
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting user growth summary:', error);
+        res.status(500).json({ error: 'Failed to get user growth summary' });
+    }
+});
+
+// Get global leaderboard (all platforms)
+router.get('/api/leaderboard/global', authenticateAdmin, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        const data = await analyticsService.getGlobalLeaderboard(limit, offset);
+        res.json({ success: true, data, total: data.length });
+    } catch (error) {
+        logger.error('Error getting global leaderboard:', error);
+        res.status(500).json({ error: 'Failed to get leaderboard' });
+    }
+});
+
+// Get platform-specific leaderboard
+router.get('/api/leaderboard/:platform', authenticateAdmin, async (req, res) => {
+    try {
+        const platform = req.params.platform;
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        if (!['whatsapp', 'telegram'].includes(platform.toLowerCase())) {
+            return res.status(400).json({ error: 'Invalid platform. Use "whatsapp" or "telegram"' });
+        }
+        
+        const data = await analyticsService.getPlatformLeaderboard(platform, limit, offset);
+        res.json({ success: true, platform, data, total: data.length });
+    } catch (error) {
+        logger.error(`Error getting ${req.params.platform} leaderboard:`, error);
+        res.status(500).json({ error: 'Failed to get leaderboard' });
+    }
+});
+
+// Get leaderboard by timeframe
+router.get('/api/leaderboard/timeframe/:timeframe', authenticateAdmin, async (req, res) => {
+    try {
+        const timeframe = req.params.timeframe;
+        const platform = req.query.platform || null;
+        const limit = parseInt(req.query.limit) || 100;
+        
+        if (!['daily', 'weekly', 'monthly', 'all-time'].includes(timeframe)) {
+            return res.status(400).json({ 
+                error: 'Invalid timeframe. Use "daily", "weekly", "monthly", or "all-time"' 
+            });
+        }
+        
+        const data = await analyticsService.getLeaderboardByTimeframe(timeframe, platform, limit);
+        res.json({ success: true, timeframe, platform: platform || 'all', data });
+    } catch (error) {
+        logger.error(`Error getting ${req.params.timeframe} leaderboard:`, error);
+        res.status(500).json({ error: 'Failed to get leaderboard' });
+    }
+});
+
+// Get all tournaments with stats
+router.get('/api/tournaments/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const data = await analyticsService.getTournamentsWithStats();
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting tournaments stats:', error);
+        res.status(500).json({ error: 'Failed to get tournament statistics' });
+    }
+});
+
+// Get tournament leaderboard by tournament ID
+router.get('/api/tournaments/:id/leaderboard', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = parseInt(req.params.id);
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const data = await analyticsService.getTournamentLeaderboard(tournamentId, limit, offset);
+        res.json({ 
+            success: true, 
+            tournament_id: tournamentId,
+            data,
+            total: data.length 
+        });
+    } catch (error) {
+        logger.error(`Error getting tournament ${req.params.id} leaderboard:`, error);
+        res.status(500).json({ error: 'Failed to get tournament leaderboard' });
+    }
+});
+
+// Get referral statistics
+router.get('/api/analytics/referrals/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const data = await analyticsService.getReferralStats();
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting referral stats:', error);
+        res.status(500).json({ error: 'Failed to get referral statistics' });
+    }
+});
+
+// Get top referrers
+router.get('/api/analytics/referrals/top', authenticateAdmin, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const data = await analyticsService.getTopReferrers(limit);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting top referrers:', error);
+        res.status(500).json({ error: 'Failed to get top referrers' });
+    }
+});
+
+// Get revenue statistics
+router.get('/api/analytics/revenue/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await analyticsService.getRevenueStats(days);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting revenue stats:', error);
+        res.status(500).json({ error: 'Failed to get revenue statistics' });
+    }
+});
+
+// Get daily revenue trend
+router.get('/api/analytics/revenue/daily', authenticateAdmin, async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await analyticsService.getDailyRevenue(days);
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting daily revenue:', error);
+        res.status(500).json({ error: 'Failed to get daily revenue data' });
+    }
+});
+
+// Get game statistics
+router.get('/api/analytics/games/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const data = await analyticsService.getGameStats();
+        res.json({ success: true, data });
+    } catch (error) {
+        logger.error('Error getting game stats:', error);
+        res.status(500).json({ error: 'Failed to get game statistics' });
+    }
+});
+
+// Refresh leaderboard cache manually
+router.post('/api/leaderboard/refresh', authenticateAdmin, async (req, res) => {
+    try {
+        await analyticsService.refreshLeaderboardCache();
+        res.json({ success: true, message: 'Leaderboard cache refreshed successfully' });
+    } catch (error) {
+        logger.error('Error refreshing leaderboard:', error);
+        res.status(500).json({ error: 'Failed to refresh leaderboard cache' });
+    }
+});
+
 
 // ============================================
 // MODULE EXPORT
