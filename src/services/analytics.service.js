@@ -113,25 +113,28 @@ class AnalyticsService {
     
     async getGlobalLeaderboard(limit = 100, offset = 0) {
         try {
+            // Query directly from users table (leaderboard_cache may have wrong schema)
             const result = await pool.query(`
                 SELECT 
-                    ROW_NUMBER() OVER (ORDER BY total_score DESC) as rank,
-                    id,
-                    username,
-                    full_name,
-                    COALESCE(lga, city) as lga,
-                    phone_number,
+                    ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(gs.final_score), 0) DESC) as rank,
+                    u.id,
+                    u.username,
+                    u.full_name,
+                    COALESCE(u.lga, u.city) as lga,
+                    u.phone_number,
                     CASE 
-                        WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
                         ELSE 'whatsapp'
                     END as platform,
-                    total_games_played,
-                    total_score,
-                    highest_score,
-                    total_winnings as total_earnings,
-                    total_referrals as referral_count,
-                    last_active
-                FROM leaderboard_cache
+                    COUNT(gs.id) as total_games_played,
+                    COALESCE(SUM(gs.final_score), 0) as total_score,
+                    COALESCE(MAX(gs.final_score), 0) as highest_score,
+                    u.total_winnings as total_earnings,
+                    u.total_referrals as referral_count,
+                    u.last_active
+                FROM users u
+                LEFT JOIN game_sessions gs ON u.id = gs.user_id AND gs.status = 'completed'
+                GROUP BY u.id
                 ORDER BY total_score DESC
                 LIMIT $1 OFFSET $2
             `, [limit, offset]);
@@ -139,37 +142,7 @@ class AnalyticsService {
             return result.rows;
         } catch (error) {
             logger.error('Error getting global leaderboard:', error);
-            // Fallback query if leaderboard_cache doesn't exist
-            try {
-                const fallback = await pool.query(`
-                    SELECT 
-                        ROW_NUMBER() OVER (ORDER BY COALESCE(SUM(gs.final_score), 0) DESC) as rank,
-                        u.id,
-                        u.username,
-                        u.full_name,
-                        COALESCE(u.lga, u.city) as lga,
-                        u.phone_number,
-                        CASE 
-                            WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                            ELSE 'whatsapp'
-                        END as platform,
-                        COUNT(gs.id) as total_games_played,
-                        COALESCE(SUM(gs.final_score), 0) as total_score,
-                        COALESCE(MAX(gs.final_score), 0) as highest_score,
-                        u.total_winnings as total_earnings,
-                        u.total_referrals as referral_count,
-                        u.last_active
-                    FROM users u
-                    LEFT JOIN game_sessions gs ON u.id = gs.user_id AND gs.status = 'completed'
-                    GROUP BY u.id
-                    ORDER BY total_score DESC
-                    LIMIT $1 OFFSET $2
-                `, [limit, offset]);
-                return fallback.rows;
-            } catch (fallbackError) {
-                logger.error('Fallback leaderboard also failed:', fallbackError);
-                throw error;
-            }
+            throw error;
         }
     }
     
