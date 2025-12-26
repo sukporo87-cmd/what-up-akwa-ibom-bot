@@ -1274,28 +1274,58 @@
                     await loadUserGrowth('daily');
                     break;
                 case 'referrals':
-                    const [refStats, topRefs] = await Promise.all([
+                    const [refStatsRes, topRefsRes] = await Promise.all([
                         fetch('/admin/api/analytics/referrals/stats', { headers }).then(r => r.json()),
                         fetch('/admin/api/analytics/referrals/top?limit=20', { headers }).then(r => r.json())
                     ]);
-                    updateReferralStats(refStats.data);
-                    updateTopReferrers(topRefs.data);
+                    console.log('Referral stats response:', refStatsRes);
+                    console.log('Top referrers response:', topRefsRes);
+                    if (refStatsRes && refStatsRes.data) {
+                        updateReferralStats(refStatsRes.data);
+                    } else {
+                        console.warn('No referral stats data available');
+                    }
+                    if (topRefsRes && topRefsRes.data) {
+                        updateTopReferrers(topRefsRes.data);
+                    } else {
+                        console.warn('No top referrers data available');
+                    }
                     break;
                 case 'revenue':
-                    const [revStats, dailyRev] = await Promise.all([
+                    const [revStatsRes, dailyRevRes] = await Promise.all([
                         fetch('/admin/api/analytics/revenue/stats?days=30', { headers }).then(r => r.json()),
                         fetch('/admin/api/analytics/revenue/daily?days=30', { headers }).then(r => r.json())
                     ]);
-                    updateRevenueStats(revStats.data);
-                    updateRevenueChart(dailyRev.data);
+                    console.log('Revenue stats response:', revStatsRes);
+                    console.log('Daily revenue response:', dailyRevRes);
+                    if (revStatsRes && revStatsRes.data) {
+                        updateRevenueStats(revStatsRes.data);
+                    } else {
+                        console.warn('No revenue stats data available');
+                    }
+                    if (dailyRevRes && dailyRevRes.data) {
+                        updateRevenueChart(dailyRevRes.data);
+                    } else {
+                        console.warn('No daily revenue data available');
+                    }
                     break;
                 case 'games':
-                    const gameStats = await fetch('/admin/api/analytics/games/stats', { headers }).then(r => r.json());
-                    updateGameStats(gameStats.data);
+                    const gameStatsRes = await fetch('/admin/api/analytics/games/stats', { headers }).then(r => r.json());
+                    console.log('Game stats response:', gameStatsRes);
+                    if (gameStatsRes && gameStatsRes.data) {
+                        updateGameStats(gameStatsRes.data);
+                    } else {
+                        console.warn('No game stats data available');
+                    }
                     break;
                 case 'tournaments':
-                    const tournaments = await fetch('/admin/api/tournaments/stats', { headers }).then(r => r.json());
-                    updateTournamentList(tournaments.data);
+                    const tournamentsRes = await fetch('/admin/api/tournaments/stats', { headers }).then(r => r.json());
+                    console.log('Tournaments response:', tournamentsRes);
+                    if (tournamentsRes && tournamentsRes.data) {
+                        updateTournamentList(tournamentsRes.data);
+                    } else {
+                        console.warn('No tournaments data available');
+                    }
                     break;
             }
         } catch (error) {
@@ -1399,9 +1429,17 @@
             });
             
             const result = await response.json();
-            updateLeaderboardTable(result.data);
+            console.log('Leaderboard response:', result);
+            
+            if (result && result.data) {
+                updateLeaderboardTable(result.data);
+            } else {
+                console.warn('No leaderboard data available');
+                updateLeaderboardTable([]);
+            }
         } catch (error) {
             console.error('Error loading leaderboard:', error);
+            updateLeaderboardTable([]);
         }
     }
     
@@ -1484,6 +1522,7 @@
             });
             
             const result = await response.json();
+            console.log('Tournament leaderboard response:', result);
             
             // Switch to leaderboards tab and show tournament leaderboard
             document.querySelectorAll('.analytics-tab-content').forEach(tab => tab.style.display = 'none');
@@ -1491,7 +1530,11 @@
             document.getElementById('leaderboards-tab').style.display = 'block';
             document.querySelectorAll('.analytics-tab-btn')[1].classList.add('active');
             
-            updateLeaderboardTable(result.data);
+            if (result && result.data) {
+                updateLeaderboardTable(result.data);
+            } else {
+                updateLeaderboardTable([]);
+            }
         } catch (error) {
             console.error('Error loading tournament leaderboard:', error);
             alert('Failed to load tournament leaderboard');
@@ -1502,6 +1545,10 @@
     // REFERRAL ANALYTICS
     // ====================================
     function updateReferralStats(stats) {
+        if (!stats) {
+            console.warn('No stats provided to updateReferralStats');
+            return;
+        }
         document.getElementById('total-referrals').textContent = stats.total_referrals || 0;
         document.getElementById('active-referrers').textContent = stats.active_referrers || 0;
         document.getElementById('conversion-rate').textContent = (stats.conversion_rate || 0) + '%';
@@ -1539,6 +1586,10 @@
     // REVENUE ANALYTICS
     // ====================================
     function updateRevenueStats(stats) {
+        if (!stats) {
+            console.warn('No stats provided to updateRevenueStats');
+            return;
+        }
         document.getElementById('total-revenue-value').textContent = formatCurrency(stats.total_revenue || 0);
         document.getElementById('avg-transaction').textContent = formatCurrency(stats.avg_transaction || 0);
         document.getElementById('paying-users').textContent = stats.paying_users || 0;
@@ -1547,6 +1598,11 @@
     function updateRevenueChart(data) {
         const ctx = document.getElementById('revenueChart');
         if (!ctx) return;
+        
+        if (!data || data.length === 0) {
+            console.warn('No data provided to updateRevenueChart');
+            return;
+        }
         
         if (revenueChart) revenueChart.destroy();
         
@@ -1598,6 +1654,10 @@
     // GAME ANALYTICS
     // ====================================
     function updateGameStats(stats) {
+        if (!stats) {
+            console.warn('No stats provided to updateGameStats');
+            return;
+        }
         document.getElementById('total-games-stat').textContent = (stats.total_games || 0).toLocaleString();
         document.getElementById('unique-players').textContent = (stats.unique_players || 0).toLocaleString();
         document.getElementById('completion-rate').textContent = (stats.completion_rate || 0) + '%';
