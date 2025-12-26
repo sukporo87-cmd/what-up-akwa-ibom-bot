@@ -1823,7 +1823,7 @@ router.get('/api/tournaments', authenticateAdmin, async (req, res) => {
     }
 });
 
-router.get('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
+router.get('/api/tournaments/:id(\\d+)', authenticateAdmin, async (req, res) => {
     try {
         const tournamentId = req.params.id;
         
