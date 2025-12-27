@@ -1,13 +1,22 @@
 // ============================================
 // FILE: src/services/image.service.js
-// UPDATED: Uses username instead of full_name, shows city
+// BACKWARD COMPATIBLE: Works with existing code!
+// Auto-detects platform from winData
 // ============================================
 
-const { createCanvas, loadImage, registerFont } = require('canvas');
+const { createCanvas, loadImage } = require('canvas');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
+
+// Optional: Only needed for Telegram GIF support
+let GIFEncoder;
+try {
+  GIFEncoder = require('gifencoder');
+} catch (e) {
+  logger.warn('GIFEncoder not installed - Telegram animations disabled. Install with: npm install gifencoder');
+}
 
 class ImageService {
   constructor() {
@@ -21,30 +30,55 @@ class ImageService {
     }
   }
 
+  /**
+   * BACKWARD COMPATIBLE: Auto-detects platform and returns appropriate format
+   * @param {Object} winData - { username, city, amount, questionsAnswered, totalQuestions, platform? }
+   * @returns {String|Object} - Filepath (for WhatsApp) OR { filepath, type, caption } (for Telegram)
+   */
   async generateWinImage(winData) {
-    const { name, username, city, amount, questionsAnswered, totalQuestions } = winData;
-
-    // Determine if this is a GRAND PRIZE (15/15 correct)
+    const { username, city, amount, questionsAnswered, totalQuestions } = winData;
+    
+    // Auto-detect platform from winData or default to WhatsApp
+    const platform = winData.platform || 'whatsapp';
     const isGrandPrize = questionsAnswered === totalQuestions && totalQuestions === 15;
 
-    // Generate PNG image based on prize type
-    if (isGrandPrize) {
-      return await this.generateGrandPrizeImage(winData);
-    } else {
-      return await this.generateRegularWinImage(winData);
+    // TELEGRAM: Return animated GIF (if available)
+    if (platform === 'telegram' && GIFEncoder) {
+      try {
+        const filepath = await this.generateTelegramAnimatedGif(winData, isGrandPrize);
+        const caption = this.generateTelegramCaption(winData, isGrandPrize);
+        
+        // Return object for Telegram
+        return { filepath, type: 'gif', caption, platform: 'telegram' };
+      } catch (error) {
+        logger.error('Failed to generate Telegram GIF, falling back to PNG:', error);
+        // Fall through to PNG generation
+      }
     }
+
+    // WHATSAPP or FALLBACK: Generate PNG
+    const filepath = isGrandPrize 
+      ? await this.generateGrandPrizePNG(winData)
+      : await this.generateRegularWinPNG(winData);
+    
+    // BACKWARD COMPATIBLE: Return just filepath string
+    // Your existing code expects: const imagePath = await generateWinImage(...)
+    return filepath;
   }
 
-  async generateRegularWinImage(winData) {
-    const { name, username, city, amount, questionsAnswered, totalQuestions } = winData;
+  // ============================================
+  // WHATSAPP PNG GENERATION
+  // ============================================
 
-    // Create canvas - 1080x1080 (perfect for WhatsApp)
+  async generateRegularWinPNG(winData) {
+    const { username, city, amount, questionsAnswered, totalQuestions } = winData;
+
     const width = 1080;
     const height = 1080;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // BACKGROUND - Orange-Yellow Gradient
+    // Orange gradient background
     const gradient = ctx.createLinearGradient(0, 0, width, height);
     gradient.addColorStop(0, '#FF6B35');
     gradient.addColorStop(0.5, '#F7931E');
@@ -52,403 +86,421 @@ class ImageService {
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    // CONFETTI PARTICLES - MORE (70 particles)
+    // Confetti
     this.drawConfetti(ctx, width, height, [
       '#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3',
-      '#F38181', '#AA96DA', '#FCBAD3', '#FFFFD2',
-      '#A8E6CF', '#FFB3BA', '#C7CEEA', '#FFDAC1'
+      '#F38181', '#AA96DA', '#FCBAD3', '#FFFFD2'
     ], 70);
 
-    // QR CODE - Top Right Corner
-    const qrSize = 180;
-    const qrPadding = 40;
-    const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+    // QR Code
+    await this.drawQRCode(ctx, width, '#FF6B35', 'Scan to Play!');
 
-    const qrDataUrl = await QRCode.toDataURL(whatsappLink, {
-      width: qrSize,
-      margin: 1,
-      color: {
-        dark: '#FF6B35',
-        light: '#FFFFFF'
-      }
+    // Trophy
+    await this.drawTrophyImage(ctx, width, 120, 220, false);
+
+    // Winner badge
+    this.drawWinnerBadge(ctx, width, 350, '#FF6B35');
+
+    // Text content
+    this.drawVictoryText(ctx, width, {
+      username,
+      city,
+      amount,
+      questionsAnswered,
+      totalQuestions,
+      textColor: 'white',
+      isGrandPrize: false
     });
 
-    const qrImage = await loadImage(qrDataUrl);
-
-    // QR Code with white background
-    ctx.fillStyle = 'white';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 5;
-
-    const qrBgSize = qrSize + 20;
-    ctx.fillRect(width - qrBgSize - qrPadding, qrPadding, qrBgSize, qrBgSize);
-    ctx.shadowBlur = 0;
-
-    ctx.drawImage(qrImage, width - qrSize - qrPadding - 10, qrPadding + 10, qrSize, qrSize);
-
-    // "Scan to Play" text under QR
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 24px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 5;
-    ctx.fillText('Scan to Play!', width - qrPadding - qrBgSize/2, qrPadding + qrBgSize + 35);
-    ctx.shadowBlur = 0;
-
-    // TROPHY IMAGE - Large at top (using local file)
-    const trophyPath = path.join(__dirname, '../assets/trophy.png');
-    try {
-      const trophyImage = await loadImage(trophyPath);
-      const trophySize = 220;
-      const trophyX = width / 2 - trophySize / 2;
-      const trophyY = 120;
-
-      // Add shadow for trophy
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 20;
-      ctx.shadowOffsetY = 10;
-      ctx.drawImage(trophyImage, trophyX, trophyY, trophySize, trophySize);
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
-    } catch (error) {
-      // Fallback to drawn trophy if image fails to load
-      logger.warn('Trophy image not found at ' + trophyPath + ', using drawn trophy');
-      this.drawTrophy(ctx, width / 2, 230, 160, '#FFD700', false);
-    }
-
-    // "WINNER!!!" BADGE
-    const winnerY = 350;
-    ctx.fillStyle = 'white';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 15;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 4;
-    this.roundRect(ctx, width/2 - 150, winnerY, 300, 60, 30);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    ctx.fillStyle = '#FF6B35';
-    ctx.font = 'bold 36px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('WINNER!!!', width / 2, winnerY + 43);
-
-    // NEW TEXT LAYOUT - LARGE AND BOLD
-    let currentY = 480;
-
-    // USERNAME (with @ symbol) - PRIVACY FIRST!
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 72px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-    ctx.shadowBlur = 8;
-    ctx.fillText(`@${username}`, width / 2, currentY);
-    currentY += 60;
-
-    // CITY
-    ctx.font = 'bold 52px Arial, sans-serif';
-    ctx.shadowBlur = 8;
-    ctx.fillText(`from ${city}`, width / 2, currentY);
-    currentY += 100;
-
-    // "WON"
-    ctx.font = 'bold 68px Arial, sans-serif';
-    ctx.shadowBlur = 8;
-    ctx.fillText('WON', width / 2, currentY);
-    currentY += 100;
-
-    // AMOUNT - Even bigger
-    ctx.font = 'bold 110px Arial, sans-serif';
-    ctx.shadowBlur = 10;
-    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, currentY);
-    currentY += 100;
-
-    // "ON"
-    ctx.font = 'bold 68px Arial, sans-serif';
-    ctx.shadowBlur = 8;
-    ctx.fillText('ON', width / 2, currentY);
-    currentY += 100;
-
-    // "WHAT'S UP TRIVIA GAME"
-    ctx.font = 'bold 76px Arial, sans-serif';
-    ctx.shadowBlur = 10;
-    ctx.fillText("WHAT'S UP TRIVIA GAME", width / 2, currentY);
-    ctx.shadowBlur = 0;
-    currentY += 80;
-
-    // Questions Correct
-    ctx.font = 'bold 38px Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.fillText(`${questionsAnswered}/${totalQuestions} Questions Correct`, width / 2, currentY);
-    currentY += 70;
-
-    // BOTTOM - Company Credit
-    ctx.font = 'bold 32px Arial, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-    ctx.shadowBlur = 6;
-    ctx.fillText('SummerIsland Systems', width / 2, 1040);
-    ctx.shadowBlur = 0;
-
-    // Save to temp file as PNG
-    const filename = `win_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
+    // Save PNG
+    const filename = `win_${Date.now()}.png`;
     const filepath = path.join(this.tempDir, filename);
-    const buffer = canvas.toBuffer('image/png');
+    const buffer = canvas.toBuffer('image/png', { compressionLevel: 6 });
     fs.writeFileSync(filepath, buffer);
 
-    logger.info(`Regular win PNG generated: ${filename}`);
+    logger.info(`Victory PNG generated: ${filename}`);
     return filepath;
   }
 
-  
-  async generateGrandPrizeImage(winData) {
-    const { name, username, city, amount, questionsAnswered, totalQuestions } = winData;
+  async generateGrandPrizePNG(winData) {
+    const { username, city, amount } = winData;
 
-    // Create canvas - 1080x1080
     const width = 1080;
     const height = 1080;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // BACKGROUND - Dark dramatic
+    // Dark background
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, width, height);
-
-    // SUBTLE PATTERN OVERLAY
     this.drawPatternOverlay(ctx, width, height);
 
-    // GOLD CONFETTI PARTICLES - MORE (60 particles)
-    this.drawConfetti(ctx, width, height, [
-      '#FFD700', '#FFA500', '#FFFF00', '#FFD700',
-      '#FFA500', '#FFFF00', '#FFD700', '#FFA500'
-    ], 60, true);
+    // Gold confetti
+    this.drawConfetti(ctx, width, height, ['#FFD700', '#FFA500', '#FFFF00'], 60, true);
 
-    // QR CODE - Top Right Corner (Gold theme)
+    // Gold QR Code
+    await this.drawQRCode(ctx, width, '#FFD700', 'Scan & Win!');
+
+    // Grand prize banner
+    this.drawGrandPrizeBanner(ctx, width, 120);
+
+    // Mega trophy
+    await this.drawTrophyImage(ctx, width, 150, 260, true);
+
+    // Text content
+    this.drawVictoryText(ctx, width, {
+      username,
+      city,
+      amount,
+      questionsAnswered: 15,
+      totalQuestions: 15,
+      textColor: '#FFD700',
+      isGrandPrize: true
+    });
+
+    // Save PNG
+    const filename = `grand_${Date.now()}.png`;
+    const filepath = path.join(this.tempDir, filename);
+    const buffer = canvas.toBuffer('image/png', { compressionLevel: 6 });
+    fs.writeFileSync(filepath, buffer);
+
+    logger.info(`Grand Prize PNG generated: ${filename}`);
+    return filepath;
+  }
+
+  // ============================================
+  // TELEGRAM ANIMATED GIF (Premium Feature!)
+  // ============================================
+
+  async generateTelegramAnimatedGif(winData, isGrandPrize) {
+    if (!GIFEncoder) {
+      throw new Error('GIFEncoder not available');
+    }
+
+    const { username, city, amount, questionsAnswered, totalQuestions } = winData;
+    const width = 1080;
+    const height = 1080;
+    const totalFrames = 60; // 2 seconds at 30fps
+    const fps = 30;
+
+    const filename = `win_tg_${Date.now()}.gif`;
+    const filepath = path.join(this.tempDir, filename);
+
+    const encoder = new GIFEncoder(width, height);
+    encoder.createReadStream().pipe(fs.createWriteStream(filepath));
+    encoder.start();
+    encoder.setRepeat(0);
+    encoder.setDelay(1000 / fps);
+    encoder.setQuality(10);
+
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    for (let frame = 0; frame < totalFrames; frame++) {
+      const progress = frame / totalFrames;
+      ctx.clearRect(0, 0, width, height);
+
+      if (isGrandPrize) {
+        await this.drawGrandPrizeFrame(ctx, width, height, progress, { username, city, amount });
+      } else {
+        await this.drawRegularWinFrame(ctx, width, height, progress, { 
+          username, city, amount, questionsAnswered, totalQuestions 
+        });
+      }
+
+      encoder.addFrame(ctx);
+    }
+
+    encoder.finish();
+    logger.info(`Telegram animated GIF generated: ${filename}`);
+    return filepath;
+  }
+
+  async drawRegularWinFrame(ctx, width, height, progress, data) {
+    const { username, city, amount, questionsAnswered, totalQuestions } = data;
+
+    // Background fade in
+    const alpha = this.easeInOut(Math.min(progress * 2, 1));
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, `rgba(255, 107, 53, ${alpha})`);
+    gradient.addColorStop(0.5, `rgba(247, 147, 30, ${alpha})`);
+    gradient.addColorStop(1, `rgba(255, 210, 63, ${alpha})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    // Animated confetti
+    if (progress > 0.2) {
+      this.drawAnimatedConfetti(ctx, width, height, progress, [
+        '#FF6B6B', '#4ECDC4', '#FFD93D', '#95E1D3'
+      ], false);
+    }
+
+    // QR Code fade in
+    if (progress > 0.1) {
+      ctx.globalAlpha = this.easeInOut((progress - 0.1) / 0.2);
+      await this.drawQRCode(ctx, width, '#FF6B35', 'Scan to Play!');
+      ctx.globalAlpha = 1;
+    }
+
+    // Trophy bounce
+    if (progress > 0.2) {
+      const trophyProgress = (progress - 0.2) / 0.3;
+      const bounce = this.bounceEffect(trophyProgress);
+      const trophyY = 120 + (1 - bounce) * 200;
+      ctx.globalAlpha = Math.min(trophyProgress * 2, 1);
+      await this.drawTrophyImage(ctx, width, trophyY, 220, false);
+      ctx.globalAlpha = 1;
+    }
+
+    // Winner badge slide
+    if (progress > 0.4) {
+      ctx.globalAlpha = this.easeInOut((progress - 0.4) / 0.2);
+      this.drawWinnerBadge(ctx, width, 350, '#FF6B35');
+      ctx.globalAlpha = 1;
+    }
+
+    // Text reveal
+    if (progress > 0.5) {
+      const textProgress = (progress - 0.5) / 0.5;
+      ctx.globalAlpha = this.easeInOut(textProgress);
+      this.drawVictoryText(ctx, width, {
+        username, city, amount, questionsAnswered, totalQuestions,
+        textColor: 'white', isGrandPrize: false
+      });
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  async drawGrandPrizeFrame(ctx, width, height, progress, data) {
+    const { username, city, amount } = data;
+
+    // Dark background
+    const alpha = this.easeInOut(Math.min(progress * 2, 1));
+    ctx.fillStyle = `rgba(26, 26, 46, ${alpha})`;
+    ctx.fillRect(0, 0, width, height);
+    
+    if (progress > 0.1) {
+      ctx.globalAlpha = (progress - 0.1) * 2;
+      this.drawPatternOverlay(ctx, width, height);
+      ctx.globalAlpha = 1;
+    }
+
+    // Gold confetti rain
+    if (progress > 0.15) {
+      this.drawAnimatedConfetti(ctx, width, height, progress, ['#FFD700', '#FFA500', '#FFFF00'], true);
+    }
+
+    // QR Code
+    if (progress > 0.1) {
+      ctx.globalAlpha = this.easeInOut((progress - 0.1) / 0.2);
+      await this.drawQRCode(ctx, width, '#FFD700', 'Scan & Win!');
+      ctx.globalAlpha = 1;
+    }
+
+    // Banner slide down
+    if (progress > 0.2) {
+      const bannerProgress = (progress - 0.2) / 0.2;
+      const bannerY = 120 - (1 - this.easeInOut(bannerProgress)) * 150;
+      ctx.globalAlpha = this.easeInOut(bannerProgress);
+      this.drawGrandPrizeBanner(ctx, width, bannerY);
+      ctx.globalAlpha = 1;
+    }
+
+    // Trophy with extra bounce
+    if (progress > 0.3) {
+      const trophyProgress = (progress - 0.3) / 0.3;
+      const bounce = this.bounceEffect(trophyProgress) * 1.5;
+      const scale = 0.5 + bounce * 0.5;
+      
+      ctx.save();
+      ctx.globalAlpha = Math.min(trophyProgress * 2, 1);
+      ctx.translate(width / 2, 280);
+      ctx.scale(scale, scale);
+      ctx.translate(-width / 2, -280);
+      await this.drawTrophyImage(ctx, width, 150, 260, true);
+      ctx.restore();
+    }
+
+    // Text reveal
+    if (progress > 0.6) {
+      ctx.globalAlpha = this.easeInOut((progress - 0.6) / 0.4);
+      this.drawVictoryText(ctx, width, {
+        username, city, amount,
+        questionsAnswered: 15, totalQuestions: 15,
+        textColor: '#FFD700', isGrandPrize: true
+      });
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ============================================
+  // DRAWING UTILITIES
+  // ============================================
+
+  async drawQRCode(ctx, width, color, text) {
     const qrSize = 180;
     const qrPadding = 40;
-    const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+    const whatsappLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER || '2348012345678'}`;
 
     const qrDataUrl = await QRCode.toDataURL(whatsappLink, {
       width: qrSize,
       margin: 1,
-      color: {
-        dark: '#1a1a2e',
-        light: '#FFD700'
+      color: { 
+        dark: color === '#FFD700' ? '#1a1a2e' : color, 
+        light: color === '#FFD700' ? '#FFD700' : '#FFFFFF' 
       }
     });
 
     const qrImage = await loadImage(qrDataUrl);
-
-    // QR Code with gold glow
-    const qrGradient = ctx.createRadialGradient(
-      width - qrPadding - qrSize/2,
-      qrPadding + qrSize/2,
-      0,
-      width - qrPadding - qrSize/2,
-      qrPadding + qrSize/2,
-      qrSize
-    );
-    qrGradient.addColorStop(0, 'rgba(255, 215, 0, 0.3)');
-    qrGradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
-    ctx.fillStyle = qrGradient;
-    ctx.fillRect(width - qrSize - qrPadding - 30, qrPadding - 30, qrSize + 60, qrSize + 60);
-
     ctx.drawImage(qrImage, width - qrSize - qrPadding, qrPadding, qrSize, qrSize);
 
-    // "Scan & Win" text under QR
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 24px Arial, sans-serif';
+    ctx.fillStyle = color === '#FFD700' ? '#FFD700' : 'white';
+    ctx.font = 'bold 24px Arial';
     ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+    ctx.shadowColor = color === '#FFD700' ? 'rgba(255, 215, 0, 0.5)' : 'rgba(0, 0, 0, 0.3)';
     ctx.shadowBlur = 10;
-    ctx.fillText('Scan & Win!', width - qrPadding - qrSize/2, qrPadding + qrSize + 35);
+    ctx.fillText(text, width - qrPadding - qrSize/2, qrPadding + qrSize + 35);
+    ctx.shadowBlur = 0;
+  }
+
+  async drawTrophyImage(ctx, width, trophyY, size, isGold) {
+    const trophyPath = path.join(__dirname, '../assets/trophy.png');
+    try {
+      const trophyImage = await loadImage(trophyPath);
+      const trophyX = width / 2 - size / 2;
+
+      ctx.shadowColor = isGold ? 'rgba(255, 215, 0, 0.8)' : 'rgba(0, 0, 0, 0.3)';
+      ctx.shadowBlur = isGold ? 40 : 20;
+      ctx.shadowOffsetY = 10;
+      ctx.drawImage(trophyImage, trophyX, trophyY, size, size);
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+    } catch (error) {
+      this.drawTrophy(ctx, width / 2, trophyY + size/2, size * 0.7, isGold ? '#FFD700' : '#FFD700', isGold);
+    }
+  }
+
+  drawWinnerBadge(ctx, width, y, color) {
+    ctx.fillStyle = 'white';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 15;
+    this.roundRect(ctx, width/2 - 150, y, 300, 60, 30);
+    ctx.fill();
     ctx.shadowBlur = 0;
 
-    // GRAND PRIZE BANNER
-    const bannerY = 120;
-    const bannerGradient = ctx.createLinearGradient(width/2 - 350, bannerY, width/2 + 350, bannerY);
-    bannerGradient.addColorStop(0, '#FFD700');
-    bannerGradient.addColorStop(1, '#FFA500');
-    ctx.fillStyle = bannerGradient;
+    ctx.fillStyle = color;
+    ctx.font = 'bold 36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('WINNER!!!', width / 2, y + 43);
+  }
+
+  drawGrandPrizeBanner(ctx, width, y) {
+    const gradient = ctx.createLinearGradient(width/2 - 350, y, width/2 + 350, y);
+    gradient.addColorStop(0, '#FFD700');
+    gradient.addColorStop(1, '#FFA500');
+    ctx.fillStyle = gradient;
     ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
     ctx.shadowBlur = 25;
-    this.roundRect(ctx, width/2 - 380, bannerY, 760, 70, 35);
+    this.roundRect(ctx, width/2 - 380, y, 760, 70, 35);
     ctx.fill();
     ctx.shadowBlur = 0;
 
     ctx.fillStyle = '#1a1a2e';
-    ctx.font = 'bold 38px Arial, sans-serif';
+    ctx.font = 'bold 38px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('🌟 GRAND PRIZE WINNER!!! 🌟', width / 2, bannerY + 48);
+    ctx.fillText('🌟 GRAND PRIZE WINNER!!! 🌟', width / 2, y + 48);
+  }
 
-    // MEGA TROPHY IMAGE - Grand Prize (using local file)
-    const trophyPath = path.join(__dirname, '../assets/trophy.png');
-    try {
-      const trophyImage = await loadImage(trophyPath);
-      const trophySize = 260;
-      const trophyX = width / 2 - trophySize / 2;
-      const trophyY = 150;
+  drawVictoryText(ctx, width, data) {
+    const { username, city, amount, questionsAnswered, totalQuestions, textColor, isGrandPrize } = data;
+    let y = 480;
 
-      // Add golden glow for trophy
-      ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
-      ctx.shadowBlur = 40;
-      ctx.shadowOffsetY = 0;
-      ctx.drawImage(trophyImage, trophyX, trophyY, trophySize, trophySize);
-      ctx.shadowBlur = 0;
-    } catch (error) {
-      // Fallback to drawn trophy if image fails to load
-      logger.warn('Trophy image not found at ' + trophyPath + ', using drawn trophy');
-      this.drawTrophy(ctx, width / 2, 280, 200, '#FFD700', true);
-    }
-
-    // NEW TEXT LAYOUT - LARGE AND BOLD
-    let currentY = 480;
-
-    // USERNAME (with @ symbol)
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 72px Arial, sans-serif';
+    ctx.fillStyle = textColor;
     ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
-    ctx.shadowBlur = 15;
-    ctx.fillText(`@${username}`, width / 2, currentY);
-    currentY += 60;
+    ctx.shadowColor = isGrandPrize ? 'rgba(255, 215, 0, 0.6)' : 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = isGrandPrize ? 15 : 8;
 
-    // CITY
-    ctx.font = 'bold 52px Arial, sans-serif';
-    ctx.shadowBlur = 15;
-    ctx.fillText(`from ${city}`, width / 2, currentY);
-    currentY += 100;
+    ctx.font = 'bold 72px Arial';
+    ctx.fillText(`@${username}`, width / 2, y);
+    y += 60;
 
-    // "WON"
-    ctx.font = 'bold 68px Arial, sans-serif';
-    ctx.shadowBlur = 15;
-    ctx.fillText('WON', width / 2, currentY);
-    currentY += 100;
+    ctx.font = 'bold 52px Arial';
+    ctx.fillText(`from ${city}`, width / 2, y);
+    y += 100;
 
-    // AMOUNT - Even bigger with glow
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 120px Arial, sans-serif';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.9)';
-    ctx.shadowBlur = 20;
-    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, currentY);
-    currentY += 100;
+    ctx.font = 'bold 68px Arial';
+    ctx.fillText('WON', width / 2, y);
+    y += 100;
 
-    // "ON"
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 68px Arial, sans-serif';
-    ctx.shadowBlur = 15;
-    ctx.fillText('ON', width / 2, currentY);
-    currentY += 100;
+    if (isGrandPrize) ctx.fillStyle = 'white';
+    ctx.font = 'bold 110px Arial';
+    ctx.fillText(`₦${amount.toLocaleString()}`, width / 2, y);
+    y += 100;
 
-    // "WHAT'S UP TRIVIA GAME"
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 76px Arial, sans-serif';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
-    ctx.shadowBlur = 18;
-    ctx.fillText("WHAT'S UP TRIVIA GAME", width / 2, currentY);
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 68px Arial';
+    ctx.fillText('ON', width / 2, y);
+    y += 100;
+
+    if (isGrandPrize) ctx.fillStyle = 'white';
+    ctx.font = 'bold 76px Arial';
+    ctx.fillText("WHAT'S UP TRIVIA GAME", width / 2, y);
     ctx.shadowBlur = 0;
-    currentY += 80;
+    y += 80;
 
-    // Questions Correct
-    ctx.font = 'bold 40px Arial, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
-    ctx.shadowBlur = 10;
-    ctx.fillText('15/15 PERFECT! ⭐', width / 2, currentY);
-    ctx.shadowBlur = 0;
+    ctx.font = 'bold 38px Arial';
+    ctx.fillStyle = isGrandPrize ? 'white' : 'rgba(255, 255, 255, 0.95)';
+    const scoreText = isGrandPrize ? '15/15 PERFECT! ⭐' : `${questionsAnswered}/${totalQuestions} Questions Correct`;
+    ctx.fillText(scoreText, width / 2, y);
 
-    // BOTTOM - Company Credit
-    ctx.font = 'bold 34px Arial, sans-serif';
-    ctx.fillStyle = '#FFD700';
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
-    ctx.shadowBlur = 12;
+    ctx.font = 'bold 32px Arial';
+    ctx.fillStyle = isGrandPrize ? '#FFD700' : 'white';
     ctx.fillText('SummerIsland Systems', width / 2, 1040);
-    ctx.shadowBlur = 0;
-
-    // Save to temp file as PNG
-    const filename = `grand_prize_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
-    const filepath = path.join(this.tempDir, filename);
-    const buffer = canvas.toBuffer('image/png');
-    fs.writeFileSync(filepath, buffer);
-
-    logger.info(`Grand prize PNG generated: ${filename}`);
-    return filepath;
   }
 
-  drawTrophy(ctx, x, y, size, color, hasGlow = false) {
-    ctx.save();
+  drawAnimatedConfetti(ctx, width, height, progress, colors, isGold) {
+    const count = isGold ? 60 : 70;
+    const fallSpeed = height * 0.3;
+    
+    for (let i = 0; i < count; i++) {
+      ctx.save();
+      const x = (i / count) * width + Math.sin(progress * Math.PI * 4 + i) * 50;
+      const baseY = (i % 10) * (height / 10);
+      const y = (baseY + progress * fallSpeed) % height;
+      const size = isGold ? (Math.random() * 12 + 8) : (Math.random() * 14 + 6);
+      const rotation = progress * Math.PI * 4 + i;
+      const color = colors[i % colors.length];
 
-    if (hasGlow) {
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 40;
-    } else {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 15;
-    }
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      ctx.fillStyle = color;
 
-    ctx.fillStyle = color;
-
-    // Trophy cup (main body)
-    ctx.beginPath();
-    ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Trophy stem
-    ctx.fillRect(x - size * 0.12, y + size * 0.35, size * 0.24, size * 0.25);
-
-    // Trophy base
-    ctx.fillRect(x - size * 0.35, y + size * 0.55, size * 0.7, size * 0.15);
-
-    // Left handle
-    ctx.beginPath();
-    ctx.arc(x - size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Right handle
-    ctx.beginPath();
-    ctx.arc(x + size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Trophy rim (top)
-    ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size * 0.12);
-
-    // Shine/highlight
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.beginPath();
-    ctx.arc(x - size * 0.2, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Star on trophy (for extra flair)
-    this.drawStar(ctx, x, y - size * 0.65, size * 0.18, 'white');
-
-    ctx.restore();
-  }
-
-  drawStar(ctx, cx, cy, radius, color) {
-    ctx.save();
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
-      const x = cx + Math.cos(angle) * radius;
-      const y = cy + Math.sin(angle) * radius;
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
+      if (isGold) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12;
       }
-      const innerAngle = angle + Math.PI / 5;
-      const innerX = cx + Math.cos(innerAngle) * (radius * 0.4);
-      const innerY = cy + Math.sin(innerAngle) * (radius * 0.4);
-      ctx.lineTo(innerX, innerY);
+
+      const shape = i % 3;
+      if (shape === 0) {
+        ctx.beginPath();
+        ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (shape === 1) {
+        ctx.fillRect(-size / 2, -size / 2, size, size * 1.5);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(0, -size / 2);
+        ctx.lineTo(size / 2, size / 2);
+        ctx.lineTo(-size / 2, size / 2);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
   }
 
-  drawConfetti(ctx, width, height, colors, count = 50, isGold = false) {
+  drawConfetti(ctx, width, height, colors, count, isGold = false) {
     for (let i = 0; i < count; i++) {
       ctx.save();
       const x = Math.random() * width;
@@ -466,18 +518,14 @@ class ImageService {
         ctx.shadowBlur = 12;
       }
 
-      // Draw different confetti shapes
       const shape = Math.random();
       if (shape > 0.66) {
-        // Circle
         ctx.beginPath();
         ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
         ctx.fill();
       } else if (shape > 0.33) {
-        // Rectangle
         ctx.fillRect(-size / 2, -size / 2, size, size * 1.5);
       } else {
-        // Triangle
         ctx.beginPath();
         ctx.moveTo(0, -size / 2);
         ctx.lineTo(size / 2, size / 2);
@@ -490,11 +538,59 @@ class ImageService {
     }
   }
 
+  drawTrophy(ctx, x, y, size, color, hasGlow) {
+    ctx.save();
+    ctx.shadowColor = hasGlow ? color : 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = hasGlow ? 40 : 15;
+    ctx.fillStyle = color;
+
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillRect(x - size * 0.12, y + size * 0.35, size * 0.24, size * 0.25);
+    ctx.fillRect(x - size * 0.35, y + size * 0.55, size * 0.7, size * 0.15);
+
+    ctx.beginPath();
+    ctx.arc(x - size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + size * 0.55, y - size * 0.05, size * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size * 0.12);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.beginPath();
+    ctx.arc(x - size * 0.2, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    this.drawStar(ctx, x, y - size * 0.65, size * 0.18, 'white');
+    ctx.restore();
+  }
+
+  drawStar(ctx, cx, cy, radius, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      const innerAngle = angle + Math.PI / 5;
+      const innerX = cx + Math.cos(innerAngle) * (radius * 0.4);
+      const innerY = cy + Math.sin(innerAngle) * (radius * 0.4);
+      ctx.lineTo(innerX, innerY);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
   drawPatternOverlay(ctx, width, height) {
     ctx.save();
     ctx.strokeStyle = 'rgba(255, 215, 0, 0.03)';
     ctx.lineWidth = 1;
-
     const spacing = 20;
     for (let i = 0; i < width + height; i += spacing) {
       ctx.beginPath();
@@ -502,7 +598,6 @@ class ImageService {
       ctx.lineTo(0, i);
       ctx.stroke();
     }
-
     ctx.restore();
   }
 
@@ -520,16 +615,59 @@ class ImageService {
     ctx.closePath();
   }
 
-  truncateText(ctx, text, maxWidth) {
-    let width = ctx.measureText(text).width;
-    if (width <= maxWidth) return text;
+  // ============================================
+  // ANIMATION EASING FUNCTIONS
+  // ============================================
 
-    while (width > maxWidth && text.length > 0) {
-      text = text.slice(0, -1);
-      width = ctx.measureText(text + '...').width;
-    }
-    return text + '...';
+  easeInOut(t) {
+    return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
   }
+
+  bounceEffect(t) {
+    if (t >= 1) return 1;
+    const n = 7.5625;
+    const d = 2.75;
+    if (t < 1 / d) return n * t * t;
+    if (t < 2 / d) return n * (t -= 1.5 / d) * t + 0.75;
+    if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + 0.9375;
+    return n * (t -= 2.625 / d) * t + 0.984375;
+  }
+
+  // ============================================
+  // CAPTION GENERATION (Optional)
+  // ============================================
+
+  generateTelegramCaption(winData, isGrandPrize) {
+    const { username, city, amount, questionsAnswered, totalQuestions } = winData;
+    
+    if (isGrandPrize) {
+      return `🏆 *GRAND PRIZE WINNER!* 🏆
+
+🎉 Congratulations *@${username}* from *${city}*!
+
+💰 You've won *₦${amount.toLocaleString()}*!
+⭐ Perfect score: *15/15 questions*!
+
+🎮 Play now and win big on *What's Up Trivia*!
+
+_Powered by SummerIsland Systems_`;
+    }
+
+    return `🎊 *WINNER!* 🎊
+
+🎉 *@${username}* from *${city}* just won!
+
+💰 Prize: *₦${amount.toLocaleString()}*
+📊 Score: *${questionsAnswered}/${totalQuestions} correct*
+
+🎮 Your turn to win! Play What's Up Trivia now!
+
+_Powered by SummerIsland Systems_`;
+  }
+
+  // ============================================
+  // CLEANUP
+  // ============================================
 
   cleanupTempFiles() {
     try {
