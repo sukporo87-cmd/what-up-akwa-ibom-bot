@@ -1,6 +1,6 @@
 // ============================================
 // FILE: src/services/question.service.js
-// UPDATED: Support for multiple question banks
+// UPDATED: Support for multiple question banks with STRICT practice mode
 // Batch 7: Question Service
 // ============================================
 
@@ -45,8 +45,9 @@ class QuestionService {
             let paramIndex = 3;
             
             if (gameMode === 'practice') {
-                // Practice mode - use practice bank or classic bank
-                questionBankCondition = `AND (qb.bank_name = 'practice_mode' OR qb.bank_name = 'classic_mode' OR q.is_practice = true)`;
+                // ✅ UPDATED: Practice mode - ONLY use practice_mode bank (strict)
+                questionBankCondition = `AND qb.bank_name = 'practice_mode'`;
+                logger.info(`Practice mode: Looking for questions with difficulty ${minDifficulty}-${maxDifficulty} from practice_mode bank`);
             } else if (gameMode === 'tournament' && tournamentId) {
                 // Tournament mode - check if tournament has custom question bank
                 const tournament = await pool.query(
@@ -115,10 +116,29 @@ class QuestionService {
             
             const result = await pool.query(query, params);
             
-            // If no question found, try fallback
+            // If no question found, handle fallback
             if (!result.rows[0]) {
-                logger.warn(`No questions found for difficulty ${minDifficulty}-${maxDifficulty} in ${gameMode} mode, trying fallback`);
+                logger.warn(`No questions found for difficulty ${minDifficulty}-${maxDifficulty} in ${gameMode} mode`);
                 
+                // ✅ UPDATED: For practice mode, do NOT fallback to classic
+                if (gameMode === 'practice') {
+                    logger.error(`Practice mode has insufficient questions for difficulty ${minDifficulty}-${maxDifficulty}. Need to add more practice questions!`);
+                    
+                    // Check how many practice questions exist total
+                    const countResult = await pool.query(`
+                        SELECT COUNT(*) as total
+                        FROM questions q
+                        JOIN question_banks qb ON q.question_bank_id = qb.id
+                        WHERE qb.bank_name = 'practice_mode'
+                        AND q.is_active = true
+                    `);
+                    
+                    logger.error(`Total practice questions available: ${countResult.rows[0].total}`);
+                    return null; // Return null instead of falling back to classic
+                }
+                
+                // For other modes, try fallback
+                logger.warn(`Trying fallback for ${gameMode} mode`);
                 let fallbackQuery;
                 if (excludeIds.length > 0) {
                     const placeholders = excludeIds.map((_, i) => `$${i + 3}`).join(',');
@@ -276,6 +296,115 @@ class QuestionService {
         } catch (error) {
             logger.error('Error getting question count by category:', error);
             return [];
+        }
+    }
+
+    /**
+     * ✅ NEW: Get question bank statistics
+     */
+    async getQuestionBankStats(bankName = null) {
+        try {
+            let query;
+            let params = [];
+            
+            if (bankName) {
+                query = `
+                    SELECT 
+                        qb.bank_name,
+                        qb.for_game_mode,
+                        COUNT(q.id) as total_questions,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 1 AND 5) as easy_count,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 6 AND 10) as medium_count,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 11 AND 15) as hard_count,
+                        COUNT(q.id) FILTER (WHERE q.is_active = true) as active_count
+                    FROM question_banks qb
+                    LEFT JOIN questions q ON qb.id = q.question_bank_id
+                    WHERE qb.bank_name = $1
+                    GROUP BY qb.id, qb.bank_name, qb.for_game_mode
+                `;
+                params = [bankName];
+            } else {
+                query = `
+                    SELECT 
+                        qb.bank_name,
+                        qb.for_game_mode,
+                        COUNT(q.id) as total_questions,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 1 AND 5) as easy_count,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 6 AND 10) as medium_count,
+                        COUNT(q.id) FILTER (WHERE q.difficulty BETWEEN 11 AND 15) as hard_count,
+                        COUNT(q.id) FILTER (WHERE q.is_active = true) as active_count
+                    FROM question_banks qb
+                    LEFT JOIN questions q ON qb.id = q.question_bank_id
+                    WHERE qb.is_active = true
+                    GROUP BY qb.id, qb.bank_name, qb.for_game_mode
+                    ORDER BY qb.for_game_mode
+                `;
+            }
+            
+            const result = await pool.query(query, params);
+            return bankName ? result.rows[0] : result.rows;
+        } catch (error) {
+            logger.error('Error getting question bank stats:', error);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ NEW: Validate if a game mode has enough questions for a full game
+     */
+    async validateGameModeQuestions(gameMode) {
+        try {
+            let bankName;
+            
+            if (gameMode === 'practice') {
+                bankName = 'practice_mode';
+            } else if (gameMode === 'classic') {
+                bankName = 'classic_mode';
+            } else if (gameMode === 'tournament') {
+                bankName = 'tournaments';
+            } else {
+                return { valid: false, message: 'Invalid game mode' };
+            }
+            
+            const stats = await this.getQuestionBankStats(bankName);
+            
+            if (!stats) {
+                return { 
+                    valid: false, 
+                    message: `Question bank '${bankName}' not found` 
+                };
+            }
+            
+            // A full game needs at least 1 question in each difficulty range
+            const issues = [];
+            
+            if (stats.easy_count < 1) {
+                issues.push(`Need at least 1 easy question (1-7), currently have ${stats.easy_count}`);
+            }
+            if (stats.medium_count < 1) {
+                issues.push(`Need at least 1 medium question (6-12), currently have ${stats.medium_count}`);
+            }
+            if (stats.hard_count < 1) {
+                issues.push(`Need at least 1 hard question (11-15), currently have ${stats.hard_count}`);
+            }
+            
+            if (issues.length > 0) {
+                return {
+                    valid: false,
+                    message: `Insufficient questions for ${gameMode} mode`,
+                    details: issues,
+                    stats: stats
+                };
+            }
+            
+            return {
+                valid: true,
+                message: `${gameMode} mode has sufficient questions`,
+                stats: stats
+            };
+        } catch (error) {
+            logger.error('Error validating game mode questions:', error);
+            return { valid: false, message: 'Validation error', error: error.message };
         }
     }
 }
