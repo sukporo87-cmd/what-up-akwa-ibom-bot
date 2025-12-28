@@ -2336,7 +2336,83 @@ router.get('/api/audit/sessions', authenticateAdmin, async (req, res) => {
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
-        let query = `
+        // Base WHERE clause that will be shared between count and data queries
+        let whereClause = `WHERE gs.started_at > NOW() - INTERVAL '7 days'`;
+        const params = [];
+        let paramIndex = 1;
+
+        if (username) {
+            whereClause += ` AND LOWER(u.username) LIKE LOWER($${paramIndex})`;
+            params.push(`%${username}%`);
+            paramIndex++;
+        }
+
+        if (phone) {
+            whereClause += ` AND u.phone_number LIKE $${paramIndex}`;
+            params.push(`%${phone}%`);
+            paramIndex++;
+        }
+
+        if (user_id) {
+            whereClause += ` AND gs.user_id = $${paramIndex}`;
+            params.push(parseInt(user_id));
+            paramIndex++;
+        }
+
+        if (game_mode) {
+            whereClause += ` AND gs.game_mode = $${paramIndex}`;
+            params.push(game_mode);
+            paramIndex++;
+        }
+
+        if (platform) {
+            whereClause += ` AND gs.platform = $${paramIndex}`;
+            params.push(platform);
+            paramIndex++;
+        }
+
+        if (status) {
+            whereClause += ` AND gs.status = $${paramIndex}`;
+            params.push(status);
+            paramIndex++;
+        }
+
+        if (min_score) {
+            whereClause += ` AND gs.final_score >= $${paramIndex}`;
+            params.push(parseInt(min_score));
+            paramIndex++;
+        }
+
+        if (max_score) {
+            whereClause += ` AND gs.final_score <= $${paramIndex}`;
+            params.push(parseInt(max_score));
+            paramIndex++;
+        }
+
+        if (date_from) {
+            whereClause += ` AND gs.started_at >= $${paramIndex}`;
+            params.push(date_from);
+            paramIndex++;
+        }
+
+        if (date_to) {
+            whereClause += ` AND gs.started_at <= $${paramIndex}`;
+            params.push(date_to);
+            paramIndex++;
+        }
+
+        // Count query
+        const countQuery = `
+            SELECT COUNT(*) as total
+            FROM game_sessions gs
+            JOIN users u ON gs.user_id = u.id
+            ${whereClause}
+        `;
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0].total);
+
+        // Data query with pagination
+        const dataQuery = `
             SELECT 
                 gs.id as session_id,
                 gs.user_id,
@@ -2357,82 +2433,13 @@ router.get('/api/audit/sessions', authenticateAdmin, async (req, res) => {
                 (SELECT COUNT(*) FROM game_audit_logs WHERE session_id = gs.id) as audit_events_count
             FROM game_sessions gs
             JOIN users u ON gs.user_id = u.id
-            WHERE gs.started_at > NOW() - INTERVAL '7 days'
+            ${whereClause}
+            ORDER BY gs.started_at DESC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
-
-        const params = [];
-        let paramIndex = 1;
-
-        if (username) {
-            query += ` AND LOWER(u.username) LIKE LOWER($${paramIndex})`;
-            params.push(`%${username}%`);
-            paramIndex++;
-        }
-
-        if (phone) {
-            query += ` AND u.phone_number LIKE $${paramIndex}`;
-            params.push(`%${phone}%`);
-            paramIndex++;
-        }
-
-        if (user_id) {
-            query += ` AND gs.user_id = $${paramIndex}`;
-            params.push(parseInt(user_id));
-            paramIndex++;
-        }
-
-        if (game_mode) {
-            query += ` AND gs.game_mode = $${paramIndex}`;
-            params.push(game_mode);
-            paramIndex++;
-        }
-
-        if (platform) {
-            query += ` AND gs.platform = $${paramIndex}`;
-            params.push(platform);
-            paramIndex++;
-        }
-
-        if (status) {
-            query += ` AND gs.status = $${paramIndex}`;
-            params.push(status);
-            paramIndex++;
-        }
-
-        if (min_score) {
-            query += ` AND gs.final_score >= $${paramIndex}`;
-            params.push(parseInt(min_score));
-            paramIndex++;
-        }
-
-        if (max_score) {
-            query += ` AND gs.final_score <= $${paramIndex}`;
-            params.push(parseInt(max_score));
-            paramIndex++;
-        }
-
-        if (date_from) {
-            query += ` AND gs.started_at >= $${paramIndex}`;
-            params.push(date_from);
-            paramIndex++;
-        }
-
-        if (date_to) {
-            query += ` AND gs.started_at <= $${paramIndex}`;
-            params.push(date_to);
-            paramIndex++;
-        }
-
-        // Get total count
-        const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
-        const countResult = await pool.query(countQuery, params);
-        const total = parseInt(countResult.rows[0].total);
-
-        // Add pagination
-        query += ` ORDER BY gs.started_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(parseInt(limit), offset);
-
-        const result = await pool.query(query, params);
+        
+        const dataParams = [...params, parseInt(limit), offset];
+        const result = await pool.query(dataQuery, dataParams);
 
         res.json({
             success: true,
