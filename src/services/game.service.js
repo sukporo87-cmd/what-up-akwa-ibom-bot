@@ -1,7 +1,7 @@
 // ============================================
 // FILE: src/services/game.service.js
 // COMPLETE FILE - READY TO PASTE AND REPLACE
-// CHANGES: Added platform tracking to game creation
+// CHANGES: Added platform tracking and audit logging
 // ============================================
 
 const pool = require('../config/database');
@@ -9,6 +9,7 @@ const redis = require('../config/redis');
 const MessagingService = require('./messaging.service');
 const QuestionService = require('./question.service');
 const PaymentService = require('./payment.service');
+const auditService = require('./audit.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -265,6 +266,9 @@ class GameService {
             const session = result.rows[0];
             await redis.setex(`session:${sessionKey}`, 3600, JSON.stringify(session));
 
+            // 📝 AUDIT: Log game start
+            await auditService.logGameStart(session.id, user.id, gameMode, platform, tournamentId);
+
             logger.info(`🎮 Game started: User ${user.id}, Platform: ${platform}, Mode: ${gameMode}, Type: ${gameType}`);
 
             let gameModeText = '';
@@ -397,6 +401,24 @@ Play as many times as allowed!`;
             this.clearQuestionTimeout(timeoutKey);
             this.clearAllSessionTimeouts(session.session_key);
 
+            // Determine outcome
+            let outcome = 'completed';
+            if (wonGrandPrize) {
+                outcome = 'grand_prize';
+            } else if (finalScore === 0) {
+                outcome = 'wrong_answer';
+            }
+
+            // 📝 AUDIT: Log game end
+            await auditService.logGameEnd(
+                session.id, 
+                user.id, 
+                finalScore, 
+                questionNumber - 1, 
+                outcome,
+                finalScore
+            );
+
             await pool.query(`
                 UPDATE game_sessions
                 SET status = 'completed', completed_at = NOW(), final_score = $1
@@ -490,11 +512,10 @@ Play as many times as allowed!`;
         message += `Potential Score: ₦${score.toLocaleString()}\n\n`;
         message += `⚠️ This was practice mode - no real prizes.\n\n`;
         message += `Ready to play for REAL prizes?\n\n`;
-        message += `1️⃣ Play Classic Mode (Win real money!)\n`;
-        message += `2️⃣ Practice Again\n`;
-        message += `3️⃣ View Leaderboard\n`;
-        message += `4️⃣ Main Menu\n\n`;
-        message += `Or type MENU for all options.`;
+        message += `1️⃣ Play Again\n`;
+        message += `2️⃣ View Leaderboard\n`;
+        message += `3️⃣ Main Menu\n\n`;
+        message += `Type PLAY to start Classic Mode and win real money! 💰`;
         
         await messagingService.sendMessage(user.phone_number, message);
     }
@@ -510,7 +531,7 @@ Play as many times as allowed!`;
         message += `1️⃣ Play Again\n`;
         message += `2️⃣ View Leaderboard\n`;
         message += `3️⃣ Claim Prize\n`;
-        message += `4️⃣ Print your victory card`;
+        message += `4️⃣ Share Victory Card`;
         
         await messagingService.sendMessage(user.phone_number, message);
     }
@@ -557,6 +578,9 @@ Play as many times as allowed!`;
             
             session.current_question_id = question.id;
             await this.updateSession(session);
+            
+            // 📝 AUDIT: Log question asked
+            await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount);
             
             let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
             if (isSafe) message += ' (SAFE) 🔒';
@@ -638,6 +662,17 @@ Play as many times as allowed!`;
             const isCorrect = answer === question.correct_answer;
             const prizeAmount = PRIZE_LADDER[questionNumber];
             
+            // 📝 AUDIT: Log answer given
+            await auditService.logAnswer(
+                session.id, 
+                user.id, 
+                questionNumber, 
+                answer, 
+                question.correct_answer, 
+                isCorrect, 
+                isCorrect ? prizeAmount : session.current_score
+            );
+            
             if (isCorrect) {
                 session.current_score = prizeAmount;
                 session.current_question = questionNumber + 1;
@@ -705,18 +740,20 @@ Play as many times as allowed!`;
         }
         
         message += `Well played, ${user.full_name}! 👏\n\n`;
-        message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-        if (guaranteedAmount > 0) message += `3️⃣ Claim Prize`;
+        message += `1️⃣ Play Again\n`;
+        message += `2️⃣ View Leaderboard\n`;
+        if (guaranteedAmount > 0) {
+            message += `3️⃣ Claim Prize\n`;
+        }
+        message += `\nType MENU for main menu.`;
         
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false);
     }
 
     async handleTimeout(session, user) {
-        await messagingService.sendMessage(
-            user.phone_number,
-            `⏰ TIME'S UP! 😢\n\nYou didn't answer in time.\n\nGame Over!`
-        );
+        // 📝 AUDIT: Log timeout
+        await auditService.logTimeout(session.id, user.id, session.current_question);
         
         let guaranteedAmount = 0;
         for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
@@ -725,6 +762,26 @@ Play as many times as allowed!`;
                 break;
             }
         }
+        
+        let message = `⏰ TIME'S UP! 😢\n\n`;
+        message += `You didn't answer in time.\n\n`;
+        message += `🎮 GAME OVER 🎮\n\n`;
+        
+        if (guaranteedAmount > 0) {
+            message += `You reached a safe checkpoint!\n`;
+            message += `💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`;
+        } else {
+            message += `💰 You won: ₦0\n\n`;
+        }
+        
+        message += `1️⃣ Play Again\n`;
+        message += `2️⃣ View Leaderboard\n`;
+        if (guaranteedAmount > 0) {
+            message += `3️⃣ Claim Prize\n`;
+        }
+        message += `\nType MENU for main menu.`;
+        
+        await messagingService.sendMessage(user.phone_number, message);
         
         session.current_score = guaranteedAmount;
         await this.completeGame(session, user, false);
@@ -761,6 +818,15 @@ Play as many times as allowed!`;
                 const wrongOptions = allOptions.filter(opt => opt !== correctAnswer);
                 const keepWrong = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
                 const remainingOptions = [correctAnswer, keepWrong].sort();
+                
+                // 📝 AUDIT: Log 50:50 lifeline used
+                await auditService.logLifelineUsed(
+                    currentSession.id, 
+                    user.id, 
+                    currentSession.current_question, 
+                    '50:50',
+                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions }
+                );
                 
                 const questionNumber = currentSession.current_question;
                 const prizeAmount = PRIZE_LADDER[questionNumber];
@@ -800,6 +866,15 @@ Play as many times as allowed!`;
                 await pool.query(
                     'UPDATE game_sessions SET lifeline_skip_used = true WHERE id = $1',
                     [currentSession.id]
+                );
+                
+                // 📝 AUDIT: Log Skip lifeline used
+                await auditService.logLifelineUsed(
+                    currentSession.id, 
+                    user.id, 
+                    questionNumber, 
+                    'Skip',
+                    { skipped_question_id: currentSession.current_question_id }
                 );
                 
                 await messagingService.sendMessage(

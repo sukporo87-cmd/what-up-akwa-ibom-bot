@@ -543,13 +543,47 @@
     <div class="header">
         <h1>🎮 What's Up Trivia Admin</h1>
         <div class="header-actions">
-            <a href="/admin" class="card-action">← Back to Admin Panel</a>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <a href="/admin" style="
+                    padding: 10px 16px;
+                    background: rgba(255,255,255,0.1);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    border: 1px solid rgba(255,255,255,0.2);
+                    transition: all 0.3s;
+                " onmouseover="this.style.background='rgba(255,255,255,0.2)';" 
+                   onmouseout="this.style.background='rgba(255,255,255,0.1)';">
+                    🏠 Main Admin
+                </a>
+                <a href="/admin/audit" style="
+                    padding: 10px 16px;
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.3s;
+                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" 
+                   onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+                    📝 Audit Trail
+                </a>
+            </div>
             <div class="platform-toggle">
                 <button class="active" onclick="filterPlatform('all')">All Platforms</button>
                 <button onclick="filterPlatform('whatsapp')">📱 WhatsApp</button>
                 <button onclick="filterPlatform('telegram')">💬 Telegram</button>
             </div>
-            <button class="card-action" onclick="logout()">Logout</button>
+            <button class="card-action" onclick="logout()">🚪 Logout</button>
         </div>
     </div>
 

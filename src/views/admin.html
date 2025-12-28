@@ -581,19 +581,41 @@
         <div class="admin-name">👤 Admin</div>
         <div class="session-timer" id="sessionTimer">Session active</div>
       </div>
-      <!-- Add this button in your admin.html navigation -->
-<a href="/admin/dashboard" class="dashboard-link" style="
-    padding: 10px 20px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    text-decoration: none;
-    border-radius: 8px;
-    font-weight: 600;
-    display: inline-block;
-    margin: 10px;
-">
-    📊 View Analytics Dashboard
-</a>
+      <!-- Navigation Links -->
+      <div class="nav-links" style="display: flex; gap: 10px; align-items: center;">
+        <a href="/admin/dashboard" class="nav-link" style="
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)';" 
+           onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            📊 Analytics
+        </a>
+        <a href="/admin/audit" class="nav-link" style="
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.4)';" 
+           onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            📝 Audit Trail
+        </a>
+      </div>
       <button class="logout-btn" onclick="logout()">
         <span>🚪</span>
         <span>Logout</span>

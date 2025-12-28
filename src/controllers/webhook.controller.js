@@ -435,20 +435,18 @@ Type the code, or type SKIP to continue:`
     if (isPaymentEnabled) {
       const gamesRemaining = referrerId ? 1 : 0;
       welcomeMsg += `💎 Games Remaining: ${gamesRemaining}\n\n`;
-      welcomeMsg += `Ready to play? Reply:\n\n`;
-
-      if (gamesRemaining > 0) {
-        welcomeMsg += `1️⃣ Play Now\n`;
-        welcomeMsg += `2️⃣ How to Play\n`;
-        welcomeMsg += `3️⃣ Leaderboard\n`;
-        welcomeMsg += `4️⃣ Buy Games\n`;
-        welcomeMsg += `5️⃣ My Stats`;
-      } else {
-        welcomeMsg += `1️⃣ Buy Games\n`;
-        welcomeMsg += `2️⃣ How to Play\n`;
-        welcomeMsg += `3️⃣ Leaderboard\n`;
-        welcomeMsg += `4️⃣ My Stats`;
+      
+      if (gamesRemaining === 0) {
+        welcomeMsg += `⚠️ You need games to play Classic Mode.\n`;
+        welcomeMsg += `Try Practice Mode for FREE or buy games!\n\n`;
       }
+      
+      welcomeMsg += `Ready to play? Reply:\n\n`;
+      welcomeMsg += `1️⃣ Play Now\n`;
+      welcomeMsg += `2️⃣ How to Play\n`;
+      welcomeMsg += `3️⃣ Leaderboard\n`;
+      welcomeMsg += `4️⃣ Buy Games\n`;
+      welcomeMsg += `5️⃣ My Stats`;
     } else {
       welcomeMsg += `Ready to play? Reply:\n\n`;
       welcomeMsg += `1️⃣ Play Now\n`;
@@ -806,11 +804,12 @@ Type the code, or type SKIP to continue:`
 // ============================================
 
   // ============================================
-  // MAIN MENU INPUT HANDLER (ENHANCED WITH NEW COMMANDS)
+  // MAIN MENU INPUT HANDLER (FIXED VERSION)
   // ============================================
 
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
+    const isPaymentEnabled = paymentService.isEnabled();
 
     // PROFILE command
     if (input === 'PROFILE' || input.includes('PROFILE')) {
@@ -836,19 +835,13 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // STATS command
-    if (input === '5' || input === '4' || input.includes('STATS') || input.includes('STATISTICS')) {
-      await this.handleStatsRequest(user);
-      return;
-    }
-
     // TOURNAMENTS command
     if (input.includes('TOURNAMENT')) {
       await this.showTournamentCategories(user);
       return;
     }
 
-    // WIN SHARING
+    // WIN SHARING (YES/Y response)
     const winSharePending = await redis.get(`win_share_pending:${user.id}`);
     if (winSharePending && (input === 'YES' || input === 'Y')) {
       await this.handleWinShare(user, JSON.parse(winSharePending));
@@ -856,13 +849,19 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // BUY command
+    // BUY command (text-based) - works regardless of payment mode
     if (input.includes('BUY')) {
       await this.handleBuyGames(user);
       return;
     }
 
-    // 🔧 NEW: Check for explicit post-game state first
+    // STATS command (text-based)
+    if (input.includes('STATS') || input.includes('STATISTICS')) {
+      await this.handleStatsRequest(user);
+      return;
+    }
+
+    // Check for explicit post-game state first
     const postGameState = await redis.get(`post_game:${user.id}`);
     const isInPostGameWindow = postGameState !== null;
     
@@ -897,19 +896,18 @@ Type the code, or type SKIP to continue:`
       let welcomeMessage = `Hello again @${user.username}! 👋\n\n`;
       welcomeMessage += `Welcome back to What's Up Trivia Game! 🎉\n\n`;
 
-      if (paymentService.isEnabled()) {
+      if (isPaymentEnabled) {
         const gamesRemaining = await paymentService.getGamesRemaining(user.id);
         welcomeMessage += `💎 Classic Mode Tokens: ${gamesRemaining}\n\n`;
       }
 
       welcomeMessage += `_Proudly brought to you by SummerIsland Systems._\n\n`;
-      welcomeMessage += `🎄 Merry Christmas! 🎄\n\n`;
       welcomeMessage += `What would you like to do?\n\n`;
       welcomeMessage += `1️⃣ Play Now\n`;
       welcomeMessage += `2️⃣ How to Play\n`;
       welcomeMessage += `3️⃣ View Leaderboard\n`;
 
-      if (paymentService.isEnabled()) {
+      if (isPaymentEnabled) {
         welcomeMessage += `4️⃣ Buy Games\n`;
         welcomeMessage += `5️⃣ My Stats`;
       } else {
@@ -921,10 +919,16 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // 🔧 UPDATED: Post-game menu with explicit state check
+    // ============================================
+    // POST-GAME MENU HANDLING
+    // Menu shown after game completion:
+    // 1️⃣ Play Again
+    // 2️⃣ View Leaderboard  
+    // 3️⃣ Claim Prize
+    // 4️⃣ Share Victory Card (if available)
+    // ============================================
     if (isInPostGameWindow) {
-      if (input === '1' || input.includes('PLAY')) {
-        // Clear post-game state when user chooses to play again
+      if (input === '1' || input.includes('PLAY') || input.includes('AGAIN')) {
         await redis.del(`post_game:${user.id}`);
         await this.showGameModeMenu(user);
         return;
@@ -932,17 +936,22 @@ Type the code, or type SKIP to continue:`
         await this.sendLeaderboardMenu(user.phone_number);
         return;
       } else if (input === '3' || input.includes('CLAIM')) {
-        // Clear post-game state when claiming
         await redis.del(`post_game:${user.id}`);
         await this.handleClaimPrize(user);
         return;
-      } else if (input === '4' && winSharePending) {
-        await this.handleWinShare(user, JSON.parse(winSharePending));
-        await redis.del(`win_share_pending:${user.id}`);
-        await redis.del(`post_game:${user.id}`);
+      } else if (input === '4' || input.includes('SHARE') || input.includes('VICTORY') || input.includes('CARD')) {
+        if (winSharePending) {
+          await this.handleWinShare(user, JSON.parse(winSharePending));
+          await redis.del(`win_share_pending:${user.id}`);
+          await redis.del(`post_game:${user.id}`);
+        } else {
+          await messagingService.sendMessage(
+            user.phone_number,
+            '❌ Victory card not available. It may have expired.\n\nType MENU for main menu.'
+          );
+        }
         return;
       } else if (input === 'MENU' || input.includes('MAIN')) {
-        // User explicitly wants main menu - clear post-game state
         await redis.del(`post_game:${user.id}`);
         await this.sendMainMenu(user.phone_number);
         return;
@@ -950,13 +959,33 @@ Type the code, or type SKIP to continue:`
       // If input doesn't match post-game options, fall through to regular menu
     }
 
-    // Regular menu handling (only if NOT in post-game)
+    // ============================================
+    // REGULAR MAIN MENU HANDLING
+    // Payment ENABLED:
+    //   1️⃣ Play Now | 2️⃣ How to Play | 3️⃣ Leaderboard | 4️⃣ Buy Games | 5️⃣ Stats
+    // Payment DISABLED:
+    //   1️⃣ Play Now | 2️⃣ How to Play | 3️⃣ Leaderboard | 4️⃣ Stats
+    // ============================================
     if (input === '1' || input.includes('PLAY')) {
       await this.showGameModeMenu(user);
     } else if (input === '2' || input.includes('HOW')) {
       await this.sendHowToPlay(user.phone_number);
     } else if (input === '3' || input.includes('LEADERBOARD')) {
       await this.sendLeaderboardMenu(user.phone_number);
+    } else if (input === '4') {
+      // Option 4 depends on payment mode
+      if (isPaymentEnabled) {
+        await this.handleBuyGames(user);
+      } else {
+        await this.handleStatsRequest(user);
+      }
+    } else if (input === '5') {
+      // Option 5 is Stats (only when payment is enabled)
+      if (isPaymentEnabled) {
+        await this.handleStatsRequest(user);
+      } else {
+        await this.sendMainMenu(user.phone_number);
+      }
     } else if (input === 'RESET' || input === 'RESTART') {
       await this.handleReset(user);
     } else {
@@ -1068,6 +1097,7 @@ Type the code, or type SKIP to continue:`
     try {
       const stats = await userService.getUserStats(user.id);
       const referralStats = await referralService.getReferralStats(user.id);
+      const isPaymentEnabled = paymentService.isEnabled();
 
       if (!stats) {
         await messagingService.sendMessage(
@@ -1102,7 +1132,7 @@ Type the code, or type SKIP to continue:`
       message += `Total Referrals: ${referralStats.totalReferrals}\n`;
       message += `Free Games Earned: ${referralStats.pendingRewards}\n\n`;
 
-      if (paymentService.isEnabled()) {
+      if (isPaymentEnabled) {
         message += `💎 GAMES\n`;
         message += `━━━━━━━━━━━━━━━━\n`;
         message += `Games Remaining: ${stats.gamesRemaining}\n`;
@@ -1669,20 +1699,26 @@ Type the code, or type SKIP to continue:`
 
       await userService.clearUserState(user.phone_number);
       await redis.del(`game_ready:${user.id}`);
+      await redis.del(`post_game:${user.id}`);
+      await redis.del(`win_share_pending:${user.id}`);
 
-      await messagingService.sendMessage(
-        user.phone_number,
-        `🔄 Game Reset! 🔄
+      const isPaymentEnabled = paymentService.isEnabled();
 
-All active games have been cancelled.
+      let message = `🔄 Game Reset! 🔄\n\n`;
+      message += `All active games have been cancelled.\n\n`;
+      message += `Ready to start fresh?\n\n`;
+      message += `1️⃣ Play Now\n`;
+      message += `2️⃣ How to Play\n`;
+      message += `3️⃣ Leaderboard\n`;
 
-Ready to start fresh?
+      if (isPaymentEnabled) {
+        message += `4️⃣ Buy Games\n`;
+        message += `5️⃣ My Stats`;
+      } else {
+        message += `4️⃣ My Stats`;
+      }
 
-1️⃣ Play Now
-2️⃣ How to Play
-3️⃣ Leaderboard
-4️⃣ My Stats`
-      );
+      await messagingService.sendMessage(user.phone_number, message);
 
     } catch (error) {
       logger.error('Error resetting game:', error);

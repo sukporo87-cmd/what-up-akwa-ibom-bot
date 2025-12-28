@@ -57,6 +57,11 @@ router.get('/dashboard', (req, res) => {
   res.sendFile('admin-dashboard.html', { root: './src/views' });
 });
 
+// NEW: Audit trail dashboard
+router.get('/audit', (req, res) => {
+  res.sendFile('admin-audit.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -2293,6 +2298,674 @@ router.post('/api/leaderboard/refresh', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to refresh leaderboard cache' });
     }
 });
+
+// ============================================
+// GAME AUDIT TRAIL ENDPOINTS
+// ============================================
+
+const auditService = require('../services/audit.service');
+
+// Get audit statistics overview
+router.get('/api/audit/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const stats = await auditService.getAuditStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        logger.error('Error getting audit stats:', error);
+        res.status(500).json({ error: 'Failed to get audit statistics' });
+    }
+});
+
+// Search game sessions for audit
+router.get('/api/audit/sessions', authenticateAdmin, async (req, res) => {
+    try {
+        const { 
+            page = 1, 
+            limit = 20, 
+            username, 
+            phone, 
+            user_id,
+            game_mode,
+            platform,
+            status,
+            min_score,
+            max_score,
+            date_from,
+            date_to 
+        } = req.query;
+
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        let query = `
+            SELECT 
+                gs.id as session_id,
+                gs.user_id,
+                u.username,
+                u.full_name,
+                u.phone_number,
+                gs.game_mode,
+                gs.platform,
+                gs.final_score,
+                gs.status,
+                gs.started_at,
+                gs.completed_at,
+                gs.current_question as questions_reached,
+                gs.lifeline_5050_used,
+                gs.lifeline_skip_used,
+                gs.is_tournament_game,
+                gs.tournament_id,
+                (SELECT COUNT(*) FROM game_audit_logs WHERE session_id = gs.id) as audit_events_count
+            FROM game_sessions gs
+            JOIN users u ON gs.user_id = u.id
+            WHERE gs.started_at > NOW() - INTERVAL '7 days'
+        `;
+
+        const params = [];
+        let paramIndex = 1;
+
+        if (username) {
+            query += ` AND LOWER(u.username) LIKE LOWER($${paramIndex})`;
+            params.push(`%${username}%`);
+            paramIndex++;
+        }
+
+        if (phone) {
+            query += ` AND u.phone_number LIKE $${paramIndex}`;
+            params.push(`%${phone}%`);
+            paramIndex++;
+        }
+
+        if (user_id) {
+            query += ` AND gs.user_id = $${paramIndex}`;
+            params.push(parseInt(user_id));
+            paramIndex++;
+        }
+
+        if (game_mode) {
+            query += ` AND gs.game_mode = $${paramIndex}`;
+            params.push(game_mode);
+            paramIndex++;
+        }
+
+        if (platform) {
+            query += ` AND gs.platform = $${paramIndex}`;
+            params.push(platform);
+            paramIndex++;
+        }
+
+        if (status) {
+            query += ` AND gs.status = $${paramIndex}`;
+            params.push(status);
+            paramIndex++;
+        }
+
+        if (min_score) {
+            query += ` AND gs.final_score >= $${paramIndex}`;
+            params.push(parseInt(min_score));
+            paramIndex++;
+        }
+
+        if (max_score) {
+            query += ` AND gs.final_score <= $${paramIndex}`;
+            params.push(parseInt(max_score));
+            paramIndex++;
+        }
+
+        if (date_from) {
+            query += ` AND gs.started_at >= $${paramIndex}`;
+            params.push(date_from);
+            paramIndex++;
+        }
+
+        if (date_to) {
+            query += ` AND gs.started_at <= $${paramIndex}`;
+            params.push(date_to);
+            paramIndex++;
+        }
+
+        // Get total count
+        const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0].total);
+
+        // Add pagination
+        query += ` ORDER BY gs.started_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(parseInt(limit), offset);
+
+        const result = await pool.query(query, params);
+
+        res.json({
+            success: true,
+            sessions: result.rows,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        logger.error('Error searching audit sessions:', error);
+        res.status(500).json({ error: 'Failed to search sessions' });
+    }
+});
+
+// Get detailed audit trail for a specific session
+router.get('/api/audit/session/:sessionId', authenticateAdmin, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const report = await auditService.generateSessionReport(parseInt(sessionId));
+
+        if (!report) {
+            return res.status(404).json({ error: 'Session not found or no audit data available' });
+        }
+
+        res.json({ success: true, report });
+    } catch (error) {
+        logger.error('Error getting session audit:', error);
+        res.status(500).json({ error: 'Failed to get session audit trail' });
+    }
+});
+
+// Get raw audit events for a session (for detailed inspection)
+router.get('/api/audit/session/:sessionId/events', authenticateAdmin, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const events = await auditService.getSessionAuditTrail(parseInt(sessionId));
+
+        res.json({ success: true, events });
+    } catch (error) {
+        logger.error('Error getting audit events:', error);
+        res.status(500).json({ error: 'Failed to get audit events' });
+    }
+});
+
+// Get audit trail for a specific user
+router.get('/api/audit/user/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { date_from, date_to } = req.query;
+
+        const events = await auditService.getUserAuditTrail(
+            parseInt(userId),
+            date_from || null,
+            date_to || null
+        );
+
+        // Get user info
+        const userResult = await pool.query(
+            'SELECT id, username, full_name, phone_number FROM users WHERE id = $1',
+            [parseInt(userId)]
+        );
+
+        res.json({
+            success: true,
+            user: userResult.rows[0] || null,
+            events,
+            eventCount: events.length
+        });
+    } catch (error) {
+        logger.error('Error getting user audit:', error);
+        res.status(500).json({ error: 'Failed to get user audit trail' });
+    }
+});
+
+// Generate printable audit report (HTML format)
+router.get('/api/audit/session/:sessionId/print', authenticateAdmin, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const report = await auditService.generateSessionReport(parseInt(sessionId));
+
+        if (!report) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Generate HTML report
+        const html = generatePrintableAuditReport(report);
+        
+        res.setHeader('Content-Type', 'text/html');
+        res.send(html);
+    } catch (error) {
+        logger.error('Error generating printable report:', error);
+        res.status(500).json({ error: 'Failed to generate printable report' });
+    }
+});
+
+// Export audit report as JSON (for download)
+router.get('/api/audit/session/:sessionId/export', authenticateAdmin, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const report = await auditService.generateSessionReport(parseInt(sessionId));
+
+        if (!report) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=audit_session_${sessionId}.json`);
+        res.send(JSON.stringify(report, null, 2));
+    } catch (error) {
+        logger.error('Error exporting audit report:', error);
+        res.status(500).json({ error: 'Failed to export audit report' });
+    }
+});
+
+// Find suspicious sessions (fast correct answers, possible cheating)
+router.get('/api/audit/suspicious', authenticateAdmin, async (req, res) => {
+    try {
+        const { min_correct = 5, max_response_time_ms = 2000 } = req.query;
+
+        const result = await pool.query(`
+            SELECT 
+                gal.session_id,
+                gs.user_id,
+                u.username,
+                u.phone_number,
+                gs.game_mode,
+                gs.platform,
+                gs.final_score,
+                gs.started_at,
+                COUNT(*) as fast_correct_answers,
+                AVG((gal.event_data->>'response_time_ms')::int) as avg_response_time_ms,
+                MIN((gal.event_data->>'response_time_ms')::int) as min_response_time_ms
+            FROM game_audit_logs gal
+            JOIN game_sessions gs ON gal.session_id = gs.id
+            JOIN users u ON gs.user_id = u.id
+            WHERE gal.event_type = 'ANSWER_GIVEN'
+            AND (gal.event_data->>'is_correct')::boolean = true
+            AND (gal.event_data->>'response_time_ms')::int < $1
+            AND gal.created_at > NOW() - INTERVAL '7 days'
+            GROUP BY gal.session_id, gs.user_id, u.username, u.phone_number, 
+                     gs.game_mode, gs.platform, gs.final_score, gs.started_at
+            HAVING COUNT(*) >= $2
+            ORDER BY COUNT(*) DESC, AVG((gal.event_data->>'response_time_ms')::int) ASC
+            LIMIT 50
+        `, [parseInt(max_response_time_ms), parseInt(min_correct)]);
+
+        res.json({
+            success: true,
+            suspicious_sessions: result.rows,
+            criteria: {
+                max_response_time_ms: parseInt(max_response_time_ms),
+                min_fast_correct_answers: parseInt(min_correct)
+            }
+        });
+    } catch (error) {
+        logger.error('Error finding suspicious sessions:', error);
+        res.status(500).json({ error: 'Failed to find suspicious sessions' });
+    }
+});
+
+// Manual audit cleanup (admin triggered)
+router.post('/api/audit/cleanup', authenticateAdmin, async (req, res) => {
+    try {
+        const { retention_days = 7 } = req.body;
+
+        // Validate retention days (minimum 1, maximum 30)
+        const days = Math.max(1, Math.min(30, parseInt(retention_days)));
+
+        const result = await auditService.cleanupOldAuditLogs(days);
+
+        res.json({
+            success: true,
+            message: `Cleaned up audit logs older than ${days} days`,
+            deleted: result.deleted
+        });
+    } catch (error) {
+        logger.error('Error cleaning up audit logs:', error);
+        res.status(500).json({ error: 'Failed to cleanup audit logs' });
+    }
+});
+
+// ============================================
+// HELPER FUNCTION: Generate Printable HTML Report
+// ============================================
+
+function generatePrintableAuditReport(report) {
+    const formatDate = (date) => new Date(date).toLocaleString();
+    const formatMs = (ms) => ms ? `${(ms / 1000).toFixed(2)}s` : 'N/A';
+
+    let questionsHtml = '';
+    let questionNum = 0;
+    
+    for (const event of report.timeline) {
+        if (event.event === 'QUESTION_ASKED') {
+            questionNum++;
+            const q = event.data;
+            questionsHtml += `
+                <div class="question-block">
+                    <h4>Question ${q.question_number} - ₦${q.prize_at_stake?.toLocaleString() || 0}</h4>
+                    <p class="question-text">${q.question_text}</p>
+                    <div class="options">
+                        <div class="option ${q.correct_answer === 'A' ? 'correct' : ''}">A) ${q.option_a}</div>
+                        <div class="option ${q.correct_answer === 'B' ? 'correct' : ''}">B) ${q.option_b}</div>
+                        <div class="option ${q.correct_answer === 'C' ? 'correct' : ''}">C) ${q.option_c}</div>
+                        <div class="option ${q.correct_answer === 'D' ? 'correct' : ''}">D) ${q.option_d}</div>
+                    </div>
+                    <p class="meta">Correct Answer: <strong>${q.correct_answer}</strong> | Difficulty: ${q.difficulty || 'N/A'} | Category: ${q.category || 'General'}</p>
+                </div>
+            `;
+        } else if (event.event === 'ANSWER_GIVEN') {
+            const a = event.data;
+            questionsHtml += `
+                <div class="answer-block ${a.is_correct ? 'correct-answer' : 'wrong-answer'}">
+                    <p>
+                        <strong>User Answer:</strong> ${a.user_answer} 
+                        ${a.is_correct ? '✅ CORRECT' : '❌ WRONG'} 
+                        | <strong>Response Time:</strong> ${formatMs(a.response_time_ms)}
+                    </p>
+                </div>
+            `;
+        } else if (event.event === 'LIFELINE_USED') {
+            const l = event.data;
+            questionsHtml += `
+                <div class="lifeline-block">
+                    <p>💎 <strong>Lifeline Used:</strong> ${l.lifeline_type} on Question ${l.question_number}</p>
+                </div>
+            `;
+        } else if (event.event === 'TIMEOUT') {
+            questionsHtml += `
+                <div class="timeout-block">
+                    <p>⏰ <strong>TIMEOUT</strong> on Question ${event.data.question_number}</p>
+                </div>
+            `;
+        }
+    }
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Report - Session #${report.session_id}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            line-height: 1.6; 
+            padding: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+            color: #333;
+        }
+        .header { 
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .header h1 { margin-bottom: 10px; }
+        .header .session-id { 
+            font-size: 14px; 
+            opacity: 0.8;
+            background: rgba(255,255,255,0.1);
+            padding: 5px 10px;
+            border-radius: 5px;
+            display: inline-block;
+        }
+        .section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007bff;
+        }
+        .section h3 {
+            color: #007bff;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .info-item {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .info-item label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .info-item .value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+        .question-block {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .question-block h4 {
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+        .question-text {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .options {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .option {
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .option.correct {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .meta {
+            font-size: 12px;
+            color: #666;
+        }
+        .answer-block {
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin: -10px 0 15px 0;
+        }
+        .correct-answer {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+        }
+        .wrong-answer {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+        }
+        .lifeline-block {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .timeout-block {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        .summary-item {
+            text-align: center;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .summary-item .number {
+            font-size: 28px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .summary-item .label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .print-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .print-button:hover {
+            background: #0056b3;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 12px;
+            border-top: 1px solid #dee2e6;
+            margin-top: 30px;
+        }
+        @media print {
+            .print-button { display: none; }
+            body { padding: 0; }
+            .header { 
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button class="print-button" onclick="window.print()">🖨️ Print Report</button>
+
+    <div class="header">
+        <h1>🎮 Game Session Audit Report</h1>
+        <span class="session-id">Session ID: #${report.session_id}</span>
+    </div>
+
+    <div class="section">
+        <h3>👤 Player Information</h3>
+        <div class="info-grid">
+            <div class="info-item">
+                <label>Username</label>
+                <div class="value">@${report.user.username}</div>
+            </div>
+            <div class="info-item">
+                <label>Full Name</label>
+                <div class="value">${report.user.full_name}</div>
+            </div>
+            <div class="info-item">
+                <label>Phone Number</label>
+                <div class="value">${report.user.phone}</div>
+            </div>
+            <div class="info-item">
+                <label>User ID</label>
+                <div class="value">#${report.user.id}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>🎯 Game Information</h3>
+        <div class="info-grid">
+            <div class="info-item">
+                <label>Game Mode</label>
+                <div class="value">${report.game_info.mode?.toUpperCase() || 'N/A'}</div>
+            </div>
+            <div class="info-item">
+                <label>Final Score</label>
+                <div class="value">₦${report.game_info.final_score?.toLocaleString() || 0}</div>
+            </div>
+            <div class="info-item">
+                <label>Status</label>
+                <div class="value">${report.game_info.status?.toUpperCase() || 'N/A'}</div>
+            </div>
+            <div class="info-item">
+                <label>Started At</label>
+                <div class="value">${formatDate(report.game_info.started)}</div>
+            </div>
+            <div class="info-item">
+                <label>Completed At</label>
+                <div class="value">${report.game_info.completed ? formatDate(report.game_info.completed) : 'N/A'}</div>
+            </div>
+            <div class="info-item">
+                <label>Duration</label>
+                <div class="value">${report.game_info.started && report.game_info.completed ? 
+                    Math.round((new Date(report.game_info.completed) - new Date(report.game_info.started)) / 1000) + 's' : 'N/A'}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>📊 Session Summary</h3>
+        <div class="summary-grid">
+            <div class="summary-item">
+                <div class="number">${report.summary.total_questions}</div>
+                <div class="label">Questions Asked</div>
+            </div>
+            <div class="summary-item">
+                <div class="number" style="color: #28a745;">${report.summary.correct_answers}</div>
+                <div class="label">Correct</div>
+            </div>
+            <div class="summary-item">
+                <div class="number" style="color: #dc3545;">${report.summary.wrong_answers}</div>
+                <div class="label">Wrong</div>
+            </div>
+            <div class="summary-item">
+                <div class="number">${formatMs(report.summary.average_response_time_ms)}</div>
+                <div class="label">Avg Response</div>
+            </div>
+        </div>
+        ${report.summary.lifelines_used.length > 0 ? `
+        <p style="margin-top: 15px; text-align: center;">
+            <strong>Lifelines Used:</strong> ${report.summary.lifelines_used.join(', ')}
+        </p>
+        ` : ''}
+        ${report.summary.timeouts > 0 ? `
+        <p style="margin-top: 10px; text-align: center; color: #dc3545;">
+            <strong>Timeouts:</strong> ${report.summary.timeouts}
+        </p>
+        ` : ''}
+    </div>
+
+    <div class="section">
+        <h3>📝 Question-by-Question Timeline</h3>
+        ${questionsHtml}
+    </div>
+
+    <div class="footer">
+        <p>What's Up Trivia - Game Audit Report</p>
+        <p>Generated on ${new Date().toLocaleString()}</p>
+        <p>This report is for internal use and dispute resolution purposes.</p>
+    </div>
+</body>
+</html>
+    `;
+}
 
 
 // ============================================

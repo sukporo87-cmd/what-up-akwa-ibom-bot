@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Trail - What's Up Trivia Admin</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-links a {
+            color: #fff;
+            text-decoration: none;
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .nav-links a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .stat-card .number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: rgba(255,255,255,0.7);
+            text-transform: uppercase;
+        }
+
+        .search-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .search-section h3 {
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+
+        .search-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            color: rgba(255,255,255,0.7);
+            text-transform: uppercase;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 10px 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+
+        .form-group select option {
+            background: #1a1a2e;
+            color: #fff;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .results-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .results-header h3 {
+            color: #4CAF50;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        th {
+            background: rgba(255,255,255,0.05);
+            color: rgba(255,255,255,0.7);
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background: rgba(255,255,255,0.03);
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-completed {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4CAF50;
+        }
+
+        .status-active {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196F3;
+        }
+
+        .status-cancelled {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .platform-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .platform-whatsapp {
+            background: rgba(37, 211, 102, 0.2);
+            color: #25D366;
+        }
+
+        .platform-telegram {
+            background: rgba(0, 136, 204, 0.2);
+            color: #0088cc;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .action-btn {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .action-btn.view {
+            background: rgba(33, 150, 243, 0.2);
+            color: #2196F3;
+        }
+
+        .action-btn.print {
+            background: rgba(156, 39, 176, 0.2);
+            color: #9C27B0;
+        }
+
+        .action-btn.export {
+            background: rgba(255, 152, 0, 0.2);
+            color: #FF9800;
+        }
+
+        .action-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: transparent;
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            color: rgba(255,255,255,0.7);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .modal.active {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 40px 20px;
+        }
+
+        .modal-content {
+            background: #1a1a2e;
+            border-radius: 12px;
+            max-width: 900px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .modal-header h2 {
+            color: #4CAF50;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .timeline-event {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .timeline-event.answer-correct {
+            border-left-color: #4CAF50;
+        }
+
+        .timeline-event.answer-wrong {
+            border-left-color: #f44336;
+        }
+
+        .timeline-event.lifeline {
+            border-left-color: #FF9800;
+        }
+
+        .timeline-event.timeout {
+            border-left-color: #f44336;
+        }
+
+        .timeline-event .event-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .timeline-event .event-type {
+            font-weight: 600;
+            color: #4CAF50;
+        }
+
+        .timeline-event .event-time {
+            font-size: 12px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .suspicious-alert {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .suspicious-alert h4 {
+            color: #f44336;
+            margin-bottom: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255,255,255,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 Audit Trail</h1>
+            <div class="nav-links" style="display: flex; gap: 10px; align-items: center;">
+                <a href="/admin" style="
+                    padding: 10px 16px;
+                    background: rgba(255,255,255,0.1);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    border: 1px solid rgba(255,255,255,0.2);
+                    transition: all 0.3s;
+                " onmouseover="this.style.background='rgba(255,255,255,0.2)';" 
+                   onmouseout="this.style.background='rgba(255,255,255,0.1)';">
+                    🏠 Main Admin
+                </a>
+                <a href="/admin/dashboard" style="
+                    padding: 10px 16px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.3s;
+                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)';" 
+                   onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+                    📊 Analytics
+                </a>
+                <button onclick="showSuspicious()" style="
+                    padding: 10px 16px;
+                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.3s;
+                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(245,158,11,0.4)';" 
+                   onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+                    ⚠️ Suspicious
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="number" id="totalLogs">-</div>
+                <div class="label">Total Audit Logs</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="totalSessions">-</div>
+                <div class="label">Sessions Tracked</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="uniqueUsers">-</div>
+                <div class="label">Unique Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="gamesStarted">-</div>
+                <div class="label">Games Started</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="answersLogged">-</div>
+                <div class="label">Answers Logged</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="timeoutsLogged">-</div>
+                <div class="label">Timeouts</div>
+            </div>
+        </div>
+
+        <!-- Search Section -->
+        <div class="search-section">
+            <h3>🔍 Search Game Sessions</h3>
+            <div class="search-grid">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="searchUsername" placeholder="Search by username...">
+                </div>
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="text" id="searchPhone" placeholder="Search by phone...">
+                </div>
+                <div class="form-group">
+                    <label>User ID</label>
+                    <input type="number" id="searchUserId" placeholder="User ID">
+                </div>
+                <div class="form-group">
+                    <label>Game Mode</label>
+                    <select id="searchGameMode">
+                        <option value="">All Modes</option>
+                        <option value="practice">Practice</option>
+                        <option value="classic">Classic</option>
+                        <option value="tournament">Tournament</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Platform</label>
+                    <select id="searchPlatform">
+                        <option value="">All Platforms</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="telegram">Telegram</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="searchStatus">
+                        <option value="">All Status</option>
+                        <option value="completed">Completed</option>
+                        <option value="active">Active</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Min Score (₦)</label>
+                    <input type="number" id="searchMinScore" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label>Max Score (₦)</label>
+                    <input type="number" id="searchMaxScore" placeholder="50000">
+                </div>
+                <div class="form-group">
+                    <label>Date From</label>
+                    <input type="datetime-local" id="searchDateFrom">
+                </div>
+                <div class="form-group">
+                    <label>Date To</label>
+                    <input type="datetime-local" id="searchDateTo">
+                </div>
+            </div>
+            <div class="button-row">
+                <button class="btn btn-primary" onclick="searchSessions()">🔍 Search</button>
+                <button class="btn btn-secondary" onclick="clearSearch()">🔄 Clear</button>
+                <button class="btn btn-danger" onclick="showCleanupModal()">🗑️ Cleanup Old Logs</button>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section">
+            <div class="results-header">
+                <h3>📋 Game Sessions</h3>
+                <span id="resultCount"></span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Session ID</th>
+                            <th>User</th>
+                            <th>Mode</th>
+                            <th>Platform</th>
+                            <th>Score</th>
+                            <th>Questions</th>
+                            <th>Status</th>
+                            <th>Started</th>
+                            <th>Events</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessionsTable">
+                        <tr>
+                            <td colspan="10" class="loading">Loading sessions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <!-- Audit Detail Modal -->
+    <div class="modal" id="auditModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔍 Session Audit Trail</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <div class="loading">Loading audit data...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Suspicious Sessions Modal -->
+    <div class="modal" id="suspiciousModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚠️ Suspicious Sessions</h2>
+                <button class="modal-close" onclick="closeSuspiciousModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="suspiciousBody">
+                <div class="loading">Analyzing sessions...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin/api';
+        let sessionToken = localStorage.getItem('adminSessionToken');
+        let currentPage = 1;
+        let totalPages = 1;
+
+        // Check authentication
+        if (!sessionToken) {
+            window.location.href = '/admin';
+        }
+
+        // API helper
+        async function apiCall(endpoint, options = {}) {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                ...options,
+                headers: {
+                    'Authorization': `Bearer ${sessionToken}`,
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                }
+            });
+
+            if (response.status === 401) {
+                localStorage.removeItem('adminSessionToken');
+                window.location.href = '/admin';
+                return;
+            }
+
+            return response.json();
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const data = await apiCall('/audit/stats');
+                if (data.success) {
+                    document.getElementById('totalLogs').textContent = data.stats.total_logs?.toLocaleString() || '0';
+                    document.getElementById('totalSessions').textContent = data.stats.total_sessions?.toLocaleString() || '0';
+                    document.getElementById('uniqueUsers').textContent = data.stats.unique_users?.toLocaleString() || '0';
+                    document.getElementById('gamesStarted').textContent = data.stats.games_started?.toLocaleString() || '0';
+                    document.getElementById('answersLogged').textContent = data.stats.answers_logged?.toLocaleString() || '0';
+                    document.getElementById('timeoutsLogged').textContent = data.stats.timeouts_logged?.toLocaleString() || '0';
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Search sessions
+        async function searchSessions(page = 1) {
+            currentPage = page;
+            const params = new URLSearchParams();
+            params.append('page', page);
+            params.append('limit', 20);
+
+            const username = document.getElementById('searchUsername').value;
+            const phone = document.getElementById('searchPhone').value;
+            const userId = document.getElementById('searchUserId').value;
+            const gameMode = document.getElementById('searchGameMode').value;
+            const platform = document.getElementById('searchPlatform').value;
+            const status = document.getElementById('searchStatus').value;
+            const minScore = document.getElementById('searchMinScore').value;
+            const maxScore = document.getElementById('searchMaxScore').value;
+            const dateFrom = document.getElementById('searchDateFrom').value;
+            const dateTo = document.getElementById('searchDateTo').value;
+
+            if (username) params.append('username', username);
+            if (phone) params.append('phone', phone);
+            if (userId) params.append('user_id', userId);
+            if (gameMode) params.append('game_mode', gameMode);
+            if (platform) params.append('platform', platform);
+            if (status) params.append('status', status);
+            if (minScore) params.append('min_score', minScore);
+            if (maxScore) params.append('max_score', maxScore);
+            if (dateFrom) params.append('date_from', dateFrom);
+            if (dateTo) params.append('date_to', dateTo);
+
+            document.getElementById('sessionsTable').innerHTML = '<tr><td colspan="10" class="loading">Searching...</td></tr>';
+
+            try {
+                const data = await apiCall(`/audit/sessions?${params.toString()}`);
+                
+                if (data.success) {
+                    totalPages = data.pagination.totalPages;
+                    renderSessions(data.sessions);
+                    renderPagination(data.pagination);
+                    document.getElementById('resultCount').textContent = `${data.pagination.total} sessions found`;
+                }
+            } catch (error) {
+                console.error('Error searching sessions:', error);
+                document.getElementById('sessionsTable').innerHTML = '<tr><td colspan="10" class="no-data">Error loading sessions</td></tr>';
+            }
+        }
+
+        // Render sessions table
+        function renderSessions(sessions) {
+            const tbody = document.getElementById('sessionsTable');
+            
+            if (sessions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="no-data">No sessions found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = sessions.map(s => `
+                <tr>
+                    <td>#${s.session_id}</td>
+                    <td>
+                        <strong>@${s.username}</strong><br>
+                        <small>${s.full_name}</small>
+                    </td>
+                    <td>${s.game_mode || 'N/A'}</td>
+                    <td>
+                        <span class="platform-badge platform-${s.platform || 'whatsapp'}">
+                            ${s.platform === 'telegram' ? '📱 Telegram' : '💬 WhatsApp'}
+                        </span>
+                    </td>
+                    <td>₦${(s.final_score || 0).toLocaleString()}</td>
+                    <td>${s.questions_reached || 0}/15</td>
+                    <td>
+                        <span class="status-badge status-${s.status}">
+                            ${s.status}
+                        </span>
+                    </td>
+                    <td>${new Date(s.started_at).toLocaleString()}</td>
+                    <td>${s.audit_events_count || 0}</td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn view" onclick="viewAudit(${s.session_id})" title="View Audit">👁️</button>
+                            <button class="action-btn print" onclick="printAudit(${s.session_id})" title="Print Report">🖨️</button>
+                            <button class="action-btn export" onclick="exportAudit(${s.session_id})" title="Export JSON">📥</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Render pagination
+        function renderPagination(pagination) {
+            const container = document.getElementById('pagination');
+            container.innerHTML = `
+                <button onclick="searchSessions(1)" ${pagination.page === 1 ? 'disabled' : ''}>First</button>
+                <button onclick="searchSessions(${pagination.page - 1})" ${pagination.page === 1 ? 'disabled' : ''}>Prev</button>
+                <span class="page-info">Page ${pagination.page} of ${pagination.totalPages}</span>
+                <button onclick="searchSessions(${pagination.page + 1})" ${pagination.page >= pagination.totalPages ? 'disabled' : ''}>Next</button>
+                <button onclick="searchSessions(${pagination.totalPages})" ${pagination.page >= pagination.totalPages ? 'disabled' : ''}>Last</button>
+            `;
+        }
+
+        // View audit detail
+        async function viewAudit(sessionId) {
+            document.getElementById('auditModal').classList.add('active');
+            document.getElementById('modalBody').innerHTML = '<div class="loading">Loading audit trail...</div>';
+
+            try {
+                const data = await apiCall(`/audit/session/${sessionId}`);
+                
+                if (data.success) {
+                    renderAuditDetail(data.report);
+                } else {
+                    document.getElementById('modalBody').innerHTML = '<div class="no-data">No audit data available</div>';
+                }
+            } catch (error) {
+                console.error('Error loading audit:', error);
+                document.getElementById('modalBody').innerHTML = '<div class="no-data">Error loading audit data</div>';
+            }
+        }
+
+        // Render audit detail
+        function renderAuditDetail(report) {
+            let html = `
+                <div style="margin-bottom: 20px;">
+                    <h4 style="color: #4CAF50; margin-bottom: 10px;">Player Information</h4>
+                    <p><strong>Username:</strong> @${report.user.username}</p>
+                    <p><strong>Full Name:</strong> ${report.user.full_name}</p>
+                    <p><strong>Phone:</strong> ${report.user.phone}</p>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <h4 style="color: #4CAF50; margin-bottom: 10px;">Game Summary</h4>
+                    <p><strong>Mode:</strong> ${report.game_info.mode}</p>
+                    <p><strong>Final Score:</strong> ₦${(report.game_info.final_score || 0).toLocaleString()}</p>
+                    <p><strong>Status:</strong> ${report.game_info.status}</p>
+                    <p><strong>Questions Answered:</strong> ${report.summary.total_questions}</p>
+                    <p><strong>Correct:</strong> ${report.summary.correct_answers} | <strong>Wrong:</strong> ${report.summary.wrong_answers}</p>
+                    <p><strong>Avg Response Time:</strong> ${(report.summary.average_response_time_ms / 1000).toFixed(2)}s</p>
+                    ${report.summary.lifelines_used.length > 0 ? `<p><strong>Lifelines Used:</strong> ${report.summary.lifelines_used.join(', ')}</p>` : ''}
+                </div>
+                <h4 style="color: #4CAF50; margin-bottom: 15px;">Event Timeline</h4>
+            `;
+
+            for (const event of report.timeline) {
+                let eventClass = '';
+                let eventIcon = '📌';
+                
+                switch (event.event) {
+                    case 'GAME_START':
+                        eventIcon = '🎮';
+                        break;
+                    case 'QUESTION_ASKED':
+                        eventIcon = '❓';
+                        break;
+                    case 'ANSWER_GIVEN':
+                        eventIcon = event.data.is_correct ? '✅' : '❌';
+                        eventClass = event.data.is_correct ? 'answer-correct' : 'answer-wrong';
+                        break;
+                    case 'LIFELINE_USED':
+                        eventIcon = '💎';
+                        eventClass = 'lifeline';
+                        break;
+                    case 'TIMEOUT':
+                        eventIcon = '⏰';
+                        eventClass = 'timeout';
+                        break;
+                    case 'GAME_END':
+                        eventIcon = '🏁';
+                        break;
+                }
+
+                html += `
+                    <div class="timeline-event ${eventClass}">
+                        <div class="event-header">
+                            <span class="event-type">${eventIcon} ${event.event}</span>
+                            <span class="event-time">${new Date(event.timestamp).toLocaleString()}</span>
+                        </div>
+                        <pre style="font-size: 12px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;">${JSON.stringify(event.data, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            document.getElementById('modalBody').innerHTML = html;
+        }
+
+        // Print audit report
+        function printAudit(sessionId) {
+            window.open(`${API_BASE}/audit/session/${sessionId}/print?token=${sessionToken}`, '_blank');
+        }
+
+        // Export audit as JSON
+        async function exportAudit(sessionId) {
+            window.location.href = `${API_BASE}/audit/session/${sessionId}/export`;
+        }
+
+        // Show suspicious sessions
+        async function showSuspicious() {
+            document.getElementById('suspiciousModal').classList.add('active');
+            document.getElementById('suspiciousBody').innerHTML = '<div class="loading">Analyzing sessions for suspicious activity...</div>';
+
+            try {
+                const data = await apiCall('/audit/suspicious?min_correct=3&max_response_time_ms=2000');
+                
+                if (data.success && data.suspicious_sessions.length > 0) {
+                    let html = `
+                        <div class="suspicious-alert">
+                            <h4>⚠️ Detection Criteria</h4>
+                            <p>Sessions with ${data.criteria.min_fast_correct_answers}+ correct answers under ${data.criteria.max_response_time_ms}ms response time</p>
+                        </div>
+                        <table style="width: 100%;">
+                            <thead>
+                                <tr>
+                                    <th>Session</th>
+                                    <th>User</th>
+                                    <th>Fast Correct</th>
+                                    <th>Avg Time</th>
+                                    <th>Min Time</th>
+                                    <th>Score</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+                    
+                    for (const s of data.suspicious_sessions) {
+                        html += `
+                            <tr>
+                                <td>#${s.session_id}</td>
+                                <td>@${s.username}</td>
+                                <td>${s.fast_correct_answers}</td>
+                                <td>${Math.round(s.avg_response_time_ms)}ms</td>
+                                <td>${s.min_response_time_ms}ms</td>
+                                <td>₦${(s.final_score || 0).toLocaleString()}</td>
+                                <td>
+                                    <button class="action-btn view" onclick="viewAudit(${s.session_id}); closeSuspiciousModal();">View</button>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</tbody></table>';
+                    document.getElementById('suspiciousBody').innerHTML = html;
+                } else {
+                    document.getElementById('suspiciousBody').innerHTML = '<div class="no-data">✅ No suspicious sessions detected!</div>';
+                }
+            } catch (error) {
+                console.error('Error loading suspicious sessions:', error);
+                document.getElementById('suspiciousBody').innerHTML = '<div class="no-data">Error analyzing sessions</div>';
+            }
+        }
+
+        // Cleanup modal
+        function showCleanupModal() {
+            if (confirm('Are you sure you want to cleanup old audit logs? This will delete logs older than 7 days.')) {
+                cleanupLogs();
+            }
+        }
+
+        async function cleanupLogs() {
+            try {
+                const data = await apiCall('/audit/cleanup', {
+                    method: 'POST',
+                    body: JSON.stringify({ retention_days: 7 })
+                });
+                
+                if (data.success) {
+                    alert(`Cleanup complete! ${data.deleted} logs deleted.`);
+                    loadStats();
+                }
+            } catch (error) {
+                console.error('Error cleaning up logs:', error);
+                alert('Error cleaning up logs');
+            }
+        }
+
+        // Clear search
+        function clearSearch() {
+            document.getElementById('searchUsername').value = '';
+            document.getElementById('searchPhone').value = '';
+            document.getElementById('searchUserId').value = '';
+            document.getElementById('searchGameMode').value = '';
+            document.getElementById('searchPlatform').value = '';
+            document.getElementById('searchStatus').value = '';
+            document.getElementById('searchMinScore').value = '';
+            document.getElementById('searchMaxScore').value = '';
+            document.getElementById('searchDateFrom').value = '';
+            document.getElementById('searchDateTo').value = '';
+            searchSessions(1);
+        }
+
+        // Close modals
+        function closeModal() {
+            document.getElementById('auditModal').classList.remove('active');
+        }
+
+        function closeSuspiciousModal() {
+            document.getElementById('suspiciousModal').classList.remove('active');
+        }
+
+        // Close modal on outside click
+        document.getElementById('auditModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+
+        document.getElementById('suspiciousModal').addEventListener('click', function(e) {
+            if (e.target === this) closeSuspiciousModal();
+        });
+
+        // Initialize
+        loadStats();
+        searchSessions(1);
+    </script>
+</body>
+</html>
