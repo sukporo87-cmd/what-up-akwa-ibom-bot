@@ -865,6 +865,17 @@ Type the code, or type SKIP to continue:`
     const postGameState = await redis.get(`post_game:${user.id}`);
     const isInPostGameWindow = postGameState !== null;
     
+    // Parse post-game state to get game type
+    let postGameData = null;
+    if (isInPostGameWindow) {
+      try {
+        postGameData = JSON.parse(postGameState);
+      } catch (e) {
+        // Legacy format (just timestamp string) - treat as non-practice
+        postGameData = { gameType: 'classic', timestamp: parseInt(postGameState) };
+      }
+    }
+    
     // If NOT in post-game window, check for active session conflicts
     if (!isInPostGameWindow) {
       const activeSession = await gameService.getActiveSession(user.id);
@@ -921,13 +932,14 @@ Type the code, or type SKIP to continue:`
 
     // ============================================
     // POST-GAME MENU HANDLING
-    // Menu shown after game completion:
-    // 1️⃣ Play Again
-    // 2️⃣ View Leaderboard  
-    // 3️⃣ Claim Prize
-    // 4️⃣ Share Victory Card (if available)
+    // Practice mode menu:
+    //   1️⃣ Play Again | 2️⃣ View Leaderboard | 3️⃣ Main Menu
+    // Classic/Tournament win menu:
+    //   1️⃣ Play Again | 2️⃣ View Leaderboard | 3️⃣ Claim Prize | 4️⃣ Share Victory Card
     // ============================================
     if (isInPostGameWindow) {
+      const isPracticeMode = postGameData && postGameData.gameType === 'practice';
+      
       if (input === '1' || input.includes('PLAY') || input.includes('AGAIN')) {
         await redis.del(`post_game:${user.id}`);
         await this.showGameModeMenu(user);
@@ -935,7 +947,18 @@ Type the code, or type SKIP to continue:`
       } else if (input === '2' || input.includes('LEADERBOARD')) {
         await this.sendLeaderboardMenu(user.phone_number);
         return;
-      } else if (input === '3' || input.includes('CLAIM')) {
+      } else if (input === '3') {
+        await redis.del(`post_game:${user.id}`);
+        if (isPracticeMode) {
+          // Practice mode: Option 3 = Main Menu
+          await this.sendMainMenu(user.phone_number);
+        } else {
+          // Classic/Tournament mode: Option 3 = Claim Prize
+          await this.handleClaimPrize(user);
+        }
+        return;
+      } else if (input.includes('CLAIM')) {
+        // Explicit CLAIM keyword always goes to claim prize
         await redis.del(`post_game:${user.id}`);
         await this.handleClaimPrize(user);
         return;

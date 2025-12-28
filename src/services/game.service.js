@@ -497,7 +497,12 @@ Play as many times as allowed!`;
                 await this.sendWinMessage(user, finalScore, questionNumber);
             }
 
-            await redis.setex(`post_game:${user.id}`, 45, Date.now().toString());
+            // Store post-game state with game type so menu handling knows the context
+            await redis.setex(`post_game:${user.id}`, 45, JSON.stringify({
+                timestamp: Date.now(),
+                gameType: session.game_type,
+                finalScore: finalScore
+            }));
 
         } catch (error) {
             logger.error('Error completing game:', error);
