@@ -37,6 +37,30 @@ const authenticateAdmin = async (req, res, next) => {
   next();
 };
 
+// Middleware that also accepts token from query parameter (for print/export that open in new tabs)
+const authenticateAdminWithQuery = async (req, res, next) => {
+  // First try Authorization header
+  const authHeader = req.headers.authorization;
+  let token = authHeader && authHeader.split(' ')[1];
+  
+  // If no header token, try query parameter
+  if (!token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized - No token provided' });
+  }
+
+  const validation = await adminAuthService.validateSession(token);
+  if (!validation.valid) {
+    return res.status(401).json({ error: 'Unauthorized - ' + validation.reason });
+  }
+
+  req.adminSession = validation.session;
+  next();
+};
+
 const getIpAddress = (req) => {
   return req.headers['x-forwarded-for']?.split(',')[0] ||
          req.connection.remoteAddress ||
@@ -2518,7 +2542,8 @@ router.get('/api/audit/user/:userId', authenticateAdmin, async (req, res) => {
 });
 
 // Generate printable audit report (HTML format)
-router.get('/api/audit/session/:sessionId/print', authenticateAdmin, async (req, res) => {
+// Uses authenticateAdminWithQuery to accept token from query param (for new tab)
+router.get('/api/audit/session/:sessionId/print', authenticateAdminWithQuery, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const report = await auditService.generateSessionReport(parseInt(sessionId));
@@ -2539,7 +2564,8 @@ router.get('/api/audit/session/:sessionId/print', authenticateAdmin, async (req,
 });
 
 // Export audit report as JSON (for download)
-router.get('/api/audit/session/:sessionId/export', authenticateAdmin, async (req, res) => {
+// Uses authenticateAdminWithQuery to accept token from query param (for new tab)
+router.get('/api/audit/session/:sessionId/export', authenticateAdminWithQuery, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const report = await auditService.generateSessionReport(parseInt(sessionId));

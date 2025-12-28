@@ -902,8 +902,8 @@
         }
 
         // Export audit as JSON
-        async function exportAudit(sessionId) {
-            window.location.href = `${API_BASE}/audit/session/${sessionId}/export`;
+        function exportAudit(sessionId) {
+            window.open(`${API_BASE}/audit/session/${sessionId}/export?token=${sessionToken}`, '_blank');
         }
 
         // Show suspicious sessions
