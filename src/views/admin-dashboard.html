@@ -864,6 +864,7 @@
         <div style="display: flex; gap: 10px; flex-wrap: wrap; padding: 20px; background: var(--bg-card); border-radius: 10px; margin-bottom: 20px;">
             <button class="analytics-tab-btn active" onclick="switchAnalyticsTab('user-growth')">📈 User Growth</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('leaderboards')">🏆 Leaderboards</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('streaks')">🔥 Streaks</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('tournaments')">🎮 Tournaments</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('referrals')">👥 Referrals</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('revenue')">💰 Revenue</button>
@@ -921,6 +922,93 @@
             <h3 style="margin-bottom: 20px;">🎮 Tournament Analytics</h3>
             <div id="tournament-list" style="margin-bottom: 20px;">
                 <p style="text-align: center; padding: 20px;">Loading tournaments...</p>
+            </div>
+        </div>
+        
+        <!-- Streaks Tab -->
+        <div id="streaks-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🔥 Daily Streak Analytics</h3>
+            
+            <!-- Streak Overview Stats -->
+            <div class="stats-grid" style="margin-bottom: 30px;">
+                <div class="stat-card">
+                    <div class="stat-card-value" id="active-streaks">0</div>
+                    <div class="stat-card-label">Active Streaks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="streak-3-plus">0</div>
+                    <div class="stat-card-label">3+ Day Streaks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="streak-7-plus">0</div>
+                    <div class="stat-card-label">7+ Day Streaks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="streak-30-plus">0</div>
+                    <div class="stat-card-label">30+ Day Streaks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="highest-streak">0</div>
+                    <div class="stat-card-label">Highest Streak</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value" id="played-today">0</div>
+                    <div class="stat-card-label">Played Today</div>
+                </div>
+                <div class="stat-card" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+                    <div class="stat-card-value" id="at-risk-count">0</div>
+                    <div class="stat-card-label">⚠️ At Risk</div>
+                </div>
+                <div class="stat-card" style="background: linear-gradient(135deg, #10b981, #059669);">
+                    <div class="stat-card-value" id="rewards-given">0</div>
+                    <div class="stat-card-label">🎁 Rewards Given</div>
+                </div>
+            </div>
+            
+            <!-- Streak Distribution Chart & Leaderboard -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+                <div>
+                    <h4 style="margin-bottom: 15px;">📊 Streak Distribution</h4>
+                    <div class="chart-container" style="height: 300px;">
+                        <canvas id="streakDistributionChart"></canvas>
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 15px;">🏆 Top Streakers</h4>
+                    <div id="streak-leaderboard" style="max-height: 300px; overflow-y: auto; background: var(--bg-card); border-radius: 10px; padding: 10px;">
+                        <div style="text-align: center; color: var(--text-secondary); padding: 20px;">Loading...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Streak Champions (60+ days) -->
+            <div id="champions-section" style="margin-bottom: 30px;">
+                <h4 style="margin-bottom: 15px;">💎 Streak Champions (60+ Days)</h4>
+                <div id="streak-champions" style="background: var(--bg-card); border-radius: 10px; padding: 15px;">
+                    <div style="text-align: center; color: var(--text-secondary); padding: 20px;">Loading champions...</div>
+                </div>
+            </div>
+            
+            <!-- Recent Streak Rewards -->
+            <h4 style="margin-bottom: 15px;">🎁 Recent Streak Rewards</h4>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Platform</th>
+                            <th>Streak Days</th>
+                            <th>Reward</th>
+                            <th>Free Games</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="streak-rewards-table">
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 20px;">Loading rewards...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
         
@@ -1360,6 +1448,9 @@
                     } else {
                         console.warn('No tournaments data available');
                     }
+                    break;
+                case 'streaks':
+                    await loadStreakData();
                     break;
             }
         } catch (error) {
@@ -1898,6 +1989,109 @@
             startAutoRefresh();
         }
     });
+
+    // ====================================
+    // STREAK DATA FUNCTIONS
+    // ====================================
+    let streakDistributionChart = null;
+    
+    async function loadStreakData() {
+        try {
+            const token = localStorage.getItem('adminSessionToken');
+            const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+            console.log('Loading streak data...');
+            const [statsRes, leaderboardRes, rewardsRes, championsRes] = await Promise.all([
+                fetch('/admin/api/streaks/stats', { headers }),
+                fetch('/admin/api/streaks/leaderboard?limit=10', { headers }),
+                fetch('/admin/api/streaks/rewards?limit=10', { headers }),
+                fetch('/admin/api/streaks/champions', { headers })
+            ]);
+            if (statsRes.ok) { const data = await statsRes.json(); updateStreakStats(data); }
+            if (leaderboardRes.ok) { const data = await leaderboardRes.json(); updateStreakLeaderboard(data.leaderboard); }
+            if (rewardsRes.ok) { const data = await rewardsRes.json(); updateStreakRewards(data.rewards); }
+            if (championsRes.ok) { const data = await championsRes.json(); updateStreakChampions(data.champions); }
+            console.log('✅ Streak data loaded');
+        } catch (error) { console.error('Error loading streak data:', error); }
+    }
+    
+    function updateStreakStats(data) {
+        const stats = data.stats;
+        const el = (id) => document.getElementById(id);
+        if (el('active-streaks')) el('active-streaks').textContent = stats.activeStreaks.toLocaleString();
+        if (el('streak-3-plus')) el('streak-3-plus').textContent = stats.streak3Plus.toLocaleString();
+        if (el('streak-7-plus')) el('streak-7-plus').textContent = stats.streak7Plus.toLocaleString();
+        if (el('streak-30-plus')) el('streak-30-plus').textContent = stats.streak30Plus.toLocaleString();
+        if (el('highest-streak')) el('highest-streak').textContent = stats.highestCurrentStreak + ' days';
+        if (el('played-today')) el('played-today').textContent = stats.playedToday.toLocaleString();
+        if (el('at-risk-count')) el('at-risk-count').textContent = stats.atRisk.toLocaleString();
+        if (el('rewards-given')) el('rewards-given').textContent = stats.totalRewardsGiven.toLocaleString();
+        updateStreakDistributionChart(data.distribution);
+    }
+    
+    function updateStreakDistributionChart(distribution) {
+        const ctx = document.getElementById('streakDistributionChart');
+        if (!ctx) return;
+        const labels = distribution.map(d => d.range + ' days');
+        const values = distribution.map(d => parseInt(d.count));
+        const colors = ['rgba(156,163,175,0.8)','rgba(251,191,36,0.8)','rgba(249,115,22,0.8)','rgba(239,68,68,0.8)','rgba(220,38,38,0.8)','rgba(124,58,237,0.8)','rgba(59,130,246,0.8)'];
+        if (streakDistributionChart) streakDistributionChart.destroy();
+        streakDistributionChart = new Chart(ctx, {
+            type: 'bar', data: { labels: labels, datasets: [{ label: 'Users', data: values, backgroundColor: colors, borderRadius: 5 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, ticks: { color: '#a0aec0' }, grid: { color: 'rgba(255,255,255,0.1)' } }, x: { ticks: { color: '#a0aec0' }, grid: { display: false } } } }
+        });
+    }
+    
+    function updateStreakLeaderboard(leaderboard) {
+        const container = document.getElementById('streak-leaderboard');
+        if (!container) return;
+        if (!leaderboard || leaderboard.length === 0) { container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px;">No active streaks yet</div>'; return; }
+        let html = '';
+        leaderboard.forEach((user, index) => {
+            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+            const platformIcon = user.platform === 'telegram' ? '💬' : '📱';
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:${index < 3 ? 'rgba(251,191,36,0.1)' : 'var(--bg-card)'};border-radius:8px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:10px;"><span style="font-weight:bold;color:var(--text-secondary);width:25px;">${index + 1}</span><span>${platformIcon}</span>
+                <div><div style="font-weight:600;">@${user.username} ${medal}</div><div style="font-size:12px;color:var(--text-secondary);">${user.city || 'Unknown'}</div></div></div>
+                <div style="text-align:right;"><div style="font-weight:bold;color:#f59e0b;">${user.currentStreak} days ${user.badgeEmoji || ''}</div><div style="font-size:12px;color:var(--text-secondary);">Best: ${user.longestStreak}</div></div></div>`;
+        });
+        container.innerHTML = html;
+    }
+    
+    function updateStreakRewards(rewards) {
+        const tbody = document.getElementById('streak-rewards-table');
+        if (!tbody) return;
+        if (!rewards || rewards.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:20px;">No rewards given yet</td></tr>'; return; }
+        let html = '';
+        rewards.forEach(reward => {
+            const platformIcon = reward.platform === 'telegram' ? '💬' : '📱';
+            const date = new Date(reward.createdAt).toLocaleDateString();
+            let badgeEmoji = '🔥';
+            if (reward.streakDays >= 60) badgeEmoji = '💎'; else if (reward.streakDays >= 30) badgeEmoji = '🏆'; else if (reward.streakDays >= 14) badgeEmoji = '🔥🔥🔥'; else if (reward.streakDays >= 7) badgeEmoji = '🔥🔥';
+            html += `<tr><td><div style="font-weight:600;">@${reward.username}</div><div style="font-size:12px;color:var(--text-secondary);">${reward.fullName}</div></td>
+                <td>${platformIcon} ${reward.platform}</td><td><span style="color:#f59e0b;font-weight:bold;">${reward.streakDays} days ${badgeEmoji}</span></td>
+                <td>${reward.description}</td><td><span style="color:var(--success-color);font-weight:bold;">+${reward.rewardAmount}</span></td><td>${date}</td></tr>`;
+        });
+        tbody.innerHTML = html;
+    }
+    
+    function updateStreakChampions(champions) {
+        const container = document.getElementById('streak-champions');
+        const section = document.getElementById('champions-section');
+        if (!container) return;
+        if (!champions || champions.length === 0) { container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px;">No streak champions yet (60+ days required)</div>'; return; }
+        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:15px;">';
+        champions.forEach((champion) => {
+            const platformIcon = champion.platform === 'telegram' ? '💬' : '📱';
+            html += `<div style="background:linear-gradient(135deg,rgba(59,130,246,0.2),rgba(124,58,237,0.2));border:1px solid rgba(59,130,246,0.3);border-radius:12px;padding:20px;text-align:center;">
+                <div style="font-size:40px;margin-bottom:10px;">💎</div><div style="font-weight:bold;font-size:16px;">@${champion.username}</div>
+                <div style="color:var(--text-secondary);font-size:12px;margin:5px 0;">${champion.city || 'Unknown'} ${platformIcon}</div>
+                <div style="color:#3b82f6;font-size:20px;font-weight:bold;margin:10px 0;">${champion.currentStreak} Days</div>
+                <div style="color:var(--text-secondary);font-size:11px;">Winnings: ₦${(champion.totalWinnings || 0).toLocaleString()}</div></div>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
 
     // ====================================
     // INITIALIZE DASHBOARD

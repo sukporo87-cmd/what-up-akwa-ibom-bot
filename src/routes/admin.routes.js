@@ -3002,6 +3002,280 @@ function generatePrintableAuditReport(report) {
 
 
 // ============================================
+// STREAK ADMIN ENDPOINTS
+// ============================================
+
+// Get streak overview statistics
+router.get('/api/streaks/stats', authenticateAdmin, async (req, res) => {
+    try {
+        // Total users with active streaks
+        const activeStreaksResult = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE current_streak > 0) as active_streaks,
+                COUNT(*) FILTER (WHERE current_streak >= 3) as streak_3_plus,
+                COUNT(*) FILTER (WHERE current_streak >= 7) as streak_7_plus,
+                COUNT(*) FILTER (WHERE current_streak >= 14) as streak_14_plus,
+                COUNT(*) FILTER (WHERE current_streak >= 30) as streak_30_plus,
+                COUNT(*) FILTER (WHERE current_streak >= 60) as streak_60_plus,
+                MAX(current_streak) as highest_current_streak,
+                MAX(longest_streak) as highest_ever_streak,
+                AVG(current_streak) FILTER (WHERE current_streak > 0) as avg_active_streak,
+                COUNT(*) FILTER (WHERE last_play_date = CURRENT_DATE) as played_today,
+                COUNT(*) FILTER (WHERE last_play_date = CURRENT_DATE - 1) as at_risk
+            FROM users
+        `);
+
+        // Streak distribution (for chart)
+        const distributionResult = await pool.query(`
+            SELECT 
+                CASE 
+                    WHEN current_streak = 0 THEN '0'
+                    WHEN current_streak BETWEEN 1 AND 2 THEN '1-2'
+                    WHEN current_streak BETWEEN 3 AND 6 THEN '3-6'
+                    WHEN current_streak BETWEEN 7 AND 13 THEN '7-13'
+                    WHEN current_streak BETWEEN 14 AND 29 THEN '14-29'
+                    WHEN current_streak BETWEEN 30 AND 59 THEN '30-59'
+                    ELSE '60+'
+                END as range,
+                COUNT(*) as count
+            FROM users
+            GROUP BY range
+            ORDER BY 
+                CASE range
+                    WHEN '0' THEN 1
+                    WHEN '1-2' THEN 2
+                    WHEN '3-6' THEN 3
+                    WHEN '7-13' THEN 4
+                    WHEN '14-29' THEN 5
+                    WHEN '30-59' THEN 6
+                    ELSE 7
+                END
+        `);
+
+        // Recent streak activity (last 7 days)
+        const recentActivityResult = await pool.query(`
+            SELECT 
+                last_play_date as date,
+                COUNT(*) as players
+            FROM users
+            WHERE last_play_date >= CURRENT_DATE - 7
+            AND last_play_date IS NOT NULL
+            GROUP BY last_play_date
+            ORDER BY last_play_date DESC
+        `);
+
+        // Total rewards given - check if table exists first
+        let rewards = { total_rewards: 0, total_games_given: 0, rewards_today: 0, rewards_this_week: 0 };
+        try {
+            const rewardsResult = await pool.query(`
+                SELECT 
+                    COUNT(*) as total_rewards,
+                    COALESCE(SUM(reward_amount), 0) as total_games_given,
+                    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as rewards_today,
+                    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as rewards_this_week
+                FROM streak_rewards
+            `);
+            rewards = rewardsResult.rows[0] || rewards;
+        } catch (e) {
+            // streak_rewards table might not exist yet
+            logger.warn('streak_rewards table not found, using defaults');
+        }
+
+        const stats = activeStreaksResult.rows[0];
+
+        res.json({
+            success: true,
+            stats: {
+                activeStreaks: parseInt(stats.active_streaks) || 0,
+                streak3Plus: parseInt(stats.streak_3_plus) || 0,
+                streak7Plus: parseInt(stats.streak_7_plus) || 0,
+                streak14Plus: parseInt(stats.streak_14_plus) || 0,
+                streak30Plus: parseInt(stats.streak_30_plus) || 0,
+                streak60Plus: parseInt(stats.streak_60_plus) || 0,
+                highestCurrentStreak: parseInt(stats.highest_current_streak) || 0,
+                highestEverStreak: parseInt(stats.highest_ever_streak) || 0,
+                avgActiveStreak: parseFloat(stats.avg_active_streak || 0).toFixed(1),
+                playedToday: parseInt(stats.played_today) || 0,
+                atRisk: parseInt(stats.at_risk) || 0,
+                totalRewardsGiven: parseInt(rewards.total_rewards) || 0,
+                totalGamesGiven: parseInt(rewards.total_games_given) || 0,
+                rewardsToday: parseInt(rewards.rewards_today) || 0,
+                rewardsThisWeek: parseInt(rewards.rewards_this_week) || 0
+            },
+            distribution: distributionResult.rows,
+            recentActivity: recentActivityResult.rows
+        });
+    } catch (error) {
+        logger.error('Error getting streak stats:', error);
+        res.status(500).json({ error: 'Failed to get streak statistics' });
+    }
+});
+
+// Get streak leaderboard
+router.get('/api/streaks/leaderboard', authenticateAdmin, async (req, res) => {
+    try {
+        const { limit = 20, type = 'current' } = req.query;
+
+        let orderBy = 'current_streak DESC, longest_streak DESC';
+        if (type === 'longest') {
+            orderBy = 'longest_streak DESC, current_streak DESC';
+        }
+
+        const result = await pool.query(`
+            SELECT 
+                u.id,
+                u.username,
+                u.full_name,
+                u.phone_number,
+                u.city,
+                u.platform,
+                u.current_streak,
+                u.longest_streak,
+                u.last_play_date,
+                u.streak_badge,
+                u.created_at as member_since,
+                (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed') as total_games
+            FROM users u
+            WHERE u.current_streak > 0 OR u.longest_streak > 0
+            ORDER BY ${orderBy}
+            LIMIT $1
+        `, [parseInt(limit)]);
+
+        const leaderboard = result.rows.map((user, index) => {
+            let badgeEmoji = '';
+            switch (user.streak_badge) {
+                case 'diamond': badgeEmoji = '💎'; break;
+                case 'trophy': badgeEmoji = '🏆'; break;
+                case 'fire3': badgeEmoji = '🔥🔥🔥'; break;
+                case 'fire2': badgeEmoji = '🔥🔥'; break;
+                case 'fire1': badgeEmoji = '🔥'; break;
+            }
+
+            return {
+                rank: index + 1,
+                id: user.id,
+                username: user.username,
+                fullName: user.full_name,
+                phone: user.phone_number,
+                city: user.city,
+                platform: user.platform,
+                currentStreak: user.current_streak,
+                longestStreak: user.longest_streak,
+                lastPlayDate: user.last_play_date,
+                badge: user.streak_badge,
+                badgeEmoji,
+                totalGames: parseInt(user.total_games) || 0,
+                memberSince: user.member_since
+            };
+        });
+
+        res.json({
+            success: true,
+            leaderboard,
+            type
+        });
+    } catch (error) {
+        logger.error('Error getting streak leaderboard:', error);
+        res.status(500).json({ error: 'Failed to get streak leaderboard' });
+    }
+});
+
+// Get recent streak rewards
+router.get('/api/streaks/rewards', authenticateAdmin, async (req, res) => {
+    try {
+        const { limit = 20 } = req.query;
+
+        // Check if table exists
+        let rewards = [];
+        try {
+            const result = await pool.query(`
+                SELECT 
+                    sr.id,
+                    sr.user_id,
+                    sr.streak_days,
+                    sr.reward_type,
+                    sr.reward_amount,
+                    sr.reward_description,
+                    sr.created_at,
+                    u.username,
+                    u.full_name,
+                    u.phone_number,
+                    u.platform
+                FROM streak_rewards sr
+                JOIN users u ON sr.user_id = u.id
+                ORDER BY sr.created_at DESC
+                LIMIT $1
+            `, [parseInt(limit)]);
+            
+            rewards = result.rows.map(r => ({
+                id: r.id,
+                userId: r.user_id,
+                username: r.username,
+                fullName: r.full_name,
+                phone: r.phone_number,
+                platform: r.platform,
+                streakDays: r.streak_days,
+                rewardType: r.reward_type,
+                rewardAmount: r.reward_amount,
+                description: r.reward_description,
+                createdAt: r.created_at
+            }));
+        } catch (e) {
+            logger.warn('streak_rewards table not found');
+        }
+
+        res.json({
+            success: true,
+            rewards
+        });
+    } catch (error) {
+        logger.error('Error getting streak rewards:', error);
+        res.status(500).json({ error: 'Failed to get streak rewards' });
+    }
+});
+
+// Get streak champions (60+ days)
+router.get('/api/streaks/champions', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                u.id,
+                u.username,
+                u.full_name,
+                u.city,
+                u.platform,
+                u.current_streak,
+                u.longest_streak,
+                u.last_play_date,
+                (SELECT COALESCE(SUM(final_score), 0) FROM game_sessions WHERE user_id = u.id AND status = 'completed') as total_winnings
+            FROM users u
+            WHERE u.current_streak >= 60
+            ORDER BY u.current_streak DESC
+        `);
+
+        res.json({
+            success: true,
+            champions: result.rows.map(u => ({
+                id: u.id,
+                username: u.username,
+                fullName: u.full_name,
+                city: u.city,
+                platform: u.platform,
+                currentStreak: u.current_streak,
+                longestStreak: u.longest_streak,
+                lastPlayDate: u.last_play_date,
+                totalWinnings: parseInt(u.total_winnings) || 0
+            })),
+            count: result.rows.length
+        });
+    } catch (error) {
+        logger.error('Error getting streak champions:', error);
+        res.status(500).json({ error: 'Failed to get streak champions' });
+    }
+});
+
+
+// ============================================
 // MODULE EXPORT
 // ============================================
 module.exports = router;
