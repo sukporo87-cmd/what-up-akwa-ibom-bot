@@ -22,11 +22,30 @@ class UserService {
     }
   }
 
-  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, platform = 'whatsapp') {
+  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, consentDataOrPlatform = 'whatsapp') {
     const client = await pool.connect();
     
     try {
       await client.query('BEGIN');
+
+      // Handle backward compatibility - consentDataOrPlatform can be string (platform) or object (consent data)
+      let platform = 'whatsapp';
+      let termsAccepted = false;
+      let privacyAccepted = false;
+      let consentTimestamp = null;
+      let consentPlatform = null;
+
+      if (typeof consentDataOrPlatform === 'string') {
+        // Old format: just platform string
+        platform = consentDataOrPlatform;
+      } else if (typeof consentDataOrPlatform === 'object' && consentDataOrPlatform !== null) {
+        // New format: consent data object
+        termsAccepted = consentDataOrPlatform.termsAccepted || false;
+        privacyAccepted = consentDataOrPlatform.privacyAccepted || false;
+        consentTimestamp = consentDataOrPlatform.consentTimestamp || null;
+        consentPlatform = consentDataOrPlatform.consentPlatform || 'whatsapp';
+        platform = consentPlatform;
+      }
 
       // Generate referral code
       const referralCode = this.generateReferralCode();
@@ -34,15 +53,17 @@ class UserService {
       // Store platform info in phone_number field with prefix for Telegram
       const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
 
-      // 🔧 UPDATED: Create user WITH explicit platform column
+      // 🔧 UPDATED: Create user WITH consent fields
       const userResult = await client.query(
         `INSERT INTO users (
             phone_number, full_name, city, username, age, 
-            referral_code, referred_by, platform
+            referral_code, referred_by, platform,
+            terms_accepted, privacy_accepted, consent_timestamp, consent_platform
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *`,
-        [identifier, fullName, city, username, age, referralCode, referrerId, platform]
+        [identifier, fullName, city, username, age, referralCode, referrerId, platform,
+         termsAccepted, privacyAccepted, consentTimestamp, consentPlatform]
       );
 
       const user = userResult.rows[0];

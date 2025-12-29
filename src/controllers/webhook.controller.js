@@ -95,15 +95,23 @@ class WebhookController {
       const userState = await userService.getUserState(phone);
 
       // ===================================
-      // PRIORITY 1: REGISTRATION STATES
+      // PRIORITY 1: TERMS ACCEPTANCE (BEFORE REGISTRATION)
+      // ===================================
+      if (userState && userState.state === 'TERMS_ACCEPTANCE') {
+        await this.handleTermsAcceptance(phone, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 2: REGISTRATION STATES
       // ===================================
       if (userState && userState.state === 'REGISTRATION_NAME') {
-        await this.handleRegistrationName(phone, message);
+        await this.handleRegistrationName(phone, message, userState.data);
         return;
       }
 
       if (userState && userState.state === 'REGISTRATION_CITY') {
-        await this.handleRegistrationCity(phone, message, userState.data.name);
+        await this.handleRegistrationCity(phone, message, userState.data);
         return;
       }
 
@@ -244,10 +252,51 @@ class WebhookController {
   // REGISTRATION HANDLERS (WITH REFERRALS)
   // ============================================
 
-  async handleNewUser(phone) {
+  async handleNewUser(phone, platform = 'whatsapp') {
+    // Show terms and privacy acceptance first
+    const termsUrl = process.env.TERMS_URL || 'https://whatsuptrivia.com.ng/terms';
+    const privacyUrl = process.env.PRIVACY_URL || 'https://whatsuptrivia.com.ng/privacy';
+    
     await messagingService.sendMessage(
       phone,
-      `🎉 *WELCOME TO WHAT'S UP TRIVIA GAME!* 🎉
+      `🎉 *Welcome to What's Up Trivia!* 🎉
+
+Play. Learn. Win.
+
+Before you continue, please review and accept our Terms of Service and Privacy Policy.
+
+📄 *Terms of Service:*
+${termsUrl}
+
+🔐 *Privacy Policy:*
+${privacyUrl}
+
+Reply:
+1️⃣ I ACCEPT
+2️⃣ I DO NOT ACCEPT`
+    );
+
+    await userService.setUserState(phone, 'TERMS_ACCEPTANCE', { platform });
+  }
+
+  async handleTermsAcceptance(phone, message, stateData) {
+    const input = message.trim();
+    const platform = stateData?.platform || 'whatsapp';
+    
+    if (input === '1' || input.toUpperCase() === 'I ACCEPT' || input.toUpperCase() === 'ACCEPT') {
+      // User accepted - store consent data for later (will be saved when user is created)
+      await userService.setUserState(phone, 'REGISTRATION_NAME', {
+        termsAccepted: true,
+        privacyAccepted: true,
+        consentTimestamp: new Date().toISOString(),
+        consentPlatform: platform
+      });
+      
+      await messagingService.sendMessage(
+        phone,
+        `✅ Thank you for accepting our Terms and Privacy Policy!
+
+🎉 *WELCOME TO WHAT'S UP TRIVIA GAME!* 🎉
 
 The ultimate trivia game for you!
 
@@ -255,21 +304,43 @@ Test your knowledge and win amazing prizes! 🏆
 
 _Developed & Proudly brought to you by SummerIsland Systems._
 
-🎄 *Merry Christmas!* 🎄
-
 Let's get you registered! What's your full name?`
-    );
+      );
+    } else if (input === '2' || input.toUpperCase().includes('NOT ACCEPT') || input.toUpperCase() === 'DECLINE') {
+      // User declined
+      await userService.clearUserState(phone);
+      
+      await messagingService.sendMessage(
+        phone,
+        `❌ We're sorry to see you go!
 
-    await userService.setUserState(phone, 'REGISTRATION_NAME');
+You must accept our Terms of Service and Privacy Policy to use What's Up Trivia.
+
+If you change your mind, simply send "Hi" to start again.
+
+Thank you for your interest! 👋`
+      );
+    } else {
+      // Invalid input
+      await messagingService.sendMessage(
+        phone,
+        `⚠️ Please reply with:
+
+1️⃣ I ACCEPT - to continue
+2️⃣ I DO NOT ACCEPT - to decline`
+      );
+    }
   }
 
-  async handleRegistrationName(phone, name) {
+  async handleRegistrationName(phone, name, stateData = {}) {
     if (!name || name.trim().length < 2) {
       await messagingService.sendMessage(phone, '❌ Please enter a valid name (at least 2 characters).');
       return;
     }
 
+    // Preserve consent data from terms acceptance
     await userService.setUserState(phone, 'REGISTRATION_CITY', {
+      ...stateData,
       name: name.trim()
     });
 
@@ -285,7 +356,7 @@ Type your city name:`
     );
   }
 
-  async handleRegistrationCity(phone, city, name) {
+  async handleRegistrationCity(phone, city, stateData = {}) {
     if (!city || city.trim().length < 2) {
       await messagingService.sendMessage(phone, '❌ Please enter a valid city name.');
       return;
@@ -296,8 +367,9 @@ Type your city name:`
       .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(' ');
 
+    // Preserve consent data
     await userService.setUserState(phone, 'REGISTRATION_USERNAME', {
-      name: name,
+      ...stateData,
       city: formattedCity
     });
 
@@ -345,9 +417,9 @@ Your username:`
       return;
     }
 
+    // Preserve consent data
     await userService.setUserState(phone, 'REGISTRATION_AGE', {
-      name: name,
-      city: city,
+      ...stateData,
       username: cleanUsername
     });
 
@@ -371,10 +443,9 @@ Type your age (e.g., 25):`
       return;
     }
 
+    // Preserve consent data
     await userService.setUserState(phone, 'REGISTRATION_REFERRAL', {
-      name: name,
-      city: city,
-      username: username,
+      ...stateData,
       age: age
     });
 
@@ -391,7 +462,7 @@ Type the code, or type SKIP to continue:`
   }
 
   async handleRegistrationReferral(phone, referralCodeInput, stateData) {
-    const { name, city, username, age } = stateData;
+    const { name, city, username, age, termsAccepted, privacyAccepted, consentTimestamp, consentPlatform } = stateData;
     const input = referralCodeInput.trim().toUpperCase();
 
     let referrerId = null;
@@ -414,7 +485,15 @@ Type the code, or type SKIP to continue:`
       logger.info(`User registering with referral code: ${input} from user ${referrerId}`);
     }
 
-    const user = await userService.createUser(phone, name, city, username, age, referrerId);
+    // Pass consent data to createUser
+    const consentData = {
+      termsAccepted: termsAccepted || false,
+      privacyAccepted: privacyAccepted || false,
+      consentTimestamp: consentTimestamp || null,
+      consentPlatform: consentPlatform || 'whatsapp'
+    };
+
+    const user = await userService.createUser(phone, name, city, username, age, referrerId, consentData);
     await userService.clearUserState(phone);
 
     const isPaymentEnabled = paymentService.isEnabled();
