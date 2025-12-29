@@ -13,6 +13,7 @@ const PaymentService = require('../services/payment.service');
 const PayoutService = require('../services/payout.service');
 const ReferralService = require('../services/referral.service');
 const TournamentService = require('../services/tournament.service');
+const streakService = require('../services/streak.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -1090,8 +1091,80 @@ Type the code, or type SKIP to continue:`
       }
     } else if (input === 'RESET' || input === 'RESTART') {
       await this.handleReset(user);
+    } else if (input === 'STREAK' || input === 'STREAKS') {
+      await this.handleStreakCommand(user);
     } else {
       await this.sendMainMenu(user.phone_number);
+    }
+  }
+
+  // ============================================
+  // STREAK COMMAND
+  // ============================================
+
+  async handleStreakCommand(user) {
+    try {
+      // Get user's streak info
+      const streakInfo = await streakService.getStreakInfo(user.id);
+      
+      // Get streak leaderboard
+      const leaderboard = await streakService.getStreakLeaderboard(10);
+      
+      let message = `🔥 *DAILY STREAK* 🔥\n\n`;
+      
+      // User's streak info
+      message += `*Your Streak:*\n`;
+      if (streakInfo && streakInfo.currentStreak > 0) {
+        message += `🔥 Current: ${streakInfo.currentStreak} days ${streakInfo.badgeEmoji}\n`;
+        message += `🏆 Longest: ${streakInfo.longestStreak} days\n`;
+        if (streakInfo.playedToday) {
+          message += `✅ Played today!\n`;
+        } else if (streakInfo.isActive) {
+          message += `⚠️ Play today to keep your streak!\n`;
+        }
+        if (streakInfo.nextMilestone) {
+          message += `📍 ${streakInfo.daysToNextMilestone} day(s) to next reward!\n`;
+        }
+      } else {
+        message += `You don't have an active streak.\n`;
+        message += `Play Classic or Tournament mode to start!\n`;
+      }
+      
+      message += `\n━━━━━━━━━━━━━━━━\n\n`;
+      
+      // Streak rewards info
+      message += `*🎁 STREAK REWARDS:*\n`;
+      message += `3 days: 1 Free Game 🔥\n`;
+      message += `7 days: 2 Free Games 🔥🔥\n`;
+      message += `14 days: 3 Free Games 🔥🔥🔥\n`;
+      message += `30 days: 5 Free Games 🏆\n`;
+      message += `60 days: 10 Free Games 💎\n\n`;
+      
+      message += `━━━━━━━━━━━━━━━━\n\n`;
+      
+      // Streak leaderboard
+      message += `*🏅 STREAK LEADERBOARD:*\n\n`;
+      
+      if (leaderboard.length === 0) {
+        message += `No active streaks yet!\nBe the first! 🎯\n`;
+      } else {
+        for (const player of leaderboard) {
+          const medal = player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : player.rank === 3 ? '🥉' : '';
+          message += `${player.rank}. @${player.username} - ${player.currentStreak} days ${player.badgeEmoji} ${medal}\n`;
+        }
+      }
+      
+      message += `\n_Practice mode doesn't count toward streak._\n`;
+      message += `\nType MENU for main menu.`;
+      
+      await messagingService.sendMessage(user.phone_number, message);
+      
+    } catch (error) {
+      logger.error('Error handling streak command:', error);
+      await messagingService.sendMessage(
+        user.phone_number,
+        '❌ Error loading streak info. Please try again.'
+      );
     }
   }
 
@@ -1214,6 +1287,25 @@ Type the code, or type SKIP to continue:`
       message += `📍 Location: ${stats.city}\n`;
       message += `🎂 Age: ${stats.age}\n`;
       message += `🏆 Overall Rank: #${stats.rank}\n\n`;
+
+      // Add streak info
+      try {
+        const streakInfo = await streakService.getStreakInfo(user.id);
+        message += `🔥 STREAK\n`;
+        message += `━━━━━━━━━━━━━━━━\n`;
+        if (streakInfo && streakInfo.currentStreak > 0) {
+          message += `Current: ${streakInfo.currentStreak} days ${streakInfo.badgeEmoji}\n`;
+          message += `Longest: ${streakInfo.longestStreak} days\n`;
+          if (streakInfo.nextMilestone) {
+            message += `Next reward: ${streakInfo.daysToNextMilestone} day(s)\n`;
+          }
+        } else {
+          message += `No active streak\n`;
+        }
+        message += `\n`;
+      } catch (err) {
+        // Don't fail stats if streak fetch fails
+      }
 
       message += `🎮 GAME STATISTICS\n`;
       message += `━━━━━━━━━━━━━━━━\n`;
@@ -1846,8 +1938,24 @@ Type the code, or type SKIP to continue:`
 
   let message = '🏠 MAIN MENU 🏠\n\n';
 
-  if (isPaymentEnabled && user) {
-    message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+  if (user) {
+    // Show streak info
+    try {
+      const streakInfo = await streakService.getStreakInfo(user.id);
+      if (streakInfo && streakInfo.currentStreak > 0) {
+        message += `🔥 Streak: ${streakInfo.currentStreak} days ${streakInfo.badgeEmoji}\n`;
+        if (!streakInfo.playedToday && streakInfo.isActive) {
+          message += `   ⚠️ Play today to keep it!\n`;
+        }
+        message += '\n';
+      }
+    } catch (err) {
+      // Don't fail menu if streak fetch fails
+    }
+    
+    if (isPaymentEnabled) {
+      message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+    }
   }
 
   message += 'What would you like to do?\n\n';
@@ -1862,7 +1970,8 @@ Type the code, or type SKIP to continue:`
     message += '4️⃣ My Stats\n';
   }
 
-  message += '\nHaving issues? Type RESET to start fresh.\n\nReply with your choice.';
+  message += '\nType STREAK to see streak leaderboard 🔥\n';
+  message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
 
   await messagingService.sendMessage(phone, message);
 }

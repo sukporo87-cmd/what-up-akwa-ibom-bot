@@ -10,6 +10,7 @@ const MessagingService = require('./messaging.service');
 const QuestionService = require('./question.service');
 const PaymentService = require('./payment.service');
 const auditService = require('./audit.service');
+const streakService = require('./streak.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -268,6 +269,22 @@ class GameService {
 
             // 📝 AUDIT: Log game start
             await auditService.logGameStart(session.id, user.id, gameMode, platform, tournamentId);
+
+            // 🔥 STREAK: Update user's daily streak (only for classic/tournament)
+            let streakResult = null;
+            if (gameMode === 'classic' || isTournamentGame) {
+                try {
+                    streakResult = await streakService.updateStreak(user.id, isTournamentGame ? 'tournament' : 'classic');
+                    if (streakResult.reward) {
+                        // Send streak reward notification
+                        const rewardMessage = streakService.formatRewardMessage(streakResult.reward);
+                        await messagingService.sendMessage(user.phone_number, rewardMessage);
+                    }
+                } catch (streakError) {
+                    logger.error('Error updating streak:', streakError);
+                    // Don't fail the game start if streak update fails
+                }
+            }
 
             logger.info(`🎮 Game started: User ${user.id}, Platform: ${platform}, Mode: ${gameMode}, Type: ${gameType}`);
 
