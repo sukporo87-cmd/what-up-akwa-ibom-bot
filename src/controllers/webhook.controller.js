@@ -1029,12 +1029,14 @@ Type the code, or type SKIP to continue:`
         return;
       } else if (input === '3') {
         await redis.del(`post_game:${user.id}`);
-        if (isPracticeMode) {
-          // Practice mode: Option 3 = Main Menu
-          await this.sendMainMenu(user.phone_number);
-        } else {
-          // Classic/Tournament mode: Option 3 = Claim Prize
+        // Check if user has actual winnings to claim
+        const hasWinnings = postGameData && postGameData.finalScore > 0 && postGameData.gameType !== 'practice';
+        if (hasWinnings) {
+          // Classic/Tournament mode with winnings: Option 3 = Claim Prize
           await this.handleClaimPrize(user);
+        } else {
+          // Practice mode OR no winnings: Option 3 = Main Menu
+          await this.sendMainMenu(user.phone_number);
         }
         return;
       } else if (input.includes('CLAIM')) {
@@ -1337,8 +1339,12 @@ Type the code, or type SKIP to continue:`
       message += `_Proudly brought to you by SummerIsland Systems._\n\n`;
       message += `Keep playing to climb the ranks! 🚀\n\n`;
       message += `1️⃣ Play Now\n`;
-      message += `2️⃣ View Leaderboard\n`;
-      message += `3️⃣ Main Menu`;
+      message += `2️⃣ How to Play\n`;
+      message += `3️⃣ View Leaderboard\n`;
+      if (isPaymentEnabled) {
+        message += `4️⃣ Buy Games\n`;
+      }
+      message += `\nType MENU for main menu.`;
 
       await messagingService.sendMessage(user.phone_number, message);
 

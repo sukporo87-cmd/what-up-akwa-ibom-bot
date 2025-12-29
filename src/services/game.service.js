@@ -515,7 +515,8 @@ Play as many times as allowed!`;
             }
 
             // Store post-game state with game type so menu handling knows the context
-            await redis.setex(`post_game:${user.id}`, 45, JSON.stringify({
+            // Extended to 120 seconds to give users time to read and respond
+            await redis.setex(`post_game:${user.id}`, 120, JSON.stringify({
                 timestamp: Date.now(),
                 gameType: session.game_type,
                 finalScore: finalScore
@@ -766,8 +767,9 @@ Play as many times as allowed!`;
         message += `2️⃣ View Leaderboard\n`;
         if (guaranteedAmount > 0) {
             message += `3️⃣ Claim Prize\n`;
+        } else {
+            message += `3️⃣ Main Menu\n`;
         }
-        message += `\nType MENU for main menu.`;
         
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false);
@@ -800,8 +802,9 @@ Play as many times as allowed!`;
         message += `2️⃣ View Leaderboard\n`;
         if (guaranteedAmount > 0) {
             message += `3️⃣ Claim Prize\n`;
+        } else {
+            message += `3️⃣ Main Menu\n`;
         }
-        message += `\nType MENU for main menu.`;
         
         await messagingService.sendMessage(user.phone_number, message);
         
