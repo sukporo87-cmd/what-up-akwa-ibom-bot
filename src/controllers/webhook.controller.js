@@ -511,6 +511,7 @@ Type the code, or type SKIP to continue:`
     welcomeMsg += `\n🔗 Your referral code: *${user.referral_code}*\n`;
     welcomeMsg += `Share it! Every 3 friends = 1 FREE GAME for you! 💰\n\n`;
     welcomeMsg += `_Proudly brought to you by SummerIsland Systems._\n\n`;
+    welcomeMsg += `🎆 Happy New Year! 🎆\n\n`;
 
     if (isPaymentEnabled) {
       const gamesRemaining = referrerId ? 1 : 0;
@@ -993,6 +994,7 @@ Type the code, or type SKIP to continue:`
       }
 
       welcomeMessage += `_Proudly brought to you by SummerIsland Systems._\n\n`;
+      welcomeMessage += `🎆 Happy New Year! 🎆\n\n`;
       welcomeMessage += `What would you like to do?\n\n`;
       welcomeMessage += `1️⃣ Play Now\n`;
       welcomeMessage += `2️⃣ How to Play\n`;
