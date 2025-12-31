@@ -833,6 +833,23 @@ Play as many times as allowed!`;
                     return;
                 }
                 
+                // Get existing timeout to calculate remaining time
+                const questionNumber = currentSession.current_question;
+                const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
+                
+                // Calculate remaining time and add 5 bonus seconds
+                const existingTimeout = await redis.get(timeoutKey);
+                let remainingTime = 15; // default if no timeout found
+                if (existingTimeout) {
+                    const timeoutExpiry = parseInt(existingTimeout);
+                    remainingTime = Math.max(0, Math.ceil((timeoutExpiry - Date.now()) / 1000));
+                }
+                const newTime = remainingTime + 5; // Add 5 bonus seconds
+                
+                // Clear existing timeout
+                this.clearQuestionTimeout(timeoutKey);
+                await redis.del(timeoutKey);
+                
                 await pool.query(
                     'UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1',
                     [currentSession.id]
@@ -850,14 +867,13 @@ Play as many times as allowed!`;
                     user.id, 
                     currentSession.current_question, 
                     '50:50',
-                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions }
+                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions, bonus_seconds: 5, new_time: newTime }
                 );
                 
-                const questionNumber = currentSession.current_question;
                 const prizeAmount = PRIZE_LADDER[questionNumber];
                 const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
                 
-                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n\n`;
+                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n+5 bonus seconds added!\n\n`;
                 message += `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
                 if (isSafe) message += ' (SAFE) 🔒';
                 message += `\n\n${question.question_text}\n\n`;
@@ -866,7 +882,7 @@ Play as many times as allowed!`;
                     message += `${opt}) ${question['option_' + opt.toLowerCase()]}\n`;
                 });
                 
-                message += `\n⏱️ 15 seconds...\n\n`;
+                message += `\n⏱️ ${newTime} seconds...\n\n`;
                 
                 const lifelines = [];
                 if (!currentSession.lifeline_skip_used) lifelines.push('Skip');
@@ -875,6 +891,27 @@ Play as many times as allowed!`;
                 }
                 
                 await messagingService.sendMessage(user.phone_number, message);
+                
+                // Set new timeout with remaining time + 5 bonus seconds
+                await redis.setex(timeoutKey, newTime + 3, (Date.now() + newTime * 1000).toString());
+                
+                const timeoutId = setTimeout(async () => {
+                    try {
+                        const timeout = await redis.get(timeoutKey);
+                        if (timeout) {
+                            const activeSession = await this.getActiveSession(user.id);
+                            if (activeSession && activeSession.current_question === questionNumber) {
+                                await redis.del(timeoutKey);
+                                activeTimeouts.delete(timeoutKey);
+                                await this.handleTimeout(activeSession, user);
+                            }
+                        }
+                    } catch (error) {
+                        logger.error('Error in 50:50 timeout handler:', error);
+                    }
+                }, newTime * 1000);
+                
+                activeTimeouts.set(timeoutKey, timeoutId);
                 
             } else if (lifeline === 'skip') {
                 if (currentSession.lifeline_skip_used) {

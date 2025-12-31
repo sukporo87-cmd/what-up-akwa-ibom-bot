@@ -3027,18 +3027,20 @@ router.get('/api/streaks/stats', authenticateAdmin, async (req, res) => {
 
         // Streak distribution (for chart)
         const distributionResult = await pool.query(`
-            SELECT 
-                CASE 
-                    WHEN current_streak = 0 THEN '0'
-                    WHEN current_streak BETWEEN 1 AND 2 THEN '1-2'
-                    WHEN current_streak BETWEEN 3 AND 6 THEN '3-6'
-                    WHEN current_streak BETWEEN 7 AND 13 THEN '7-13'
-                    WHEN current_streak BETWEEN 14 AND 29 THEN '14-29'
-                    WHEN current_streak BETWEEN 30 AND 59 THEN '30-59'
-                    ELSE '60+'
-                END as streak_range,
-                COUNT(*) as count
-            FROM users
+            SELECT streak_range, COUNT(*) as count
+            FROM (
+                SELECT 
+                    CASE 
+                        WHEN current_streak = 0 THEN '0'
+                        WHEN current_streak BETWEEN 1 AND 2 THEN '1-2'
+                        WHEN current_streak BETWEEN 3 AND 6 THEN '3-6'
+                        WHEN current_streak BETWEEN 7 AND 13 THEN '7-13'
+                        WHEN current_streak BETWEEN 14 AND 29 THEN '14-29'
+                        WHEN current_streak BETWEEN 30 AND 59 THEN '30-59'
+                        ELSE '60+'
+                    END as streak_range
+                FROM users
+            ) sub
             GROUP BY streak_range
             ORDER BY 
                 CASE streak_range
