@@ -2031,7 +2031,7 @@
     function updateStreakDistributionChart(distribution) {
         const ctx = document.getElementById('streakDistributionChart');
         if (!ctx) return;
-        const labels = distribution.map(d => d.range + ' days');
+        const labels = distribution.map(d => (d.streak_range || d.range) + ' days');
         const values = distribution.map(d => parseInt(d.count));
         const colors = ['rgba(156,163,175,0.8)','rgba(251,191,36,0.8)','rgba(249,115,22,0.8)','rgba(239,68,68,0.8)','rgba(220,38,38,0.8)','rgba(124,58,237,0.8)','rgba(59,130,246,0.8)'];
         if (streakDistributionChart) streakDistributionChart.destroy();

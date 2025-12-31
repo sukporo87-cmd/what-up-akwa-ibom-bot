@@ -3036,12 +3036,12 @@ router.get('/api/streaks/stats', authenticateAdmin, async (req, res) => {
                     WHEN current_streak BETWEEN 14 AND 29 THEN '14-29'
                     WHEN current_streak BETWEEN 30 AND 59 THEN '30-59'
                     ELSE '60+'
-                END as range,
+                END as streak_range,
                 COUNT(*) as count
             FROM users
-            GROUP BY range
+            GROUP BY streak_range
             ORDER BY 
-                CASE range
+                CASE streak_range
                     WHEN '0' THEN 1
                     WHEN '1-2' THEN 2
                     WHEN '3-6' THEN 3
