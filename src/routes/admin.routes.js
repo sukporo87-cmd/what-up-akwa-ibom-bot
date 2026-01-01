@@ -943,24 +943,20 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
     
-    // Try to get from admin_activity_log table first (new)
+    // Query using existing table structure (action_details instead of separate columns)
     let activities = [];
     try {
       const result = await pool.query(`
-        SELECT id, admin_id, action_type, target_type, target_id, details, ip_address, created_at
+        SELECT id, admin_id, action_type, action_details as details, ip_address, created_at,
+               action_details->>'target_type' as target_type,
+               action_details->>'target_id' as target_id
         FROM admin_activity_log
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
       `, [limit, offset]);
       activities = result.rows;
     } catch (dbError) {
-      // Log the actual error
-      if (dbError.code === '42P01') {
-        // Table doesn't exist
-        logger.warn('admin_activity_log table not found, using legacy method');
-      } else {
-        logger.warn('admin_activity_log query failed, using legacy method:', dbError.message);
-      }
+      logger.warn('admin_activity_log query failed, using legacy method:', dbError.message);
       activities = await adminAuthService.getActivityLog(limit, offset);
     }
     
@@ -3467,7 +3463,7 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         
         // Get recent transactions
         const recentTransactionsResult = await pool.query(`
-            SELECT id, transaction_type, amount, payment_status as status, created_at
+            SELECT id, transaction_type, amount, payment_status as status, created_at, reference
             FROM transactions
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -3662,11 +3658,36 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
         const cardId = parseInt(req.params.id);
         const adminId = req.session?.adminId || null;
         
-        // Get card data
-        const cardData = await victoryCardsService.getVictoryCardData(cardId);
+        // Try to get card data by victory_card_id first
+        let cardData = await victoryCardsService.getVictoryCardData(cardId);
+        
+        // If not found, try by transaction_id
+        if (!cardData) {
+            cardData = await victoryCardsService.getVictoryCardByTransaction(cardId);
+        }
+        
+        // If still not found, get from transaction directly
+        if (!cardData) {
+            const transactionResult = await pool.query(`
+                SELECT t.id as transaction_id, t.amount, t.created_at as win_date,
+                       u.id as user_id, u.username, u.full_name, u.city,
+                       gs.current_question as questions_answered
+                FROM transactions t
+                JOIN users u ON t.user_id = u.id
+                LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
+                    AND DATE(gs.completed_at) = DATE(t.created_at)
+                    AND gs.current_score = t.amount
+                WHERE t.id = $1 AND t.transaction_type = 'prize'
+            `, [cardId]);
+            
+            if (transactionResult.rows.length > 0) {
+                cardData = transactionResult.rows[0];
+                cardData.total_questions = 15;
+            }
+        }
         
         if (!cardData) {
-            return res.status(404).json({ error: 'Victory card not found' });
+            return res.status(404).json({ error: 'Victory card or transaction not found' });
         }
         
         // Generate the image
@@ -3675,12 +3696,14 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
             username: cardData.username,
             city: cardData.city,
             amount: parseFloat(cardData.amount),
-            questionsAnswered: cardData.questions_answered,
-            totalQuestions: cardData.total_questions
+            questionsAnswered: cardData.questions_answered || 15,
+            totalQuestions: cardData.total_questions || 15
         });
         
-        // Log regeneration
-        await victoryCardsService.logAdminRegeneration(cardId, adminId);
+        // Log regeneration if we have a victory card id
+        if (cardData.id) {
+            await victoryCardsService.logAdminRegeneration(cardData.id, adminId);
+        }
         
         // Return the image path (or base64)
         const fs = require('fs');

@@ -352,10 +352,17 @@ class RestrictionsService {
     
     async logAdminActivity(adminId, actionType, targetType, targetId, details, ipAddress = null) {
         try {
+            // Match existing table structure: action_details instead of separate columns
+            const actionDetails = {
+                target_type: targetType,
+                target_id: targetId,
+                ...details
+            };
+            
             await pool.query(`
-                INSERT INTO admin_activity_log (admin_id, action_type, target_type, target_id, details, ip_address)
-                VALUES ($1, $2, $3, $4, $5, $6)
-            `, [adminId, actionType, targetType, targetId, JSON.stringify(details), ipAddress]);
+                INSERT INTO admin_activity_log (admin_id, action_type, action_details, ip_address)
+                VALUES ($1, $2, $3, $4)
+            `, [adminId, actionType, JSON.stringify(actionDetails), ipAddress]);
         } catch (error) {
             logger.error('Error logging admin activity:', error);
         }
