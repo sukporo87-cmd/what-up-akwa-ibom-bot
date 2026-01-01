@@ -2193,9 +2193,11 @@
     // ====================================
     
     async function loadSettings() {
+        const token = localStorage.getItem('adminSessionToken');
+        
         try {
             const response = await fetch('/admin/api/settings', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await response.json();
             
@@ -2231,31 +2233,33 @@
     }
     
     async function loadRestrictionCounts() {
+        const token = localStorage.getItem('adminSessionToken');
+        
         try {
             // Suspended users count
             const suspendedResponse = await fetch('/admin/api/users/suspended', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const suspendedData = await suspendedResponse.json();
             document.getElementById('suspendedCount').textContent = suspendedData.success ? suspendedData.users.length : 0;
             
             // Cooldown users count
             const cooldownResponse = await fetch('/admin/api/users/cooldown', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const cooldownData = await cooldownResponse.json();
             document.getElementById('cooldownCount').textContent = cooldownData.success ? cooldownData.users.length : 0;
             
             // Daily limit users count
             const limitResponse = await fetch('/admin/api/users/daily-limit', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const limitData = await limitResponse.json();
             document.getElementById('dailyLimitCount').textContent = limitData.success ? limitData.users.length : 0;
             
             // Flagged users count
             const flaggedResponse = await fetch('/admin/api/fraud/flagged-users', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const flaggedData = await flaggedResponse.json();
             document.getElementById('flaggedCount').textContent = flaggedData.success ? flaggedData.users.length : 0;
@@ -2270,10 +2274,12 @@
     // ====================================
     
     async function loadAchievements() {
+        const token = localStorage.getItem('adminSessionToken');
+        
         // Load achievement types
         try {
             const typesResponse = await fetch('/admin/api/achievements/all', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const typesData = await typesResponse.json();
             
@@ -2287,7 +2293,7 @@
         // Load leaderboard
         try {
             const leaderboardResponse = await fetch('/admin/api/achievements/leaderboard?limit=20', {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const leaderboardData = await leaderboardResponse.json();
             
