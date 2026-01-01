@@ -942,8 +942,24 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
-    const activities = await adminAuthService.getActivityLog(limit, offset);
-    res.json({ activities });
+    
+    // Try to get from admin_activity_log table first (new)
+    let activities = [];
+    try {
+      const result = await pool.query(`
+        SELECT id, admin_id, action_type, target_type, target_id, details, ip_address, created_at
+        FROM admin_activity_log
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset]);
+      activities = result.rows;
+    } catch (dbError) {
+      // Table might not exist yet, fall back to old method
+      logger.warn('admin_activity_log table not found, using legacy method');
+      activities = await adminAuthService.getActivityLog(limit, offset);
+    }
+    
+    res.json({ success: true, activities });
   } catch (error) {
     logger.error('Error getting activity log:', error);
     res.status(500).json({ error: 'Failed to fetch activity log' });
@@ -3278,35 +3294,548 @@ router.get('/api/streaks/champions', authenticateAdmin, async (req, res) => {
 
 
 // ============================================
+// RESTRICTIONS & SUSPENSION ENDPOINTS
+// ============================================
+
+// Get all suspended users
+router.get('/api/users/suspended', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const users = await restrictionsService.getSuspendedUsers();
+        res.json({ success: true, users });
+    } catch (error) {
+        logger.error('Error getting suspended users:', error);
+        res.status(500).json({ error: 'Failed to get suspended users' });
+    }
+});
+
+// Suspend a user
+router.post('/api/users/:id/suspend', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const { reason } = req.body;
+        const userId = parseInt(req.params.id);
+        const adminId = req.session?.adminId || null;
+        
+        const success = await restrictionsService.suspendUser(userId, reason, adminId);
+        
+        if (success) {
+            res.json({ success: true, message: 'User suspended successfully' });
+        } else {
+            res.status(500).json({ error: 'Failed to suspend user' });
+        }
+    } catch (error) {
+        logger.error('Error suspending user:', error);
+        res.status(500).json({ error: 'Failed to suspend user' });
+    }
+});
+
+// Unsuspend a user
+router.post('/api/users/:id/unsuspend', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const userId = parseInt(req.params.id);
+        const adminId = req.session?.adminId || null;
+        
+        const success = await restrictionsService.unsuspendUser(userId, adminId);
+        
+        if (success) {
+            res.json({ success: true, message: 'User unsuspended successfully' });
+        } else {
+            res.status(500).json({ error: 'Failed to unsuspend user' });
+        }
+    } catch (error) {
+        logger.error('Error unsuspending user:', error);
+        res.status(500).json({ error: 'Failed to unsuspend user' });
+    }
+});
+
+// Get users on grand prize cooldown
+router.get('/api/users/cooldown', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const users = await restrictionsService.getUsersOnCooldown();
+        res.json({ success: true, users });
+    } catch (error) {
+        logger.error('Error getting users on cooldown:', error);
+        res.status(500).json({ error: 'Failed to get users on cooldown' });
+    }
+});
+
+// Clear grand prize cooldown
+router.post('/api/users/:id/clear-cooldown', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const userId = parseInt(req.params.id);
+        const adminId = req.session?.adminId || null;
+        
+        const success = await restrictionsService.clearGrandPrizeCooldown(userId, adminId);
+        
+        if (success) {
+            res.json({ success: true, message: 'Cooldown cleared successfully' });
+        } else {
+            res.status(500).json({ error: 'Failed to clear cooldown' });
+        }
+    } catch (error) {
+        logger.error('Error clearing cooldown:', error);
+        res.status(500).json({ error: 'Failed to clear cooldown' });
+    }
+});
+
+// Get users at daily limit
+router.get('/api/users/daily-limit', authenticateAdmin, async (req, res) => {
+    try {
+        const restrictionsService = require('../services/restrictions.service');
+        const users = await restrictionsService.getUsersAtDailyLimit();
+        res.json({ success: true, users });
+    } catch (error) {
+        logger.error('Error getting users at daily limit:', error);
+        res.status(500).json({ error: 'Failed to get users at daily limit' });
+    }
+});
+
+// ============================================
+// ENHANCED USER MANAGEMENT ENDPOINTS
+// ============================================
+
+// Get user details with full profile
+router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        
+        // Get user basic info
+        const userResult = await pool.query(`
+            SELECT u.*, 
+                   r.username as referrer_username,
+                   r.full_name as referrer_name
+            FROM users u
+            LEFT JOIN users r ON u.referred_by = r.id
+            WHERE u.id = $1
+        `, [userId]);
+        
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const user = userResult.rows[0];
+        
+        // Get game stats
+        const statsResult = await pool.query(`
+            SELECT 
+                COUNT(*) as total_games,
+                COUNT(*) FILTER (WHERE status = 'won') as games_won,
+                COUNT(*) FILTER (WHERE status = 'lost') as games_lost,
+                MAX(current_question) as highest_question,
+                AVG(avg_response_time_ms) FILTER (WHERE avg_response_time_ms IS NOT NULL) as avg_response_time,
+                COUNT(*) FILTER (WHERE suspicious_flag = true) as suspicious_games
+            FROM game_sessions
+            WHERE user_id = $1
+        `, [userId]);
+        
+        // Get financial stats
+        const financialResult = await pool.query(`
+            SELECT 
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'prize'), 0) as total_winnings,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'purchase'), 0) as total_purchases,
+                COUNT(*) FILTER (WHERE transaction_type = 'prize') as prize_count,
+                MAX(amount) FILTER (WHERE transaction_type = 'prize') as highest_win
+            FROM transactions
+            WHERE user_id = $1
+        `, [userId]);
+        
+        // Get referral stats
+        const referralResult = await pool.query(`
+            SELECT COUNT(*) as referral_count
+            FROM users
+            WHERE referred_by = $1
+        `, [userId]);
+        
+        // Get recent games
+        const recentGamesResult = await pool.query(`
+            SELECT id, game_mode, game_type, current_question, current_score, status,
+                   started_at, completed_at, avg_response_time_ms, suspicious_flag
+            FROM game_sessions
+            WHERE user_id = $1
+            ORDER BY started_at DESC
+            LIMIT 20
+        `, [userId]);
+        
+        // Get recent transactions
+        const recentTransactionsResult = await pool.query(`
+            SELECT id, transaction_type, amount, status, created_at, reference
+            FROM transactions
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT 20
+        `, [userId]);
+        
+        // Get achievements
+        const achievementsResult = await pool.query(`
+            SELECT achievement_type, achievement_name, description, earned_at, metadata
+            FROM user_achievements
+            WHERE user_id = $1
+            ORDER BY earned_at DESC
+        `, [userId]);
+        
+        res.json({
+            success: true,
+            user,
+            stats: statsResult.rows[0],
+            financial: financialResult.rows[0],
+            referrals: referralResult.rows[0],
+            recentGames: recentGamesResult.rows,
+            recentTransactions: recentTransactionsResult.rows,
+            achievements: achievementsResult.rows
+        });
+    } catch (error) {
+        logger.error('Error getting user profile:', error);
+        res.status(500).json({ error: 'Failed to get user profile' });
+    }
+});
+
+// Search users with multiple parameters
+router.get('/api/users/search', authenticateAdmin, async (req, res) => {
+    try {
+        const { 
+            query, username, phone, city, 
+            minWinnings, maxWinnings, 
+            minGames, maxGames,
+            suspended, platform,
+            dateFrom, dateTo,
+            sortBy = 'created_at', sortOrder = 'DESC',
+            limit = 50, offset = 0
+        } = req.query;
+        
+        let sql = `
+            SELECT u.*, 
+                   COALESCE(t.total_winnings, 0) as total_winnings,
+                   COALESCE(g.game_count, 0) as game_count
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, SUM(amount) as total_winnings 
+                FROM transactions WHERE transaction_type = 'prize' 
+                GROUP BY user_id
+            ) t ON u.id = t.user_id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) as game_count 
+                FROM game_sessions 
+                GROUP BY user_id
+            ) g ON u.id = g.user_id
+            WHERE 1=1
+        `;
+        const params = [];
+        let paramIndex = 1;
+        
+        // General search query
+        if (query) {
+            sql += ` AND (u.username ILIKE $${paramIndex} OR u.full_name ILIKE $${paramIndex} OR u.phone_number ILIKE $${paramIndex})`;
+            params.push(`%${query}%`);
+            paramIndex++;
+        }
+        
+        // Specific field searches
+        if (username) {
+            sql += ` AND u.username ILIKE $${paramIndex}`;
+            params.push(`%${username}%`);
+            paramIndex++;
+        }
+        
+        if (phone) {
+            sql += ` AND u.phone_number ILIKE $${paramIndex}`;
+            params.push(`%${phone}%`);
+            paramIndex++;
+        }
+        
+        if (city) {
+            sql += ` AND u.city ILIKE $${paramIndex}`;
+            params.push(`%${city}%`);
+            paramIndex++;
+        }
+        
+        if (suspended !== undefined) {
+            sql += ` AND u.is_suspended = $${paramIndex}`;
+            params.push(suspended === 'true');
+            paramIndex++;
+        }
+        
+        if (platform) {
+            if (platform === 'telegram') {
+                sql += ` AND u.phone_number LIKE 'tg_%'`;
+            } else if (platform === 'whatsapp') {
+                sql += ` AND u.phone_number NOT LIKE 'tg_%'`;
+            }
+        }
+        
+        if (dateFrom) {
+            sql += ` AND u.created_at >= $${paramIndex}`;
+            params.push(dateFrom);
+            paramIndex++;
+        }
+        
+        if (dateTo) {
+            sql += ` AND u.created_at <= $${paramIndex}`;
+            params.push(dateTo);
+            paramIndex++;
+        }
+        
+        // Sorting
+        const validSortColumns = ['created_at', 'username', 'total_winnings', 'game_count', 'current_streak'];
+        const sortColumn = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
+        const order = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        
+        sql += ` ORDER BY ${sortColumn} ${order} NULLS LAST`;
+        sql += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(parseInt(limit), parseInt(offset));
+        
+        const result = await pool.query(sql, params);
+        
+        // Get total count
+        let countSql = `SELECT COUNT(*) FROM users u WHERE 1=1`;
+        // Apply same filters for count (simplified)
+        const countResult = await pool.query(countSql);
+        
+        res.json({
+            success: true,
+            users: result.rows,
+            total: parseInt(countResult.rows[0].count),
+            limit: parseInt(limit),
+            offset: parseInt(offset)
+        });
+    } catch (error) {
+        logger.error('Error searching users:', error);
+        res.status(500).json({ error: 'Failed to search users' });
+    }
+});
+
+// ============================================
+// VICTORY CARDS ENDPOINTS
+// ============================================
+
+// Get all victory cards (for admin dashboard)
+router.get('/api/victory-cards', authenticateAdmin, async (req, res) => {
+    try {
+        const victoryCardsService = require('../services/victory-cards.service');
+        const { limit = 50, offset = 0, userId, minAmount, dateFrom, dateTo } = req.query;
+        
+        const cards = await victoryCardsService.getAllVictoryCards({
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            userId: userId ? parseInt(userId) : null,
+            minAmount: minAmount ? parseFloat(minAmount) : null,
+            dateFrom,
+            dateTo
+        });
+        
+        res.json({ success: true, cards });
+    } catch (error) {
+        logger.error('Error getting victory cards:', error);
+        res.status(500).json({ error: 'Failed to get victory cards' });
+    }
+});
+
+// Get recent winners
+router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
+    try {
+        const victoryCardsService = require('../services/victory-cards.service');
+        const { limit = 20 } = req.query;
+        
+        const winners = await victoryCardsService.getRecentWinners(parseInt(limit));
+        res.json({ success: true, winners });
+    } catch (error) {
+        logger.error('Error getting recent winners:', error);
+        res.status(500).json({ error: 'Failed to get recent winners' });
+    }
+});
+
+// Regenerate victory card
+router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, res) => {
+    try {
+        const victoryCardsService = require('../services/victory-cards.service');
+        const ImageService = require('../services/image.service');
+        const imageService = new ImageService();
+        
+        const cardId = parseInt(req.params.id);
+        const adminId = req.session?.adminId || null;
+        
+        // Get card data
+        const cardData = await victoryCardsService.getVictoryCardData(cardId);
+        
+        if (!cardData) {
+            return res.status(404).json({ error: 'Victory card not found' });
+        }
+        
+        // Generate the image
+        const imagePath = await imageService.generateWinImage({
+            name: cardData.full_name,
+            username: cardData.username,
+            city: cardData.city,
+            amount: parseFloat(cardData.amount),
+            questionsAnswered: cardData.questions_answered,
+            totalQuestions: cardData.total_questions
+        });
+        
+        // Log regeneration
+        await victoryCardsService.logAdminRegeneration(cardId, adminId);
+        
+        // Return the image path (or base64)
+        const fs = require('fs');
+        const imageBuffer = fs.readFileSync(imagePath);
+        const base64Image = imageBuffer.toString('base64');
+        
+        // Clean up
+        fs.unlinkSync(imagePath);
+        imageService.cleanupTempFiles();
+        
+        res.json({ 
+            success: true, 
+            image: `data:image/png;base64,${base64Image}`,
+            cardData
+        });
+    } catch (error) {
+        logger.error('Error regenerating victory card:', error);
+        res.status(500).json({ error: 'Failed to regenerate victory card' });
+    }
+});
+
+// Get win statistics
+router.get('/api/stats/wins', authenticateAdmin, async (req, res) => {
+    try {
+        const victoryCardsService = require('../services/victory-cards.service');
+        const { period = 'today' } = req.query;
+        
+        const stats = await victoryCardsService.getWinStatistics(period);
+        res.json({ success: true, stats });
+    } catch (error) {
+        logger.error('Error getting win statistics:', error);
+        res.status(500).json({ error: 'Failed to get win statistics' });
+    }
+});
+
+// ============================================
+// ANTI-FRAUD ENDPOINTS
+// ============================================
+
+// Get flagged users
+router.get('/api/fraud/flagged-users', authenticateAdmin, async (req, res) => {
+    try {
+        const antiFraudService = require('../services/anti-fraud.service');
+        const { limit = 50 } = req.query;
+        
+        const users = await antiFraudService.getFlaggedUsers(parseInt(limit));
+        res.json({ success: true, users });
+    } catch (error) {
+        logger.error('Error getting flagged users:', error);
+        res.status(500).json({ error: 'Failed to get flagged users' });
+    }
+});
+
+// Get suspicious sessions
+router.get('/api/fraud/suspicious-sessions', authenticateAdmin, async (req, res) => {
+    try {
+        const antiFraudService = require('../services/anti-fraud.service');
+        const { limit = 50 } = req.query;
+        
+        const sessions = await antiFraudService.getSuspiciousSessions(parseInt(limit));
+        res.json({ success: true, sessions });
+    } catch (error) {
+        logger.error('Error getting suspicious sessions:', error);
+        res.status(500).json({ error: 'Failed to get suspicious sessions' });
+    }
+});
+
+// Get user fraud report
+router.get('/api/fraud/user/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const antiFraudService = require('../services/anti-fraud.service');
+        const userId = parseInt(req.params.id);
+        
+        const report = await antiFraudService.getUserFraudReport(userId);
+        
+        if (!report) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json({ success: true, report });
+    } catch (error) {
+        logger.error('Error getting user fraud report:', error);
+        res.status(500).json({ error: 'Failed to get fraud report' });
+    }
+});
+
+// Clear user fraud flags
+router.post('/api/fraud/user/:id/clear', authenticateAdmin, async (req, res) => {
+    try {
+        const antiFraudService = require('../services/anti-fraud.service');
+        const userId = parseInt(req.params.id);
+        const adminId = req.session?.adminId || null;
+        
+        const success = await antiFraudService.clearUserFlags(userId, adminId);
+        
+        if (success) {
+            res.json({ success: true, message: 'Fraud flags cleared' });
+        } else {
+            res.status(500).json({ error: 'Failed to clear fraud flags' });
+        }
+    } catch (error) {
+        logger.error('Error clearing fraud flags:', error);
+        res.status(500).json({ error: 'Failed to clear fraud flags' });
+    }
+});
+
+// ============================================
+// ACHIEVEMENTS ENDPOINTS
+// ============================================
+
+// Get achievement leaderboard
+router.get('/api/achievements/leaderboard', authenticateAdmin, async (req, res) => {
+    try {
+        const achievementsService = require('../services/achievements.service');
+        const { limit = 20 } = req.query;
+        
+        const leaderboard = await achievementsService.getAchievementLeaderboard(parseInt(limit));
+        res.json({ success: true, leaderboard });
+    } catch (error) {
+        logger.error('Error getting achievement leaderboard:', error);
+        res.status(500).json({ error: 'Failed to get achievement leaderboard' });
+    }
+});
+
+// Get all possible achievements
+router.get('/api/achievements/all', authenticateAdmin, async (req, res) => {
+    try {
+        const achievementsService = require('../services/achievements.service');
+        const achievements = achievementsService.getAllAchievements();
+        res.json({ success: true, achievements });
+    } catch (error) {
+        logger.error('Error getting all achievements:', error);
+        res.status(500).json({ error: 'Failed to get achievements' });
+    }
+});
+
+// ============================================
+// SYSTEM SETTINGS ENDPOINTS
+// ============================================
+
+// Get current system settings
+router.get('/api/settings', authenticateAdmin, async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            settings: {
+                maintenanceMode: process.env.MAINTENANCE_MODE === 'true',
+                maintenanceMessage: process.env.MAINTENANCE_MESSAGE || '',
+                grandPrizeCooldownDays: parseInt(process.env.GRAND_PRIZE_COOLDOWN_DAYS) || 7,
+                dailyWinLimit: parseInt(process.env.DAILY_WIN_LIMIT) || 30000,
+                paymentMode: process.env.PAYMENT_MODE || 'disabled'
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting settings:', error);
+        res.status(500).json({ error: 'Failed to get settings' });
+    }
+});
+
+// ============================================
 // MODULE EXPORT
 // ============================================
 module.exports = router;
-
-// ============================================
-// END OF COMPLETE admin.routes.js FILE
-// ALL 6 BATCHES COMBINED
-// ============================================
-
-/*
- * SUMMARY OF CHANGES:
- * 
- * NEW ROUTES ADDED:
- * - GET /dashboard - Multi-platform analytics dashboard page
- * - GET /api/stats/platform-overview - Platform stats (WhatsApp vs Telegram)
- * - GET /api/stats/platform-comparison - Chart data for platform comparison
- * - GET /api/activity/live - Real-time activity feed
- * - GET /api/health/platforms - Platform health monitoring
- * - GET /api/users/platform - Platform-filtered user list
- * - GET /api/payouts/platform - Platform-filtered payout list
- * 
- * UPDATED:
- * - Payout notification now uses MessagingService for multi-platform support
- * 
- * FILE STRUCTURE:
- * - BATCH 1: Imports, middleware, authentication, basic routes
- * - BATCH 2: NEW multi-platform dashboard API endpoints
- * - BATCH 3: Original analytics endpoints (kept for compatibility)
- * - BATCH 4: Payout and user management
- * - BATCH 5: Question management
- * - BATCH 6: Tournament management and module export
- */

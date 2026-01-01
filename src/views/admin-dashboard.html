@@ -869,6 +869,8 @@
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('referrals')">👥 Referrals</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('revenue')">💰 Revenue</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('games')">🎯 Game Stats</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('settings')">⚙️ Settings</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('achievements')">🏅 Achievements</button>
         </div>
         
         <!-- Tab Contents -->
@@ -1090,6 +1092,93 @@
                 <div class="stat-card">
                     <div class="stat-card-value" id="avg-score">0</div>
                     <div class="stat-card-label">Average Score</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Settings Tab (NEW) -->
+        <div id="settings-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">⚙️ System Settings</h3>
+            
+            <!-- Maintenance Mode -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                    🔧 Maintenance Mode
+                    <span id="maintenanceStatus" style="padding: 4px 12px; border-radius: 20px; font-size: 12px; background: #d1fae5; color: #065f46;">OFF</span>
+                </h4>
+                <p style="color: var(--text-secondary); margin-bottom: 15px;">When enabled, all users will see a maintenance message and cannot use the app.</p>
+                <div style="display: flex; gap: 15px; align-items: center;">
+                    <span style="color: var(--text-secondary);">Status:</span>
+                    <strong id="maintenanceModeValue">Disabled</strong>
+                </div>
+                <p style="margin-top: 10px; color: var(--text-secondary); font-size: 13px;">
+                    To enable/disable: Set <code style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">MAINTENANCE_MODE=true/false</code> in Render environment variables.
+                </p>
+            </div>
+            
+            <!-- Restriction Settings -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">🚫 Restriction Settings</h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+                    <div style="background: var(--bg-card); padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Grand Prize Cooldown</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="cooldownDays">7 days</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">Env: GRAND_PRIZE_COOLDOWN_DAYS</div>
+                    </div>
+                    <div style="background: var(--bg-card); padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Daily Win Limit</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="dailyLimit">₦30,000</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">Env: DAILY_WIN_LIMIT</div>
+                    </div>
+                    <div style="background: var(--bg-card); padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Payment Mode</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="paymentModeValue">-</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">Env: PAYMENT_MODE</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Quick Stats -->
+            <div class="card" style="padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">📊 Current Restrictions Active</h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+                    <div style="background: #fee2e2; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #991b1b;" id="suspendedCount">-</div>
+                        <div style="font-size: 12px; color: #991b1b;">Suspended Users</div>
+                    </div>
+                    <div style="background: #fef3c7; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #92400e;" id="cooldownCount">-</div>
+                        <div style="font-size: 12px; color: #92400e;">On Cooldown</div>
+                    </div>
+                    <div style="background: #dbeafe; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #1e40af;" id="dailyLimitCount">-</div>
+                        <div style="font-size: 12px; color: #1e40af;">At Daily Limit</div>
+                    </div>
+                    <div style="background: #fce7f3; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #9d174d;" id="flaggedCount">-</div>
+                        <div style="font-size: 12px; color: #9d174d;">Fraud Flagged</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Achievements Tab (NEW) -->
+        <div id="achievements-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🏅 Achievements Overview</h3>
+            
+            <!-- Achievement Types -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">Available Achievements</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;" id="achievementTypes">
+                    <div class="loading">Loading achievements...</div>
+                </div>
+            </div>
+            
+            <!-- Achievement Leaderboard -->
+            <div class="card" style="padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">🏆 Achievement Leaderboard</h4>
+                <div id="achievementLeaderboard">
+                    <div class="loading">Loading leaderboard...</div>
                 </div>
             </div>
         </div>
@@ -1451,6 +1540,12 @@
                     break;
                 case 'streaks':
                     await loadStreakData();
+                    break;
+                case 'settings':
+                    await loadSettings();
+                    break;
+                case 'achievements':
+                    await loadAchievements();
                     break;
             }
         } catch (error) {
@@ -2092,6 +2187,201 @@
         html += '</div>';
         container.innerHTML = html;
     }
+
+    // ====================================
+    // NEW: SETTINGS TAB FUNCTIONS
+    // ====================================
+    
+    async function loadSettings() {
+        try {
+            const response = await fetch('/admin/api/settings', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                const settings = data.settings;
+                
+                // Maintenance mode
+                const maintenanceStatus = document.getElementById('maintenanceStatus');
+                const maintenanceModeValue = document.getElementById('maintenanceModeValue');
+                if (settings.maintenanceMode) {
+                    maintenanceStatus.style.background = '#fee2e2';
+                    maintenanceStatus.style.color = '#991b1b';
+                    maintenanceStatus.textContent = 'ON';
+                    maintenanceModeValue.textContent = 'Enabled';
+                } else {
+                    maintenanceStatus.style.background = '#d1fae5';
+                    maintenanceStatus.style.color = '#065f46';
+                    maintenanceStatus.textContent = 'OFF';
+                    maintenanceModeValue.textContent = 'Disabled';
+                }
+                
+                // Other settings
+                document.getElementById('cooldownDays').textContent = settings.grandPrizeCooldownDays + ' days';
+                document.getElementById('dailyLimit').textContent = '₦' + settings.dailyWinLimit.toLocaleString();
+                document.getElementById('paymentModeValue').textContent = settings.paymentMode || 'disabled';
+            }
+        } catch (error) {
+            console.error('Error loading settings:', error);
+        }
+        
+        // Load restriction counts
+        loadRestrictionCounts();
+    }
+    
+    async function loadRestrictionCounts() {
+        try {
+            // Suspended users count
+            const suspendedResponse = await fetch('/admin/api/users/suspended', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const suspendedData = await suspendedResponse.json();
+            document.getElementById('suspendedCount').textContent = suspendedData.success ? suspendedData.users.length : 0;
+            
+            // Cooldown users count
+            const cooldownResponse = await fetch('/admin/api/users/cooldown', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const cooldownData = await cooldownResponse.json();
+            document.getElementById('cooldownCount').textContent = cooldownData.success ? cooldownData.users.length : 0;
+            
+            // Daily limit users count
+            const limitResponse = await fetch('/admin/api/users/daily-limit', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const limitData = await limitResponse.json();
+            document.getElementById('dailyLimitCount').textContent = limitData.success ? limitData.users.length : 0;
+            
+            // Flagged users count
+            const flaggedResponse = await fetch('/admin/api/fraud/flagged-users', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const flaggedData = await flaggedResponse.json();
+            document.getElementById('flaggedCount').textContent = flaggedData.success ? flaggedData.users.length : 0;
+            
+        } catch (error) {
+            console.error('Error loading restriction counts:', error);
+        }
+    }
+
+    // ====================================
+    // NEW: ACHIEVEMENTS TAB FUNCTIONS
+    // ====================================
+    
+    async function loadAchievements() {
+        // Load achievement types
+        try {
+            const typesResponse = await fetch('/admin/api/achievements/all', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const typesData = await typesResponse.json();
+            
+            if (typesData.success) {
+                renderAchievementTypes(typesData.achievements);
+            }
+        } catch (error) {
+            console.error('Error loading achievement types:', error);
+        }
+        
+        // Load leaderboard
+        try {
+            const leaderboardResponse = await fetch('/admin/api/achievements/leaderboard?limit=20', {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const leaderboardData = await leaderboardResponse.json();
+            
+            if (leaderboardData.success) {
+                renderAchievementLeaderboard(leaderboardData.leaderboard);
+            }
+        } catch (error) {
+            console.error('Error loading achievement leaderboard:', error);
+        }
+    }
+    
+    function renderAchievementTypes(achievements) {
+        const container = document.getElementById('achievementTypes');
+        
+        if (!achievements || achievements.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-secondary);">No achievements configured</p>';
+            return;
+        }
+        
+        let html = '';
+        achievements.forEach(a => {
+            html += `
+                <div style="background: var(--bg-card); padding: 12px; border-radius: 10px; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">${a.emoji}</span>
+                    <div>
+                        <div style="font-weight: 600;">${a.name}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">${a.description}</div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    }
+    
+    function renderAchievementLeaderboard(leaderboard) {
+        const container = document.getElementById('achievementLeaderboard');
+        
+        if (!leaderboard || leaderboard.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-secondary);">No achievements earned yet</p>';
+            return;
+        }
+        
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<thead><tr style="border-bottom: 1px solid var(--border-color);">';
+        html += '<th style="padding: 10px; text-align: left;">Rank</th>';
+        html += '<th style="padding: 10px; text-align: left;">User</th>';
+        html += '<th style="padding: 10px; text-align: left;">City</th>';
+        html += '<th style="padding: 10px; text-align: center;">Achievements</th>';
+        html += '</tr></thead><tbody>';
+        
+        leaderboard.forEach((user, index) => {
+            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+            html += `<tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 10px;">${index + 1} ${medal}</td>
+                <td style="padding: 10px;"><strong>@${user.username}</strong></td>
+                <td style="padding: 10px;">${user.city || 'N/A'}</td>
+                <td style="padding: 10px; text-align: center;">
+                    <span style="background: var(--primary-color); padding: 4px 12px; border-radius: 20px; font-weight: bold;">${user.achievement_count}</span>
+                </td>
+            </tr>`;
+        });
+        
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+
+    // ====================================
+    // UPDATE: switchAnalyticsTab to handle new tabs
+    // ====================================
+    
+    const originalSwitchAnalyticsTab = switchAnalyticsTab;
+    switchAnalyticsTab = function(tabName) {
+        document.querySelectorAll('.analytics-tab-content').forEach(tab => {
+            tab.style.display = 'none';
+        });
+        
+        document.querySelectorAll('.analytics-tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        const targetTab = document.getElementById(tabName + '-tab');
+        if (targetTab) {
+            targetTab.style.display = 'block';
+        }
+        
+        const activeBtn = document.querySelector(`.analytics-tab-btn[onclick="switchAnalyticsTab('${tabName}')"]`);
+        if (activeBtn) {
+            activeBtn.classList.add('active');
+        }
+        
+        // Load data for specific tabs
+        loadTabData(tabName);
+    };
 
     // ====================================
     // INITIALIZE DASHBOARD

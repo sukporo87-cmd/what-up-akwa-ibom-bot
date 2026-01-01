@@ -540,6 +540,30 @@
             </div>
         </div>
 
+        <!-- Admin Activity Section (NEW) -->
+        <div class="card" style="background: rgba(255,255,255,0.05); border-radius: 12px; padding: 20px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="display: flex; align-items: center; gap: 10px;">
+                    👮 Admin Activity Log
+                    <span style="background: rgba(102, 126, 234, 0.2); color: #667eea; padding: 4px 10px; border-radius: 20px; font-size: 12px;" id="adminActivityCount">0</span>
+                </h3>
+                <button onclick="loadAdminActivity()" style="padding: 8px 16px; background: rgba(102, 126, 234, 0.2); color: #667eea; border: none; border-radius: 6px; cursor: pointer;">🔄 Refresh</button>
+            </div>
+            
+            <!-- Activity Type Filter -->
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                <button class="activity-filter active" onclick="filterAdminActivity('all')" data-filter="all" style="padding: 6px 12px; background: rgba(102, 126, 234, 0.3); color: #fff; border: none; border-radius: 20px; cursor: pointer; font-size: 12px;">All</button>
+                <button class="activity-filter" onclick="filterAdminActivity('suspend')" data-filter="suspend" style="padding: 6px 12px; background: rgba(239, 68, 68, 0.2); color: #ef4444; border: none; border-radius: 20px; cursor: pointer; font-size: 12px;">⛔ Suspensions</button>
+                <button class="activity-filter" onclick="filterAdminActivity('cooldown')" data-filter="cooldown" style="padding: 6px 12px; background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: none; border-radius: 20px; cursor: pointer; font-size: 12px;">🏆 Cooldowns</button>
+                <button class="activity-filter" onclick="filterAdminActivity('fraud')" data-filter="fraud" style="padding: 6px 12px; background: rgba(236, 72, 153, 0.2); color: #ec4899; border: none; border-radius: 20px; cursor: pointer; font-size: 12px;">🔍 Fraud</button>
+                <button class="activity-filter" onclick="filterAdminActivity('payout')" data-filter="payout" style="padding: 6px 12px; background: rgba(16, 185, 129, 0.2); color: #10b981; border: none; border-radius: 20px; cursor: pointer; font-size: 12px;">💰 Payouts</button>
+            </div>
+            
+            <div id="adminActivityTable" style="max-height: 400px; overflow-y: auto;">
+                <div class="loading">Loading admin activity...</div>
+            </div>
+        </div>
+
         <!-- Search Section -->
         <div class="search-section">
             <h3>🔍 Search Game Sessions</h3>
@@ -1019,9 +1043,135 @@
             if (e.target === this) closeSuspiciousModal();
         });
 
+        // ====================================
+        // NEW: ADMIN ACTIVITY LOG FUNCTIONS
+        // ====================================
+        
+        let allAdminActivity = [];
+        let currentActivityFilter = 'all';
+        
+        async function loadAdminActivity() {
+            const token = localStorage.getItem('adminSessionToken');
+            
+            try {
+                const response = await fetch('/admin/api/activity-log?limit=100', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success || data.activities) {
+                    allAdminActivity = data.activities || data.data || [];
+                    document.getElementById('adminActivityCount').textContent = allAdminActivity.length;
+                    renderAdminActivity(allAdminActivity);
+                } else {
+                    document.getElementById('adminActivityTable').innerHTML = '<p style="color: rgba(255,255,255,0.5); text-align: center;">No admin activity found</p>';
+                }
+            } catch (error) {
+                console.error('Error loading admin activity:', error);
+                document.getElementById('adminActivityTable').innerHTML = '<p style="color: rgba(255,255,255,0.5); text-align: center;">Error loading admin activity</p>';
+            }
+        }
+        
+        function filterAdminActivity(filter) {
+            currentActivityFilter = filter;
+            
+            // Update button styles
+            document.querySelectorAll('.activity-filter').forEach(btn => {
+                btn.style.background = btn.dataset.filter === filter ? 'rgba(102, 126, 234, 0.3)' : 'rgba(255,255,255,0.1)';
+            });
+            
+            let filtered = allAdminActivity;
+            
+            if (filter !== 'all') {
+                filtered = allAdminActivity.filter(a => {
+                    const type = a.action_type?.toLowerCase() || '';
+                    switch(filter) {
+                        case 'suspend': return type.includes('suspend');
+                        case 'cooldown': return type.includes('cooldown');
+                        case 'fraud': return type.includes('fraud');
+                        case 'payout': return type.includes('payout') || type.includes('paid');
+                        default: return true;
+                    }
+                });
+            }
+            
+            renderAdminActivity(filtered);
+        }
+        
+        function renderAdminActivity(activities) {
+            const container = document.getElementById('adminActivityTable');
+            
+            if (!activities || activities.length === 0) {
+                container.innerHTML = '<p style="color: rgba(255,255,255,0.5); text-align: center; padding: 20px;">No activity found</p>';
+                return;
+            }
+            
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<thead><tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">';
+            html += '<th style="padding: 10px; text-align: left; font-size: 12px; color: rgba(255,255,255,0.7);">Action</th>';
+            html += '<th style="padding: 10px; text-align: left; font-size: 12px; color: rgba(255,255,255,0.7);">Target</th>';
+            html += '<th style="padding: 10px; text-align: left; font-size: 12px; color: rgba(255,255,255,0.7);">Details</th>';
+            html += '<th style="padding: 10px; text-align: left; font-size: 12px; color: rgba(255,255,255,0.7);">Date</th>';
+            html += '</tr></thead><tbody>';
+            
+            activities.forEach(activity => {
+                const actionType = activity.action_type || 'unknown';
+                const actionIcon = getActionIcon(actionType);
+                const actionColor = getActionColor(actionType);
+                const details = typeof activity.details === 'object' ? JSON.stringify(activity.details) : (activity.details || '-');
+                const truncatedDetails = details.length > 50 ? details.substring(0, 50) + '...' : details;
+                
+                html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 10px;">
+                        <span style="background: ${actionColor}20; color: ${actionColor}; padding: 4px 8px; border-radius: 4px; font-size: 11px;">
+                            ${actionIcon} ${actionType}
+                        </span>
+                    </td>
+                    <td style="padding: 10px; font-size: 13px;">
+                        ${activity.target_type || '-'} #${activity.target_id || '-'}
+                    </td>
+                    <td style="padding: 10px; font-size: 12px; color: rgba(255,255,255,0.7);" title="${details}">
+                        ${truncatedDetails}
+                    </td>
+                    <td style="padding: 10px; font-size: 12px; color: rgba(255,255,255,0.5);">
+                        ${new Date(activity.created_at).toLocaleString()}
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+        
+        function getActionIcon(actionType) {
+            const type = actionType.toLowerCase();
+            if (type.includes('suspend')) return '⛔';
+            if (type.includes('unsuspend')) return '✅';
+            if (type.includes('cooldown')) return '🏆';
+            if (type.includes('fraud')) return '🔍';
+            if (type.includes('payout') || type.includes('paid')) return '💰';
+            if (type.includes('victory')) return '🎴';
+            if (type.includes('question')) return '❓';
+            if (type.includes('tournament')) return '🏅';
+            return '📝';
+        }
+        
+        function getActionColor(actionType) {
+            const type = actionType.toLowerCase();
+            if (type.includes('suspend')) return '#ef4444';
+            if (type.includes('unsuspend')) return '#10b981';
+            if (type.includes('cooldown')) return '#f59e0b';
+            if (type.includes('fraud')) return '#ec4899';
+            if (type.includes('payout') || type.includes('paid')) return '#10b981';
+            if (type.includes('victory')) return '#8b5cf6';
+            return '#667eea';
+        }
+
         // Initialize
         loadStats();
         searchSessions(1);
+        loadAdminActivity();
     </script>
 </body>
 </html>

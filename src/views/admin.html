@@ -717,8 +717,11 @@
       <button class="tab" onclick="switchTab('payouts')">💰 Payouts</button>
       <button class="tab" onclick="switchTab('history')">📜 History</button>
       <button class="tab" onclick="switchTab('users')">👥 Users</button>
+      <button class="tab" onclick="switchTab('restrictions')">🚫 Restrictions</button>
+      <button class="tab" onclick="switchTab('fraud')">🔍 Fraud</button>
+      <button class="tab" onclick="switchTab('winners')">🏆 Winners</button>
       <button class="tab" onclick="switchTab('questions')">❓ Questions</button>
-      <button class="tab" onclick="switchTab('tournaments')">🏆 Tournaments</button>
+      <button class="tab" onclick="switchTab('tournaments')">🏅 Tournaments</button>
       <button class="tab" onclick="switchTab('activity')">📋 Activity Log</button>
     </div>
 
@@ -794,15 +797,167 @@
     <div id="usersTab" class="tab-content">
       <div class="card">
         <div class="card-header">
-          <h2>All Users</h2>
+          <h2>👥 All Users</h2>
           <div class="filter-group">
-            <button class="btn btn-primary" onclick="loadUsers()">🔄 Refresh</button>
+            <input type="text" id="userSearchQuery" placeholder="Search by name, username, phone..." style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; width: 250px;">
+            <select id="userPlatformFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;">
+              <option value="">All Platforms</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="telegram">Telegram</option>
+            </select>
+            <select id="userStatusFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;">
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+            </select>
+            <button class="btn btn-primary" onclick="searchUsers()">🔍 Search</button>
+            <button class="btn btn-secondary" onclick="loadUsers()">🔄 Reset</button>
           </div>
         </div>
         <div id="usersTableContainer">
           <div class="loading">
             <div class="spinner"></div>
             <p>Loading users...</p>
+          </div>
+        </div>
+        <!-- Pagination -->
+        <div id="usersPagination" style="display: flex; justify-content: center; gap: 10px; margin-top: 20px;"></div>
+      </div>
+    </div>
+
+    <!-- Restrictions Tab (NEW) -->
+    <div id="restrictionsTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>🚫 User Restrictions</h2>
+          <button class="btn btn-primary" onclick="loadRestrictions()">🔄 Refresh</button>
+        </div>
+        
+        <!-- Sub-tabs for restrictions -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">
+          <button class="btn btn-secondary" onclick="showRestrictionsSubTab('suspended')" id="suspendedSubTab" style="background: var(--danger);">⛔ Suspended Users</button>
+          <button class="btn btn-secondary" onclick="showRestrictionsSubTab('cooldown')" id="cooldownSubTab">🏆 Grand Prize Cooldown</button>
+          <button class="btn btn-secondary" onclick="showRestrictionsSubTab('dailylimit')" id="dailylimitSubTab">💰 Daily Limit Reached</button>
+        </div>
+        
+        <!-- Suspended Users Section -->
+        <div id="suspendedUsersSection">
+          <h3 style="margin-bottom: 15px;">⛔ Suspended Users</h3>
+          <div id="suspendedUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading suspended users...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Cooldown Users Section -->
+        <div id="cooldownUsersSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">🏆 Users on Grand Prize Cooldown</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">These users have won the grand prize and must wait before playing Classic/Tournament mode again.</p>
+          <div id="cooldownUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading cooldown users...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Daily Limit Section -->
+        <div id="dailyLimitSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">💰 Users at Daily Win Limit</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">These users have reached the daily win limit of ₦30,000 and cannot play Classic/Tournament mode until tomorrow.</p>
+          <div id="dailyLimitUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading daily limit users...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fraud Monitoring Tab (NEW) -->
+    <div id="fraudTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>🔍 Fraud Monitoring</h2>
+          <button class="btn btn-primary" onclick="loadFraudData()">🔄 Refresh</button>
+        </div>
+        
+        <!-- Fraud Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+          <div class="stat-card" style="background: #fee2e2;">
+            <h3 style="color: #991b1b;">Flagged Users</h3>
+            <div class="value" id="flaggedUsersCount" style="color: #dc2626;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fef3c7;">
+            <h3 style="color: #92400e;">Suspicious Sessions</h3>
+            <div class="value" id="suspiciousSessionsCount" style="color: #d97706;">-</div>
+          </div>
+        </div>
+        
+        <!-- Sub-tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">
+          <button class="btn btn-danger" onclick="showFraudSubTab('flagged')" id="flaggedSubTab">🚩 Flagged Users</button>
+          <button class="btn btn-secondary" onclick="showFraudSubTab('sessions')" id="sessionsSubTab">⚠️ Suspicious Sessions</button>
+        </div>
+        
+        <!-- Flagged Users -->
+        <div id="flaggedUsersSection">
+          <h3 style="margin-bottom: 15px;">🚩 Flagged Users</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Users flagged for unusually fast response times or suspicious patterns.</p>
+          <div id="flaggedUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading flagged users...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Suspicious Sessions -->
+        <div id="suspiciousSessionsSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">⚠️ Suspicious Game Sessions</h3>
+          <div id="suspiciousSessionsTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading suspicious sessions...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Winners Tab (NEW) -->
+    <div id="winnersTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>🏆 Recent Winners & Victory Cards</h2>
+          <button class="btn btn-primary" onclick="loadWinners()">🔄 Refresh</button>
+        </div>
+        
+        <!-- Win Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+          <div class="stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
+            <h3>Today's Wins</h3>
+            <div class="value" id="todayWinsCount">-</div>
+            <div class="label" id="todayWinsAmount">₦0</div>
+          </div>
+          <div class="stat-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white;">
+            <h3>Cards Shared</h3>
+            <div class="value" id="cardsSharedCount">-</div>
+          </div>
+          <div class="stat-card" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white;">
+            <h3>Cards Pending</h3>
+            <div class="value" id="cardsPendingCount">-</div>
+          </div>
+        </div>
+        
+        <h3 style="margin-bottom: 15px;">Recent Winners</h3>
+        <div id="winnersTableContainer">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Loading winners...</p>
           </div>
         </div>
       </div>
@@ -1135,6 +1290,86 @@
 </div>
 
 <!-- BATCH 7/10 COMPLETE - All modals -->
+
+<!-- User Profile Modal (NEW) -->
+<div id="userProfileModal" class="modal">
+  <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+    <div class="modal-header">
+      <h3>👤 User Profile</h3>
+      <button class="close-modal" onclick="closeModal('userProfileModal')">&times;</button>
+    </div>
+    <div id="userProfileContent">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading user profile...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Suspend User Modal (NEW) -->
+<div id="suspendUserModal" class="modal">
+  <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-header" style="background: #fee2e2;">
+      <h3 style="color: #991b1b;">⛔ Suspend User</h3>
+      <button class="close-modal" onclick="closeModal('suspendUserModal')">&times;</button>
+    </div>
+    <div id="suspendUserDetails" style="padding: 15px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 15px;">
+      <!-- User info will be populated here -->
+    </div>
+    <form id="suspendUserForm" onsubmit="submitSuspension(event)">
+      <input type="hidden" id="suspendUserId">
+      <div class="form-group">
+        <label>Suspension Reason *</label>
+        <textarea id="suspensionReason" required rows="3" placeholder="Enter the reason for suspension..."></textarea>
+      </div>
+      <div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+        <strong style="color: #92400e;">⚠️ Warning:</strong>
+        <span style="color: #78350f;">The user will be immediately blocked from accessing the game.</span>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button type="submit" class="btn btn-danger" style="flex: 1;">⛔ Suspend User</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('suspendUserModal')">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Victory Card Preview Modal (NEW) -->
+<div id="victoryCardModal" class="modal">
+  <div class="modal-content" style="max-width: 600px; text-align: center;">
+    <div class="modal-header">
+      <h3>🎴 Victory Card</h3>
+      <button class="close-modal" onclick="closeModal('victoryCardModal')">&times;</button>
+    </div>
+    <div id="victoryCardContent" style="padding: 20px;">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Generating victory card...</p>
+      </div>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+      <button class="btn btn-primary" onclick="downloadVictoryCard()">📥 Download</button>
+      <button class="btn btn-secondary" onclick="closeModal('victoryCardModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fraud Report Modal (NEW) -->
+<div id="fraudReportModal" class="modal">
+  <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+    <div class="modal-header" style="background: #fee2e2;">
+      <h3 style="color: #991b1b;">🔍 Fraud Investigation Report</h3>
+      <button class="close-modal" onclick="closeModal('fraudReportModal')">&times;</button>
+    </div>
+    <div id="fraudReportContent">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading fraud report...</p>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 // BATCH 8/10 - JavaScript: Authentication, State, and Core Functions
@@ -2119,6 +2354,733 @@ async function endTournament(tournamentId) {
 
 // BATCH 10/10 COMPLETE - ALL FUNCTIONS IMPLEMENTED
 // Complete admin dashboard with zero errors
+
+// ============================================
+// NEW: ENHANCED USER MANAGEMENT FUNCTIONS
+// ============================================
+
+// Search users with advanced filters
+async function searchUsers() {
+  const query = document.getElementById('userSearchQuery').value;
+  const platform = document.getElementById('userPlatformFilter').value;
+  const status = document.getElementById('userStatusFilter').value;
+  
+  const params = new URLSearchParams();
+  if (query) params.append('query', query);
+  if (platform) params.append('platform', platform);
+  if (status === 'suspended') params.append('suspended', 'true');
+  if (status === 'active') params.append('suspended', 'false');
+  
+  try {
+    const response = await fetch(`/admin/api/users/search?${params.toString()}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      renderUsersTable(data.users);
+    } else {
+      showAlert('Failed to search users', 'error');
+    }
+  } catch (error) {
+    console.error('Error searching users:', error);
+    showAlert('Error searching users', 'error');
+  }
+}
+
+// View user profile
+async function viewUserProfile(userId) {
+  openModal('userProfileModal');
+  document.getElementById('userProfileContent').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading user profile...</p></div>';
+  
+  try {
+    const response = await fetch(`/admin/api/users/${userId}/profile`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      renderUserProfile(data);
+    } else {
+      document.getElementById('userProfileContent').innerHTML = '<p style="color: red;">Failed to load user profile</p>';
+    }
+  } catch (error) {
+    console.error('Error loading user profile:', error);
+    document.getElementById('userProfileContent').innerHTML = '<p style="color: red;">Error loading user profile</p>';
+  }
+}
+
+function renderUserProfile(data) {
+  const { user, stats, financial, referrals, recentGames, recentTransactions, achievements } = data;
+  const platformIcon = user.phone_number.startsWith('tg_') ? '💬 Telegram' : '📱 WhatsApp';
+  const suspendedBadge = user.is_suspended ? '<span class="badge" style="background:#fee2e2;color:#991b1b;">SUSPENDED</span>' : '';
+  
+  let html = `
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+      <!-- Left Column -->
+      <div>
+        <div style="background: #f8fafc; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px;">👤 Personal Information ${suspendedBadge}</h4>
+          <div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">@${user.username}</span></div>
+          <div class="detail-row"><span class="detail-label">Full Name</span><span class="detail-value">${user.full_name}</span></div>
+          <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value">${user.phone_number}</span></div>
+          <div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">${platformIcon}</span></div>
+          <div class="detail-row"><span class="detail-label">City</span><span class="detail-value">${user.city || 'N/A'}</span></div>
+          <div class="detail-row"><span class="detail-label">Age</span><span class="detail-value">${user.age || 'N/A'}</span></div>
+          <div class="detail-row"><span class="detail-label">Joined</span><span class="detail-value">${new Date(user.created_at).toLocaleDateString()}</span></div>
+          <div class="detail-row"><span class="detail-label">Referral Code</span><span class="detail-value">${user.referral_code}</span></div>
+        </div>
+        
+        <div style="background: #f0fdf4; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px;">🎮 Game Stats</h4>
+          <div class="detail-row"><span class="detail-label">Total Games</span><span class="detail-value">${stats.total_games || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Games Won</span><span class="detail-value">${stats.games_won || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Games Lost</span><span class="detail-value">${stats.games_lost || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Win Rate</span><span class="detail-value">${stats.total_games > 0 ? Math.round((stats.games_won / stats.total_games) * 100) : 0}%</span></div>
+          <div class="detail-row"><span class="detail-label">Highest Question</span><span class="detail-value">Q${stats.highest_question || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Avg Response Time</span><span class="detail-value">${stats.avg_response_time ? Math.round(stats.avg_response_time / 1000) + 's' : 'N/A'}</span></div>
+          <div class="detail-row"><span class="detail-label">Current Streak</span><span class="detail-value">${user.current_streak || 0} days</span></div>
+        </div>
+      </div>
+      
+      <!-- Right Column -->
+      <div>
+        <div style="background: #fef3c7; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px;">💰 Financial</h4>
+          <div class="detail-row"><span class="detail-label">Total Winnings</span><span class="detail-value" style="color: #059669; font-weight: bold;">₦${parseFloat(financial.total_winnings || 0).toLocaleString()}</span></div>
+          <div class="detail-row"><span class="detail-label">Highest Win</span><span class="detail-value">₦${parseFloat(financial.highest_win || 0).toLocaleString()}</span></div>
+          <div class="detail-row"><span class="detail-label">Total Purchases</span><span class="detail-value">₦${parseFloat(financial.total_purchases || 0).toLocaleString()}</span></div>
+          <div class="detail-row"><span class="detail-label">Games Remaining</span><span class="detail-value">${user.games_remaining || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Referrals</span><span class="detail-value">${referrals.referral_count || 0}</span></div>
+        </div>
+        
+        ${achievements.length > 0 ? `
+        <div style="background: #ede9fe; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px;">🏅 Achievements (${achievements.length})</h4>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            ${achievements.map(a => `<span style="background: white; padding: 5px 10px; border-radius: 20px; font-size: 12px;">${a.metadata?.emoji || '🏅'} ${a.achievement_name}</span>`).join('')}
+          </div>
+        </div>
+        ` : ''}
+        
+        ${stats.suspicious_games > 0 ? `
+        <div style="background: #fee2e2; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px; color: #991b1b;">⚠️ Fraud Flags</h4>
+          <div class="detail-row"><span class="detail-label">Fraud Flags</span><span class="detail-value" style="color: #dc2626;">${user.fraud_flags || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Suspicious Sessions</span><span class="detail-value" style="color: #dc2626;">${stats.suspicious_games}</span></div>
+          <button class="btn btn-danger" onclick="viewFraudReport(${user.id})" style="margin-top: 10px;">View Fraud Report</button>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+    
+    <!-- Actions -->
+    <div style="display: flex; gap: 10px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+      ${user.is_suspended 
+        ? `<button class="btn btn-success" onclick="unsuspendUser(${user.id})">✅ Unsuspend User</button>`
+        : `<button class="btn btn-danger" onclick="showSuspendModal(${user.id}, '${user.username}', '${user.full_name}')">⛔ Suspend User</button>`
+      }
+      ${user.grand_prize_cooldown_until 
+        ? `<button class="btn btn-warning" onclick="clearCooldown(${user.id})">🏆 Clear Cooldown</button>`
+        : ''
+      }
+      ${user.fraud_flags > 0 
+        ? `<button class="btn btn-secondary" onclick="clearFraudFlags(${user.id})">🔍 Clear Fraud Flags</button>`
+        : ''
+      }
+      <button class="btn btn-primary" onclick="window.print()">🖨️ Print Profile</button>
+    </div>
+  `;
+  
+  document.getElementById('userProfileContent').innerHTML = html;
+}
+
+// Show suspend user modal
+function showSuspendModal(userId, username, fullName) {
+  closeModal('userProfileModal');
+  document.getElementById('suspendUserId').value = userId;
+  document.getElementById('suspendUserDetails').innerHTML = `
+    <p><strong>Username:</strong> @${username}</p>
+    <p><strong>Full Name:</strong> ${fullName}</p>
+  `;
+  document.getElementById('suspensionReason').value = '';
+  openModal('suspendUserModal');
+}
+
+// Submit suspension
+async function submitSuspension(event) {
+  event.preventDefault();
+  const userId = document.getElementById('suspendUserId').value;
+  const reason = document.getElementById('suspensionReason').value;
+  
+  try {
+    const response = await fetch(`/admin/api/users/${userId}/suspend`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionToken}`
+      },
+      body: JSON.stringify({ reason })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showAlert('✅ User suspended successfully', 'success');
+      closeModal('suspendUserModal');
+      loadUsers();
+      loadRestrictions();
+    } else {
+      showAlert('❌ Failed to suspend user', 'error');
+    }
+  } catch (error) {
+    console.error('Error suspending user:', error);
+    showAlert('❌ Error suspending user', 'error');
+  }
+}
+
+// Unsuspend user
+async function unsuspendUser(userId) {
+  if (!confirm('Are you sure you want to unsuspend this user?')) return;
+  
+  try {
+    const response = await fetch(`/admin/api/users/${userId}/unsuspend`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showAlert('✅ User unsuspended successfully', 'success');
+      closeModal('userProfileModal');
+      loadUsers();
+      loadRestrictions();
+    } else {
+      showAlert('❌ Failed to unsuspend user', 'error');
+    }
+  } catch (error) {
+    console.error('Error unsuspending user:', error);
+    showAlert('❌ Error unsuspending user', 'error');
+  }
+}
+
+// Clear cooldown
+async function clearCooldown(userId) {
+  if (!confirm('Are you sure you want to clear this user\'s grand prize cooldown?')) return;
+  
+  try {
+    const response = await fetch(`/admin/api/users/${userId}/clear-cooldown`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showAlert('✅ Cooldown cleared successfully', 'success');
+      closeModal('userProfileModal');
+      loadRestrictions();
+    } else {
+      showAlert('❌ Failed to clear cooldown', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing cooldown:', error);
+    showAlert('❌ Error clearing cooldown', 'error');
+  }
+}
+
+// ============================================
+// NEW: RESTRICTIONS TAB FUNCTIONS
+// ============================================
+
+function showRestrictionsSubTab(tab) {
+  document.getElementById('suspendedUsersSection').style.display = tab === 'suspended' ? 'block' : 'none';
+  document.getElementById('cooldownUsersSection').style.display = tab === 'cooldown' ? 'block' : 'none';
+  document.getElementById('dailyLimitSection').style.display = tab === 'dailylimit' ? 'block' : 'none';
+  
+  document.getElementById('suspendedSubTab').style.background = tab === 'suspended' ? 'var(--danger)' : 'var(--secondary)';
+  document.getElementById('cooldownSubTab').style.background = tab === 'cooldown' ? 'var(--warning)' : 'var(--secondary)';
+  document.getElementById('dailylimitSubTab').style.background = tab === 'dailylimit' ? 'var(--primary)' : 'var(--secondary)';
+}
+
+async function loadRestrictions() {
+  // Load suspended users
+  try {
+    const suspendedResponse = await fetch('/admin/api/users/suspended', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const suspendedData = await suspendedResponse.json();
+    
+    if (suspendedData.success) {
+      renderSuspendedUsers(suspendedData.users);
+    }
+  } catch (error) {
+    console.error('Error loading suspended users:', error);
+  }
+  
+  // Load cooldown users
+  try {
+    const cooldownResponse = await fetch('/admin/api/users/cooldown', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const cooldownData = await cooldownResponse.json();
+    
+    if (cooldownData.success) {
+      renderCooldownUsers(cooldownData.users);
+    }
+  } catch (error) {
+    console.error('Error loading cooldown users:', error);
+  }
+  
+  // Load daily limit users
+  try {
+    const limitResponse = await fetch('/admin/api/users/daily-limit', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const limitData = await limitResponse.json();
+    
+    if (limitData.success) {
+      renderDailyLimitUsers(limitData.users);
+    }
+  } catch (error) {
+    console.error('Error loading daily limit users:', error);
+  }
+}
+
+function renderSuspendedUsers(users) {
+  if (users.length === 0) {
+    document.getElementById('suspendedUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No suspended users</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Reason</th><th>Suspended At</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    html += `<tr>
+      <td><strong>@${user.username}</strong><br><small>${user.full_name}</small></td>
+      <td>${user.suspension_reason || 'N/A'}</td>
+      <td>${user.suspended_at ? new Date(user.suspended_at).toLocaleString() : 'N/A'}</td>
+      <td>
+        <button class="btn btn-success btn-sm" onclick="unsuspendUser(${user.id})">✅ Unsuspend</button>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('suspendedUsersTable').innerHTML = html;
+}
+
+function renderCooldownUsers(users) {
+  if (users.length === 0) {
+    document.getElementById('cooldownUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No users on cooldown</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Won Grand Prize</th><th>Cooldown Until</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    html += `<tr>
+      <td><strong>@${user.username}</strong><br><small>${user.full_name}</small></td>
+      <td>${user.last_grand_prize_win ? new Date(user.last_grand_prize_win).toLocaleDateString() : 'N/A'}</td>
+      <td>${user.grand_prize_cooldown_until ? new Date(user.grand_prize_cooldown_until).toLocaleDateString() : 'N/A'}</td>
+      <td>
+        <button class="btn btn-warning btn-sm" onclick="clearCooldown(${user.id})">🏆 Clear</button>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('cooldownUsersTable').innerHTML = html;
+}
+
+function renderDailyLimitUsers(users) {
+  if (users.length === 0) {
+    document.getElementById('dailyLimitUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No users at daily limit</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Today's Winnings</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    html += `<tr>
+      <td><strong>@${user.username}</strong><br><small>${user.full_name}</small></td>
+      <td style="color: #059669; font-weight: bold;">₦${parseFloat(user.today_winnings).toLocaleString()}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('dailyLimitUsersTable').innerHTML = html;
+}
+
+// ============================================
+// NEW: FRAUD MONITORING FUNCTIONS
+// ============================================
+
+function showFraudSubTab(tab) {
+  document.getElementById('flaggedUsersSection').style.display = tab === 'flagged' ? 'block' : 'none';
+  document.getElementById('suspiciousSessionsSection').style.display = tab === 'sessions' ? 'block' : 'none';
+  
+  document.getElementById('flaggedSubTab').style.background = tab === 'flagged' ? 'var(--danger)' : 'var(--secondary)';
+  document.getElementById('sessionsSubTab').style.background = tab === 'sessions' ? 'var(--warning)' : 'var(--secondary)';
+}
+
+async function loadFraudData() {
+  // Load flagged users
+  try {
+    const flaggedResponse = await fetch('/admin/api/fraud/flagged-users', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const flaggedData = await flaggedResponse.json();
+    
+    if (flaggedData.success) {
+      document.getElementById('flaggedUsersCount').textContent = flaggedData.users.length;
+      renderFlaggedUsers(flaggedData.users);
+    }
+  } catch (error) {
+    console.error('Error loading flagged users:', error);
+  }
+  
+  // Load suspicious sessions
+  try {
+    const sessionsResponse = await fetch('/admin/api/fraud/suspicious-sessions', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const sessionsData = await sessionsResponse.json();
+    
+    if (sessionsData.success) {
+      document.getElementById('suspiciousSessionsCount').textContent = sessionsData.sessions.length;
+      renderSuspiciousSessions(sessionsData.sessions);
+    }
+  } catch (error) {
+    console.error('Error loading suspicious sessions:', error);
+  }
+}
+
+function renderFlaggedUsers(users) {
+  if (users.length === 0) {
+    document.getElementById('flaggedUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No flagged users 🎉</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Flags</th><th>Avg Response</th><th>Suspicious Games</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    const avgTime = user.avg_response_time ? Math.round(user.avg_response_time / 1000) + 's' : 'N/A';
+    html += `<tr>
+      <td><strong>@${user.username}</strong><br><small>${user.full_name}</small></td>
+      <td><span style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 10px;">${user.fraud_flags}</span></td>
+      <td>${avgTime}</td>
+      <td>${user.suspicious_games || 0}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewFraudReport(${user.id})">🔍 Report</button>
+        <button class="btn btn-secondary btn-sm" onclick="clearFraudFlags(${user.id})">✓ Clear</button>
+        ${!user.is_suspended ? `<button class="btn btn-danger btn-sm" onclick="showSuspendModal(${user.id}, '${user.username}', '${user.full_name}')">⛔ Suspend</button>` : ''}
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('flaggedUsersTable').innerHTML = html;
+}
+
+function renderSuspiciousSessions(sessions) {
+  if (sessions.length === 0) {
+    document.getElementById('suspiciousSessionsTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No suspicious sessions 🎉</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Game Mode</th><th>Avg Response</th><th>Fastest</th><th>Score</th><th>Date</th>
+  </tr></thead><tbody>`;
+  
+  sessions.forEach(session => {
+    html += `<tr>
+      <td><strong>@${session.username}</strong></td>
+      <td>${session.game_mode || session.game_type}</td>
+      <td>${session.avg_response_time_ms ? Math.round(session.avg_response_time_ms / 1000) + 's' : 'N/A'}</td>
+      <td style="color: ${session.fastest_response_ms < 2000 ? '#dc2626' : 'inherit'};">${session.fastest_response_ms ? Math.round(session.fastest_response_ms / 1000) + 's' : 'N/A'}</td>
+      <td>₦${(session.current_score || 0).toLocaleString()}</td>
+      <td>${new Date(session.started_at).toLocaleString()}</td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('suspiciousSessionsTable').innerHTML = html;
+}
+
+async function viewFraudReport(userId) {
+  openModal('fraudReportModal');
+  document.getElementById('fraudReportContent').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading fraud report...</p></div>';
+  
+  try {
+    const response = await fetch(`/admin/api/fraud/user/${userId}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      renderFraudReport(data.report);
+    } else {
+      document.getElementById('fraudReportContent').innerHTML = '<p style="color: red;">Failed to load fraud report</p>';
+    }
+  } catch (error) {
+    console.error('Error loading fraud report:', error);
+    document.getElementById('fraudReportContent').innerHTML = '<p style="color: red;">Error loading fraud report</p>';
+  }
+}
+
+function renderFraudReport(report) {
+  const { user, stats, history } = report;
+  
+  let html = `
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+      <div style="background: #f8fafc; padding: 20px; border-radius: 12px;">
+        <h4>👤 User Info</h4>
+        <p><strong>Username:</strong> @${user.username}</p>
+        <p><strong>Name:</strong> ${user.full_name}</p>
+        <p><strong>Fraud Flags:</strong> <span style="color: #dc2626; font-weight: bold;">${user.fraud_flags}</span></p>
+        <p><strong>Status:</strong> ${user.is_suspended ? '<span style="color: #dc2626;">SUSPENDED</span>' : '<span style="color: #059669;">Active</span>'}</p>
+      </div>
+      
+      <div style="background: #fef3c7; padding: 20px; border-radius: 12px;">
+        <h4>📊 Session Stats</h4>
+        <p><strong>Total Sessions:</strong> ${stats.total_sessions || 0}</p>
+        <p><strong>Wins:</strong> ${stats.wins || 0}</p>
+        <p><strong>Perfect Games:</strong> ${stats.perfect_games || 0}</p>
+        <p><strong>Avg Response:</strong> ${stats.avg_response_time ? Math.round(stats.avg_response_time / 1000) + 's' : 'N/A'}</p>
+        <p><strong>Fastest Ever:</strong> ${stats.fastest_response ? Math.round(stats.fastest_response / 1000) + 's' : 'N/A'}</p>
+        <p><strong>Suspicious Sessions:</strong> <span style="color: #dc2626;">${stats.suspicious_sessions || 0}</span></p>
+      </div>
+    </div>
+    
+    <div style="margin-top: 20px;">
+      <h4>📜 Flag History</h4>
+      ${history.length > 0 ? `
+        <table class="data-table" style="margin-top: 10px;">
+          <thead><tr><th>Action</th><th>Details</th><th>Date</th></tr></thead>
+          <tbody>
+            ${history.map(h => `<tr>
+              <td>${h.action_type}</td>
+              <td>${h.details?.reason || JSON.stringify(h.details)}</td>
+              <td>${new Date(h.created_at).toLocaleString()}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      ` : '<p style="color: var(--text-gray);">No history available</p>'}
+    </div>
+    
+    <div style="margin-top: 20px; display: flex; gap: 10px;">
+      <button class="btn btn-secondary" onclick="clearFraudFlags(${user.id}); closeModal('fraudReportModal');">✓ Clear Flags</button>
+      ${!user.is_suspended ? `<button class="btn btn-danger" onclick="closeModal('fraudReportModal'); showSuspendModal(${user.id}, '${user.username}', '${user.full_name}');">⛔ Suspend User</button>` : ''}
+    </div>
+  `;
+  
+  document.getElementById('fraudReportContent').innerHTML = html;
+}
+
+async function clearFraudFlags(userId) {
+  if (!confirm('Are you sure you want to clear fraud flags for this user?')) return;
+  
+  try {
+    const response = await fetch(`/admin/api/fraud/user/${userId}/clear`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showAlert('✅ Fraud flags cleared', 'success');
+      loadFraudData();
+    } else {
+      showAlert('❌ Failed to clear fraud flags', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing fraud flags:', error);
+    showAlert('❌ Error clearing fraud flags', 'error');
+  }
+}
+
+// ============================================
+// NEW: WINNERS TAB FUNCTIONS
+// ============================================
+
+async function loadWinners() {
+  // Load win stats
+  try {
+    const statsResponse = await fetch('/admin/api/stats/wins?period=today', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const statsData = await statsResponse.json();
+    
+    if (statsData.success && statsData.stats) {
+      document.getElementById('todayWinsCount').textContent = statsData.stats.total_wins || 0;
+      document.getElementById('todayWinsAmount').textContent = '₦' + parseFloat(statsData.stats.total_amount || 0).toLocaleString();
+      document.getElementById('cardsSharedCount').textContent = statsData.stats.cards_shared || 0;
+      document.getElementById('cardsPendingCount').textContent = statsData.stats.cards_pending || 0;
+    }
+  } catch (error) {
+    console.error('Error loading win stats:', error);
+  }
+  
+  // Load recent winners
+  try {
+    const winnersResponse = await fetch('/admin/api/winners/recent?limit=30', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const winnersData = await winnersResponse.json();
+    
+    if (winnersData.success) {
+      renderWinnersTable(winnersData.winners);
+    }
+  } catch (error) {
+    console.error('Error loading winners:', error);
+  }
+}
+
+function renderWinnersTable(winners) {
+  if (winners.length === 0) {
+    document.getElementById('winnersTableContainer').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No recent winners</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Amount</th><th>Mode</th><th>Card Status</th><th>Date</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  winners.forEach(winner => {
+    const cardStatus = winner.victory_card_shared 
+      ? '<span class="badge" style="background:#d1fae5;color:#065f46;">Shared</span>'
+      : '<span class="badge" style="background:#fef3c7;color:#92400e;">Pending</span>';
+    const platformIcon = winner.phone_number?.startsWith('tg_') ? '💬' : '📱';
+    
+    html += `<tr>
+      <td>${platformIcon} <strong>@${winner.username}</strong><br><small>${winner.full_name}</small></td>
+      <td style="color: #059669; font-weight: bold;">₦${parseFloat(winner.amount).toLocaleString()}</td>
+      <td>${winner.game_mode || 'Classic'}</td>
+      <td>${cardStatus}</td>
+      <td>${new Date(winner.win_date).toLocaleString()}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="regenerateVictoryCard(${winner.victory_card_id || winner.transaction_id})">🎴 Generate Card</button>
+        <button class="btn btn-secondary btn-sm" onclick="viewUserProfile(${winner.user_id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('winnersTableContainer').innerHTML = html;
+}
+
+let currentVictoryCardImage = null;
+
+async function regenerateVictoryCard(cardId) {
+  openModal('victoryCardModal');
+  document.getElementById('victoryCardContent').innerHTML = '<div class="loading"><div class="spinner"></div><p>Generating victory card...</p></div>';
+  
+  try {
+    const response = await fetch(`/admin/api/victory-cards/${cardId}/regenerate`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      currentVictoryCardImage = data.image;
+      document.getElementById('victoryCardContent').innerHTML = `
+        <img src="${data.image}" alt="Victory Card" style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+        <div style="margin-top: 15px; color: var(--text-gray);">
+          <p><strong>Winner:</strong> @${data.cardData.username}</p>
+          <p><strong>Amount:</strong> ₦${parseFloat(data.cardData.amount).toLocaleString()}</p>
+        </div>
+      `;
+    } else {
+      document.getElementById('victoryCardContent').innerHTML = '<p style="color: red;">Failed to generate victory card</p>';
+    }
+  } catch (error) {
+    console.error('Error regenerating victory card:', error);
+    document.getElementById('victoryCardContent').innerHTML = '<p style="color: red;">Error generating victory card</p>';
+  }
+}
+
+function downloadVictoryCard() {
+  if (!currentVictoryCardImage) return;
+  
+  const link = document.createElement('a');
+  link.href = currentVictoryCardImage;
+  link.download = 'victory-card-' + Date.now() + '.png';
+  link.click();
+}
+
+// ============================================
+// UPDATE: Enhanced switchTab function
+// ============================================
+
+const originalSwitchTab = switchTab;
+switchTab = function(tabName) {
+  // Handle new tabs
+  const allTabs = ['analytics', 'payouts', 'history', 'users', 'restrictions', 'fraud', 'winners', 'questions', 'tournaments', 'activity'];
+  
+  allTabs.forEach(tab => {
+    const tabContent = document.getElementById(tab + 'Tab');
+    const tabButton = document.querySelector(`.tab[onclick="switchTab('${tab}')"]`);
+    
+    if (tabContent) {
+      tabContent.classList.remove('active');
+    }
+    if (tabButton) {
+      tabButton.classList.remove('active');
+    }
+  });
+  
+  const activeContent = document.getElementById(tabName + 'Tab');
+  const activeButton = document.querySelector(`.tab[onclick="switchTab('${tabName}')"]`);
+  
+  if (activeContent) {
+    activeContent.classList.add('active');
+  }
+  if (activeButton) {
+    activeButton.classList.add('active');
+  }
+  
+  // Load data for new tabs
+  if (tabName === 'restrictions') {
+    loadRestrictions();
+  } else if (tabName === 'fraud') {
+    loadFraudData();
+  } else if (tabName === 'winners') {
+    loadWinners();
+  } else if (tabName === 'users') {
+    loadUsers();
+  } else if (tabName === 'analytics') {
+    loadAnalytics();
+  } else if (tabName === 'payouts') {
+    loadPayouts();
+  } else if (tabName === 'history') {
+    loadHistory();
+  } else if (tabName === 'questions') {
+    loadQuestions();
+  } else if (tabName === 'tournaments') {
+    loadTournaments();
+  } else if (tabName === 'activity') {
+    loadActivityLog();
+  }
+};
+
 </script>
 
 </body>

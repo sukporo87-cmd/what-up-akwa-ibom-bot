@@ -1,7 +1,7 @@
 // ============================================
 // FILE: src/services/game.service.js
 // COMPLETE FILE - READY TO PASTE AND REPLACE
-// CHANGES: Added platform tracking and audit logging
+// CHANGES: Added platform tracking, audit logging, restrictions, anti-fraud, achievements
 // ============================================
 
 const pool = require('../config/database');
@@ -11,6 +11,10 @@ const QuestionService = require('./question.service');
 const PaymentService = require('./payment.service');
 const auditService = require('./audit.service');
 const streakService = require('./streak.service');
+const restrictionsService = require('./restrictions.service');
+const antiFraudService = require('./anti-fraud.service');
+const achievementsService = require('./achievements.service');
+const victoryCardsService = require('./victory-cards.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -498,12 +502,78 @@ Play as many times as allowed!`;
             await redis.del(`game_ready:${user.id}`);
             await redis.del(`user_state:${user.phone_number}`);
 
+            // Finalize anti-fraud session stats
+            try {
+                await antiFraudService.finalizeSessionStats(session.id, user.id);
+            } catch (afError) {
+                logger.error('Error finalizing anti-fraud stats:', afError);
+            }
+
             if (session.game_type !== 'practice' && finalScore > 0) {
                 await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
                     amount: finalScore,
                     questionsAnswered: session.current_question - 1,
                     totalQuestions: 15
                 }));
+
+                // Create victory card record and store win data
+                try {
+                    // Get the transaction ID for this win
+                    const txResult = await pool.query(`
+                        SELECT id FROM transactions 
+                        WHERE user_id = $1 AND transaction_type = 'prize' AND amount = $2
+                        ORDER BY created_at DESC LIMIT 1
+                    `, [user.id, finalScore]);
+                    
+                    if (txResult.rows.length > 0) {
+                        const transactionId = txResult.rows[0].id;
+                        
+                        // Store win data for victory card
+                        await victoryCardsService.storeWinData(transactionId, {
+                            amount: finalScore,
+                            questionsAnswered: session.current_question - 1,
+                            totalQuestions: 15,
+                            gameMode: session.game_mode,
+                            tournamentId: session.tournament_id,
+                            username: user.username,
+                            fullName: user.full_name,
+                            city: user.city,
+                            wonAt: new Date().toISOString()
+                        });
+                        
+                        // Create victory card record
+                        await victoryCardsService.createVictoryCardRecord(
+                            user.id,
+                            transactionId,
+                            session.id,
+                            {
+                                amount: finalScore,
+                                questionsAnswered: session.current_question - 1,
+                                totalQuestions: 15
+                            }
+                        );
+                    }
+                } catch (vcError) {
+                    logger.error('Error creating victory card record:', vcError);
+                }
+
+                // Set grand prize cooldown if won grand prize (₦50,000)
+                if (wonGrandPrize) {
+                    try {
+                        await restrictionsService.setGrandPrizeCooldown(user.id);
+                        logger.info(`Grand prize cooldown set for user ${user.id}`);
+                    } catch (cooldownError) {
+                        logger.error('Error setting grand prize cooldown:', cooldownError);
+                    }
+                }
+            }
+
+            // Check and award achievements
+            try {
+                const newAchievements = await achievementsService.checkAndAwardAchievements(user.id);
+                // Achievements will be announced after victory card in handleWinShare
+            } catch (achError) {
+                logger.error('Error checking achievements:', achError);
             }
 
             if (session.game_type === 'practice') {
@@ -605,6 +675,9 @@ Play as many times as allowed!`;
             // 📝 AUDIT: Log question asked
             await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount);
             
+            // 🔍 ANTI-FRAUD: Track question start time
+            await antiFraudService.setQuestionStartTime(session.session_key, questionNumber);
+            
             let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
             if (isSafe) message += ' (SAFE) 🔒';
             message += `\n\n${question.question_text}\n\n`;
@@ -664,6 +737,18 @@ Play as many times as allowed!`;
             await redis.del(timeoutKey);
             this.clearQuestionTimeout(timeoutKey);
             
+            // 🔍 ANTI-FRAUD: Calculate and track response time
+            let responseTimeMs = null;
+            try {
+                const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
+                if (startTime) {
+                    responseTimeMs = Date.now() - startTime;
+                    await antiFraudService.trackResponseTime(session.id, questionNumber, responseTimeMs, user.id);
+                }
+            } catch (afError) {
+                logger.error('Error tracking response time:', afError);
+            }
+            
             if (!session.current_question_id) {
                 await messagingService.sendMessage(
                     user.phone_number,
@@ -685,7 +770,7 @@ Play as many times as allowed!`;
             const isCorrect = answer === question.correct_answer;
             const prizeAmount = PRIZE_LADDER[questionNumber];
             
-            // 📝 AUDIT: Log answer given
+            // 📝 AUDIT: Log answer given (now with response time)
             await auditService.logAnswer(
                 session.id, 
                 user.id, 
@@ -693,7 +778,8 @@ Play as many times as allowed!`;
                 answer, 
                 question.correct_answer, 
                 isCorrect, 
-                isCorrect ? prizeAmount : session.current_score
+                isCorrect ? prizeAmount : session.current_score,
+                responseTimeMs
             );
             
             if (isCorrect) {

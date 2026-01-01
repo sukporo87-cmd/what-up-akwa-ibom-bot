@@ -14,6 +14,10 @@ const PayoutService = require('../services/payout.service');
 const ReferralService = require('../services/referral.service');
 const TournamentService = require('../services/tournament.service');
 const streakService = require('../services/streak.service');
+const restrictionsService = require('../services/restrictions.service');
+const achievementsService = require('../services/achievements.service');
+const victoryCardsService = require('../services/victory-cards.service');
+const antiFraudService = require('../services/anti-fraud.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -80,6 +84,23 @@ class WebhookController {
       const input = message.trim().toUpperCase();
 
       // ===================================
+      // PRIORITY -1: MAINTENANCE MODE CHECK
+      // ===================================
+      if (restrictionsService.isMaintenanceMode()) {
+        await messagingService.sendMessage(phone, restrictionsService.getMaintenanceMessage());
+        return;
+      }
+
+      // ===================================
+      // PRIORITY -0.5: RATE LIMITING
+      // ===================================
+      const rateLimit = await restrictionsService.checkRateLimit(phone, 'message', 30, 1);
+      if (rateLimit.limited) {
+        await messagingService.sendMessage(phone, restrictionsService.getRateLimitMessage());
+        return;
+      }
+
+      // ===================================
       // PRIORITY 0: RESET COMMAND (WORKS EVERYWHERE)
       // ===================================
       if (input === 'RESET' || input === 'RESTART') {
@@ -94,6 +115,17 @@ class WebhookController {
 
       let user = await userService.getUserByPhone(phone);
       const userState = await userService.getUserState(phone);
+
+      // ===================================
+      // PRIORITY 0.5: SUSPENSION CHECK (for existing users)
+      // ===================================
+      if (user) {
+        const suspension = await restrictionsService.isUserSuspended(user.id);
+        if (suspension.suspended) {
+          await messagingService.sendMessage(phone, restrictionsService.getSuspensionMessage(suspension.reason));
+          return;
+        }
+      }
 
       // ===================================
       // PRIORITY 1: TERMS ACCEPTANCE (BEFORE REGISTRATION)
@@ -582,7 +614,7 @@ Type the code, or type SKIP to continue:`
     
     switch(input) {
       case '1':
-        // Free Play - Practice Mode
+        // Free Play - Practice Mode (only checks suspension, allows during cooldown/limit)
         await userService.clearUserState(user.phone_number);
         await messagingService.sendMessage(
           user.phone_number,
@@ -592,7 +624,22 @@ Type the code, or type SKIP to continue:`
         break;
         
       case '2':
-        // Classic Mode
+        // Classic Mode - Check all restrictions
+        const classicRestriction = await restrictionsService.canUserPlay(user.id, 'classic');
+        if (!classicRestriction.canPlay) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, classicRestriction.message);
+          return;
+        }
+        
+        // Check game rate limit (anti-fraud)
+        const rateLimit = await antiFraudService.checkGameRateLimit(user.id);
+        if (!rateLimit.allowed) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, rateLimit.message);
+          return;
+        }
+        
         await userService.clearUserState(user.phone_number);
         await messagingService.sendMessage(
           user.phone_number,
@@ -602,7 +649,14 @@ Type the code, or type SKIP to continue:`
         break;
         
       case '3':
-        // Sponsored Tournaments
+        // Sponsored Tournaments - Check restrictions
+        const tournamentRestriction = await restrictionsService.canUserPlay(user.id, 'tournament');
+        if (!tournamentRestriction.canPlay) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, tournamentRestriction.message);
+          return;
+        }
+        
         await this.showTournamentCategories(user);
         break;
         
@@ -918,7 +972,19 @@ Type the code, or type SKIP to continue:`
 
     // TOURNAMENTS command
     if (input.includes('TOURNAMENT')) {
+      // Check restrictions before showing tournaments
+      const restriction = await restrictionsService.canUserPlay(user.id, 'tournament');
+      if (!restriction.canPlay) {
+        await messagingService.sendMessage(user.phone_number, restriction.message);
+        return;
+      }
       await this.showTournamentCategories(user);
+      return;
+    }
+
+    // ACHIEVEMENTS command
+    if (input === 'ACHIEVEMENTS' || input === 'BADGES' || input.includes('ACHIEVEMENT')) {
+      await this.handleAchievementsCommand(user);
       return;
     }
 
@@ -1447,6 +1513,16 @@ Type the code, or type SKIP to continue:`
         await messagingService.sendMessage(
           user.phone_number,
           '❌ No pending prizes to claim.\n\nPlay games to win prizes! 🎮\n\nType PLAY to start.'
+        );
+        return;
+      }
+
+      // Check if victory card must be shared first
+      const canClaim = await victoryCardsService.canUserClaim(user.id);
+      if (!canClaim.canClaim && canClaim.reason === 'victory_card_required') {
+        await messagingService.sendMessage(
+          user.phone_number,
+          victoryCardsService.getVictoryCardRequiredMessage(parseFloat(transaction.amount))
         );
         return;
       }
@@ -2131,11 +2207,38 @@ Reply with your choice:`
         `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
       );
 
+      // Mark victory card as shared in database
+      try {
+        const pendingCard = await victoryCardsService.getPendingVictoryCard(user.id);
+        if (pendingCard) {
+          await victoryCardsService.markCardAsShared(pendingCard.id);
+        }
+      } catch (vcError) {
+        logger.error('Error marking victory card as shared:', vcError);
+      }
+
+      // Check and award achievements
+      try {
+        const newAchievements = await achievementsService.checkAndAwardAchievements(user.id);
+        if (newAchievements.length > 0) {
+          for (const achievement of newAchievements) {
+            await messagingService.sendMessage(
+              user.phone_number,
+              achievementsService.formatNewAchievementMessage(achievement)
+            );
+          }
+        }
+      } catch (achError) {
+        logger.error('Error checking achievements:', achError);
+      }
+
       await messagingService.sendMessage(
         user.phone_number,
         `✅ Victory card sent! 🎉
 
 Save it and share on your WhatsApp Status to inspire others!
+
+You can now claim your prize! 💰
 
 1️⃣ Play Again
 2️⃣ View Leaderboard
@@ -2150,6 +2253,24 @@ Save it and share on your WhatsApp Status to inspire others!
       await messagingService.sendMessage(
         user.phone_number,
         '❌ Sorry, something went wrong creating your victory card. Please try again later.'
+      );
+    }
+  }
+
+  // ============================================
+  // ACHIEVEMENTS COMMAND
+  // ============================================
+  
+  async handleAchievementsCommand(user) {
+    try {
+      const achievements = await achievementsService.getUserAchievements(user.id);
+      const message = achievementsService.formatAchievementsMessage(achievements);
+      await messagingService.sendMessage(user.phone_number, message);
+    } catch (error) {
+      logger.error('Error handling achievements command:', error);
+      await messagingService.sendMessage(
+        user.phone_number,
+        '❌ Error loading achievements. Please try again.'
       );
     }
   }
