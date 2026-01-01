@@ -3462,7 +3462,7 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         
         // Get recent transactions
         const recentTransactionsResult = await pool.query(`
-            SELECT id, transaction_type, amount, status, created_at, reference
+            SELECT id, transaction_type, amount, payment_status as status, created_at, reference
             FROM transactions
             WHERE user_id = $1
             ORDER BY created_at DESC

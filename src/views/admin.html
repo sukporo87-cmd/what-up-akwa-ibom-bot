@@ -2062,23 +2062,74 @@ async function loadHistory() {
 async function loadUsers() {
   const container = document.getElementById('usersTableContainer');
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading users...</p></div>';
+  
+  // Reset search filters
+  document.getElementById('userSearchQuery').value = '';
+  document.getElementById('userPlatformFilter').value = '';
+  document.getElementById('userStatusFilter').value = '';
+  
   try {
     const response = await fetch('/admin/api/users', { headers: getAuthHeaders() });
     const data = await response.json();
-    allUsers = data.users;
-    if (allUsers.length === 0) {
-      container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>No users found</p></div>';
-      return;
-    }
-    let html = `<table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>City</th><th>Age</th><th>Games</th><th>Winnings</th><th>Remaining</th><th>Joined</th></tr></thead><tbody>`;
-    allUsers.forEach(user => {
-      html += `<tr><td><strong>${user.full_name}</strong></td><td>@${user.username || 'N/A'}</td><td>${user.phone_number}</td><td>${user.city || 'N/A'}</td><td>${user.age || 'N/A'}</td><td>${user.total_games_played}</td><td>₦${parseFloat(user.total_winnings).toLocaleString()}</td><td>${user.games_remaining || 0}</td><td>${new Date(user.created_at).toLocaleDateString()}</td></tr>`;
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
+    allUsers = data.users || [];
+    renderUsersTable(allUsers);
   } catch (error) {
+    console.error('Error loading users:', error);
     container.innerHTML = '<div class="empty-state"><p>Error loading users</p></div>';
   }
+}
+
+function renderUsersTable(users) {
+  const container = document.getElementById('usersTableContainer');
+  
+  if (!users || users.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>No users found</p></div>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th>
+    <th>Phone</th>
+    <th>City</th>
+    <th>Games</th>
+    <th>Winnings</th>
+    <th>Status</th>
+    <th>Joined</th>
+    <th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    const platformIcon = user.phone_number.startsWith('tg_') ? '💬' : '📱';
+    const suspendedBadge = user.is_suspended 
+      ? '<span class="badge" style="background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:10px;">SUSPENDED</span>' 
+      : '<span class="badge" style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:4px;font-size:10px;">Active</span>';
+    
+    html += `<tr>
+      <td>
+        ${platformIcon} <strong>${user.full_name}</strong><br>
+        <small style="color:#666;">@${user.username || 'N/A'}</small>
+      </td>
+      <td style="font-size:12px;">${user.phone_number}</td>
+      <td>${user.city || 'N/A'}</td>
+      <td>${user.total_games_played || 0}</td>
+      <td style="color:#059669;font-weight:bold;">₦${parseFloat(user.total_winnings || 0).toLocaleString()}</td>
+      <td>${suspendedBadge}</td>
+      <td style="font-size:12px;">${new Date(user.created_at).toLocaleDateString()}</td>
+      <td>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})" style="padding:4px 8px;font-size:11px;">👤 Profile</button>
+          ${user.is_suspended 
+            ? `<button class="btn btn-success btn-sm" onclick="unsuspendUser(${user.id})" style="padding:4px 8px;font-size:11px;">✅ Unsuspend</button>`
+            : `<button class="btn btn-danger btn-sm" onclick="showSuspendModal(${user.id}, '${user.username}', '${user.full_name}')" style="padding:4px 8px;font-size:11px;">⛔ Suspend</button>`
+          }
+        </div>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  html += `<div style="text-align:center;margin-top:15px;color:#666;font-size:13px;">Showing ${users.length} users</div>`;
+  container.innerHTML = html;
 }
 
 // QUESTIONS FUNCTIONS
