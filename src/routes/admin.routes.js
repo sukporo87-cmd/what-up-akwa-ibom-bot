@@ -954,8 +954,13 @@ router.get('/api/activity-log', authenticateAdmin, async (req, res) => {
       `, [limit, offset]);
       activities = result.rows;
     } catch (dbError) {
-      // Table might not exist yet, fall back to old method
-      logger.warn('admin_activity_log table not found, using legacy method');
+      // Log the actual error
+      if (dbError.code === '42P01') {
+        // Table doesn't exist
+        logger.warn('admin_activity_log table not found, using legacy method');
+      } else {
+        logger.warn('admin_activity_log query failed, using legacy method:', dbError.message);
+      }
       activities = await adminAuthService.getActivityLog(limit, offset);
     }
     
@@ -3462,7 +3467,7 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         
         // Get recent transactions
         const recentTransactionsResult = await pool.query(`
-            SELECT id, transaction_type, amount, payment_status as status, created_at, reference
+            SELECT id, transaction_type, amount, payment_status as status, created_at
             FROM transactions
             WHERE user_id = $1
             ORDER BY created_at DESC
