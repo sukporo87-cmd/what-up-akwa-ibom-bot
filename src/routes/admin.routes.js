@@ -3690,13 +3690,26 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
             return res.status(404).json({ error: 'Victory card or transaction not found' });
         }
         
+        // Calculate questionsAnswered from amount if not available
+        // Prize tiers: Q5=₦1000, Q6=₦2000, Q7=₦3000, Q8=₦5000, Q9=₦7500, Q10=₦10000, 
+        //              Q11=₦15000, Q12=₦20000, Q13=₦25000, Q14=₦35000, Q15=₦50000
+        let questionsAnswered = cardData.questions_answered;
+        if (!questionsAnswered) {
+            const amount = parseFloat(cardData.amount);
+            const prizeTiers = {
+                50000: 15, 35000: 14, 25000: 13, 20000: 12, 15000: 11,
+                10000: 10, 7500: 9, 5000: 8, 3000: 7, 2000: 6, 1000: 5
+            };
+            questionsAnswered = prizeTiers[amount] || Math.min(Math.floor(amount / 3000) + 5, 15);
+        }
+        
         // Generate the image
         const imagePath = await imageService.generateWinImage({
             name: cardData.full_name,
             username: cardData.username,
             city: cardData.city,
             amount: parseFloat(cardData.amount),
-            questionsAnswered: cardData.questions_answered || 15,
+            questionsAnswered: questionsAnswered,
             totalQuestions: cardData.total_questions || 15
         });
         
@@ -3860,6 +3873,344 @@ router.get('/api/settings', authenticateAdmin, async (req, res) => {
     } catch (error) {
         logger.error('Error getting settings:', error);
         res.status(500).json({ error: 'Failed to get settings' });
+    }
+});
+
+// ============================================
+// SECURITY DASHBOARD
+// ============================================
+
+router.get('/api/security/dashboard', authenticateAdmin, async (req, res) => {
+    try {
+        const kycResult = await pool.query(`SELECT COUNT(*) as count FROM kyc_verifications WHERE status = 'submitted'`);
+        
+        const alertsResult = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE status = 'new') as new_alerts,
+                COUNT(*) FILTER (WHERE severity = 'critical' AND status = 'new') as critical_alerts
+            FROM fraud_alerts
+        `);
+        
+        const multiAccountResult = await pool.query(`SELECT COUNT(*) as count FROM account_links WHERE is_confirmed IS NULL`);
+        
+        const highRiskResult = await pool.query(`SELECT COUNT(*) as count FROM user_behavior_patterns WHERE anomaly_score >= 70`);
+        
+        const captchaResult = await pool.query(`
+            SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_correct = false) as failed
+            FROM captcha_logs WHERE created_at >= NOW() - INTERVAL '24 hours'
+        `);
+        
+        const sharedDevicesResult = await pool.query(`SELECT COUNT(DISTINCT device_id) as count FROM device_fingerprints WHERE is_flagged = true`);
+        
+        res.json({
+            success: true,
+            dashboard: {
+                pendingKYC: parseInt(kycResult.rows[0]?.count || 0),
+                newFraudAlerts: parseInt(alertsResult.rows[0]?.new_alerts || 0),
+                criticalAlerts: parseInt(alertsResult.rows[0]?.critical_alerts || 0),
+                unreviewedAccountLinks: parseInt(multiAccountResult.rows[0]?.count || 0),
+                highRiskUsers: parseInt(highRiskResult.rows[0]?.count || 0),
+                captchaStats: {
+                    total: parseInt(captchaResult.rows[0]?.total || 0),
+                    failed: parseInt(captchaResult.rows[0]?.failed || 0),
+                    failureRate: captchaResult.rows[0]?.total > 0 
+                        ? ((captchaResult.rows[0].failed / captchaResult.rows[0].total) * 100).toFixed(1) + '%'
+                        : '0%'
+                },
+                flaggedDevices: parseInt(sharedDevicesResult.rows[0]?.count || 0)
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting security dashboard:', error);
+        res.status(500).json({ error: 'Failed to get security dashboard' });
+    }
+});
+
+// ============================================
+// KYC MANAGEMENT
+// ============================================
+
+router.get('/api/kyc/pending', authenticateAdmin, async (req, res) => {
+    try {
+        const kycService = require('../services/kyc.service');
+        const pendingReviews = await kycService.getPendingKYCReviews();
+        res.json({ success: true, reviews: pendingReviews });
+    } catch (error) {
+        logger.error('Error getting pending KYC reviews:', error);
+        res.status(500).json({ error: 'Failed to get pending KYC reviews' });
+    }
+});
+
+router.get('/api/kyc/all', authenticateAdmin, async (req, res) => {
+    try {
+        const { status, limit = 50, offset = 0 } = req.query;
+        const kycService = require('../services/kyc.service');
+        const records = await kycService.getAllKYCRecords(status, parseInt(limit), parseInt(offset));
+        res.json({ success: true, records });
+    } catch (error) {
+        logger.error('Error getting KYC records:', error);
+        res.status(500).json({ error: 'Failed to get KYC records' });
+    }
+});
+
+router.get('/api/kyc/user/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const kycService = require('../services/kyc.service');
+        const kycStatus = await kycService.getKYCStatus(userId);
+        res.json({ success: true, kyc: kycStatus });
+    } catch (error) {
+        logger.error('Error getting user KYC status:', error);
+        res.status(500).json({ error: 'Failed to get KYC status' });
+    }
+});
+
+router.post('/api/kyc/:kycId/approve', authenticateAdmin, async (req, res) => {
+    try {
+        const kycId = parseInt(req.params.kycId);
+        const adminId = req.session?.adminId || null;
+        const { notes } = req.body;
+        
+        const kycService = require('../services/kyc.service');
+        const result = await kycService.approveKYC(kycId, adminId, notes);
+        
+        if (result.success) {
+            res.json({ success: true, message: 'KYC approved successfully' });
+        } else {
+            res.status(400).json({ error: result.error });
+        }
+    } catch (error) {
+        logger.error('Error approving KYC:', error);
+        res.status(500).json({ error: 'Failed to approve KYC' });
+    }
+});
+
+router.post('/api/kyc/:kycId/reject', authenticateAdmin, async (req, res) => {
+    try {
+        const kycId = parseInt(req.params.kycId);
+        const adminId = req.session?.adminId || null;
+        const { reason } = req.body;
+        
+        if (!reason) {
+            return res.status(400).json({ error: 'Rejection reason is required' });
+        }
+        
+        const kycService = require('../services/kyc.service');
+        const result = await kycService.rejectKYC(kycId, adminId, reason);
+        
+        if (result.success) {
+            res.json({ success: true, message: 'KYC rejected' });
+        } else {
+            res.status(400).json({ error: result.error });
+        }
+    } catch (error) {
+        logger.error('Error rejecting KYC:', error);
+        res.status(500).json({ error: 'Failed to reject KYC' });
+    }
+});
+
+// ============================================
+// FRAUD ALERTS
+// ============================================
+
+router.get('/api/security/fraud-alerts', authenticateAdmin, async (req, res) => {
+    try {
+        const { status = 'new', limit = 50 } = req.query;
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const alerts = await deviceTrackingService.getFraudAlerts(status, parseInt(limit));
+        res.json({ success: true, alerts });
+    } catch (error) {
+        logger.error('Error getting fraud alerts:', error);
+        res.status(500).json({ error: 'Failed to get fraud alerts' });
+    }
+});
+
+router.post('/api/security/fraud-alerts/:alertId/resolve', authenticateAdmin, async (req, res) => {
+    try {
+        const alertId = parseInt(req.params.alertId);
+        const adminId = req.session?.adminId || null;
+        const { resolution, notes } = req.body;
+        
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const result = await deviceTrackingService.resolveFraudAlert(alertId, adminId, resolution, notes);
+        
+        res.json({ success: result, message: result ? 'Alert resolved' : 'Failed to resolve alert' });
+    } catch (error) {
+        logger.error('Error resolving fraud alert:', error);
+        res.status(500).json({ error: 'Failed to resolve alert' });
+    }
+});
+
+// ============================================
+// DEVICE & IP TRACKING
+// ============================================
+
+router.get('/api/security/linked-accounts/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const linkedAccounts = await deviceTrackingService.getLinkedAccounts(userId);
+        res.json({ success: true, linkedAccounts });
+    } catch (error) {
+        logger.error('Error getting linked accounts:', error);
+        res.status(500).json({ error: 'Failed to get linked accounts' });
+    }
+});
+
+router.get('/api/security/shared-devices', authenticateAdmin, async (req, res) => {
+    try {
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const sharedDevices = await deviceTrackingService.getSharedDeviceUsers();
+        res.json({ success: true, sharedDevices });
+    } catch (error) {
+        logger.error('Error getting shared devices:', error);
+        res.status(500).json({ error: 'Failed to get shared devices' });
+    }
+});
+
+router.get('/api/security/user-devices/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const devices = await deviceTrackingService.getUserDevices(userId);
+        res.json({ success: true, devices });
+    } catch (error) {
+        logger.error('Error getting user devices:', error);
+        res.status(500).json({ error: 'Failed to get devices' });
+    }
+});
+
+router.get('/api/security/user-ips/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const { days = 30 } = req.query;
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const ips = await deviceTrackingService.getUserIPs(userId, parseInt(days));
+        res.json({ success: true, ips });
+    } catch (error) {
+        logger.error('Error getting user IPs:', error);
+        res.status(500).json({ error: 'Failed to get IPs' });
+    }
+});
+
+router.post('/api/security/account-links/:linkId/review', authenticateAdmin, async (req, res) => {
+    try {
+        const linkId = parseInt(req.params.linkId);
+        const adminId = req.session?.adminId || null;
+        const { isConfirmed } = req.body;
+        
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const result = await deviceTrackingService.reviewAccountLink(linkId, adminId, isConfirmed);
+        
+        res.json({ success: result, message: result ? 'Link reviewed' : 'Failed to review link' });
+    } catch (error) {
+        logger.error('Error reviewing account link:', error);
+        res.status(500).json({ error: 'Failed to review link' });
+    }
+});
+
+// ============================================
+// BEHAVIORAL ANALYSIS
+// ============================================
+
+router.get('/api/security/high-risk-users', authenticateAdmin, async (req, res) => {
+    try {
+        const { minScore = 50 } = req.query;
+        const behavioralService = require('../services/behavioral-analysis.service');
+        const users = await behavioralService.getHighRiskUsers(parseInt(minScore));
+        res.json({ success: true, users });
+    } catch (error) {
+        logger.error('Error getting high risk users:', error);
+        res.status(500).json({ error: 'Failed to get high risk users' });
+    }
+});
+
+router.get('/api/security/behavior-profile/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const behavioralService = require('../services/behavioral-analysis.service');
+        const profile = await behavioralService.getUserBehaviorProfile(userId);
+        res.json({ success: true, profile });
+    } catch (error) {
+        logger.error('Error getting behavior profile:', error);
+        res.status(500).json({ error: 'Failed to get behavior profile' });
+    }
+});
+
+router.post('/api/security/analyze-behavior/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const behavioralService = require('../services/behavioral-analysis.service');
+        const result = await behavioralService.updateBehaviorPatterns(userId);
+        res.json({ success: true, result });
+    } catch (error) {
+        logger.error('Error analyzing behavior:', error);
+        res.status(500).json({ error: 'Failed to analyze behavior' });
+    }
+});
+
+router.post('/api/security/batch-analyze', authenticateAdmin, async (req, res) => {
+    try {
+        const behavioralService = require('../services/behavioral-analysis.service');
+        const updatedCount = await behavioralService.batchUpdatePatterns();
+        res.json({ success: true, updatedCount });
+    } catch (error) {
+        logger.error('Error in batch analysis:', error);
+        res.status(500).json({ error: 'Failed to run batch analysis' });
+    }
+});
+
+// ============================================
+// CAPTCHA STATISTICS
+// ============================================
+
+router.get('/api/security/captcha-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT captcha_type, COUNT(*) as type_count,
+                   COUNT(*) FILTER (WHERE is_correct = true) as passed,
+                   COUNT(*) FILTER (WHERE is_correct = false) as failed,
+                   AVG(response_time_ms) as avg_response_time
+            FROM captcha_logs
+            WHERE created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY captcha_type
+        `);
+        
+        const totalResult = await pool.query(`
+            SELECT COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE is_correct = true) as passed,
+                   COUNT(*) FILTER (WHERE is_correct = false) as failed
+            FROM captcha_logs WHERE created_at >= NOW() - INTERVAL '7 days'
+        `);
+        
+        res.json({ success: true, byType: result.rows, totals: totalResult.rows[0] });
+    } catch (error) {
+        logger.error('Error getting CAPTCHA stats:', error);
+        res.status(500).json({ error: 'Failed to get CAPTCHA stats' });
+    }
+});
+
+router.get('/api/security/suspicious-captcha-users', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT cl.user_id, u.username, u.full_name,
+                   COUNT(*) as total_captchas,
+                   COUNT(*) FILTER (WHERE cl.is_correct = false) as failures,
+                   AVG(cl.response_time_ms) as avg_response_time,
+                   MIN(cl.response_time_ms) as min_response_time
+            FROM captcha_logs cl
+            JOIN users u ON cl.user_id = u.id
+            WHERE cl.created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY cl.user_id, u.username, u.full_name
+            HAVING COUNT(*) FILTER (WHERE cl.is_correct = false) >= 3
+                OR MIN(cl.response_time_ms) < 500
+            ORDER BY COUNT(*) FILTER (WHERE cl.is_correct = false) DESC
+        `);
+        
+        res.json({ success: true, users: result.rows });
+    } catch (error) {
+        logger.error('Error getting suspicious CAPTCHA users:', error);
+        res.status(500).json({ error: 'Failed to get suspicious users' });
     }
 });
 

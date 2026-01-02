@@ -15,7 +15,18 @@ const restrictionsService = require('./restrictions.service');
 const antiFraudService = require('./anti-fraud.service');
 const achievementsService = require('./achievements.service');
 const victoryCardsService = require('./victory-cards.service');
+const captchaService = require('./captcha.service');
+const deviceTrackingService = require('./device-tracking.service');
+const kycService = require('./kyc.service');
+const behavioralAnalysisService = require('./behavioral-analysis.service');
 const { logger } = require('../utils/logger');
+
+// ============================================
+// CONFIGURATION - TIMER CHANGED TO 12 SECONDS
+// ============================================
+const QUESTION_TIMEOUT_MS = 12000;  // Changed from 15000
+const QUESTION_TIMEOUT_SECONDS = 12; // Changed from 15
+const REDIS_TIMEOUT_BUFFER = 15;
 
 const messagingService = new MessagingService();
 const questionService = new QuestionService();
@@ -358,7 +369,7 @@ class GameService {
 
 📋 RULES:
 - 15 questions
-- 15 seconds per question
+- ${QUESTION_TIMEOUT_SECONDS} seconds per question
 - ⚠️ NO PRIZES in practice mode
 - Perfect for learning!
 
@@ -375,7 +386,7 @@ When ready, play Classic Mode to win real prizes! 🏆`;
 
 📋 RULES:
 - 15 questions
-- 15 seconds per question
+- ${QUESTION_TIMEOUT_SECONDS} seconds per question
 - Win up to ₦50,000!
 
 💎 LIFELINES:
@@ -401,7 +412,7 @@ Safe amounts are guaranteed!`;
 
 📋 RULES:
 - 15 questions
-- 15 seconds per question
+- ${QUESTION_TIMEOUT_SECONDS} seconds per question
 - ${prizeText}
 - Top 10 winners share prize pool
 
@@ -642,6 +653,194 @@ Play as many times as allowed!`;
         await messagingService.sendMessage(user.phone_number, message);
     }
 
+    // ============================================
+    // CAPTCHA METHODS
+    // ============================================
+
+    async sendQuestionOrCaptcha(session, user) {
+        const questionNumber = session.current_question;
+        
+        let shownCaptchas = [];
+        try {
+            shownCaptchas = JSON.parse(session.captcha_shown_at || '[]');
+        } catch (e) {
+            shownCaptchas = [];
+        }
+        
+        if (captchaService.shouldShowCaptcha(questionNumber, shownCaptchas)) {
+            await this.sendCaptcha(session, user, questionNumber);
+        } else {
+            await this.sendQuestion(session, user);
+        }
+    }
+
+    async sendCaptcha(session, user, questionNumber) {
+        try {
+            const captcha = captchaService.generateCaptcha();
+            const timeoutKey = `timeout:${session.session_key}:captcha${questionNumber}`;
+            
+            this.clearQuestionTimeout(timeoutKey);
+            
+            const captchaKey = `captcha:${session.session_key}`;
+            await redis.setex(captchaKey, 30, JSON.stringify({
+                ...captcha,
+                questionNumber,
+                startTime: Date.now()
+            }));
+            
+            let shownCaptchas = [];
+            try {
+                shownCaptchas = JSON.parse(session.captcha_shown_at || '[]');
+            } catch (e) {
+                shownCaptchas = [];
+            }
+            shownCaptchas.push(questionNumber);
+            
+            await pool.query(`UPDATE game_sessions SET captcha_shown_at = $1 WHERE id = $2`, [JSON.stringify(shownCaptchas), session.id]);
+            session.captcha_shown_at = JSON.stringify(shownCaptchas);
+            
+            const message = captchaService.formatCaptchaMessage(captcha, session.current_score, questionNumber);
+            await messagingService.sendMessage(user.phone_number, message);
+            
+            await redis.setex(timeoutKey, REDIS_TIMEOUT_BUFFER, (Date.now() + QUESTION_TIMEOUT_MS).toString());
+            
+            const timeoutId = setTimeout(async () => {
+                try {
+                    const timeout = await redis.get(timeoutKey);
+                    if (timeout) {
+                        await redis.del(timeoutKey);
+                        await redis.del(captchaKey);
+                        activeTimeouts.delete(timeoutKey);
+                        await this.handleCaptchaFailure(session, user, 'timeout');
+                    }
+                } catch (error) {
+                    logger.error('Error in CAPTCHA timeout:', error);
+                }
+            }, QUESTION_TIMEOUT_MS);
+            
+            activeTimeouts.set(timeoutKey, timeoutId);
+            logger.info(`CAPTCHA sent to user ${user.id} at Q${questionNumber}: ${captcha.type}`);
+            
+        } catch (error) {
+            logger.error('Error sending CAPTCHA:', error);
+            await this.sendQuestion(session, user);
+        }
+    }
+
+    async processCaptchaAnswer(session, user, answer) {
+        try {
+            const captchaKey = `captcha:${session.session_key}`;
+            const captchaData = await redis.get(captchaKey);
+            
+            if (!captchaData) return false;
+            
+            const captcha = JSON.parse(captchaData);
+            const questionNumber = captcha.questionNumber;
+            const timeoutKey = `timeout:${session.session_key}:captcha${questionNumber}`;
+            
+            await redis.del(timeoutKey);
+            this.clearQuestionTimeout(timeoutKey);
+            await redis.del(captchaKey);
+            
+            const responseTimeMs = Date.now() - captcha.startTime;
+            const isCorrect = captchaService.validateAnswer(captcha, answer);
+            
+            await captchaService.logCaptchaAttempt(user.id, session.id, questionNumber, captcha, answer, isCorrect, responseTimeMs);
+            
+            if (isCorrect) {
+                await messagingService.sendMessage(user.phone_number, '✅ Verified! Here comes your question...');
+                setTimeout(async () => { await this.sendQuestion(session, user); }, 500);
+            } else {
+                await this.handleCaptchaFailure(session, user, 'wrong_answer');
+            }
+            
+            return true;
+        } catch (error) {
+            logger.error('Error processing CAPTCHA:', error);
+            await this.sendQuestion(session, user);
+            return true;
+        }
+    }
+
+    async handleCaptchaFailure(session, user, reason) {
+        try {
+            const message = reason === 'timeout' 
+                ? `⏱️ *TIME'S UP!*\n\nYou didn't complete the security check in time.\n\nYour game has ended.\n\n💰 Final Score: ₦${session.current_score.toLocaleString()}`
+                : `❌ *VERIFICATION FAILED*\n\nYou didn't pass the security check.\n\nYour game has ended.\n\n💰 Final Score: ₦${session.current_score.toLocaleString()}`;
+            
+            await messagingService.sendMessage(user.phone_number, message);
+            
+            await pool.query(`UPDATE game_sessions SET status = 'completed', completed_at = NOW(), captcha_passed = false WHERE id = $1`, [session.id]);
+            
+            await redis.del(`session:${session.session_key}`);
+            await redis.del(`asked_questions:${session.session_key}`);
+            await redis.del(`game_ready:${user.id}`);
+            await redis.del(`captcha:${session.session_key}`);
+            this.clearAllSessionTimeouts(session.session_key);
+            
+        } catch (error) {
+            logger.error('Error handling CAPTCHA failure:', error);
+        }
+    }
+
+    async hasPendingCaptcha(sessionKey) {
+        const captchaData = await redis.get(`captcha:${sessionKey}`);
+        return !!captchaData;
+    }
+
+    // ============================================
+    // RANDOMIZED QUESTION SELECTION
+    // ============================================
+
+    async getRandomizedQuestion(userId, difficulty, excludeIds, gameMode, tournamentId) {
+        try {
+            const recentResult = await pool.query(`
+                SELECT question_id FROM user_question_history
+                WHERE user_id = $1 AND asked_at >= NOW() - INTERVAL '7 days'
+            `, [userId]);
+            
+            const recentQuestionIds = recentResult.rows.map(r => r.question_id);
+            const allExcludeIds = [...new Set([...excludeIds, ...recentQuestionIds])];
+            
+            let query = `SELECT * FROM questions WHERE difficulty = $1 AND is_active = true AND (is_disabled = false OR is_disabled IS NULL)`;
+            const params = [difficulty];
+            let paramIndex = 2;
+            
+            if (allExcludeIds.length > 0) {
+                query += ` AND id != ALL($${paramIndex})`;
+                params.push(allExcludeIds);
+                paramIndex++;
+            }
+            
+            if (gameMode === 'practice') {
+                query += ` AND question_bank = 'practice'`;
+            } else {
+                query += ` AND (question_bank = 'classic' OR question_bank IS NULL)`;
+            }
+            
+            query += ` ORDER BY RANDOM() LIMIT 5`;
+            
+            const result = await pool.query(query, params);
+            
+            if (result.rows.length === 0) {
+                return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+            }
+            
+            return result.rows[Math.floor(Math.random() * result.rows.length)];
+        } catch (error) {
+            logger.error('Error getting randomized question:', error);
+            return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+        }
+    }
+
+    async logQuestionHistory(userId, questionId) {
+        try {
+            await pool.query(`INSERT INTO user_question_history (user_id, question_id, asked_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`, [userId, questionId]);
+        } catch (error) {
+            logger.error('Error logging question history:', error);
+        }
+    }
+
     async sendQuestion(session, user) {
         try {
             const questionNumber = session.current_question;
@@ -655,7 +854,8 @@ Play as many times as allowed!`;
             const askedQuestionsJson = await redis.get(askedQuestionsKey);
             const askedQuestions = askedQuestionsJson ? JSON.parse(askedQuestionsJson) : [];
             
-            const question = await questionService.getQuestionByDifficulty(
+            const question = await this.getRandomizedQuestion(
+                user.id,
                 questionNumber, 
                 askedQuestions,
                 session.game_mode,
@@ -672,6 +872,9 @@ Play as many times as allowed!`;
             session.current_question_id = question.id;
             await this.updateSession(session);
             
+            // Log question history for randomization
+            await this.logQuestionHistory(user.id, question.id);
+            
             // 📝 AUDIT: Log question asked
             await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount);
             
@@ -685,7 +888,7 @@ Play as many times as allowed!`;
             message += `B) ${question.option_b}\n`;
             message += `C) ${question.option_c}\n`;
             message += `D) ${question.option_d}\n\n`;
-            message += `⏱️ 15 seconds...\n\n`;
+            message += `⏱️ ${QUESTION_TIMEOUT_SECONDS} seconds...\n\n`;
             
             const lifelines = [];
             if (!session.lifeline_5050_used) lifelines.push('50:50');
@@ -697,7 +900,7 @@ Play as many times as allowed!`;
             
             await messagingService.sendMessage(user.phone_number, message);
             
-            await redis.setex(timeoutKey, 18, (Date.now() + 15000).toString());
+            await redis.setex(timeoutKey, REDIS_TIMEOUT_BUFFER, (Date.now() + QUESTION_TIMEOUT_MS).toString());
             
             const timeoutId = setTimeout(async () => {
                 try {
@@ -713,7 +916,7 @@ Play as many times as allowed!`;
                 } catch (error) {
                     logger.error('Error in timeout handler:', error);
                 }
-            }, 15000);
+            }, QUESTION_TIMEOUT_MS);
             
             activeTimeouts.set(timeoutKey, timeoutId);
             
@@ -725,17 +928,34 @@ Play as many times as allowed!`;
 
     async processAnswer(session, user, answer) {
         try {
+            // Check for pending CAPTCHA first
+            const hasCaptcha = await this.hasPendingCaptcha(session.session_key);
+            if (hasCaptcha) {
+                const handled = await this.processCaptchaAnswer(session, user, answer);
+                if (handled) return;
+            }
+            
             const questionNumber = session.current_question;
             const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
             
-            const timeout = await redis.get(timeoutKey);
-            if (timeout && Date.now() > Number(timeout)) {
-                await this.handleTimeout(session, user);
+            // Acquire lock to prevent race conditions
+            const answerLockKey = `lock:answer:${session.session_key}:${questionNumber}`;
+            const lockAcquired = await redis.set(answerLockKey, '1', 'NX', 'EX', 3);
+            
+            if (!lockAcquired) {
+                logger.warn(`Duplicate answer prevented for session ${session.session_key}`);
                 return;
             }
             
-            await redis.del(timeoutKey);
-            this.clearQuestionTimeout(timeoutKey);
+            try {
+                const timeout = await redis.get(timeoutKey);
+                if (timeout && Date.now() > Number(timeout)) {
+                    await this.handleTimeout(session, user);
+                    return;
+                }
+                
+                await redis.del(timeoutKey);
+                this.clearQuestionTimeout(timeoutKey);
             
             // 🔍 ANTI-FRAUD: Calculate and track response time
             let responseTimeMs = null;
@@ -805,7 +1025,7 @@ Play as many times as allowed!`;
                     setTimeout(async () => {
                         const activeSession = await this.getActiveSession(user.id);
                         if (activeSession && activeSession.id === session.id) {
-                            await this.sendQuestion(session, user);
+                            await this.sendQuestionOrCaptcha(session, user);
                         }
                     }, 3000);
                 }
@@ -814,6 +1034,10 @@ Play as many times as allowed!`;
             }
             
             await questionService.updateQuestionStats(question.id, isCorrect);
+            
+            } finally {
+                await redis.del(answerLockKey);
+            }
             
         } catch (error) {
             logger.error('Error processing answer:', error);
@@ -1036,7 +1260,7 @@ Play as many times as allowed!`;
                 setTimeout(async () => {
                     const activeSession = await this.getActiveSession(user.id);
                     if (activeSession && activeSession.id === currentSession.id) {
-                        await this.sendQuestion(currentSession, user);
+                        await this.sendQuestionOrCaptcha(currentSession, user);
                     }
                 }, 1500);
             }
