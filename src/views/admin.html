@@ -719,6 +719,7 @@
       <button class="tab" onclick="switchTab('users')">👥 Users</button>
       <button class="tab" onclick="switchTab('restrictions')">🚫 Restrictions</button>
       <button class="tab" onclick="switchTab('fraud')">🔍 Fraud</button>
+      <button class="tab" onclick="switchTab('security')">🔐 Security</button>
       <button class="tab" onclick="switchTab('winners')">🏆 Winners</button>
       <button class="tab" onclick="switchTab('questions')">❓ Questions</button>
       <button class="tab" onclick="switchTab('tournaments')">🏅 Tournaments</button>
@@ -924,6 +925,141 @@
               <p>Loading suspicious sessions...</p>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Tab (NEW) -->
+    <div id="securityTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>🔐 Security Center</h2>
+          <button class="btn btn-primary" onclick="loadSecurityDashboard()">🔄 Refresh</button>
+        </div>
+        
+        <!-- Security Stats Overview -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px;">
+          <div class="stat-card" style="background: #fef3c7;">
+            <h3 style="color: #92400e;">📋 Pending KYC</h3>
+            <div class="value" id="pendingKycCount" style="color: #d97706;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fee2e2;">
+            <h3 style="color: #991b1b;">🚨 Fraud Alerts</h3>
+            <div class="value" id="fraudAlertsCount" style="color: #dc2626;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fce7f3;">
+            <h3 style="color: #9d174d;">⚠️ Critical</h3>
+            <div class="value" id="criticalAlertsCount" style="color: #be185d;">-</div>
+          </div>
+          <div class="stat-card" style="background: #dbeafe;">
+            <h3 style="color: #1e40af;">🔗 Account Links</h3>
+            <div class="value" id="accountLinksCount" style="color: #2563eb;">-</div>
+          </div>
+          <div class="stat-card" style="background: #f3e8ff;">
+            <h3 style="color: #6b21a8;">👤 High Risk</h3>
+            <div class="value" id="highRiskCount" style="color: #7c3aed;">-</div>
+          </div>
+          <div class="stat-card" style="background: #ecfdf5;">
+            <h3 style="color: #065f46;">🤖 CAPTCHA Fail</h3>
+            <div class="value" id="captchaFailRate" style="color: #059669;">-</div>
+          </div>
+        </div>
+        
+        <!-- Sub-tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
+          <button class="btn btn-warning" onclick="showSecuritySubTab('kyc')" id="kycSubTab" style="background: var(--warning);">📋 KYC Review</button>
+          <button class="btn btn-secondary" onclick="showSecuritySubTab('alerts')" id="alertsSubTab">🚨 Fraud Alerts</button>
+          <button class="btn btn-secondary" onclick="showSecuritySubTab('devices')" id="devicesSubTab">📱 Devices</button>
+          <button class="btn btn-secondary" onclick="showSecuritySubTab('behavior')" id="behaviorSubTab">📊 Behavior</button>
+          <button class="btn btn-secondary" onclick="showSecuritySubTab('captcha')" id="captchaSubTab">🤖 CAPTCHA</button>
+        </div>
+        
+        <!-- KYC Section -->
+        <div id="kycSection">
+          <h3 style="margin-bottom: 15px;">📋 KYC Verification Queue</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Users who need identity verification (daily winnings ≥ ₦20,000)</p>
+          <div id="kycTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading KYC submissions...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Fraud Alerts Section -->
+        <div id="alertsSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">🚨 Fraud Alerts</h3>
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button class="btn btn-sm btn-danger" onclick="loadFraudAlerts('new')">New</button>
+            <button class="btn btn-sm btn-warning" onclick="loadFraudAlerts('investigating')">Investigating</button>
+            <button class="btn btn-sm btn-success" onclick="loadFraudAlerts('resolved')">Resolved</button>
+          </div>
+          <div id="alertsTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading fraud alerts...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Devices Section -->
+        <div id="devicesSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">📱 Device & Account Links</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Detected multi-account usage based on device fingerprints and IP addresses</p>
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <button class="btn btn-sm btn-primary" onclick="loadSharedDevices()">🔄 Shared Devices</button>
+          </div>
+          <div id="devicesTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading device data...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Behavior Section -->
+        <div id="behaviorSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">📊 Behavioral Analysis</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Users with suspicious play patterns</p>
+          <div style="margin-bottom: 15px;">
+            <label>Minimum Anomaly Score: </label>
+            <select id="anomalyScoreFilter" onchange="loadHighRiskUsers()" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+              <option value="50">50+</option>
+              <option value="60">60+</option>
+              <option value="70" selected>70+ (High Risk)</option>
+              <option value="80">80+ (Critical)</option>
+            </select>
+          </div>
+          <div id="behaviorTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading behavioral data...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- CAPTCHA Section -->
+        <div id="captchaSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">🤖 CAPTCHA Statistics</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">CAPTCHA performance over the last 7 days</p>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            <div class="stat-card">
+              <h3>Total CAPTCHAs</h3>
+              <div class="value" id="totalCaptchas">-</div>
+            </div>
+            <div class="stat-card" style="background: #dcfce7;">
+              <h3 style="color: #166534;">Passed</h3>
+              <div class="value" id="passedCaptchas" style="color: #16a34a;">-</div>
+            </div>
+            <div class="stat-card" style="background: #fee2e2;">
+              <h3 style="color: #991b1b;">Failed</h3>
+              <div class="value" id="failedCaptchas" style="color: #dc2626;">-</div>
+            </div>
+          </div>
+          <h4 style="margin: 20px 0 10px;">By Type</h4>
+          <div id="captchaByType"><p style="color: var(--text-gray);">Click refresh to load...</p></div>
+          <h4 style="margin: 20px 0 10px;">Suspicious Users</h4>
+          <div id="suspiciousCaptchaUsers"><p style="color: var(--text-gray);">Click refresh to load...</p></div>
         </div>
       </div>
     </div>
@@ -1357,6 +1493,44 @@
 
 <!-- Fraud Report Modal (NEW) -->
 <div id="fraudReportModal" class="modal">
+
+<!-- KYC Review Modal -->
+<div id="kycReviewModal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width: 600px;">
+    <h2>📋 Review KYC Submission</h2>
+    <div id="kycReviewContent"></div>
+    <div style="display: flex; gap: 10px; margin-top: 20px;">
+      <button class="btn btn-success" onclick="approveKYC()">✅ Approve</button>
+      <button class="btn btn-danger" onclick="showRejectKYC()">❌ Reject</button>
+      <button class="btn btn-secondary" onclick="closeModal('kycReviewModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Alert Resolution Modal -->
+<div id="alertResolveModal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width: 500px;">
+    <h2>🔍 Resolve Fraud Alert</h2>
+    <div id="alertResolveContent"></div>
+    <div style="margin: 15px 0;">
+      <label>Resolution:</label>
+      <select id="alertResolution" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-top: 5px;">
+        <option value="confirmed_fraud">Confirmed Fraud - Take Action</option>
+        <option value="false_positive">False Positive - No Action</option>
+        <option value="warning_issued">Warning Issued to User</option>
+        <option value="account_suspended">Account Suspended</option>
+      </select>
+    </div>
+    <div style="margin: 15px 0;">
+      <label>Notes:</label>
+      <textarea id="alertNotes" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-top: 5px; height: 80px;" placeholder="Add resolution notes..."></textarea>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button class="btn btn-success" onclick="resolveAlert()">✅ Resolve</button>
+      <button class="btn btn-secondary" onclick="closeModal('alertResolveModal')">Cancel</button>
+    </div>
+  </div>
+</div>
   <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
     <div class="modal-header" style="background: #fee2e2;">
       <h3 style="color: #991b1b;">🔍 Fraud Investigation Report</h3>
@@ -3133,8 +3307,288 @@ switchTab = function(tabName) {
     loadTournaments();
   } else if (tabName === 'activity') {
     loadActivityLog();
+  } else if (tabName === 'security') {
+    loadSecurityDashboard();
+    loadKYCQueue();
   }
 };
+
+// ============================================
+// SECURITY TAB FUNCTIONS
+// ============================================
+
+let currentKycId = null;
+let currentAlertId = null;
+
+async function loadSecurityDashboard() {
+  try {
+    const response = await fetch('/admin/api/security/dashboard');
+    const data = await response.json();
+    
+    if (data.success) {
+      const d = data.dashboard;
+      document.getElementById('pendingKycCount').textContent = d.pendingKYC || 0;
+      document.getElementById('fraudAlertsCount').textContent = d.newFraudAlerts || 0;
+      document.getElementById('criticalAlertsCount').textContent = d.criticalAlerts || 0;
+      document.getElementById('accountLinksCount').textContent = d.unreviewedAccountLinks || 0;
+      document.getElementById('highRiskCount').textContent = d.highRiskUsers || 0;
+      document.getElementById('captchaFailRate').textContent = d.captchaStats?.failureRate || '0%';
+    }
+  } catch (error) {
+    console.error('Error loading security dashboard:', error);
+  }
+}
+
+function showSecuritySubTab(tab) {
+  document.getElementById('kycSection').style.display = 'none';
+  document.getElementById('alertsSection').style.display = 'none';
+  document.getElementById('devicesSection').style.display = 'none';
+  document.getElementById('behaviorSection').style.display = 'none';
+  document.getElementById('captchaSection').style.display = 'none';
+  
+  document.querySelectorAll('#securityTab .btn').forEach(btn => {
+    if (btn.id && btn.id.endsWith('SubTab')) {
+      btn.classList.remove('btn-warning');
+      btn.classList.add('btn-secondary');
+      btn.style.background = '';
+    }
+  });
+  
+  const activeBtn = document.getElementById(tab + 'SubTab');
+  if (activeBtn) {
+    activeBtn.classList.remove('btn-secondary');
+    activeBtn.classList.add('btn-warning');
+    activeBtn.style.background = 'var(--warning)';
+  }
+  
+  document.getElementById(tab + 'Section').style.display = 'block';
+  
+  switch(tab) {
+    case 'kyc': loadKYCQueue(); break;
+    case 'alerts': loadFraudAlerts('new'); break;
+    case 'devices': loadSharedDevices(); break;
+    case 'behavior': loadHighRiskUsers(); break;
+    case 'captcha': loadCaptchaStats(); break;
+  }
+}
+
+async function loadKYCQueue() {
+  try {
+    const response = await fetch('/admin/api/kyc/pending');
+    const data = await response.json();
+    const container = document.getElementById('kycTable');
+    
+    if (!data.success || !data.reviews || data.reviews.length === 0) {
+      container.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-gray);"><h3>✅ No Pending KYC Reviews</h3></div>';
+      return;
+    }
+    
+    let html = `<table class="data-table"><thead><tr><th>User</th><th>Daily Winnings</th><th>ID Type</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>`;
+    data.reviews.forEach(kyc => {
+      html += `<tr><td><strong>${kyc.full_name || 'N/A'}</strong><br><small>${kyc.phone_number || ''}</small></td><td>₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</td><td>${kyc.id_type || 'N/A'}</td><td>${kyc.submitted_at ? new Date(kyc.submitted_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-pending">${kyc.status}</span></td><td><button class="btn btn-primary btn-sm" onclick="showKYCReview(${kyc.id})">👁️ Review</button></td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading KYC queue:', error);
+    document.getElementById('kycTable').innerHTML = '<p style="color: red;">Error loading KYC data</p>';
+  }
+}
+
+async function showKYCReview(kycId) {
+  currentKycId = kycId;
+  try {
+    const response = await fetch(`/admin/api/kyc/user/${kycId}`);
+    const data = await response.json();
+    if (data.success && data.kyc) {
+      const kyc = data.kyc;
+      document.getElementById('kycReviewContent').innerHTML = `<div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;"><p><strong>User:</strong> ${kyc.full_name || 'N/A'}</p><p><strong>Phone:</strong> ${kyc.phone_number || 'N/A'}</p><p><strong>Daily Winnings:</strong> ₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</p><p><strong>ID Type:</strong> ${kyc.id_type || 'Not submitted'}</p></div><div style="margin-top: 15px;"><label>Admin Notes:</label><textarea id="kycAdminNotes" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-top: 5px; height: 60px;" placeholder="Add verification notes..."></textarea></div>`;
+      document.getElementById('kycReviewModal').style.display = 'flex';
+    }
+  } catch (error) {
+    console.error('Error loading KYC details:', error);
+  }
+}
+
+async function approveKYC() {
+  if (!currentKycId) return;
+  try {
+    const notes = document.getElementById('kycAdminNotes')?.value || '';
+    const response = await fetch(`/admin/api/kyc/${currentKycId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+    const data = await response.json();
+    if (data.success) {
+      alert('✅ KYC Approved Successfully');
+      closeModal('kycReviewModal');
+      loadKYCQueue();
+      loadSecurityDashboard();
+    } else {
+      alert('Error: ' + (data.error || 'Failed to approve'));
+    }
+  } catch (error) {
+    console.error('Error approving KYC:', error);
+  }
+}
+
+function showRejectKYC() {
+  const reason = prompt('Enter rejection reason:');
+  if (reason) rejectKYC(reason);
+}
+
+async function rejectKYC(reason) {
+  if (!currentKycId) return;
+  try {
+    const response = await fetch(`/admin/api/kyc/${currentKycId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+    const data = await response.json();
+    if (data.success) {
+      alert('KYC Rejected');
+      closeModal('kycReviewModal');
+      loadKYCQueue();
+      loadSecurityDashboard();
+    }
+  } catch (error) {
+    console.error('Error rejecting KYC:', error);
+  }
+}
+
+async function loadFraudAlerts(status = 'new') {
+  try {
+    const response = await fetch(`/admin/api/security/fraud-alerts?status=${status}`);
+    const data = await response.json();
+    const container = document.getElementById('alertsTable');
+    
+    if (!data.success || !data.alerts || data.alerts.length === 0) {
+      container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-gray);"><h3>✅ No ${status} Alerts</h3></div>`;
+      return;
+    }
+    
+    let html = `<table class="data-table"><thead><tr><th>User</th><th>Type</th><th>Severity</th><th>Description</th><th>Created</th><th>Actions</th></tr></thead><tbody>`;
+    data.alerts.forEach(alert => {
+      const severityClass = alert.severity === 'critical' ? 'status-rejected' : alert.severity === 'high' ? 'status-pending' : 'status-approved';
+      html += `<tr><td><strong>${alert.full_name || 'N/A'}</strong><br><small>ID: ${alert.user_id}</small></td><td>${alert.alert_type || 'Unknown'}</td><td><span class="status-badge ${severityClass}">${alert.severity}</span></td><td style="max-width: 300px;">${alert.description || ''}</td><td>${new Date(alert.created_at).toLocaleDateString()}</td><td>${status !== 'resolved' ? `<button class="btn btn-primary btn-sm" onclick="showAlertResolve(${alert.id}, '${alert.alert_type}')">🔍 Resolve</button>` : '✅'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading fraud alerts:', error);
+  }
+}
+
+function showAlertResolve(alertId, alertType) {
+  currentAlertId = alertId;
+  document.getElementById('alertResolveContent').innerHTML = `<div style="background: #fee2e2; padding: 15px; border-radius: 8px;"><p><strong>Alert Type:</strong> ${alertType}</p></div>`;
+  document.getElementById('alertResolveModal').style.display = 'flex';
+}
+
+async function resolveAlert() {
+  if (!currentAlertId) return;
+  try {
+    const resolution = document.getElementById('alertResolution').value;
+    const notes = document.getElementById('alertNotes').value;
+    const response = await fetch(`/admin/api/security/fraud-alerts/${currentAlertId}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution, notes }) });
+    const data = await response.json();
+    if (data.success) {
+      alert('Alert Resolved');
+      closeModal('alertResolveModal');
+      loadFraudAlerts('new');
+      loadSecurityDashboard();
+    }
+  } catch (error) {
+    console.error('Error resolving alert:', error);
+  }
+}
+
+async function loadSharedDevices() {
+  try {
+    const response = await fetch('/admin/api/security/shared-devices');
+    const data = await response.json();
+    const container = document.getElementById('devicesTable');
+    
+    if (!data.success || !data.sharedDevices || data.sharedDevices.length === 0) {
+      container.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-gray);"><h3>✅ No Shared Devices Detected</h3></div>';
+      return;
+    }
+    
+    let html = `<table class="data-table"><thead><tr><th>Device ID</th><th>Users</th><th>Platform</th><th>First Seen</th><th>Flagged</th></tr></thead><tbody>`;
+    data.sharedDevices.forEach(device => {
+      html += `<tr><td><code style="font-size: 11px;">${device.device_id?.substring(0, 20)}...</code></td><td>${device.user_count || 0} users</td><td>${device.platform || 'N/A'}</td><td>${device.first_seen ? new Date(device.first_seen).toLocaleDateString() : 'N/A'}</td><td>${device.is_flagged ? '🚩 Yes' : '✅ No'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading shared devices:', error);
+  }
+}
+
+async function loadHighRiskUsers() {
+  try {
+    const minScore = document.getElementById('anomalyScoreFilter')?.value || 70;
+    const response = await fetch(`/admin/api/security/high-risk-users?minScore=${minScore}`);
+    const data = await response.json();
+    const container = document.getElementById('behaviorTable');
+    
+    if (!data.success || !data.users || data.users.length === 0) {
+      container.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-gray);"><h3>✅ No High Risk Users</h3></div>';
+      return;
+    }
+    
+    let html = `<table class="data-table"><thead><tr><th>User</th><th>Score</th><th>Avg Response</th><th>Games/Day</th><th>Win Rate</th><th>Anomalies</th></tr></thead><tbody>`;
+    data.users.forEach(user => {
+      const scoreColor = user.anomaly_score >= 80 ? '#dc2626' : user.anomaly_score >= 60 ? '#d97706' : '#059669';
+      html += `<tr><td><strong>${user.full_name || 'N/A'}</strong><br><small>ID: ${user.user_id}</small></td><td><span style="color: ${scoreColor}; font-weight: bold;">${user.anomaly_score || 0}</span></td><td>${user.avg_response_time_ms ? (user.avg_response_time_ms / 1000).toFixed(1) + 's' : 'N/A'}</td><td>${user.avg_games_per_day?.toFixed(1) || 'N/A'}</td><td>${user.win_rate ? (user.win_rate * 100).toFixed(0) + '%' : 'N/A'}</td><td style="max-width: 200px; font-size: 11px;">${user.anomalies ? user.anomalies.join(', ') : 'None'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading high risk users:', error);
+  }
+}
+
+async function loadCaptchaStats() {
+  try {
+    const response = await fetch('/admin/api/security/captcha-stats');
+    const data = await response.json();
+    
+    if (data.success) {
+      document.getElementById('totalCaptchas').textContent = data.totals?.total || 0;
+      document.getElementById('passedCaptchas').textContent = data.totals?.passed || 0;
+      document.getElementById('failedCaptchas').textContent = data.totals?.failed || 0;
+      
+      if (data.byType && data.byType.length > 0) {
+        let html = `<table class="data-table"><thead><tr><th>Type</th><th>Count</th><th>Passed</th><th>Failed</th><th>Avg Time</th></tr></thead><tbody>`;
+        data.byType.forEach(type => {
+          html += `<tr><td>${type.captcha_type || 'Unknown'}</td><td>${type.type_count || 0}</td><td style="color: green;">${type.passed || 0}</td><td style="color: red;">${type.failed || 0}</td><td>${type.avg_response_time ? (type.avg_response_time / 1000).toFixed(2) + 's' : 'N/A'}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        document.getElementById('captchaByType').innerHTML = html;
+      }
+    }
+    loadSuspiciousCaptchaUsers();
+  } catch (error) {
+    console.error('Error loading CAPTCHA stats:', error);
+  }
+}
+
+async function loadSuspiciousCaptchaUsers() {
+  try {
+    const response = await fetch('/admin/api/security/suspicious-captcha-users');
+    const data = await response.json();
+    const container = document.getElementById('suspiciousCaptchaUsers');
+    
+    if (!data.success || !data.users || data.users.length === 0) {
+      container.innerHTML = '<p style="color: var(--text-gray);">No suspicious CAPTCHA activity detected.</p>';
+      return;
+    }
+    
+    let html = `<table class="data-table"><thead><tr><th>User</th><th>Total</th><th>Failures</th><th>Avg Time</th><th>Min Time</th></tr></thead><tbody>`;
+    data.users.forEach(user => {
+      html += `<tr><td><strong>${user.full_name || user.username || 'N/A'}</strong></td><td>${user.total_captchas || 0}</td><td style="color: red;">${user.failures || 0}</td><td>${user.avg_response_time ? (user.avg_response_time / 1000).toFixed(2) + 's' : 'N/A'}</td><td style="${user.min_response_time < 500 ? 'color: red; font-weight: bold;' : ''}">${user.min_response_time ? user.min_response_time + 'ms' : 'N/A'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading suspicious CAPTCHA users:', error);
+  }
+}
 
 </script>
 
