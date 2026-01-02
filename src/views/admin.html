@@ -3322,7 +3322,9 @@ let currentAlertId = null;
 
 async function loadSecurityDashboard() {
   try {
-    const response = await fetch('/admin/api/security/dashboard');
+    const response = await fetch('/admin/api/security/dashboard', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     
     if (data.success) {
@@ -3374,7 +3376,9 @@ function showSecuritySubTab(tab) {
 
 async function loadKYCQueue() {
   try {
-    const response = await fetch('/admin/api/kyc/pending');
+    const response = await fetch('/admin/api/kyc/pending', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     const container = document.getElementById('kycTable');
     
@@ -3398,7 +3402,9 @@ async function loadKYCQueue() {
 async function showKYCReview(kycId) {
   currentKycId = kycId;
   try {
-    const response = await fetch(`/admin/api/kyc/user/${kycId}`);
+    const response = await fetch(`/admin/api/kyc/user/${kycId}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     if (data.success && data.kyc) {
       const kyc = data.kyc;
@@ -3414,7 +3420,14 @@ async function approveKYC() {
   if (!currentKycId) return;
   try {
     const notes = document.getElementById('kycAdminNotes')?.value || '';
-    const response = await fetch(`/admin/api/kyc/${currentKycId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+    const response = await fetch(`/admin/api/kyc/${currentKycId}/approve`, { 
+      method: 'POST', 
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionToken}` 
+      }, 
+      body: JSON.stringify({ notes }) 
+    });
     const data = await response.json();
     if (data.success) {
       alert('✅ KYC Approved Successfully');
@@ -3437,7 +3450,14 @@ function showRejectKYC() {
 async function rejectKYC(reason) {
   if (!currentKycId) return;
   try {
-    const response = await fetch(`/admin/api/kyc/${currentKycId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+    const response = await fetch(`/admin/api/kyc/${currentKycId}/reject`, { 
+      method: 'POST', 
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionToken}` 
+      }, 
+      body: JSON.stringify({ reason }) 
+    });
     const data = await response.json();
     if (data.success) {
       alert('KYC Rejected');
@@ -3452,7 +3472,9 @@ async function rejectKYC(reason) {
 
 async function loadFraudAlerts(status = 'new') {
   try {
-    const response = await fetch(`/admin/api/security/fraud-alerts?status=${status}`);
+    const response = await fetch(`/admin/api/security/fraud-alerts?status=${status}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     const container = document.getElementById('alertsTable');
     
@@ -3484,7 +3506,14 @@ async function resolveAlert() {
   try {
     const resolution = document.getElementById('alertResolution').value;
     const notes = document.getElementById('alertNotes').value;
-    const response = await fetch(`/admin/api/security/fraud-alerts/${currentAlertId}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution, notes }) });
+    const response = await fetch(`/admin/api/security/fraud-alerts/${currentAlertId}/resolve`, { 
+      method: 'POST', 
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionToken}` 
+      }, 
+      body: JSON.stringify({ resolution, notes }) 
+    });
     const data = await response.json();
     if (data.success) {
       alert('Alert Resolved');
@@ -3499,7 +3528,9 @@ async function resolveAlert() {
 
 async function loadSharedDevices() {
   try {
-    const response = await fetch('/admin/api/security/shared-devices');
+    const response = await fetch('/admin/api/security/shared-devices', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     const container = document.getElementById('devicesTable');
     
@@ -3522,7 +3553,9 @@ async function loadSharedDevices() {
 async function loadHighRiskUsers() {
   try {
     const minScore = document.getElementById('anomalyScoreFilter')?.value || 70;
-    const response = await fetch(`/admin/api/security/high-risk-users?minScore=${minScore}`);
+    const response = await fetch(`/admin/api/security/high-risk-users?minScore=${minScore}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     const container = document.getElementById('behaviorTable');
     
@@ -3545,7 +3578,9 @@ async function loadHighRiskUsers() {
 
 async function loadCaptchaStats() {
   try {
-    const response = await fetch('/admin/api/security/captcha-stats');
+    const response = await fetch('/admin/api/security/captcha-stats', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     
     if (data.success) {
@@ -3570,7 +3605,9 @@ async function loadCaptchaStats() {
 
 async function loadSuspiciousCaptchaUsers() {
   try {
-    const response = await fetch('/admin/api/security/suspicious-captcha-users');
+    const response = await fetch('/admin/api/security/suspicious-captcha-users', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
     const data = await response.json();
     const container = document.getElementById('suspiciousCaptchaUsers');
     
