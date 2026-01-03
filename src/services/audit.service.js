@@ -173,6 +173,109 @@ class AuditService {
         }
     }
 
+    // ============================================
+    // CAPTCHA AUDIT LOGGING
+    // ============================================
+
+    /**
+     * Log when a CAPTCHA is shown to the user
+     */
+    async logCaptchaShown(sessionId, userId, questionNumber, captchaType, captchaQuestion) {
+        try {
+            const redis = require('../config/redis');
+            const captchaStartTime = Date.now();
+            
+            // Store CAPTCHA start time for response time calculation
+            await redis.setex(`audit_captcha_start:${sessionId}:${questionNumber}`, 60, captchaStartTime.toString());
+            
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'CAPTCHA_SHOWN', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    question_number: questionNumber,
+                    captcha_type: captchaType,
+                    captcha_question: captchaQuestion,
+                    captcha_start_time: captchaStartTime
+                })
+            ]);
+            
+            logger.info(`📝 Audit: CAPTCHA shown - Session ${sessionId}, Q${questionNumber}, Type: ${captchaType}`);
+        } catch (error) {
+            logger.error('Error logging CAPTCHA shown:', error);
+        }
+    }
+
+    /**
+     * Log CAPTCHA response (pass or fail)
+     */
+    async logCaptchaResponse(sessionId, userId, questionNumber, captchaType, userAnswer, correctAnswer, isCorrect, responseTimeMs) {
+        try {
+            const redis = require('../config/redis');
+            
+            // Clean up the start time
+            await redis.del(`audit_captcha_start:${sessionId}:${questionNumber}`);
+            
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, $3, $4, NOW())
+            `, [
+                sessionId,
+                userId,
+                isCorrect ? 'CAPTCHA_PASSED' : 'CAPTCHA_FAILED',
+                JSON.stringify({
+                    question_number: questionNumber,
+                    captcha_type: captchaType,
+                    user_answer: userAnswer,
+                    correct_answer: correctAnswer,
+                    is_correct: isCorrect,
+                    response_time_ms: responseTimeMs,
+                    response_time_seconds: responseTimeMs ? (responseTimeMs / 1000).toFixed(2) : null
+                })
+            ]);
+            
+            logger.info(`📝 Audit: CAPTCHA ${isCorrect ? 'PASSED ✅' : 'FAILED ❌'} - Session ${sessionId}, Q${questionNumber}, ${responseTimeMs}ms`);
+        } catch (error) {
+            logger.error('Error logging CAPTCHA response:', error);
+        }
+    }
+
+    /**
+     * Log CAPTCHA timeout
+     */
+    async logCaptchaTimeout(sessionId, userId, questionNumber, captchaType) {
+        try {
+            const redis = require('../config/redis');
+            const captchaStartTime = await redis.get(`audit_captcha_start:${sessionId}:${questionNumber}`);
+            const responseTimeMs = captchaStartTime ? Date.now() - parseInt(captchaStartTime) : 12000;
+            
+            await redis.del(`audit_captcha_start:${sessionId}:${questionNumber}`);
+            
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'CAPTCHA_TIMEOUT', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    question_number: questionNumber,
+                    captcha_type: captchaType,
+                    response_time_ms: responseTimeMs,
+                    reason: 'CAPTCHA time limit exceeded (12 seconds)'
+                })
+            ]);
+            
+            logger.info(`📝 Audit: CAPTCHA timeout - Session ${sessionId}, Q${questionNumber}`);
+        } catch (error) {
+            logger.error('Error logging CAPTCHA timeout:', error);
+        }
+    }
+
     /**
      * Log when a game ends
      */

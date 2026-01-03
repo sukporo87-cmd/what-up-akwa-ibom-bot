@@ -702,6 +702,9 @@ Play as many times as allowed!`;
             const message = captchaService.formatCaptchaMessage(captcha, session.current_score, questionNumber);
             await messagingService.sendMessage(user.phone_number, message);
             
+            // 📝 AUDIT: Log CAPTCHA shown
+            await auditService.logCaptchaShown(session.id, user.id, questionNumber, captcha.type, captcha.displayQuestion);
+            
             await redis.setex(timeoutKey, REDIS_TIMEOUT_BUFFER, (Date.now() + QUESTION_TIMEOUT_MS).toString());
             
             const timeoutId = setTimeout(async () => {
@@ -711,6 +714,10 @@ Play as many times as allowed!`;
                         await redis.del(timeoutKey);
                         await redis.del(captchaKey);
                         activeTimeouts.delete(timeoutKey);
+                        
+                        // 📝 AUDIT: Log CAPTCHA timeout
+                        await auditService.logCaptchaTimeout(session.id, user.id, questionNumber, captcha.type);
+                        
                         await this.handleCaptchaFailure(session, user, 'timeout');
                     }
                 } catch (error) {
@@ -745,7 +752,20 @@ Play as many times as allowed!`;
             const responseTimeMs = Date.now() - captcha.startTime;
             const isCorrect = captchaService.validateAnswer(captcha, answer);
             
+            // Log to captcha_logs table
             await captchaService.logCaptchaAttempt(user.id, session.id, questionNumber, captcha, answer, isCorrect, responseTimeMs);
+            
+            // 📝 AUDIT: Log CAPTCHA response to game_audit_logs
+            await auditService.logCaptchaResponse(
+                session.id, 
+                user.id, 
+                questionNumber, 
+                captcha.type, 
+                answer, 
+                captcha.answer, 
+                isCorrect, 
+                responseTimeMs
+            );
             
             if (isCorrect) {
                 await messagingService.sendMessage(user.phone_number, '✅ Verified! Here comes your question...');

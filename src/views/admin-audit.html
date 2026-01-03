@@ -412,6 +412,25 @@
             border-left-color: #f44336;
         }
 
+        .timeline-event.captcha-shown {
+            border-left-color: #9C27B0;
+        }
+
+        .timeline-event.captcha-passed {
+            border-left-color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        .timeline-event.captcha-failed {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+
+        .timeline-event.captcha-timeout {
+            border-left-color: #FF5722;
+            background: rgba(255, 87, 34, 0.1);
+        }
+
         .timeline-event .event-header {
             display: flex;
             justify-content: space-between;
@@ -900,6 +919,22 @@
                     case 'TIMEOUT':
                         eventIcon = '⏰';
                         eventClass = 'timeout';
+                        break;
+                    case 'CAPTCHA_SHOWN':
+                        eventIcon = '🔐';
+                        eventClass = 'captcha-shown';
+                        break;
+                    case 'CAPTCHA_PASSED':
+                        eventIcon = '🔓✅';
+                        eventClass = 'captcha-passed';
+                        break;
+                    case 'CAPTCHA_FAILED':
+                        eventIcon = '🔒❌';
+                        eventClass = 'captcha-failed';
+                        break;
+                    case 'CAPTCHA_TIMEOUT':
+                        eventIcon = '🔒⏰';
+                        eventClass = 'captcha-timeout';
                         break;
                     case 'GAME_END':
                         eventIcon = '🏁';

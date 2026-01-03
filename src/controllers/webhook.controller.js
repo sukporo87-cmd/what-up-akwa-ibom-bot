@@ -18,6 +18,7 @@ const restrictionsService = require('../services/restrictions.service');
 const achievementsService = require('../services/achievements.service');
 const victoryCardsService = require('../services/victory-cards.service');
 const antiFraudService = require('../services/anti-fraud.service');
+const auditService = require('../services/audit.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -988,11 +989,19 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // WIN SHARING (YES/Y response)
+    // WIN SHARING (YES/Y/SHARE/4 response)
     const winSharePending = await redis.get(`win_share_pending:${user.id}`);
-    if (winSharePending && (input === 'YES' || input === 'Y')) {
+    if (winSharePending && (
+        input === 'YES' || 
+        input === 'Y' || 
+        input === 'SHARE' || 
+        input === '4' ||
+        input.includes('VICTORY') ||
+        input.includes('CARD')
+    )) {
       await this.handleWinShare(user, JSON.parse(winSharePending));
       await redis.del(`win_share_pending:${user.id}`);
+      await redis.del(`post_game:${user.id}`);
       return;
     }
 
@@ -1936,6 +1945,19 @@ Type the code, or type SKIP to continue:`
         '⚠️ Reply START to begin the game!'
       );
       return;
+    }
+
+    // ==========================================
+    // CHECK FOR PENDING CAPTCHA FIRST
+    // This must come before the A/B/C/D check
+    // ==========================================
+    const hasPendingCaptcha = await gameService.hasPendingCaptcha(session.session_key);
+    if (hasPendingCaptcha) {
+      // User is responding to a CAPTCHA, not a game question
+      const handled = await gameService.processCaptchaAnswer(session, user, input);
+      if (handled) {
+        return;
+      }
     }
 
     // Lifelines
