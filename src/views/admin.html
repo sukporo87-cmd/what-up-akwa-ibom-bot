@@ -1089,12 +1089,44 @@
           </div>
         </div>
         
-        <h3 style="margin-bottom: 15px;">Recent Winners</h3>
+        <!-- Search and Filters -->
+        <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
+          <div style="flex: 1; min-width: 250px;">
+            <input type="text" id="winnersSearch" placeholder="🔍 Search by username, name, or phone..." 
+                   style="width: 100%; padding: 10px 15px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); color: var(--text-primary);"
+                   onkeyup="handleWinnersSearch(event)">
+          </div>
+          <select id="winnersStatusFilter" onchange="loadWinners()" style="padding: 10px 15px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); color: var(--text-primary);">
+            <option value="">All Statuses</option>
+            <option value="shared">Shared</option>
+            <option value="pending">Pending</option>
+          </select>
+          <select id="winnersModeFilter" onchange="loadWinners()" style="padding: 10px 15px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); color: var(--text-primary);">
+            <option value="">All Modes</option>
+            <option value="classic">Classic</option>
+            <option value="tournament">Tournament</option>
+          </select>
+          <select id="winnersAmountFilter" onchange="loadWinners()" style="padding: 10px 15px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); color: var(--text-primary);">
+            <option value="">All Amounts</option>
+            <option value="1000">₦1,000+</option>
+            <option value="5000">₦5,000+</option>
+            <option value="10000">₦10,000+</option>
+            <option value="20000">₦20,000+</option>
+            <option value="50000">₦50,000 (Grand Prize)</option>
+          </select>
+        </div>
+        
+        <h3 style="margin-bottom: 15px;">Winners List <span id="winnersCountLabel" style="font-weight: normal; color: var(--text-gray);"></span></h3>
         <div id="winnersTableContainer">
           <div class="loading">
             <div class="spinner"></div>
             <p>Loading winners...</p>
           </div>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="winnersPagination" style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px;">
+          <!-- Pagination will be rendered here -->
         </div>
       </div>
     </div>
@@ -3166,22 +3198,151 @@ async function loadWinners() {
     console.error('Error loading win stats:', error);
   }
   
-  // Load recent winners
-  try {
-    const winnersResponse = await fetch('/admin/api/winners/recent?limit=30', {
-      headers: { 'Authorization': `Bearer ${sessionToken}` }
-    });
-    const winnersData = await winnersResponse.json();
-    
-    if (winnersData.success) {
-      renderWinnersTable(winnersData.winners);
-    }
-  } catch (error) {
-    console.error('Error loading winners:', error);
+  // Load recent winners with pagination
+  await loadWinnersPage(1);
+}
+
+// Winners pagination state
+let winnersCurrentPage = 1;
+let winnersTotalPages = 1;
+let winnersPerPage = 20;
+
+function handleWinnersSearch(event) {
+  if (event.key === 'Enter') {
+    loadWinners();
   }
 }
 
-function renderWinnersTable(winners) {
+async function loadWinnersPage(page = 1) {
+  winnersCurrentPage = page;
+  
+  const search = document.getElementById('winnersSearch')?.value || '';
+  const status = document.getElementById('winnersStatusFilter')?.value || '';
+  const mode = document.getElementById('winnersModeFilter')?.value || '';
+  const minAmount = document.getElementById('winnersAmountFilter')?.value || '';
+  
+  const params = new URLSearchParams({
+    page: page,
+    limit: winnersPerPage,
+    search: search,
+    status: status,
+    mode: mode,
+    minAmount: minAmount
+  });
+  
+  document.getElementById('winnersTableContainer').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading winners...</p></div>';
+  
+  try {
+    const response = await fetch(`/admin/api/winners/recent?${params.toString()}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      winnersTotalPages = data.totalPages || 1;
+      renderWinnersTable(data.winners, data.total);
+      renderWinnersPagination();
+    } else {
+      document.getElementById('winnersTableContainer').innerHTML = '<p style="color: red;">Error loading winners</p>';
+    }
+  } catch (error) {
+    console.error('Error loading winners:', error);
+    document.getElementById('winnersTableContainer').innerHTML = '<p style="color: red;">Error loading winners</p>';
+  }
+}
+
+function renderWinnersTable(winners, total = 0) {
+  // Update count label
+  const countLabel = document.getElementById('winnersCountLabel');
+  if (countLabel) {
+    countLabel.textContent = total > 0 ? `(${total} total)` : '';
+  }
+  
+  if (!winners || winners.length === 0) {
+    document.getElementById('winnersTableContainer').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No winners found</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Amount</th><th>Mode</th><th>Card Status</th><th>Date</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  winners.forEach(winner => {
+    const cardStatus = winner.victory_card_shared 
+      ? '<span class="badge" style="background:#d1fae5;color:#065f46;">Shared</span>'
+      : '<span class="badge" style="background:#fef3c7;color:#92400e;">Pending</span>';
+    const platformIcon = winner.phone_number?.startsWith('tg_') ? '💬' : '📱';
+    const amountColor = parseFloat(winner.amount) >= 50000 ? '#eab308' : parseFloat(winner.amount) >= 10000 ? '#22c55e' : '#059669';
+    
+    html += `<tr>
+      <td>${platformIcon} <strong>@${winner.username || 'unknown'}</strong><br><small>${winner.full_name || ''}</small></td>
+      <td style="color: ${amountColor}; font-weight: bold;">₦${parseFloat(winner.amount).toLocaleString()}</td>
+      <td><span class="badge" style="background: ${winner.game_mode === 'tournament' ? '#dbeafe' : '#f3e8ff'}; color: ${winner.game_mode === 'tournament' ? '#1e40af' : '#7c3aed'};">${winner.game_mode || 'classic'}</span></td>
+      <td>${cardStatus}</td>
+      <td>${new Date(winner.win_date).toLocaleString()}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="regenerateVictoryCard(${winner.victory_card_id || winner.transaction_id})">🎴 Generate Card</button>
+        <button class="btn btn-secondary btn-sm" onclick="viewUserProfile(${winner.user_id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('winnersTableContainer').innerHTML = html;
+}
+
+function renderWinnersPagination() {
+  const container = document.getElementById('winnersPagination');
+  if (!container) return;
+  
+  if (winnersTotalPages <= 1) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  let html = '';
+  
+  // Previous button
+  html += `<button class="btn btn-secondary btn-sm" onclick="loadWinnersPage(${winnersCurrentPage - 1})" ${winnersCurrentPage === 1 ? 'disabled' : ''}>← Prev</button>`;
+  
+  // Page numbers
+  const maxVisiblePages = 5;
+  let startPage = Math.max(1, winnersCurrentPage - Math.floor(maxVisiblePages / 2));
+  let endPage = Math.min(winnersTotalPages, startPage + maxVisiblePages - 1);
+  
+  if (endPage - startPage < maxVisiblePages - 1) {
+    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+  }
+  
+  if (startPage > 1) {
+    html += `<button class="btn btn-secondary btn-sm" onclick="loadWinnersPage(1)">1</button>`;
+    if (startPage > 2) {
+      html += `<span style="color: var(--text-gray);">...</span>`;
+    }
+  }
+  
+  for (let i = startPage; i <= endPage; i++) {
+    if (i === winnersCurrentPage) {
+      html += `<button class="btn btn-primary btn-sm" disabled>${i}</button>`;
+    } else {
+      html += `<button class="btn btn-secondary btn-sm" onclick="loadWinnersPage(${i})">${i}</button>`;
+    }
+  }
+  
+  if (endPage < winnersTotalPages) {
+    if (endPage < winnersTotalPages - 1) {
+      html += `<span style="color: var(--text-gray);">...</span>`;
+    }
+    html += `<button class="btn btn-secondary btn-sm" onclick="loadWinnersPage(${winnersTotalPages})">${winnersTotalPages}</button>`;
+  }
+  
+  // Next button
+  html += `<button class="btn btn-secondary btn-sm" onclick="loadWinnersPage(${winnersCurrentPage + 1})" ${winnersCurrentPage === winnersTotalPages ? 'disabled' : ''}>Next →</button>`;
+  
+  container.innerHTML = html;
+}
+
+function renderWinnersTableOld(winners) {
   if (winners.length === 0) {
     document.getElementById('winnersTableContainer').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No recent winners</p>';
     return;

@@ -3637,11 +3637,116 @@ router.get('/api/victory-cards', authenticateAdmin, async (req, res) => {
 // Get recent winners
 router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
     try {
-        const victoryCardsService = require('../services/victory-cards.service');
-        const { limit = 20 } = req.query;
+        const { 
+            page = 1, 
+            limit = 20, 
+            search = '', 
+            status = '', 
+            mode = '', 
+            minAmount = '' 
+        } = req.query;
         
-        const winners = await victoryCardsService.getRecentWinners(parseInt(limit));
-        res.json({ success: true, winners });
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const offset = (pageNum - 1) * limitNum;
+        
+        // Build query conditions
+        let conditions = [`t.transaction_type = 'prize'`, `t.amount > 0`];
+        let params = [];
+        let paramIndex = 1;
+        
+        // Search filter
+        if (search) {
+            conditions.push(`(
+                u.username ILIKE $${paramIndex} OR 
+                u.full_name ILIKE $${paramIndex} OR 
+                u.phone_number ILIKE $${paramIndex}
+            )`);
+            params.push(`%${search}%`);
+            paramIndex++;
+        }
+        
+        // Status filter (shared/pending)
+        if (status === 'shared') {
+            conditions.push(`vc.shared_at IS NOT NULL`);
+        } else if (status === 'pending') {
+            conditions.push(`(vc.shared_at IS NULL OR vc.id IS NULL)`);
+        }
+        
+        // Mode filter
+        if (mode) {
+            conditions.push(`gs.game_mode = $${paramIndex}`);
+            params.push(mode);
+            paramIndex++;
+        }
+        
+        // Amount filter
+        if (minAmount) {
+            const amount = parseInt(minAmount);
+            if (amount === 50000) {
+                conditions.push(`t.amount = 50000`);
+            } else {
+                conditions.push(`t.amount >= $${paramIndex}`);
+                params.push(amount);
+                paramIndex++;
+            }
+        }
+        
+        const whereClause = conditions.join(' AND ');
+        
+        // Get total count
+        const countQuery = `
+            SELECT COUNT(DISTINCT t.id) as total
+            FROM transactions t
+            JOIN users u ON t.user_id = u.id
+            LEFT JOIN victory_cards vc ON t.id = vc.transaction_id
+            LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
+                AND DATE(gs.completed_at) = DATE(t.created_at)
+                AND gs.current_score = t.amount
+            WHERE ${whereClause}
+        `;
+        
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0].total);
+        const totalPages = Math.ceil(total / limitNum);
+        
+        // Get winners with pagination
+        const winnersQuery = `
+            SELECT DISTINCT ON (t.id)
+                t.id as transaction_id,
+                t.amount,
+                t.created_at as win_date,
+                u.id as user_id,
+                u.username,
+                u.full_name,
+                u.phone_number,
+                vc.id as victory_card_id,
+                vc.shared_at IS NOT NULL as victory_card_shared,
+                gs.game_mode,
+                gs.platform
+            FROM transactions t
+            JOIN users u ON t.user_id = u.id
+            LEFT JOIN victory_cards vc ON t.id = vc.transaction_id
+            LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
+                AND DATE(gs.completed_at) = DATE(t.created_at)
+                AND gs.current_score = t.amount
+            WHERE ${whereClause}
+            ORDER BY t.id DESC, t.created_at DESC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        
+        params.push(limitNum, offset);
+        
+        const winnersResult = await pool.query(winnersQuery, params);
+        
+        res.json({ 
+            success: true, 
+            winners: winnersResult.rows,
+            total,
+            totalPages,
+            currentPage: pageNum,
+            perPage: limitNum
+        });
     } catch (error) {
         logger.error('Error getting recent winners:', error);
         res.status(500).json({ error: 'Failed to get recent winners' });
