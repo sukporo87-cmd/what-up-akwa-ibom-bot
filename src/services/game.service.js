@@ -648,7 +648,7 @@ Play as many times as allowed!`;
         message += `2️⃣ View Leaderboard\n`;
         message += `3️⃣ Claim Prize\n`;
         message += `4️⃣ Share Victory Card\n\n`;
-        message += `Type MENU for more options.`;
+        message += `💡 _Tip: Type CLAIM anytime to claim your prize_`;
         
         await messagingService.sendMessage(user.phone_number, message);
     }

@@ -194,11 +194,20 @@ class WebhookController {
       }
 
       // ===================================
-      // PRIORITY 5: LEADERBOARD STATES
+      // PRIORITY 4.5: CLEAR LEADERBOARD STATE IF IN POST-GAME
+      // This prevents leaderboard state from intercepting post-game menu options
       // ===================================
       if (userState && userState.state === 'SELECT_LEADERBOARD') {
-        await this.handleLeaderboardSelection(phone, message);
-        return;
+        const postGameState = await redis.get(`post_game:${user.id}`);
+        if (postGameState) {
+          // User is in post-game window, clear leaderboard state so post-game menu works
+          await userService.clearUserState(phone);
+          // Don't return - let it fall through to handleMenuInput for post-game handling
+        } else {
+          // Not in post-game, handle leaderboard selection normally
+          await this.handleLeaderboardSelection(phone, message);
+          return;
+        }
       }
 
       // ===================================
@@ -237,6 +246,24 @@ class WebhookController {
       // ===================================
       if (!user) {
         await this.handleNewUser(phone);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 8.5: PAYMENT CONFIRMATION (RECEIVED)
+      // Must come before active game check so users can confirm payments mid-game
+      // ===================================
+      if (input === 'RECEIVED' || input === 'CONFIRM' || input === 'CONFIRMED') {
+        await this.handlePaymentConfirmation(user);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 8.6: CLAIM PRIZE COMMAND
+      // Allow "CLAIM" keyword to work anytime
+      // ===================================
+      if (input === 'CLAIM' || input === 'CLAIM PRIZE' || input === 'CLAIMPRICE') {
+        await this.handleClaimPrize(user);
         return;
       }
 
