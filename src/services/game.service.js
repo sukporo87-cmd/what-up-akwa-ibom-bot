@@ -660,6 +660,12 @@ Play as many times as allowed!`;
     async sendQuestionOrCaptcha(session, user) {
         const questionNumber = session.current_question;
         
+        // ✅ SKIP CAPTCHA for practice mode - only show in Classic and Tournament
+        if (session.game_type === 'practice' || session.game_mode === 'practice') {
+            await this.sendQuestion(session, user);
+            return;
+        }
+        
         let shownCaptchas = [];
         try {
             const captchaData = session.captcha_shown_at;
