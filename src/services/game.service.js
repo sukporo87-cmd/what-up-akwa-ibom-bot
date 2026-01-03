@@ -662,8 +662,18 @@ Play as many times as allowed!`;
         
         let shownCaptchas = [];
         try {
-            shownCaptchas = JSON.parse(session.captcha_shown_at || '[]');
+            const captchaData = session.captcha_shown_at;
+            if (Array.isArray(captchaData)) {
+                shownCaptchas = captchaData;
+            } else if (typeof captchaData === 'string' && captchaData.length > 0) {
+                shownCaptchas = JSON.parse(captchaData);
+            }
+            // Ensure it's always an array
+            if (!Array.isArray(shownCaptchas)) {
+                shownCaptchas = [];
+            }
         } catch (e) {
+            logger.warn('Error parsing captcha_shown_at, defaulting to empty array:', e.message);
             shownCaptchas = [];
         }
         
@@ -690,7 +700,15 @@ Play as many times as allowed!`;
             
             let shownCaptchas = [];
             try {
-                shownCaptchas = JSON.parse(session.captcha_shown_at || '[]');
+                const captchaData = session.captcha_shown_at;
+                if (Array.isArray(captchaData)) {
+                    shownCaptchas = captchaData;
+                } else if (typeof captchaData === 'string' && captchaData.length > 0) {
+                    shownCaptchas = JSON.parse(captchaData);
+                }
+                if (!Array.isArray(shownCaptchas)) {
+                    shownCaptchas = [];
+                }
             } catch (e) {
                 shownCaptchas = [];
             }
@@ -833,9 +851,9 @@ Play as many times as allowed!`;
             }
             
             if (gameMode === 'practice') {
-                query += ` AND question_bank = 'practice'`;
+                query += ` AND question_bank_id = 2`; // practice_mode bank
             } else {
-                query += ` AND (question_bank = 'classic' OR question_bank IS NULL)`;
+                query += ` AND (question_bank_id = 1 OR question_bank_id IS NULL)`; // classic_mode bank
             }
             
             query += ` ORDER BY RANDOM() LIMIT 5`;
