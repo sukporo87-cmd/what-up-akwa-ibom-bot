@@ -3666,11 +3666,11 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
             paramIndex++;
         }
         
-        // Status filter (shared/pending)
+        // Status filter (shared/pending) - uses transactions.victory_card_shared
         if (status === 'shared') {
-            conditions.push(`vc.shared_at IS NOT NULL`);
+            conditions.push(`t.victory_card_shared = true`);
         } else if (status === 'pending') {
-            conditions.push(`(vc.shared_at IS NULL OR vc.id IS NULL)`);
+            conditions.push(`(t.victory_card_shared = false OR t.victory_card_shared IS NULL)`);
         }
         
         // Mode filter
@@ -3716,12 +3716,12 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
                 t.id as transaction_id,
                 t.amount,
                 t.created_at as win_date,
+                t.victory_card_shared,
                 u.id as user_id,
                 u.username,
                 u.full_name,
                 u.phone_number,
                 vc.id as victory_card_id,
-                vc.shared_at IS NOT NULL as victory_card_shared,
                 gs.game_mode,
                 gs.platform
             FROM transactions t
