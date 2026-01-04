@@ -140,6 +140,66 @@ class VictoryCardsService {
     }
     
     // ============================================
+    // GET WIN DATA FOR SHARE (from transaction)
+    // ============================================
+    
+    async getWinDataForShare(userId) {
+        try {
+            // Get the pending (unshared) transaction
+            const result = await pool.query(`
+                SELECT t.id, t.amount, t.win_data, t.created_at,
+                       gs.current_question, gs.game_mode
+                FROM transactions t
+                LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
+                    AND DATE(gs.completed_at) = DATE(t.created_at)
+                    AND gs.current_score = t.amount
+                WHERE t.user_id = $1 
+                AND t.transaction_type = 'prize'
+                AND t.amount > 0
+                AND (t.victory_card_shared = false OR t.victory_card_shared IS NULL)
+                ORDER BY t.created_at DESC
+                LIMIT 1
+            `, [userId]);
+            
+            if (result.rows.length === 0) {
+                return null;
+            }
+            
+            const tx = result.rows[0];
+            
+            // Try to get from win_data first, then calculate
+            let questionsAnswered = 15;
+            if (tx.win_data) {
+                const winData = typeof tx.win_data === 'string' ? JSON.parse(tx.win_data) : tx.win_data;
+                questionsAnswered = winData.questionsAnswered || tx.current_question || this.estimateQuestionsFromAmount(tx.amount);
+            } else if (tx.current_question) {
+                questionsAnswered = tx.current_question - 1;
+            } else {
+                questionsAnswered = this.estimateQuestionsFromAmount(tx.amount);
+            }
+            
+            return {
+                amount: parseFloat(tx.amount),
+                questionsAnswered: questionsAnswered,
+                totalQuestions: 15,
+                transactionId: tx.id
+            };
+        } catch (error) {
+            logger.error('Error getting win data for share:', error);
+            return null;
+        }
+    }
+    
+    estimateQuestionsFromAmount(amount) {
+        const amt = parseFloat(amount);
+        const prizeTiers = {
+            50000: 15, 35000: 14, 25000: 13, 20000: 12, 15000: 11,
+            10000: 10, 7500: 9, 5000: 8, 3000: 7, 2000: 6, 1000: 5
+        };
+        return prizeTiers[amt] || Math.min(Math.floor(amt / 3000) + 5, 15);
+    }
+    
+    // ============================================
     // GET VICTORY CARD DATA FOR REGENERATION
     // ============================================
     

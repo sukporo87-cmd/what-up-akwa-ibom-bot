@@ -285,6 +285,24 @@ class GameService {
             // 📝 AUDIT: Log game start
             await auditService.logGameStart(session.id, user.id, gameMode, platform, tournamentId);
 
+            // 🔐 DEVICE TRACKING: Record device/session for multi-account detection
+            try {
+                const deviceId = deviceTrackingService.generateDeviceFingerprint({
+                    platform: platform,
+                    phoneNumber: user.phone_number,
+                    deviceType: platform === 'telegram' ? 'telegram_client' : 'whatsapp_client'
+                });
+                await deviceTrackingService.recordDevice(user.id, deviceId, platform, {
+                    gameSessionId: session.id,
+                    gameMode: gameMode,
+                    timestamp: new Date().toISOString()
+                });
+                logger.info(`📱 Device tracked for user ${user.id}: ${deviceId.substring(0, 8)}...`);
+            } catch (deviceError) {
+                logger.error('Error recording device:', deviceError);
+                // Don't fail game start if device tracking fails
+            }
+
             // 🔥 STREAK: Update user's daily streak (only for classic/tournament)
             let streakResult = null;
             if (gameMode === 'classic' || isTournamentGame) {
@@ -521,7 +539,7 @@ Play as many times as allowed!`;
             }
 
             if (session.game_type !== 'practice' && finalScore > 0) {
-                await redis.setex(`win_share_pending:${user.id}`, 300, JSON.stringify({
+                await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
                     amount: finalScore,
                     questionsAnswered: session.current_question - 1,
                     totalQuestions: 15

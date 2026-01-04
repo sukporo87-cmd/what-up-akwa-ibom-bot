@@ -1031,6 +1031,16 @@ Type the code, or type SKIP to continue:`
       await redis.del(`post_game:${user.id}`);
       return;
     }
+    
+    // SHARE command fallback - when win_share_pending has expired but user has unshared victory card
+    if (!winSharePending && (input === 'SHARE' || input === '4' || input.includes('VICTORY'))) {
+      const winData = await victoryCardsService.getWinDataForShare(user.id);
+      if (winData) {
+        // User has an unshared win - generate victory card
+        await this.handleWinShare(user, winData);
+        return;
+      }
+    }
 
     // BUY command (text-based) - works regardless of payment mode
     if (input.includes('BUY')) {
@@ -1133,8 +1143,15 @@ Type the code, or type SKIP to continue:`
         return;
       } else if (input === '3') {
         await redis.del(`post_game:${user.id}`);
-        // Check if user has actual winnings to claim
-        const hasWinnings = postGameData && postGameData.finalScore > 0 && postGameData.gameType !== 'practice';
+        // Check if user has actual winnings to claim - check DB directly as backup
+        let hasWinnings = postGameData && postGameData.finalScore > 0 && postGameData.gameType !== 'practice';
+        
+        // Double-check with database in case postGameData is stale
+        if (!hasWinnings) {
+          const pendingTx = await payoutService.getPendingTransaction(user.id);
+          hasWinnings = pendingTx && parseFloat(pendingTx.amount) > 0;
+        }
+        
         if (hasWinnings) {
           // Classic/Tournament mode with winnings: Option 3 = Claim Prize
           await this.handleClaimPrize(user);
@@ -1154,10 +1171,17 @@ Type the code, or type SKIP to continue:`
           await redis.del(`win_share_pending:${user.id}`);
           await redis.del(`post_game:${user.id}`);
         } else {
-          await messagingService.sendMessage(
-            user.phone_number,
-            '❌ Victory card not available. It may have expired.\n\nType MENU for main menu.'
-          );
+          // Fallback: check if user has unshared win
+          const winData = await victoryCardsService.getWinDataForShare(user.id);
+          if (winData) {
+            await this.handleWinShare(user, winData);
+            await redis.del(`post_game:${user.id}`);
+          } else {
+            await messagingService.sendMessage(
+              user.phone_number,
+              '❌ No victory card available.\n\nType MENU for main menu.'
+            );
+          }
         }
         return;
       } else if (input === 'MENU' || input.includes('MAIN')) {
@@ -1556,6 +1580,13 @@ Type the code, or type SKIP to continue:`
       // Check if victory card must be shared first
       const canClaim = await victoryCardsService.canUserClaim(user.id);
       if (!canClaim.canClaim && canClaim.reason === 'victory_card_required') {
+        // Regenerate win_share_pending so user can share their card
+        const winData = await victoryCardsService.getWinDataForShare(user.id);
+        if (winData) {
+          await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify(winData)); // 24 hours
+          logger.info(`Regenerated win_share_pending for user ${user.id} during claim attempt`);
+        }
+        
         await messagingService.sendMessage(
           user.phone_number,
           victoryCardsService.getVictoryCardRequiredMessage(parseFloat(transaction.amount))
