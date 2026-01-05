@@ -2287,14 +2287,12 @@ Reply with your choice:`
         `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
       );
 
-      // Mark victory card as shared in database
+      // Mark ALL victory cards as shared in database (user may have multiple pending)
       try {
-        const pendingCard = await victoryCardsService.getPendingVictoryCard(user.id);
-        if (pendingCard) {
-          await victoryCardsService.markCardAsShared(pendingCard.id);
-        }
+        await victoryCardsService.markAllCardsAsShared(user.id);
+        logger.info(`All pending victory cards marked as shared for user ${user.id}`);
       } catch (vcError) {
-        logger.error('Error marking victory card as shared:', vcError);
+        logger.error('Error marking victory cards as shared:', vcError);
       }
 
       // Check and award achievements

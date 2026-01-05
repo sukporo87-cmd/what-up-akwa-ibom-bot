@@ -63,6 +63,34 @@ class VictoryCardsService {
     }
     
     // ============================================
+    // MARK ALL PENDING CARDS AS SHARED FOR USER
+    // ============================================
+    
+    async markAllCardsAsShared(userId) {
+        try {
+            const result = await pool.query(`
+                UPDATE transactions 
+                SET victory_card_shared = true, victory_card_shared_at = NOW()
+                WHERE user_id = $1
+                AND transaction_type = 'prize'
+                AND amount > 0
+                AND (victory_card_shared = false OR victory_card_shared IS NULL)
+                RETURNING id
+            `, [userId]);
+            
+            const count = result.rowCount;
+            if (count > 0) {
+                logger.info(`Marked ${count} victory card(s) as shared for user ${userId}`);
+            }
+            
+            return count;
+        } catch (error) {
+            logger.error('Error marking all cards as shared:', error);
+            return 0;
+        }
+    }
+    
+    // ============================================
     // CHECK IF VICTORY CARD SHARED
     // ============================================
     
