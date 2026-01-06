@@ -1011,9 +1011,24 @@ Play as many times as allowed!`;
             
             try {
                 const timeout = await redis.get(timeoutKey);
+                
+                // Check timeout using Redis key
                 if (timeout && Date.now() > Number(timeout)) {
+                    logger.info(`Answer timeout (Redis check): Session ${session.session_key}, Q${questionNumber}`);
                     await this.handleTimeout(session, user);
                     return;
+                }
+                
+                // Also check using anti-fraud start time as backup
+                // This catches cases where Redis key expired but answer is still late
+                const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
+                if (startTime) {
+                    const elapsed = Date.now() - startTime;
+                    if (elapsed > QUESTION_TIMEOUT_MS) {
+                        logger.info(`Answer timeout (elapsed check): Session ${session.session_key}, Q${questionNumber}, ${elapsed}ms > ${QUESTION_TIMEOUT_MS}ms`);
+                        await this.handleTimeout(session, user);
+                        return;
+                    }
                 }
                 
                 await redis.del(timeoutKey);

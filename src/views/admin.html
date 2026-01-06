@@ -2655,13 +2655,36 @@ async function viewUserProfile(userId) {
   document.getElementById('userProfileContent').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading user profile...</p></div>';
   
   try {
+    // Fetch user profile
     const response = await fetch(`/admin/api/users/${userId}/profile`, {
       headers: { 'Authorization': `Bearer ${sessionToken}` }
     });
     const data = await response.json();
     
+    // Also fetch device and security data
+    let deviceData = { devices: [], ips: [] };
+    try {
+      const deviceResponse = await fetch(`/admin/api/security/user-devices/${userId}`, {
+        headers: { 'Authorization': `Bearer ${sessionToken}` }
+      });
+      const deviceResult = await deviceResponse.json();
+      if (deviceResult.success) {
+        deviceData.devices = deviceResult.devices || [];
+      }
+      
+      const ipResponse = await fetch(`/admin/api/security/user-ips/${userId}?days=30`, {
+        headers: { 'Authorization': `Bearer ${sessionToken}` }
+      });
+      const ipResult = await ipResponse.json();
+      if (ipResult.success) {
+        deviceData.ips = ipResult.ips || [];
+      }
+    } catch (deviceError) {
+      console.error('Error fetching device data:', deviceError);
+    }
+    
     if (data.success) {
-      renderUserProfile(data);
+      renderUserProfile(data, deviceData);
     } else {
       document.getElementById('userProfileContent').innerHTML = '<p style="color: red;">Failed to load user profile</p>';
     }
@@ -2671,8 +2694,9 @@ async function viewUserProfile(userId) {
   }
 }
 
-function renderUserProfile(data) {
+function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
   const { user, stats, financial, referrals, recentGames, recentTransactions, achievements } = data;
+  const { devices, ips } = deviceData;
   const platformIcon = user.phone_number.startsWith('tg_') ? '💬 Telegram' : '📱 WhatsApp';
   const suspendedBadge = user.is_suspended ? '<span class="badge" style="background:#fee2e2;color:#991b1b;">SUSPENDED</span>' : '';
   
@@ -2732,6 +2756,42 @@ function renderUserProfile(data) {
           <button class="btn btn-danger" onclick="viewFraudReport(${user.id})" style="margin-top: 10px;">View Fraud Report</button>
         </div>
         ` : ''}
+        
+        <!-- Device & Security Section -->
+        <div style="background: #f1f5f9; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+          <h4 style="margin-bottom: 15px;">📱 Device & Security</h4>
+          <div class="detail-row"><span class="detail-label">Multi-Account Flags</span><span class="detail-value" style="color: ${user.multi_account_flags > 0 ? '#dc2626' : 'inherit'};">${user.multi_account_flags || 0}</span></div>
+          <div class="detail-row"><span class="detail-label">Primary Device</span><span class="detail-value"><code style="font-size: 10px;">${user.primary_device_id ? user.primary_device_id.substring(0, 16) + '...' : 'Not set'}</code></span></div>
+          
+          ${devices.length > 0 ? `
+          <div style="margin-top: 15px;">
+            <strong style="font-size: 12px;">Known Devices (${devices.length}):</strong>
+            <div style="max-height: 100px; overflow-y: auto; margin-top: 8px;">
+              ${devices.map(d => `
+                <div style="background: white; padding: 8px; border-radius: 6px; margin-bottom: 5px; font-size: 11px;">
+                  <div><strong>ID:</strong> <code>${d.device_id?.substring(0, 16)}...</code></div>
+                  <div><strong>Platform:</strong> ${d.platform || 'N/A'} | <strong>Last Seen:</strong> ${d.last_seen_at ? new Date(d.last_seen_at).toLocaleDateString() : 'N/A'}</div>
+                  ${d.is_flagged ? '<span style="color: #dc2626;">🚩 Flagged</span>' : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : '<p style="color: #64748b; font-size: 12px; margin-top: 10px;">No device data recorded yet</p>'}
+          
+          ${ips.length > 0 ? `
+          <div style="margin-top: 15px;">
+            <strong style="font-size: 12px;">Recent IP Addresses (${ips.length}):</strong>
+            <div style="max-height: 100px; overflow-y: auto; margin-top: 8px;">
+              ${ips.slice(0, 5).map(ip => `
+                <div style="background: white; padding: 8px; border-radius: 6px; margin-bottom: 5px; font-size: 11px;">
+                  <div><strong>IP:</strong> ${ip.ip_address || 'N/A'} ${ip.is_vpn ? '🔒 VPN' : ''} ${ip.is_proxy ? '🔄 Proxy' : ''}</div>
+                  <div><strong>Action:</strong> ${ip.action_type || 'N/A'} | <strong>Date:</strong> ${ip.recorded_at ? new Date(ip.recorded_at).toLocaleDateString() : 'N/A'}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : ''}
+        </div>
       </div>
     </div>
     
