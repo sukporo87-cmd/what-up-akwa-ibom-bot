@@ -2719,6 +2719,20 @@ function generatePrintableAuditReport(report) {
                     <p>⏰ <strong>TIMEOUT</strong> on Question ${event.data.question_number}</p>
                 </div>
             `;
+        } else if (event.event === 'TURBO_MODE_ACTIVATED') {
+            questionsHtml += `
+                <div class="turbo-block" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                    <p>⚡🚨 <strong>TURBO MODE ACTIVATED</strong> at Question ${event.data.question_number}</p>
+                    <p style="font-size: 12px; color: #856404;">Reason: ${event.data.trigger_reason}</p>
+                    <p style="font-size: 12px; color: #856404;">Next ${event.data.turbo_questions} questions reduced to ${event.data.reduced_timeout}</p>
+                </div>
+            `;
+        } else if (event.event === 'TURBO_MODE_COMPLETED') {
+            questionsHtml += `
+                <div class="turbo-complete-block" style="background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                    <p>⚡✅ <strong>TURBO MODE COMPLETED</strong> - User passed the speed test</p>
+                </div>
+            `;
         }
     }
 

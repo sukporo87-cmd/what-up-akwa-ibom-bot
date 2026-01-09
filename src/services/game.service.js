@@ -28,6 +28,18 @@ const QUESTION_TIMEOUT_MS = 12000;  // Changed from 15000
 const QUESTION_TIMEOUT_SECONDS = 12; // Changed from 15
 const REDIS_TIMEOUT_BUFFER = 15;
 
+// ============================================
+// TURBO MODE CONFIGURATION (Anti-Cheat)
+// ============================================
+const TURBO_MODE_CONFIG = {
+    SUSPICIOUS_MIN_MS: 10500,      // 10.5 seconds - start of suspicious window
+    SUSPICIOUS_MAX_MS: 11990,      // 11.99 seconds - end of suspicious window
+    CONSECUTIVE_TRIGGER: 3,        // Trigger after 3 consecutive suspicious answers
+    REDUCED_TIMEOUT_MS: 10000,     // 10 seconds during turbo mode
+    REDUCED_TIMEOUT_SECONDS: 10,
+    TURBO_QUESTIONS: 2,            // Number of questions with reduced timeout
+};
+
 const messagingService = new MessagingService();
 const questionService = new QuestionService();
 const paymentService = new PaymentService();
@@ -107,6 +119,187 @@ class GameService {
                 logger.error('Error in timeout cleanup:', error);
             }
         }, 300000);
+    }
+
+    // ============================================
+    // TURBO MODE METHODS (Anti-Cheat)
+    // ============================================
+
+    /**
+     * Check if response time falls in suspicious window (10.5s - 11.99s)
+     */
+    isInSuspiciousWindow(responseTimeMs) {
+        return responseTimeMs >= TURBO_MODE_CONFIG.SUSPICIOUS_MIN_MS && 
+               responseTimeMs <= TURBO_MODE_CONFIG.SUSPICIOUS_MAX_MS;
+    }
+
+    /**
+     * Track consecutive suspicious response times
+     */
+    async trackSuspiciousResponseTime(sessionKey, userId, questionNumber, responseTimeMs) {
+        const trackingKey = `turbo_track:${sessionKey}`;
+        
+        try {
+            let tracking = await redis.get(trackingKey);
+            tracking = tracking ? JSON.parse(tracking) : { 
+                consecutiveCount: 0, 
+                responses: [],
+                turboModeActive: false,
+                turboQuestionsRemaining: 0
+            };
+            
+            if (this.isInSuspiciousWindow(responseTimeMs)) {
+                tracking.consecutiveCount++;
+                tracking.responses.push({
+                    questionNumber,
+                    responseTimeMs,
+                    timestamp: Date.now()
+                });
+                
+                logger.warn(`⚠️ Suspicious timing: Session ${sessionKey}, Q${questionNumber}, ${responseTimeMs}ms (${tracking.consecutiveCount} consecutive)`);
+            } else {
+                // Reset if not in suspicious window
+                tracking.consecutiveCount = 0;
+                tracking.responses = [];
+            }
+            
+            await redis.setex(trackingKey, 3600, JSON.stringify(tracking));
+            
+            return tracking;
+        } catch (error) {
+            logger.error('Error tracking suspicious response:', error);
+            return { consecutiveCount: 0, responses: [], turboModeActive: false, turboQuestionsRemaining: 0 };
+        }
+    }
+
+    /**
+     * Check if turbo mode should be activated
+     */
+    async checkAndActivateTurboMode(session, user, responseTimeMs) {
+        const trackingKey = `turbo_track:${session.session_key}`;
+        
+        try {
+            const tracking = await this.trackSuspiciousResponseTime(
+                session.session_key, 
+                user.id, 
+                session.current_question, 
+                responseTimeMs
+            );
+            
+            // Check if we should trigger turbo mode
+            if (tracking.consecutiveCount >= TURBO_MODE_CONFIG.CONSECUTIVE_TRIGGER && !tracking.turboModeActive) {
+                // Activate turbo mode
+                tracking.turboModeActive = true;
+                tracking.turboQuestionsRemaining = TURBO_MODE_CONFIG.TURBO_QUESTIONS;
+                tracking.activatedAt = Date.now();
+                tracking.activatedAtQuestion = session.current_question;
+                
+                await redis.setex(trackingKey, 3600, JSON.stringify(tracking));
+                
+                // Log to audit trail
+                await auditService.logTurboModeActivated(
+                    session.id, 
+                    user.id, 
+                    session.current_question,
+                    tracking.responses
+                );
+                
+                logger.warn(`⚡ TURBO MODE ACTIVATED: User ${user.id}, Session ${session.id}`);
+                
+                // Send warning message
+                await this.sendTurboModeWarning(user);
+                
+                return { activated: true, tracking };
+            }
+            
+            return { activated: false, tracking };
+        } catch (error) {
+            logger.error('Error checking turbo mode:', error);
+            return { activated: false, tracking: null };
+        }
+    }
+
+    /**
+     * Send the turbo mode warning message
+     */
+    async sendTurboModeWarning(user) {
+        const message = `⚡ TURBO MODE ACTIVATED ⚡
+
+You're cutting it close, champ! 🏎️
+
+Our system noticed your ninja-like timing. Impressive... or suspicious? 🤔
+
+Answering at the last second 3 times in a row? Either you're a genius who loves drama, or... 👀
+
+Prove it: Next 2 questions in 10 seconds.
+
+No pressure! Show us what you've got! 💪😏`;
+
+        await messagingService.sendMessage(user.phone_number, message);
+    }
+
+    /**
+     * Get current timeout for session (normal or turbo)
+     */
+    async getSessionTimeout(sessionKey) {
+        const trackingKey = `turbo_track:${sessionKey}`;
+        
+        try {
+            const tracking = await redis.get(trackingKey);
+            if (tracking) {
+                const data = JSON.parse(tracking);
+                if (data.turboModeActive && data.turboQuestionsRemaining > 0) {
+                    return {
+                        timeoutMs: TURBO_MODE_CONFIG.REDUCED_TIMEOUT_MS,
+                        timeoutSeconds: TURBO_MODE_CONFIG.REDUCED_TIMEOUT_SECONDS,
+                        isTurboMode: true,
+                        questionsRemaining: data.turboQuestionsRemaining
+                    };
+                }
+            }
+        } catch (error) {
+            logger.error('Error getting session timeout:', error);
+        }
+        
+        return {
+            timeoutMs: QUESTION_TIMEOUT_MS,
+            timeoutSeconds: QUESTION_TIMEOUT_SECONDS,
+            isTurboMode: false,
+            questionsRemaining: 0
+        };
+    }
+
+    /**
+     * Decrement turbo mode questions remaining
+     */
+    async decrementTurboQuestions(sessionKey, userId, sessionId) {
+        const trackingKey = `turbo_track:${sessionKey}`;
+        
+        try {
+            const tracking = await redis.get(trackingKey);
+            if (tracking) {
+                const data = JSON.parse(tracking);
+                if (data.turboModeActive && data.turboQuestionsRemaining > 0) {
+                    data.turboQuestionsRemaining--;
+                    
+                    if (data.turboQuestionsRemaining === 0) {
+                        // Turbo mode complete - log it
+                        data.turboModeActive = false;
+                        data.completedAt = Date.now();
+                        
+                        await auditService.logTurboModeCompleted(sessionId, userId);
+                        logger.info(`⚡ Turbo mode completed: User ${userId}, Session ${sessionId}`);
+                    }
+                    
+                    await redis.setex(trackingKey, 3600, JSON.stringify(data));
+                    return data;
+                }
+            }
+        } catch (error) {
+            logger.error('Error decrementing turbo questions:', error);
+        }
+        
+        return null;
     }
 
     clearQuestionTimeout(timeoutKey) {
@@ -912,6 +1105,16 @@ Play as many times as allowed!`;
             
             this.clearQuestionTimeout(timeoutKey);
             
+            // ⚡ TURBO MODE: Get dynamic timeout (normal or reduced)
+            const timeoutConfig = await this.getSessionTimeout(session.session_key);
+            const currentTimeoutMs = timeoutConfig.timeoutMs;
+            const currentTimeoutSeconds = timeoutConfig.timeoutSeconds;
+            
+            // Decrement turbo questions if in turbo mode
+            if (timeoutConfig.isTurboMode) {
+                await this.decrementTurboQuestions(session.session_key, user.id, session.id);
+            }
+            
             const askedQuestionsKey = `asked_questions:${session.session_key}`;
             const askedQuestionsJson = await redis.get(askedQuestionsKey);
             const askedQuestions = askedQuestionsJson ? JSON.parse(askedQuestionsJson) : [];
@@ -937,20 +1140,25 @@ Play as many times as allowed!`;
             // Log question history for randomization
             await this.logQuestionHistory(user.id, question.id);
             
-            // 📝 AUDIT: Log question asked
-            await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount);
+            // 📝 AUDIT: Log question asked (with turbo mode info)
+            await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount, timeoutConfig.isTurboMode);
             
             // 🔍 ANTI-FRAUD: Track question start time
             await antiFraudService.setQuestionStartTime(session.session_key, questionNumber);
             
             let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
             if (isSafe) message += ' (SAFE) 🔒';
+            if (timeoutConfig.isTurboMode) message += ' ⚡'; // Turbo mode indicator
             message += `\n\n${question.question_text}\n\n`;
             message += `A) ${question.option_a}\n`;
             message += `B) ${question.option_b}\n`;
             message += `C) ${question.option_c}\n`;
             message += `D) ${question.option_d}\n\n`;
-            message += `⏱️ ${QUESTION_TIMEOUT_SECONDS} seconds...\n\n`;
+            message += `⏱️ ${currentTimeoutSeconds} seconds...`;
+            if (timeoutConfig.isTurboMode) {
+                message += ` ⚡ (${timeoutConfig.questionsRemaining + 1} turbo left)`;
+            }
+            message += `\n\n`;
             
             const lifelines = [];
             if (!session.lifeline_5050_used) lifelines.push('50:50');
@@ -962,7 +1170,7 @@ Play as many times as allowed!`;
             
             await messagingService.sendMessage(user.phone_number, message);
             
-            await redis.setex(timeoutKey, REDIS_TIMEOUT_BUFFER, (Date.now() + QUESTION_TIMEOUT_MS).toString());
+            await redis.setex(timeoutKey, REDIS_TIMEOUT_BUFFER, (Date.now() + currentTimeoutMs).toString());
             
             const timeoutId = setTimeout(async () => {
                 try {
@@ -978,7 +1186,7 @@ Play as many times as allowed!`;
                 } catch (error) {
                     logger.error('Error in timeout handler:', error);
                 }
-            }, QUESTION_TIMEOUT_MS);
+            }, currentTimeoutMs);
             
             activeTimeouts.set(timeoutKey, timeoutId);
             
@@ -1079,6 +1287,13 @@ Play as many times as allowed!`;
                 responseTimeMs
             );
             
+            // ⚡ TURBO MODE: Check if we should activate based on response time
+            let turboActivated = false;
+            if (responseTimeMs && isCorrect) {
+                const turboResult = await this.checkAndActivateTurboMode(session, user, responseTimeMs);
+                turboActivated = turboResult.activated;
+            }
+            
             if (isCorrect) {
                 session.current_score = prizeAmount;
                 session.current_question = questionNumber + 1;
@@ -1099,12 +1314,15 @@ Play as many times as allowed!`;
                 } else {
                     await this.updateSession(session);
                     
+                    // If turbo mode just activated, add delay for user to read warning
+                    const delay = turboActivated ? 5000 : 3000;
+                    
                     setTimeout(async () => {
                         const activeSession = await this.getActiveSession(user.id);
                         if (activeSession && activeSession.id === session.id) {
                             await this.sendQuestionOrCaptcha(session, user);
                         }
-                    }, 3000);
+                    }, delay);
                 }
             } else {
                 await this.handleWrongAnswer(session, user, question);

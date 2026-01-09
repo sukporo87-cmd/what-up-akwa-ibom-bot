@@ -47,7 +47,7 @@ class AuditService {
     /**
      * Log when a question is presented to the user
      */
-    async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount) {
+    async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount, isTurboMode = false) {
         try {
             const questionStartTime = Date.now();
             
@@ -74,7 +74,9 @@ class AuditService {
                     difficulty: question.difficulty,
                     category: question.category,
                     prize_at_stake: prizeAmount,
-                    question_start_time: questionStartTime
+                    question_start_time: questionStartTime,
+                    turbo_mode: isTurboMode,
+                    timeout_seconds: isTurboMode ? 10 : 12
                 })
             ]);
         } catch (error) {
@@ -273,6 +275,88 @@ class AuditService {
             logger.info(`📝 Audit: CAPTCHA timeout - Session ${sessionId}, Q${questionNumber}`);
         } catch (error) {
             logger.error('Error logging CAPTCHA timeout:', error);
+        }
+    }
+
+    // ============================================
+    // TURBO MODE AUDIT LOGGING
+    // ============================================
+
+    /**
+     * Log when Turbo Mode is activated
+     */
+    async logTurboModeActivated(sessionId, userId, questionNumber, suspiciousResponses) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'TURBO_MODE_ACTIVATED', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    question_number: questionNumber,
+                    trigger_reason: '3 consecutive answers in 10.5s-11.99s window',
+                    suspicious_responses: suspiciousResponses,
+                    reduced_timeout: '10 seconds',
+                    turbo_questions: 2,
+                    activated_at: new Date().toISOString()
+                })
+            ]);
+            
+            logger.info(`📝 Audit: ⚡ TURBO MODE ACTIVATED - Session ${sessionId}, Q${questionNumber}`);
+        } catch (error) {
+            logger.error('Error logging turbo mode activation:', error);
+        }
+    }
+
+    /**
+     * Log when Turbo Mode is completed (user passed the test)
+     */
+    async logTurboModeCompleted(sessionId, userId) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'TURBO_MODE_COMPLETED', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    result: 'passed',
+                    message: 'User completed 2 turbo mode questions successfully',
+                    completed_at: new Date().toISOString()
+                })
+            ]);
+            
+            logger.info(`📝 Audit: ⚡ TURBO MODE COMPLETED - Session ${sessionId}, User ${userId} passed`);
+        } catch (error) {
+            logger.error('Error logging turbo mode completion:', error);
+        }
+    }
+
+    /**
+     * Log when a question is asked during Turbo Mode
+     */
+    async logTurboModeQuestion(sessionId, userId, questionNumber, questionsRemaining) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'TURBO_MODE_QUESTION', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    question_number: questionNumber,
+                    turbo_questions_remaining: questionsRemaining,
+                    timeout_seconds: 10
+                })
+            ]);
+            
+            logger.info(`📝 Audit: ⚡ Turbo question - Session ${sessionId}, Q${questionNumber}, ${questionsRemaining} remaining`);
+        } catch (error) {
+            logger.error('Error logging turbo mode question:', error);
         }
     }
 

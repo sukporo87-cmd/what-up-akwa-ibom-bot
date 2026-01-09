@@ -431,6 +431,22 @@
             background: rgba(255, 87, 34, 0.1);
         }
 
+        .timeline-event.turbo-activated {
+            border-left-color: #FFD700;
+            background: rgba(255, 215, 0, 0.2);
+            border-width: 4px;
+        }
+
+        .timeline-event.turbo-completed {
+            border-left-color: #00BCD4;
+            background: rgba(0, 188, 212, 0.1);
+        }
+
+        .timeline-event.turbo-question {
+            border-left-color: #FFC107;
+            background: rgba(255, 193, 7, 0.1);
+        }
+
         .timeline-event .event-header {
             display: flex;
             justify-content: space-between;
@@ -935,6 +951,18 @@
                     case 'CAPTCHA_TIMEOUT':
                         eventIcon = '🔒⏰';
                         eventClass = 'captcha-timeout';
+                        break;
+                    case 'TURBO_MODE_ACTIVATED':
+                        eventIcon = '⚡🚨';
+                        eventClass = 'turbo-activated';
+                        break;
+                    case 'TURBO_MODE_COMPLETED':
+                        eventIcon = '⚡✅';
+                        eventClass = 'turbo-completed';
+                        break;
+                    case 'TURBO_MODE_QUESTION':
+                        eventIcon = '⚡❓';
+                        eventClass = 'turbo-question';
                         break;
                     case 'GAME_END':
                         eventIcon = '🏁';
