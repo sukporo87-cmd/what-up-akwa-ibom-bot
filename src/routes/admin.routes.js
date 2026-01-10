@@ -3956,6 +3956,70 @@ router.post('/api/fraud/user/:id/clear', authenticateAdmin, async (req, res) => 
 });
 
 // ============================================
+// TURBO MODE ENDPOINTS
+// ============================================
+
+// Get turbo mode statistics
+router.get('/api/fraud/turbo-mode-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_ACTIVATED') as total_triggers,
+                COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_GO_TIMEOUT') as total_timeouts,
+                COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_GO_RECEIVED') as total_go_received,
+                COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_COMPLETED') as total_completed,
+                COUNT(DISTINCT user_id) FILTER (WHERE event_type = 'TURBO_MODE_ACTIVATED') as unique_users_triggered
+            FROM game_audit_logs
+            WHERE event_type LIKE 'TURBO_MODE%'
+            AND created_at >= NOW() - INTERVAL '30 days'
+        `);
+        
+        res.json({ 
+            success: true, 
+            stats: result.rows[0] || {
+                total_triggers: 0,
+                total_timeouts: 0,
+                total_go_received: 0,
+                total_completed: 0,
+                unique_users_triggered: 0
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting turbo mode stats:', error);
+        res.status(500).json({ error: 'Failed to get turbo mode stats' });
+    }
+});
+
+// Get turbo mode events
+router.get('/api/fraud/turbo-mode-events', authenticateAdmin, async (req, res) => {
+    try {
+        const { limit = 100 } = req.query;
+        
+        const result = await pool.query(`
+            SELECT 
+                gal.id,
+                gal.session_id,
+                gal.user_id,
+                gal.event_type,
+                gal.event_data,
+                gal.created_at,
+                u.username,
+                u.full_name
+            FROM game_audit_logs gal
+            LEFT JOIN users u ON gal.user_id = u.id
+            WHERE gal.event_type LIKE 'TURBO_MODE%'
+            ORDER BY gal.created_at DESC
+            LIMIT $1
+        `, [parseInt(limit)]);
+        
+        res.json({ success: true, events: result.rows });
+    } catch (error) {
+        logger.error('Error getting turbo mode events:', error);
+        res.status(500).json({ error: 'Failed to get turbo mode events' });
+    }
+});
+
+// ============================================
 // ACHIEVEMENTS ENDPOINTS
 // ============================================
 

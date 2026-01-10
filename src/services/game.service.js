@@ -1449,8 +1449,11 @@ Play as many times as allowed!`;
                     await this.updateSession(session);
                     
                     // ⚡ TURBO MODE: Check if we should activate AFTER correct message
+                    // Only for Classic and Tournament modes - NOT Practice
                     let turboActivated = false;
-                    if (responseTimeMs) {
+                    const isPracticeMode = session.game_mode === 'practice' || session.game_type === 'practice';
+                    
+                    if (responseTimeMs && !isPracticeMode) {
                         const turboResult = await this.checkAndActivateTurboMode(session, user, responseTimeMs);
                         turboActivated = turboResult.activated;
                     }
@@ -1587,14 +1590,14 @@ Play as many times as allowed!`;
                 const questionNumber = currentSession.current_question;
                 const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
                 
-                // Calculate remaining time and add 5 bonus seconds
+                // Calculate remaining time and add 7 bonus seconds
                 const existingTimeout = await redis.get(timeoutKey);
                 let remainingTime = 15; // default if no timeout found
                 if (existingTimeout) {
                     const timeoutExpiry = parseInt(existingTimeout);
                     remainingTime = Math.max(0, Math.ceil((timeoutExpiry - Date.now()) / 1000));
                 }
-                const newTime = remainingTime + 5; // Add 5 bonus seconds
+                const newTime = remainingTime + 7; // Add 7 bonus seconds
                 
                 // Clear existing timeout
                 this.clearQuestionTimeout(timeoutKey);
@@ -1617,13 +1620,13 @@ Play as many times as allowed!`;
                     user.id, 
                     currentSession.current_question, 
                     '50:50',
-                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions, bonus_seconds: 5, new_time: newTime }
+                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions, bonus_seconds: 7, new_time: newTime }
                 );
                 
                 const prizeAmount = PRIZE_LADDER[questionNumber];
                 const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
                 
-                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n+5 bonus seconds added!\n\n`;
+                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n+7 bonus seconds added!\n\n`;
                 message += `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
                 if (isSafe) message += ' (SAFE) 🔒';
                 message += `\n\n${question.question_text}\n\n`;
@@ -1642,7 +1645,7 @@ Play as many times as allowed!`;
                 
                 await messagingService.sendMessage(user.phone_number, message);
                 
-                // Set new timeout with remaining time + 5 bonus seconds
+                // Set new timeout with remaining time + 7 bonus seconds
                 await redis.setex(timeoutKey, newTime + 3, (Date.now() + newTime * 1000).toString());
                 
                 const timeoutId = setTimeout(async () => {

@@ -896,12 +896,21 @@
             <h3 style="color: #92400e;">Suspicious Sessions</h3>
             <div class="value" id="suspiciousSessionsCount" style="color: #d97706;">-</div>
           </div>
+          <div class="stat-card" style="background: #fef9c3;">
+            <h3 style="color: #854d0e;">⚡ Turbo Triggers</h3>
+            <div class="value" id="turboTriggersCount" style="color: #ca8a04;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fecaca;">
+            <h3 style="color: #991b1b;">⚡ Turbo Timeouts</h3>
+            <div class="value" id="turboTimeoutsCount" style="color: #dc2626;">-</div>
+          </div>
         </div>
         
         <!-- Sub-tabs -->
         <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">
           <button class="btn btn-danger" onclick="showFraudSubTab('flagged')" id="flaggedSubTab">🚩 Flagged Users</button>
           <button class="btn btn-secondary" onclick="showFraudSubTab('sessions')" id="sessionsSubTab">⚠️ Suspicious Sessions</button>
+          <button class="btn btn-warning" onclick="showFraudSubTab('turbo')" id="turboSubTab">⚡ Turbo Mode Events</button>
         </div>
         
         <!-- Flagged Users -->
@@ -923,6 +932,18 @@
             <div class="loading">
               <div class="spinner"></div>
               <p>Loading suspicious sessions...</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Turbo Mode Events -->
+        <div id="turboModeSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">⚡ Turbo Mode Events</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Players who triggered turbo mode by answering 3 consecutive questions in 10.5s-11.99s window.</p>
+          <div id="turboModeTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading turbo mode events...</p>
             </div>
           </div>
         </div>
@@ -3052,9 +3073,16 @@ function renderDailyLimitUsers(users) {
 function showFraudSubTab(tab) {
   document.getElementById('flaggedUsersSection').style.display = tab === 'flagged' ? 'block' : 'none';
   document.getElementById('suspiciousSessionsSection').style.display = tab === 'sessions' ? 'block' : 'none';
+  document.getElementById('turboModeSection').style.display = tab === 'turbo' ? 'block' : 'none';
   
   document.getElementById('flaggedSubTab').style.background = tab === 'flagged' ? 'var(--danger)' : 'var(--secondary)';
   document.getElementById('sessionsSubTab').style.background = tab === 'sessions' ? 'var(--warning)' : 'var(--secondary)';
+  document.getElementById('turboSubTab').style.background = tab === 'turbo' ? '#ca8a04' : 'var(--secondary)';
+  
+  // Load turbo mode data when tab is selected
+  if (tab === 'turbo') {
+    loadTurboModeEvents();
+  }
 }
 
 async function loadFraudData() {
@@ -3087,6 +3115,88 @@ async function loadFraudData() {
   } catch (error) {
     console.error('Error loading suspicious sessions:', error);
   }
+  
+  // Load turbo mode stats
+  try {
+    const turboResponse = await fetch('/admin/api/fraud/turbo-mode-stats', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const turboData = await turboResponse.json();
+    
+    if (turboData.success) {
+      document.getElementById('turboTriggersCount').textContent = turboData.stats.total_triggers || 0;
+      document.getElementById('turboTimeoutsCount').textContent = turboData.stats.total_timeouts || 0;
+    }
+  } catch (error) {
+    console.error('Error loading turbo mode stats:', error);
+    document.getElementById('turboTriggersCount').textContent = '0';
+    document.getElementById('turboTimeoutsCount').textContent = '0';
+  }
+}
+
+async function loadTurboModeEvents() {
+  document.getElementById('turboModeTable').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading turbo mode events...</p></div>';
+  
+  try {
+    const response = await fetch('/admin/api/fraud/turbo-mode-events', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      renderTurboModeEvents(data.events);
+    } else {
+      document.getElementById('turboModeTable').innerHTML = '<p style="color: red;">Failed to load turbo mode events</p>';
+    }
+  } catch (error) {
+    console.error('Error loading turbo mode events:', error);
+    document.getElementById('turboModeTable').innerHTML = '<p style="color: red;">Error loading turbo mode events</p>';
+  }
+}
+
+function renderTurboModeEvents(events) {
+  if (!events || events.length === 0) {
+    document.getElementById('turboModeTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No turbo mode events recorded yet ⚡</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Session</th><th>Event</th><th>Details</th><th>Date</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  events.forEach(event => {
+    const eventData = typeof event.event_data === 'string' ? JSON.parse(event.event_data) : event.event_data;
+    let eventBadge = '';
+    let details = '';
+    
+    if (event.event_type === 'TURBO_MODE_ACTIVATED') {
+      eventBadge = '<span style="background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 10px;">⚡ Activated</span>';
+      details = `Q${eventData.question_number || 'N/A'}`;
+    } else if (event.event_type === 'TURBO_MODE_GO_RECEIVED') {
+      eventBadge = '<span style="background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 10px;">✅ GO Received</span>';
+      details = 'User continued';
+    } else if (event.event_type === 'TURBO_MODE_GO_TIMEOUT') {
+      eventBadge = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 10px;">⏰ Timeout</span>';
+      details = 'Failed to type GO';
+    } else if (event.event_type === 'TURBO_MODE_COMPLETED') {
+      eventBadge = '<span style="background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px;">🏆 Completed</span>';
+      details = 'Passed turbo test';
+    }
+    
+    html += `<tr>
+      <td><strong>@${event.username || 'Unknown'}</strong><br><small>${event.full_name || ''}</small></td>
+      <td>#${event.session_id}</td>
+      <td>${eventBadge}</td>
+      <td>${details}</td>
+      <td>${new Date(event.created_at).toLocaleString()}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${event.user_id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('turboModeTable').innerHTML = html;
 }
 
 function renderFlaggedUsers(users) {
