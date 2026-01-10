@@ -947,7 +947,7 @@ Play as many times as allowed!`;
             }
 
             // Store post-game state with game type so menu handling knows the context
-            // Extended to 120 seconds to give users time to read and respond
+            // Extended to 118 seconds to give users time to read and respond
             await redis.setex(`post_game:${user.id}`, 120, JSON.stringify({
                 timestamp: Date.now(),
                 gameType: session.game_type,
@@ -1360,22 +1360,29 @@ Play as many times as allowed!`;
             try {
                 const timeout = await redis.get(timeoutKey);
                 
-                // Check timeout using Redis key
+                // Check timeout using Redis key (primary check)
+                // The timeout value stored is the DEADLINE (Date.now() + timeout_ms)
                 if (timeout && Date.now() > Number(timeout)) {
                     logger.info(`Answer timeout (Redis check): Session ${session.session_key}, Q${questionNumber}`);
                     await this.handleTimeout(session, user);
                     return;
                 }
                 
-                // Also check using anti-fraud start time as backup
-                // This catches cases where Redis key expired but answer is still late
-                const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
-                if (startTime) {
-                    const elapsed = Date.now() - startTime;
-                    if (elapsed > QUESTION_TIMEOUT_MS) {
-                        logger.info(`Answer timeout (elapsed check): Session ${session.session_key}, Q${questionNumber}, ${elapsed}ms > ${QUESTION_TIMEOUT_MS}ms`);
-                        await this.handleTimeout(session, user);
-                        return;
+                // Backup check: Only if Redis key doesn't exist (expired)
+                // This uses the anti-fraud start time but accounts for potential lifeline bonuses
+                // Since we reset start time when lifelines are used, this should work correctly
+                if (!timeout) {
+                    const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
+                    if (startTime) {
+                        const elapsed = Date.now() - startTime;
+                        // Use a generous timeout for backup check (18 seconds) to account for any bonuses
+                        // The primary Redis check is the accurate one
+                        const maxAllowedTime = 18000; // 18 seconds max (12 base + 5 bonus + buffer)
+                        if (elapsed > maxAllowedTime) {
+                            logger.info(`Answer timeout (backup elapsed check): Session ${session.session_key}, Q${questionNumber}, ${elapsed}ms > ${maxAllowedTime}ms`);
+                            await this.handleTimeout(session, user);
+                            return;
+                        }
                     }
                 }
                 
@@ -1590,18 +1597,23 @@ Play as many times as allowed!`;
                 const questionNumber = currentSession.current_question;
                 const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
                 
-                // Calculate remaining time and add 7 bonus seconds
+                // Calculate remaining time and add 5 bonus seconds
                 const existingTimeout = await redis.get(timeoutKey);
                 let remainingTime = 15; // default if no timeout found
                 if (existingTimeout) {
                     const timeoutExpiry = parseInt(existingTimeout);
                     remainingTime = Math.max(0, Math.ceil((timeoutExpiry - Date.now()) / 1000));
                 }
-                const newTime = remainingTime + 7; // Add 7 bonus seconds
+                const newTime = remainingTime + 5; // Add 5 bonus seconds
                 
-                // Clear existing timeout
+                // Clear existing timeout (both in-memory and Redis)
                 this.clearQuestionTimeout(timeoutKey);
                 await redis.del(timeoutKey);
+                
+                // ⚡ CRITICAL: Reset the anti-fraud start time to NOW
+                // This prevents the backup elapsed-time check from timing out the user
+                await antiFraudService.updateQuestionStartTime(currentSession.session_key, questionNumber, Date.now());
+                logger.info(`50:50 used: Reset start time for session ${currentSession.session_key}, Q${questionNumber}. New timeout: ${newTime}s`);
                 
                 await pool.query(
                     'UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1',
@@ -1620,13 +1632,13 @@ Play as many times as allowed!`;
                     user.id, 
                     currentSession.current_question, 
                     '50:50',
-                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions, bonus_seconds: 7, new_time: newTime }
+                    { removed_options: wrongOptions.filter(o => o !== keepWrong), remaining_options: remainingOptions, bonus_seconds: 5, new_time: newTime }
                 );
                 
                 const prizeAmount = PRIZE_LADDER[questionNumber];
                 const isSafe = SAFE_CHECKPOINTS.includes(questionNumber);
                 
-                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n+7 bonus seconds added!\n\n`;
+                let message = `💎 50:50 ACTIVATED! 💎\n\nTwo wrong answers removed!\n+5 bonus seconds added!\n\n`;
                 message += `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
                 if (isSafe) message += ' (SAFE) 🔒';
                 message += `\n\n${question.question_text}\n\n`;
@@ -1645,9 +1657,10 @@ Play as many times as allowed!`;
                 
                 await messagingService.sendMessage(user.phone_number, message);
                 
-                // Set new timeout with remaining time + 7 bonus seconds
-                await redis.setex(timeoutKey, newTime + 3, (Date.now() + newTime * 1000).toString());
+                // Set new Redis timeout with remaining time + 5 bonus seconds
+                await redis.setex(timeoutKey, newTime + 5, (Date.now() + newTime * 1000).toString());
                 
+                // Set new JavaScript timeout
                 const timeoutId = setTimeout(async () => {
                     try {
                         const timeout = await redis.get(timeoutKey);

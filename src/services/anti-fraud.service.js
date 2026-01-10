@@ -366,6 +366,23 @@ class AntiFraudService {
             return false;
         }
     }
+    
+    /**
+     * Update question start time (used when lifeline adds bonus time)
+     * This resets the "clock" for anti-fraud elapsed time checks
+     */
+    async updateQuestionStartTime(sessionKey, questionNumber, newStartTime = null) {
+        try {
+            const key = `question_start:${sessionKey}:q${questionNumber}`;
+            const time = newStartTime || Date.now();
+            await redis.setex(key, 120, time.toString()); // Extended TTL for bonus time
+            logger.info(`Updated question start time for ${sessionKey}:q${questionNumber} to ${time}`);
+            return true;
+        } catch (error) {
+            logger.error('Error updating question start time:', error);
+            return false;
+        }
+    }
 }
 
 module.exports = new AntiFraudService();
