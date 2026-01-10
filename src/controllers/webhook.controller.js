@@ -2006,6 +2006,25 @@ Type the code, or type SKIP to continue:`
     }
 
     // ==========================================
+    // CHECK FOR TURBO MODE GO WAIT
+    // User must type GO to continue after turbo mode warning
+    // ==========================================
+    const isWaitingForGo = await gameService.isWaitingForTurboGo(session.session_key);
+    if (isWaitingForGo) {
+      if (input === 'GO') {
+        await gameService.handleTurboGoInput(session, user);
+        return;
+      } else {
+        // User typed something other than GO
+        await messagingService.sendMessage(
+          user.phone_number,
+          `⚡ TURBO MODE ACTIVE ⚡\n\nType *GO* to continue.\n\n⏱️ Clock is ticking...`
+        );
+        return;
+      }
+    }
+
+    // ==========================================
     // CHECK FOR PENDING CAPTCHA FIRST
     // This must come before the A/B/C/D check
     // ==========================================

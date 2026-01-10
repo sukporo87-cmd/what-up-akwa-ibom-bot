@@ -193,21 +193,34 @@ class GameService {
                 tracking.turboQuestionsRemaining = TURBO_MODE_CONFIG.TURBO_QUESTIONS;
                 tracking.activatedAt = Date.now();
                 tracking.activatedAtQuestion = session.current_question;
+                tracking.waitingForGo = true;
                 
                 await redis.setex(trackingKey, 3600, JSON.stringify(tracking));
+                
+                // Set the TURBO_GO_WAIT state with 30 second timeout
+                const turboGoKey = `turbo_go_wait:${session.session_key}`;
+                await redis.setex(turboGoKey, 35, JSON.stringify({
+                    sessionId: session.id,
+                    userId: user.id,
+                    activatedAt: Date.now(),
+                    expiresAt: Date.now() + 30000
+                }));
                 
                 // Log to audit trail
                 await auditService.logTurboModeActivated(
                     session.id, 
                     user.id, 
-                    session.current_question,
+                    session.current_question - 1, // The question they just answered
                     tracking.responses
                 );
                 
-                logger.warn(`⚡ TURBO MODE ACTIVATED: User ${user.id}, Session ${session.id}`);
+                logger.warn(`⚡ TURBO MODE ACTIVATED: User ${user.id}, Session ${session.id} - Waiting for GO`);
                 
-                // Send warning message
+                // Send warning message with GO instruction
                 await this.sendTurboModeWarning(user);
+                
+                // Set 30-second timeout for GO response
+                this.setTurboGoTimeout(session, user);
                 
                 return { activated: true, tracking };
             }
@@ -217,6 +230,130 @@ class GameService {
             logger.error('Error checking turbo mode:', error);
             return { activated: false, tracking: null };
         }
+    }
+
+    /**
+     * Set timeout for GO response (30 seconds)
+     */
+    setTurboGoTimeout(session, user) {
+        const turboGoKey = `turbo_go_wait:${session.session_key}`;
+        const timeoutKey = `turbo_go_timeout:${session.session_key}`;
+        
+        const timeoutId = setTimeout(async () => {
+            try {
+                // Check if still waiting for GO
+                const goWait = await redis.get(turboGoKey);
+                if (goWait) {
+                    // User didn't type GO in time - end the game
+                    logger.warn(`⚡ TURBO MODE: User ${user.id} failed to type GO in 30 seconds`);
+                    
+                    await redis.del(turboGoKey);
+                    
+                    // Log to audit
+                    await auditService.logTurboModeTimeout(session.id, user.id);
+                    
+                    // End the game
+                    await this.handleTurboGoTimeout(session, user);
+                }
+            } catch (error) {
+                logger.error('Error in turbo GO timeout:', error);
+            }
+        }, 30000);
+        
+        // Store timeout reference
+        activeTimeouts.set(timeoutKey, timeoutId);
+    }
+
+    /**
+     * Handle when user doesn't type GO in time
+     */
+    async handleTurboGoTimeout(session, user) {
+        const currentSession = await this.getActiveSession(user.id);
+        if (!currentSession || currentSession.id !== session.id) {
+            return; // Session already ended
+        }
+        
+        const questionNumber = currentSession.current_question - 1;
+        let guaranteedAmount = 0;
+        
+        for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
+            if (questionNumber >= checkpoint) {
+                guaranteedAmount = PRIZE_LADDER[checkpoint];
+                break;
+            }
+        }
+        
+        currentSession.current_score = guaranteedAmount;
+        
+        const message = `⏰ TIME'S UP!\n\n` +
+            `You didn't type GO within 30 seconds.\n\n` +
+            `🎮 GAME OVER 🎮\n\n` +
+            (guaranteedAmount > 0 
+                ? `You reached a safe checkpoint!\n💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`
+                : `💰 You won: ₦0\n\n`) +
+            `Better luck next time! 👋\n\n` +
+            `1️⃣ Play Again\n` +
+            `2️⃣ View Leaderboard\n` +
+            (guaranteedAmount > 0 ? `3️⃣ Claim Prize\n` : `3️⃣ Main Menu\n`);
+        
+        await messagingService.sendMessage(user.phone_number, message);
+        
+        // Complete the game
+        await this.completeGame(currentSession, user, false, 'turbo_go_timeout');
+    }
+
+    /**
+     * Handle GO input from user during turbo mode wait
+     */
+    async handleTurboGoInput(session, user) {
+        const turboGoKey = `turbo_go_wait:${session.session_key}`;
+        const timeoutKey = `turbo_go_timeout:${session.session_key}`;
+        
+        try {
+            const goWait = await redis.get(turboGoKey);
+            if (!goWait) {
+                return false; // Not waiting for GO
+            }
+            
+            // Clear the GO wait state
+            await redis.del(turboGoKey);
+            
+            // Clear the timeout
+            this.clearQuestionTimeout(timeoutKey);
+            
+            logger.info(`⚡ TURBO MODE: User ${user.id} typed GO - continuing with turbo questions`);
+            
+            // Log to audit
+            await auditService.logTurboModeGoReceived(session.id, user.id);
+            
+            // Send confirmation and next question
+            await messagingService.sendMessage(
+                user.phone_number,
+                `✅ Let's GO! ⚡\n\nGet ready... here comes your first turbo question!`
+            );
+            
+            // Small delay then send next question
+            setTimeout(async () => {
+                const activeSession = await this.getActiveSession(user.id);
+                if (activeSession && activeSession.id === session.id) {
+                    await this.sendQuestionOrCaptcha(activeSession, user);
+                }
+            }, 2000);
+            
+            return true;
+        } catch (error) {
+            logger.error('Error handling turbo GO input:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Check if session is waiting for GO input
+     */
+    async isWaitingForTurboGo(sessionKey) {
+        const turboGoKey = `turbo_go_wait:${sessionKey}`;
+        const goWait = await redis.get(turboGoKey);
+        return goWait !== null;
     }
 
     /**
@@ -233,7 +370,10 @@ Answering at the last second 3 times in a row? Either you're a genius who loves 
 
 Prove it: Next 2 questions in 10 seconds.
 
-No pressure! Show us what you've got! 💪😏`;
+No pressure! Show us what you've got! 💪😏
+
+Type *GO* to continue when ready.
+⏱️ You have 30 seconds...`;
 
         await messagingService.sendMessage(user.phone_number, message);
     }
@@ -1287,13 +1427,6 @@ Play as many times as allowed!`;
                 responseTimeMs
             );
             
-            // ⚡ TURBO MODE: Check if we should activate based on response time
-            let turboActivated = false;
-            if (responseTimeMs && isCorrect) {
-                const turboResult = await this.checkAndActivateTurboMode(session, user, responseTimeMs);
-                turboActivated = turboResult.activated;
-            }
-            
             if (isCorrect) {
                 session.current_score = prizeAmount;
                 session.current_question = questionNumber + 1;
@@ -1307,6 +1440,7 @@ Play as many times as allowed!`;
                     message += `\n🔒 SAFE! ₦${prizeAmount.toLocaleString()} guaranteed!\n`;
                 }
                 
+                // Send CORRECT message first
                 await messagingService.sendMessage(user.phone_number, message);
                 
                 if (questionNumber === 15) {
@@ -1314,15 +1448,26 @@ Play as many times as allowed!`;
                 } else {
                     await this.updateSession(session);
                     
-                    // If turbo mode just activated, add delay for user to read warning
-                    const delay = turboActivated ? 5000 : 3000;
+                    // ⚡ TURBO MODE: Check if we should activate AFTER correct message
+                    let turboActivated = false;
+                    if (responseTimeMs) {
+                        const turboResult = await this.checkAndActivateTurboMode(session, user, responseTimeMs);
+                        turboActivated = turboResult.activated;
+                    }
                     
+                    if (turboActivated) {
+                        // Turbo mode activated - wait for GO input
+                        // Don't send next question yet
+                        return;
+                    }
+                    
+                    // Normal flow - send next question after delay
                     setTimeout(async () => {
                         const activeSession = await this.getActiveSession(user.id);
                         if (activeSession && activeSession.id === session.id) {
                             await this.sendQuestionOrCaptcha(session, user);
                         }
-                    }, delay);
+                    }, 3000);
                 }
             } else {
                 await this.handleWrongAnswer(session, user, question);

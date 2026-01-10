@@ -2733,6 +2733,19 @@ function generatePrintableAuditReport(report) {
                     <p>⚡✅ <strong>TURBO MODE COMPLETED</strong> - User passed the speed test</p>
                 </div>
             `;
+        } else if (event.event === 'TURBO_MODE_GO_RECEIVED') {
+            questionsHtml += `
+                <div class="turbo-go-block" style="background: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                    <p>⚡🏃 <strong>USER TYPED GO</strong> - Continuing with turbo questions</p>
+                </div>
+            `;
+        } else if (event.event === 'TURBO_MODE_GO_TIMEOUT') {
+            questionsHtml += `
+                <div class="turbo-timeout-block" style="background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                    <p>⚡⏰ <strong>TURBO MODE TIMEOUT</strong> - User failed to type GO within 30 seconds</p>
+                    <p style="font-size: 12px; color: #721c24;">Game ended due to inactivity during turbo mode challenge</p>
+                </div>
+            `;
         }
     }
 

@@ -361,6 +361,56 @@ class AuditService {
     }
 
     /**
+     * Log when user types GO to continue turbo mode
+     */
+    async logTurboModeGoReceived(sessionId, userId) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'TURBO_MODE_GO_RECEIVED', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    result: 'user_acknowledged',
+                    message: 'User typed GO to continue with turbo mode',
+                    received_at: new Date().toISOString()
+                })
+            ]);
+            
+            logger.info(`📝 Audit: ⚡ TURBO MODE GO RECEIVED - Session ${sessionId}, User ${userId}`);
+        } catch (error) {
+            logger.error('Error logging turbo mode GO received:', error);
+        }
+    }
+
+    /**
+     * Log when user fails to type GO within 30 seconds
+     */
+    async logTurboModeTimeout(sessionId, userId) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'TURBO_MODE_GO_TIMEOUT', $3, NOW())
+            `, [
+                sessionId,
+                userId,
+                JSON.stringify({
+                    result: 'timeout',
+                    message: 'User failed to type GO within 30 seconds',
+                    timeout_at: new Date().toISOString()
+                })
+            ]);
+            
+            logger.info(`📝 Audit: ⚡ TURBO MODE GO TIMEOUT - Session ${sessionId}, User ${userId}`);
+        } catch (error) {
+            logger.error('Error logging turbo mode timeout:', error);
+        }
+    }
+
+    /**
      * Log when a game ends
      */
     async logGameEnd(sessionId, userId, finalScore, questionsAnswered, outcome, guaranteedAmount = 0) {

@@ -447,6 +447,17 @@
             background: rgba(255, 193, 7, 0.1);
         }
 
+        .timeline-event.turbo-go {
+            border-left-color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        .timeline-event.turbo-timeout {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.2);
+            border-width: 4px;
+        }
+
         .timeline-event .event-header {
             display: flex;
             justify-content: space-between;
@@ -963,6 +974,14 @@
                     case 'TURBO_MODE_QUESTION':
                         eventIcon = '⚡❓';
                         eventClass = 'turbo-question';
+                        break;
+                    case 'TURBO_MODE_GO_RECEIVED':
+                        eventIcon = '⚡🏃';
+                        eventClass = 'turbo-go';
+                        break;
+                    case 'TURBO_MODE_GO_TIMEOUT':
+                        eventIcon = '⚡⏰';
+                        eventClass = 'turbo-timeout';
                         break;
                     case 'GAME_END':
                         eventIcon = '🏁';
