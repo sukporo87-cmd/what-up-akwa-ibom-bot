@@ -9,12 +9,14 @@ const pool = require('../config/database');
 const PayoutService = require('../services/payout.service');
 const WhatsAppService = require('../services/whatsapp.service');
 const AdminAuthService = require('../services/admin-auth.service');
+const FinancialService = require('../services/financial.service');
 const { logger } = require('../utils/logger');
 const analyticsService = require('../services/analytics.service');
 
 const payoutService = new PayoutService();
 const whatsappService = new WhatsAppService();
 const adminAuthService = new AdminAuthService();
+const financialService = new FinancialService();
 
 // ============================================
 // AUTHENTICATION MIDDLEWARE
@@ -4408,6 +4410,212 @@ router.get('/api/security/suspicious-captcha-users', authenticateAdmin, async (r
         logger.error('Error getting suspicious CAPTCHA users:', error);
         res.status(500).json({ error: 'Failed to get suspicious users' });
     }
+});
+
+// ============================================
+// FINANCIAL DASHBOARD ROUTES
+// ============================================
+
+// Financial access middleware - Super Admin and Finance Officer only
+const requireFinancialAccess = async (req, res, next) => {
+  const allowedRoles = ['super_admin', 'finance_officer', 'super admin', 'finance officer'];
+  const roleName = req.adminSession.role_name?.toLowerCase();
+  if (!allowedRoles.includes(roleName)) {
+    return res.status(403).json({ error: 'Access denied. Financial dashboard requires Super Admin or Finance Officer role.' });
+  }
+  next();
+};
+
+// Financial Dashboard Page
+router.get('/financials', (req, res) => {
+  res.sendFile('admin-financials.html', { root: './src/views' });
+});
+
+// Revenue Overview
+router.get('/api/financials/overview', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_financial_overview', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getRevenueOverview(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting financial overview:', error);
+    res.status(500).json({ error: 'Failed to fetch financial overview' });
+  }
+});
+
+// Token Revenue Breakdown
+router.get('/api/financials/token-revenue', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_token_revenue', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getTokenRevenueBreakdown(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting token revenue:', error);
+    res.status(500).json({ error: 'Failed to fetch token revenue' });
+  }
+});
+
+// Tournament Revenue
+router.get('/api/financials/tournament-revenue', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_tournament_revenue', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getTournamentRevenue(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting tournament revenue:', error);
+    res.status(500).json({ error: 'Failed to fetch tournament revenue' });
+  }
+});
+
+// Classic Mode Winnings
+router.get('/api/financials/classic-winnings', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_classic_winnings', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getClassicModeWinnings(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting classic winnings:', error);
+    res.status(500).json({ error: 'Failed to fetch classic winnings' });
+  }
+});
+
+// Payout Tracking
+router.get('/api/financials/payouts', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_payout_tracking', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getPayoutTracking(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting payout tracking:', error);
+    res.status(500).json({ error: 'Failed to fetch payout data' });
+  }
+});
+
+// Top Winners
+router.get('/api/financials/top-winners', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { limit = 20, start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_top_winners', { limit, start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getTopWinners(parseInt(limit), start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting top winners:', error);
+    res.status(500).json({ error: 'Failed to fetch top winners' });
+  }
+});
+
+// Financial KPIs
+router.get('/api/financials/kpis', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_financial_kpis', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getFinancialKPIs(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting KPIs:', error);
+    res.status(500).json({ error: 'Failed to fetch KPIs' });
+  }
+});
+
+// Revenue Trends
+router.get('/api/financials/trends', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { period = 'daily', days = 30 } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_revenue_trends', { period, days }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getRevenueTrends(period, parseInt(days));
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting trends:', error);
+    res.status(500).json({ error: 'Failed to fetch trends' });
+  }
+});
+
+// Comparison Reports
+router.get('/api/financials/comparison', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { type = 'daily' } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_comparison_report', { type }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getComparisonReport(type);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting comparison:', error);
+    res.status(500).json({ error: 'Failed to fetch comparison' });
+  }
+});
+
+// Revenue Forecast
+router.get('/api/financials/forecast', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_forecast', {}, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getRevenueForecast();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting forecast:', error);
+    res.status(500).json({ error: 'Failed to fetch forecast' });
+  }
+});
+
+// Churn Impact
+router.get('/api/financials/churn-impact', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_churn_impact', {}, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getChurnImpact();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting churn impact:', error);
+    res.status(500).json({ error: 'Failed to fetch churn impact' });
+  }
+});
+
+// Transaction Detail
+router.get('/api/financials/transaction/:id', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_transaction_detail', { transaction_id: req.params.id }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getTransactionDetails(req.params.id);
+    if (!data) return res.status(404).json({ error: 'Transaction not found' });
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting transaction:', error);
+    res.status(500).json({ error: 'Failed to fetch transaction' });
+  }
+});
+
+// User Financial Profile
+router.get('/api/financials/user/:id', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_user_financial_profile', { user_id: req.params.id }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getUserFinancialProfile(req.params.id);
+    if (!data) return res.status(404).json({ error: 'User not found' });
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error getting user profile:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+});
+
+// Export Data
+router.get('/api/financials/export', authenticateAdminWithQuery, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date, type = 'all', format = 'csv' } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'export_financial_data', { start_date, end_date, type, format }, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.exportTransactions(start_date, end_date, type);
+    if (format === 'csv') {
+      const headers = Object.keys(data[0] || {});
+      const csv = [headers.join(','), ...data.map(r => headers.map(h => { const v = r[h]; return typeof v === 'string' && (v.includes(',') || v.includes('"')) ? `"${v.replace(/"/g, '""')}"` : v; }).join(','))].join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=financial_export_${type}_${new Date().toISOString().split('T')[0]}.csv`);
+      return res.send(csv);
+    }
+    res.json({ success: true, data, count: data.length });
+  } catch (error) {
+    logger.error('Error exporting data:', error);
+    res.status(500).json({ error: 'Failed to export data' });
+  }
 });
 
 // ============================================

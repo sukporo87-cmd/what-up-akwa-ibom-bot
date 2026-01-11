@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Financial Dashboard - What's Up Trivia</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --primary: #0f766e; --primary-light: #14b8a6; --primary-dark: #0d5d56;
+      --success: #10b981; --success-bg: #d1fae5;
+      --danger: #ef4444; --danger-bg: #fee2e2;
+      --warning: #f59e0b; --warning-bg: #fef3c7;
+      --info: #3b82f6; --info-bg: #dbeafe;
+      --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb; --gray-300: #d1d5db;
+      --gray-400: #9ca3af; --gray-500: #6b7280; --gray-600: #4b5563; --gray-700: #374151;
+      --gray-800: #1f2937; --gray-900: #111827;
+      --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+    }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: var(--gray-100); color: var(--gray-800); line-height: 1.5; }
+    .header { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow-md); }
+    .header-left h1 { font-size: 20px; font-weight: 700; }
+    .header-left p { font-size: 13px; opacity: 0.9; }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .header-btn { padding: 8px 16px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+    .header-btn:hover { background: rgba(255,255,255,0.25); }
+    .header-btn.primary { background: white; color: var(--primary); }
+    .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+    .filter-bar { background: white; border-radius: 12px; padding: 16px 24px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; box-shadow: var(--shadow); }
+    .filter-group { display: flex; align-items: center; gap: 12px; }
+    .filter-label { font-size: 13px; font-weight: 600; color: var(--gray-600); }
+    .period-tabs { display: flex; background: var(--gray-100); border-radius: 8px; padding: 4px; }
+    .period-tab { padding: 8px 16px; border: none; background: none; font-size: 13px; font-weight: 500; color: var(--gray-600); cursor: pointer; border-radius: 6px; }
+    .period-tab:hover { color: var(--gray-800); }
+    .period-tab.active { background: white; color: var(--primary); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .date-inputs { display: flex; gap: 8px; align-items: center; }
+    .date-inputs input { padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: 6px; font-size: 13px; }
+    .apply-btn { padding: 8px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .apply-btn:hover { background: var(--primary-dark); }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .overview-card { background: white; border-radius: 12px; padding: 20px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+    .overview-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+    .overview-card.revenue::before { background: var(--success); }
+    .overview-card.payout::before { background: var(--danger); }
+    .overview-card.net::before { background: var(--primary); }
+    .overview-card.pending::before { background: var(--warning); }
+    .overview-card.margin::before { background: var(--info); }
+    .overview-card .label { font-size: 12px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .overview-card .value { font-size: 28px; font-weight: 700; color: var(--gray-900); }
+    .overview-card .value.currency::before { content: '₦'; font-size: 18px; color: var(--gray-500); }
+    .overview-card .sub-value { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+    .overview-card .change { font-size: 12px; font-weight: 500; margin-top: 8px; }
+    .overview-card .change.positive { color: var(--success); }
+    .overview-card .change.negative { color: var(--danger); }
+    .card { background: white; border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 24px; overflow: hidden; }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
+    .card-title { font-size: 15px; font-weight: 600; color: var(--gray-800); }
+    .card-body { padding: 20px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); }
+    .data-table td { padding: 12px 16px; font-size: 13px; color: var(--gray-700); border-bottom: 1px solid var(--gray-100); }
+    .data-table tr:hover { background: var(--gray-50); }
+    .data-table tr.clickable { cursor: pointer; }
+    .data-table tr.clickable:hover { background: var(--info-bg); }
+    .data-table .amount { font-weight: 600; font-family: monospace; }
+    .data-table .amount.positive { color: var(--success); }
+    .data-table .amount.negative { color: var(--danger); }
+    .badge { display: inline-flex; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .badge.success { background: var(--success-bg); color: #065f46; }
+    .badge.danger { background: var(--danger-bg); color: #991b1b; }
+    .badge.warning { background: var(--warning-bg); color: #92400e; }
+    .badge.info { background: var(--info-bg); color: #1e40af; }
+    .badge.gray { background: var(--gray-200); color: var(--gray-600); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    .kpi-card { background: var(--gray-50); border-radius: 8px; padding: 16px; text-align: center; }
+    .kpi-card .kpi-value { font-size: 24px; font-weight: 700; color: var(--gray-900); }
+    .kpi-card .kpi-label { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+    .chart-container { position: relative; height: 300px; width: 100%; }
+    .tabs { display: flex; border-bottom: 1px solid var(--gray-200); margin-bottom: 20px; }
+    .tab { padding: 12px 20px; border: none; background: none; font-size: 14px; font-weight: 500; color: var(--gray-500); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tab:hover { color: var(--gray-700); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+    .modal-overlay.active { opacity: 1; visibility: visible; }
+    .modal { background: white; border-radius: 16px; width: 90%; max-width: 800px; max-height: 90vh; overflow: hidden; }
+    .modal-header { padding: 20px 24px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
+    .modal-title { font-size: 18px; font-weight: 700; }
+    .modal-close { background: none; border: none; font-size: 24px; color: var(--gray-400); cursor: pointer; }
+    .modal-body { padding: 24px; overflow-y: auto; max-height: calc(90vh - 80px); }
+    .loading { display: flex; align-items: center; justify-content: center; padding: 40px; }
+    .spinner { width: 32px; height: 32px; border: 3px solid var(--gray-200); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty-state { text-align: center; padding: 40px; color: var(--gray-500); }
+    .text-right { text-align: right; }
+    .mt-4 { margin-top: 16px; }
+    @media print { .header, .filter-bar, .no-print { display: none !important; } body { background: white; } .card { box-shadow: none; border: 1px solid var(--gray-200); } }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <h1>💰 Financial Dashboard</h1>
+      <p>What's Up Trivia - Revenue & Payout Management</p>
+    </div>
+    <div class="header-right">
+      <button class="header-btn" onclick="exportData('csv')">📥 Export CSV</button>
+      <button class="header-btn" onclick="printReport()">🖨️ Print</button>
+      <a href="/admin" class="header-btn">← Back</a>
+      <button class="header-btn primary" onclick="logout()">Logout</button>
+    </div>
+  </header>
+  <div class="container">
+    <div class="filter-bar no-print">
+      <div class="filter-group">
+        <span class="filter-label">Period:</span>
+        <div class="period-tabs">
+          <button class="period-tab active" data-period="today">Today</button>
+          <button class="period-tab" data-period="yesterday">Yesterday</button>
+          <button class="period-tab" data-period="week">This Week</button>
+          <button class="period-tab" data-period="month">This Month</button>
+          <button class="period-tab" data-period="all">All Time</button>
+          <button class="period-tab" data-period="custom">Custom</button>
+        </div>
+      </div>
+      <div class="filter-group date-inputs" id="customDateInputs" style="display:none;">
+        <input type="date" id="startDate"><span>to</span><input type="date" id="endDate">
+        <button class="apply-btn" onclick="applyCustomDates()">Apply</button>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label" id="lastUpdated">Loading...</span>
+        <button class="apply-btn" onclick="refreshData()">🔄</button>
+      </div>
+    </div>
+    <div class="overview-grid">
+      <div class="overview-card revenue"><div class="label">Gross Revenue</div><div class="value currency" id="grossRevenue">0</div></div>
+      <div class="overview-card revenue"><div class="label">Token Revenue</div><div class="value currency" id="tokenRevenue">0</div><div class="sub-value" id="tokenTransactions">0 transactions</div></div>
+      <div class="overview-card revenue"><div class="label">Tournament Revenue</div><div class="value currency" id="tournamentRevenue">0</div><div class="sub-value" id="tournamentTransactions">0 entries</div></div>
+      <div class="overview-card payout"><div class="label">Total Payouts</div><div class="value currency" id="totalPayouts">0</div><div class="sub-value" id="payoutCount">0 payouts</div></div>
+      <div class="overview-card pending"><div class="label">Pending Payouts</div><div class="value currency" id="pendingPayouts">0</div><div class="sub-value" id="pendingCount">0 pending</div></div>
+      <div class="overview-card net"><div class="label">Net Revenue</div><div class="value currency" id="netRevenue">0</div></div>
+      <div class="overview-card margin"><div class="label">Profit Margin</div><div class="value" id="profitMargin">0%</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header"><div class="card-title">📈 Revenue Trends</div>
+          <div class="period-tabs" style="padding:2px;">
+            <button class="period-tab active" data-chart-period="daily" onclick="updateChartPeriod('daily')">Daily</button>
+            <button class="period-tab" data-chart-period="weekly" onclick="updateChartPeriod('weekly')">Weekly</button>
+            <button class="period-tab" data-chart-period="monthly" onclick="updateChartPeriod('monthly')">Monthly</button>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-container"><canvas id="revenueTrendsChart"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">📊 Key Performance Indicators</div></div>
+        <div class="card-body">
+          <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-value" id="kpiARPU">₦0</div><div class="kpi-label">ARPU</div></div>
+            <div class="kpi-card"><div class="kpi-value" id="kpiARPPU">₦0</div><div class="kpi-label">ARPPU</div></div>
+            <div class="kpi-card"><div class="kpi-value" id="kpiLTV">₦0</div><div class="kpi-label">Player LTV</div></div>
+            <div class="kpi-card"><div class="kpi-value" id="kpiConversion">0%</div><div class="kpi-label">Conversion</div></div>
+            <div class="kpi-card"><div class="kpi-value" id="kpiPayingUsers">0</div><div class="kpi-label">Paying Users</div></div>
+            <div class="kpi-card"><div class="kpi-value" id="kpiPayoutRatio">0%</div><div class="kpi-label">Payout Ratio</div></div>
+          </div>
+          <div class="mt-4" style="background:var(--info-bg);border-radius:8px;padding:16px;">
+            <div style="font-weight:600;color:var(--info);margin-bottom:8px;">📈 Revenue Forecast</div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;">
+              <div>Avg Daily: <strong id="forecastDaily">₦0</strong></div>
+              <div>Month Proj: <strong id="forecastMonth">₦0</strong></div>
+              <div>Days Left: <strong id="forecastDays">0</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🎮 Token Package Revenue</div></div>
+      <div class="card-body"><div class="grid-2">
+        <table class="data-table"><thead><tr><th>Package</th><th>Price</th><th>Games</th><th class="text-right">Sales</th><th class="text-right">Revenue</th></tr></thead><tbody id="tokenPackageTable"><tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr></tbody></table>
+        <div class="chart-container" style="height:250px;"><canvas id="packagePieChart"></canvas></div>
+      </div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🏆 Tournament Revenue</div></div>
+      <div class="card-body">
+        <div class="tabs">
+          <button class="tab active" onclick="switchTournamentTab('all')">All</button>
+          <button class="tab" onclick="switchTournamentTab('paid')">Paid</button>
+          <button class="tab" onclick="switchTournamentTab('free')">Free</button>
+        </div>
+        <table class="data-table"><thead><tr><th>Tournament</th><th>Type</th><th>Entry</th><th class="text-right">Players</th><th class="text-right">Revenue</th><th class="text-right">Prize Pool</th><th class="text-right">Paid Out</th><th class="text-right">Net</th><th class="text-right">ROI</th></tr></thead><tbody id="tournamentTable"><tr><td colspan="9" class="loading"><div class="spinner"></div></td></tr></tbody><tfoot id="tournamentSummary"></tfoot></table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">💸 Payout Tracking</div></div>
+      <div class="card-body">
+        <div class="tabs">
+          <button class="tab active" onclick="switchPayoutTab('pending')">Pending</button>
+          <button class="tab" onclick="switchPayoutTab('completed')">Completed</button>
+          <button class="tab" onclick="switchPayoutTab('byMode')">By Mode</button>
+        </div>
+        <div class="tab-content active" id="payoutPending">
+          <table class="data-table"><thead><tr><th>User</th><th>Phone</th><th>Amount</th><th>Status</th><th>Bank</th><th>Mode</th><th>Date</th><th></th></tr></thead><tbody id="pendingPayoutsTable"><tr><td colspan="8" class="loading"><div class="spinner"></div></td></tr></tbody></table>
+        </div>
+        <div class="tab-content" id="payoutCompleted">
+          <table class="data-table"><thead><tr><th>User</th><th>Phone</th><th>Amount</th><th>Bank</th><th>Account</th><th>Mode</th><th>Date</th></tr></thead><tbody id="completedPayoutsTable"><tr><td colspan="7" class="loading"><div class="spinner"></div></td></tr></tbody></table>
+        </div>
+        <div class="tab-content" id="payoutByMode">
+          <div class="grid-2">
+            <table class="data-table"><thead><tr><th>Mode</th><th class="text-right">Count</th><th class="text-right">Total</th></tr></thead><tbody id="payoutByModeTable"><tr><td colspan="3" class="loading"><div class="spinner"></div></td></tr></tbody></table>
+            <div class="chart-container" style="height:250px;"><canvas id="payoutModeChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🏅 Top Winners</div></div>
+      <div class="card-body">
+        <table class="data-table"><thead><tr><th>#</th><th>User</th><th>Phone</th><th class="text-right">Wins</th><th class="text-right">Total</th><th class="text-right">Highest</th><th class="text-right">Avg</th><th>Joined</th><th></th></tr></thead><tbody id="topWinnersTable"><tr><td colspan="9" class="loading"><div class="spinner"></div></td></tr></tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">📊 Period Comparison</div>
+        <div class="period-tabs" style="padding:2px;">
+          <button class="period-tab active" data-compare="daily" onclick="updateComparison('daily')">Daily</button>
+          <button class="period-tab" data-compare="weekly" onclick="updateComparison('weekly')">Weekly</button>
+          <button class="period-tab" data-compare="monthly" onclick="updateComparison('monthly')">Monthly</button>
+        </div>
+      </div>
+      <div class="card-body"><div class="grid-2" id="comparisonContent"><div class="loading"><div class="spinner"></div></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">📉 Churn Impact</div></div>
+      <div class="card-body"><div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-value" id="churnedPayers">0</div><div class="kpi-label">Churned Payers</div></div>
+        <div class="kpi-card"><div class="kpi-value" id="churnedRevenue">₦0</div><div class="kpi-label">Historical Rev</div></div>
+        <div class="kpi-card"><div class="kpi-value" id="potentialLoss">₦0</div><div class="kpi-label">Monthly Loss</div></div>
+      </div></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="userModal">
+    <div class="modal"><div class="modal-header"><div class="modal-title">👤 User Profile</div><button class="modal-close" onclick="closeUserModal()">×</button></div><div class="modal-body" id="userModalContent"><div class="loading"><div class="spinner"></div></div></div></div>
+  </div>
+  <script>
+    const API_BASE='/admin/api/financials';let authToken=localStorage.getItem('adminToken'),currentPeriod='today',startDate=null,endDate=null,charts={},allTournaments=[],allPayouts={pending:[],completed:[],by_game_mode:[]};
+    document.addEventListener('DOMContentLoaded',()=>{if(!authToken){window.location.href='/admin';return}initDateFilters();loadAllData()});
+    function initDateFilters(){document.querySelectorAll('.filter-bar .period-tab').forEach(t=>{t.addEventListener('click',()=>{document.querySelectorAll('.filter-bar .period-tab').forEach(b=>b.classList.remove('active'));t.classList.add('active');currentPeriod=t.dataset.period;if(currentPeriod==='custom'){document.getElementById('customDateInputs').style.display='flex'}else{document.getElementById('customDateInputs').style.display='none';setDateRange(currentPeriod);loadAllData()}})});setDateRange('today')}
+    function setDateRange(p){const now=new Date(),today=new Date(now.getFullYear(),now.getMonth(),now.getDate());switch(p){case'today':startDate=today.toISOString();endDate=now.toISOString();break;case'yesterday':const y=new Date(today);y.setDate(y.getDate()-1);startDate=y.toISOString();endDate=today.toISOString();break;case'week':const w=new Date(today);w.setDate(today.getDate()-today.getDay());startDate=w.toISOString();endDate=now.toISOString();break;case'month':startDate=new Date(now.getFullYear(),now.getMonth(),1).toISOString();endDate=now.toISOString();break;case'all':startDate=null;endDate=null;break}}
+    function applyCustomDates(){const s=document.getElementById('startDate').value,e=document.getElementById('endDate').value;if(s)startDate=new Date(s).toISOString();if(e){const d=new Date(e);d.setHours(23,59,59,999);endDate=d.toISOString()}loadAllData()}
+    async function apiCall(ep,params={}){const url=new URL(API_BASE+ep,window.location.origin);if(startDate)params.start_date=startDate;if(endDate)params.end_date=endDate;Object.entries(params).forEach(([k,v])=>{if(v!=null)url.searchParams.append(k,v)});const r=await fetch(url,{headers:{'Authorization':'Bearer '+authToken}});if(r.status===401){localStorage.removeItem('adminToken');window.location.href='/admin';return}if(r.status===403){alert('Access denied. Super Admin or Finance Officer required.');window.location.href='/admin';return}return r.json()}
+    async function loadAllData(){document.getElementById('lastUpdated').textContent='Loading...';try{await Promise.all([loadOverview(),loadKPIs(),loadTokenRevenue(),loadTournamentRevenue(),loadPayouts(),loadTopWinners(),loadTrends(),loadComparison(),loadForecast(),loadChurnImpact()]);document.getElementById('lastUpdated').textContent='Updated: '+new Date().toLocaleTimeString()}catch(e){console.error(e);document.getElementById('lastUpdated').textContent='Error'}}
+    function refreshData(){loadAllData()}
+    async function loadOverview(){const r=await apiCall('/overview');if(!r?.success)return;const d=r.data;document.getElementById('grossRevenue').textContent=fmt(d.gross_revenue);document.getElementById('tokenRevenue').textContent=fmt(d.token_revenue);document.getElementById('tokenTransactions').textContent=d.token_transactions+' txns';document.getElementById('tournamentRevenue').textContent=fmt(d.tournament_revenue);document.getElementById('tournamentTransactions').textContent=d.tournament_transactions+' entries';document.getElementById('totalPayouts').textContent=fmt(d.total_payouts);document.getElementById('payoutCount').textContent=d.payout_count+' payouts';document.getElementById('pendingPayouts').textContent=fmt(d.pending_payouts);document.getElementById('pendingCount').textContent=d.pending_count+' pending';document.getElementById('netRevenue').textContent=fmt(d.net_revenue);document.getElementById('profitMargin').textContent=d.profit_margin+'%'}
+    async function loadKPIs(){const r=await apiCall('/kpis');if(!r?.success)return;const d=r.data;document.getElementById('kpiARPU').textContent='₦'+fmt(d.arpu);document.getElementById('kpiARPPU').textContent='₦'+fmt(d.arppu);document.getElementById('kpiLTV').textContent='₦'+fmt(d.ltv);document.getElementById('kpiConversion').textContent=d.conversion_rate+'%';document.getElementById('kpiPayingUsers').textContent=fmt(d.paying_users);document.getElementById('kpiPayoutRatio').textContent=(d.total_revenue>0?((d.total_payouts/d.total_revenue)*100).toFixed(1):0)+'%'}
+    async function loadTokenRevenue(){const r=await apiCall('/token-revenue');if(!r?.success)return;const p=r.data.by_package,tb=document.getElementById('tokenPackageTable');if(!p.length){tb.innerHTML='<tr><td colspan="5" class="empty-state">No sales</td></tr>';return}tb.innerHTML=p.map(x=>'<tr><td><strong>'+x.package_name+'</strong></td><td>₦'+fmt(x.price)+'</td><td>'+x.games_count+'</td><td class="text-right">'+fmt(x.sales_count)+'</td><td class="text-right amount positive">₦'+fmt(x.total_revenue)+'</td></tr>').join('')+'<tr style="background:var(--gray-50);font-weight:600"><td colspan="3">Total</td><td class="text-right">'+fmt(r.data.total_sales)+'</td><td class="text-right amount positive">₦'+fmt(r.data.total_revenue)+'</td></tr>';renderPkgChart(p)}
+    function renderPkgChart(p){const ctx=document.getElementById('packagePieChart').getContext('2d');if(charts.pkg)charts.pkg.destroy();charts.pkg=new Chart(ctx,{type:'doughnut',data:{labels:p.map(x=>x.package_name),datasets:[{data:p.map(x=>parseFloat(x.total_revenue)),backgroundColor:['#10b981','#3b82f6','#f59e0b'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}})}
+    async function loadTournamentRevenue(){const r=await apiCall('/tournament-revenue');if(!r?.success)return;allTournaments=r.data.tournaments;renderTournamentTable('all');const s=r.data.summary;document.getElementById('tournamentSummary').innerHTML='<tr style="background:var(--gray-100);font-weight:600"><td colspan="3">Total</td><td class="text-right">'+fmt(s.total_participants)+'</td><td class="text-right amount positive">₦'+fmt(s.total_entry_fees)+'</td><td class="text-right">₦'+fmt(s.total_prize_pools)+'</td><td class="text-right amount negative">₦'+fmt(s.total_prizes_paid)+'</td><td class="text-right amount '+(s.net_revenue>=0?'positive':'negative')+'">₦'+fmt(s.net_revenue)+'</td><td class="text-right">'+s.roi+'%</td></tr>'}
+    function switchTournamentTab(f){renderTournamentTable(f)}
+    function renderTournamentTable(f){const tb=document.getElementById('tournamentTable');let t=allTournaments;if(f==='paid')t=t.filter(x=>x.payment_type==='paid');if(f==='free')t=t.filter(x=>x.payment_type==='free');if(!t.length){tb.innerHTML='<tr><td colspan="9" class="empty-state">None</td></tr>';return}tb.innerHTML=t.map(x=>'<tr><td><strong>'+x.tournament_name+'</strong></td><td><span class="badge '+(x.payment_type==='paid'?'info':'gray')+'">'+x.payment_type+'</span></td><td>'+(x.payment_type==='paid'?'₦'+fmt(x.entry_fee):'Free')+'</td><td class="text-right">'+fmt(x.total_participants)+'</td><td class="text-right amount positive">₦'+fmt(x.total_entry_fees)+'</td><td class="text-right">₦'+fmt(x.prize_pool)+'</td><td class="text-right amount negative">₦'+fmt(x.prizes_paid)+'</td><td class="text-right amount '+(parseFloat(x.net_profit)>=0?'positive':'negative')+'">₦'+fmt(x.net_profit)+'</td><td class="text-right">'+x.roi+'%</td></tr>').join('')}
+    async function loadPayouts(){const r=await apiCall('/payouts');if(!r?.success)return;allPayouts=r.data;renderPayoutTables()}
+    function switchPayoutTab(t){document.querySelectorAll('.card:has(#pendingPayoutsTable) .tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.card:has(#pendingPayoutsTable) .tab-content').forEach(x=>x.classList.remove('active'));event.target.classList.add('active');document.getElementById('payout'+t.charAt(0).toUpperCase()+t.slice(1)).classList.add('active')}
+    function renderPayoutTables(){const p=document.getElementById('pendingPayoutsTable'),c=document.getElementById('completedPayoutsTable'),m=document.getElementById('payoutByModeTable');if(!allPayouts.pending.length)p.innerHTML='<tr><td colspan="8" class="empty-state">None</td></tr>';else p.innerHTML=allPayouts.pending.map(x=>'<tr class="clickable" onclick="viewUser('+x.user_id+')"><td><strong>'+(x.username||'N/A')+'</strong></td><td>'+fmtPhone(x.phone_number)+'</td><td class="amount">₦'+fmt(x.amount)+'</td><td><span class="badge '+getBadge(x.payout_status)+'">'+x.payout_status+'</span></td><td>'+(x.bank_name||'-')+'</td><td>'+(x.game_mode||'classic')+'</td><td>'+fmtDate(x.created_at)+'</td><td><button class="apply-btn" style="padding:4px 8px;font-size:11px" onclick="event.stopPropagation();viewUser('+x.user_id+')">View</button></td></tr>').join('');if(!allPayouts.completed.length)c.innerHTML='<tr><td colspan="7" class="empty-state">None</td></tr>';else c.innerHTML=allPayouts.completed.map(x=>'<tr><td><strong>'+(x.username||'N/A')+'</strong></td><td>'+fmtPhone(x.phone_number)+'</td><td class="amount positive">₦'+fmt(x.amount)+'</td><td>'+(x.bank_name||'-')+'</td><td>'+(x.account_number?'****'+x.account_number.slice(-4):'-')+'</td><td>'+(x.game_mode||'classic')+'</td><td>'+fmtDate(x.completed_at)+'</td></tr>').join('');if(!allPayouts.by_game_mode.length)m.innerHTML='<tr><td colspan="3" class="empty-state">None</td></tr>';else{m.innerHTML=allPayouts.by_game_mode.map(x=>'<tr><td><strong>'+(x.game_mode||'Classic')+'</strong></td><td class="text-right">'+fmt(x.payout_count)+'</td><td class="text-right amount">₦'+fmt(x.total_amount)+'</td></tr>').join('');renderPayoutChart(allPayouts.by_game_mode)}}
+    function renderPayoutChart(d){const ctx=document.getElementById('payoutModeChart').getContext('2d');if(charts.payout)charts.payout.destroy();charts.payout=new Chart(ctx,{type:'pie',data:{labels:d.map(x=>x.game_mode||'Classic'),datasets:[{data:d.map(x=>parseFloat(x.total_amount)),backgroundColor:['#ef4444','#3b82f6','#f59e0b'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}})}
+    async function loadTopWinners(){const r=await apiCall('/top-winners',{limit:20});if(!r?.success)return;const tb=document.getElementById('topWinnersTable');if(!r.data.length){tb.innerHTML='<tr><td colspan="9" class="empty-state">None</td></tr>';return}tb.innerHTML=r.data.map((x,i)=>'<tr class="clickable" onclick="viewUser('+x.user_id+')"><td><strong>'+(i+1)+'</strong></td><td><strong>'+(x.username||'Anon')+'</strong></td><td>'+fmtPhone(x.phone_number)+'</td><td class="text-right">'+x.win_count+'</td><td class="text-right amount positive">₦'+fmt(x.total_winnings)+'</td><td class="text-right">₦'+fmt(x.highest_win)+'</td><td class="text-right">₦'+fmt(x.avg_win)+'</td><td>'+fmtDate(x.joined)+'</td><td><button class="apply-btn" style="padding:4px 8px;font-size:11px" onclick="event.stopPropagation();viewUser('+x.user_id+')">View</button></td></tr>').join('')}
+    async function loadTrends(period='daily'){const r=await apiCall('/trends',{period,days:30});if(!r?.success)return;renderTrendsChart(r.data)}
+    function updateChartPeriod(p){document.querySelectorAll('[data-chart-period]').forEach(t=>t.classList.toggle('active',t.dataset.chartPeriod===p));loadTrends(p)}
+    function renderTrendsChart(d){const ctx=document.getElementById('revenueTrendsChart').getContext('2d');if(charts.trends)charts.trends.destroy();const dates=new Set([...d.token_revenue.map(x=>x.date),...d.tournament_revenue.map(x=>x.date),...d.payouts.map(x=>x.date)]);const sorted=Array.from(dates).sort();const get=(a,dt,f='revenue')=>{const i=a.find(x=>x.date===dt);return i?parseFloat(i[f]||i.amount||0):0};charts.trends=new Chart(ctx,{type:'line',data:{labels:sorted.map(x=>fmtDateShort(x)),datasets:[{label:'Tokens',data:sorted.map(x=>get(d.token_revenue,x)),borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',fill:true,tension:0.3},{label:'Tournaments',data:sorted.map(x=>get(d.tournament_revenue,x)),borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.1)',fill:true,tension:0.3},{label:'Payouts',data:sorted.map(x=>get(d.payouts,x,'amount')),borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,0.1)',fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'₦'+fmt(v)}}}}})}
+    async function loadComparison(type='daily'){const r=await apiCall('/comparison',{type});if(!r?.success)return;renderComparison(r.data,type)}
+    function updateComparison(t){document.querySelectorAll('[data-compare]').forEach(x=>x.classList.toggle('active',x.dataset.compare===t));loadComparison(t)}
+    function renderComparison(d,t){const labels={daily:['Today','Yesterday'],weekly:['This Week','Last Week'],monthly:['This Month','Last Month']};const c=document.getElementById('comparisonContent'),cur=d.current_period.data,prev=d.previous_period.data,ch=d.changes;const rc=v=>{const n=parseFloat(v);return '<span class="change '+(n>=0?'positive':'negative')+'">'+(n>=0?'↑':'↓')+Math.abs(n).toFixed(1)+'%</span>'};c.innerHTML='<div><h4 style="margin-bottom:16px">'+labels[t][0]+'</h4><div class="kpi-grid"><div class="kpi-card"><div class="kpi-value">₦'+fmt(cur.gross_revenue)+'</div><div class="kpi-label">Gross</div>'+rc(ch.gross_revenue)+'</div><div class="kpi-card"><div class="kpi-value">₦'+fmt(cur.net_revenue)+'</div><div class="kpi-label">Net</div>'+rc(ch.net_revenue)+'</div><div class="kpi-card"><div class="kpi-value">₦'+fmt(cur.total_payouts)+'</div><div class="kpi-label">Payouts</div>'+rc(ch.total_payouts)+'</div></div></div><div><h4 style="margin-bottom:16px">'+labels[t][1]+'</h4><div class="kpi-grid"><div class="kpi-card"><div class="kpi-value">₦'+fmt(prev.gross_revenue)+'</div><div class="kpi-label">Gross</div></div><div class="kpi-card"><div class="kpi-value">₦'+fmt(prev.net_revenue)+'</div><div class="kpi-label">Net</div></div><div class="kpi-card"><div class="kpi-value">₦'+fmt(prev.total_payouts)+'</div><div class="kpi-label">Payouts</div></div></div></div>'}
+    async function loadForecast(){const r=await apiCall('/forecast');if(!r?.success)return;document.getElementById('forecastDaily').textContent='₦'+fmt(r.data.avg_daily_revenue);document.getElementById('forecastMonth').textContent='₦'+fmt(r.data.projected_month_end);document.getElementById('forecastDays').textContent=r.data.days_remaining}
+    async function loadChurnImpact(){const r=await apiCall('/churn-impact');if(!r?.success)return;document.getElementById('churnedPayers').textContent=fmt(r.data.churned_payers);document.getElementById('churnedRevenue').textContent='₦'+fmt(r.data.historical_revenue_from_churned);document.getElementById('potentialLoss').textContent='₦'+fmt(r.data.potential_monthly_loss)}
+    async function viewUser(id){document.getElementById('userModal').classList.add('active');document.getElementById('userModalContent').innerHTML='<div class="loading"><div class="spinner"></div></div>';const r=await apiCall('/user/'+id);if(!r?.success){document.getElementById('userModalContent').innerHTML='<div class="empty-state">Not found</div>';return}const d=r.data,u=d.user,s=d.summary;document.getElementById('userModalContent').innerHTML='<div class="kpi-grid" style="margin-bottom:24px"><div class="kpi-card"><div class="kpi-value">₦'+fmt(s.total_spent)+'</div><div class="kpi-label">Spent</div></div><div class="kpi-card"><div class="kpi-value">₦'+fmt(s.total_won)+'</div><div class="kpi-label">Won</div></div><div class="kpi-card"><div class="kpi-value">₦'+fmt(s.net_position)+'</div><div class="kpi-label">Net</div></div></div><div style="background:var(--gray-50);padding:16px;border-radius:8px;margin-bottom:24px"><strong>'+u.username+'</strong> | '+fmtPhone(u.phone_number)+' | Joined '+fmtDate(u.created_at)+'</div><h4 style="margin-bottom:12px">Purchases</h4><table class="data-table" style="margin-bottom:24px"><thead><tr><th>Date</th><th>Package</th><th>Amount</th><th>Status</th></tr></thead><tbody>'+(d.purchases.length?d.purchases.map(p=>'<tr><td>'+fmtDate(p.created_at)+'</td><td>'+p.package_name+'</td><td class="amount">₦'+fmt(p.amount)+'</td><td><span class="badge '+(p.status==='success'?'success':'gray')+'">'+p.status+'</span></td></tr>').join(''):'<tr><td colspan="4">None</td></tr>')+'</tbody></table><h4 style="margin-bottom:12px">Wins</h4><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>'+(d.winnings.length?d.winnings.map(w=>'<tr><td>'+fmtDate(w.created_at)+'</td><td class="amount positive">₦'+fmt(w.amount)+'</td><td>'+(w.game_mode||'classic')+'</td><td><span class="badge '+getBadge(w.payout_status)+'">'+w.payout_status+'</span></td></tr>').join(''):'<tr><td colspan="4">None</td></tr>')+'</tbody></table>'}
+    function closeUserModal(){document.getElementById('userModal').classList.remove('active')}
+    function exportData(f){const p=new URLSearchParams({format:f,type:'all',token:authToken});if(startDate)p.append('start_date',startDate);if(endDate)p.append('end_date',endDate);window.open(API_BASE+'/export?'+p.toString(),'_blank')}
+    function printReport(){window.print()}
+    function logout(){localStorage.removeItem('adminToken');window.location.href='/admin'}
+    function fmt(n){if(n==null)return'0';const x=parseFloat(n);return isNaN(x)?'0':x.toLocaleString('en-NG',{maximumFractionDigits:0})}
+    function fmtPhone(p){if(!p)return'N/A';return p.startsWith('tg_')?'📱'+p.replace('tg_',''):'📞'+p}
+    function fmtDate(d){if(!d)return'N/A';return new Date(d).toLocaleDateString('en-NG',{year:'numeric',month:'short',day:'numeric'})}
+    function fmtDateShort(d){if(!d)return'';return new Date(d).toLocaleDateString('en-NG',{month:'short',day:'numeric'})}
+    function getBadge(s){return{pending:'warning',details_collected:'info',approved:'info',completed:'success',rejected:'danger',failed:'danger'}[s]||'gray'}
+  </script>
+</body>
+</html>
