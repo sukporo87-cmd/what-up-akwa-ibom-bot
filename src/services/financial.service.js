@@ -39,13 +39,14 @@ class FinancialService {
       `);
       
       // Total Payouts - from transactions table where type is 'prize' and payout completed
+      // Status flow: pending -> details_collected -> approved -> paid -> confirmed
       const payouts = await pool.query(`
         SELECT 
           COALESCE(SUM(t.amount), 0) as total,
           COUNT(*) as payout_count
         FROM transactions t
         WHERE t.transaction_type = 'prize'
-        AND t.payout_status = 'completed'
+        AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND t.${dateFilter}` : ''}
       `);
       
@@ -162,7 +163,7 @@ class FinancialService {
             (SELECT SUM(tr.amount) FROM transactions tr 
              WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
              AND tr.transaction_type = 'prize'
-             AND tr.payout_status = 'completed'), 0
+             AND tr.payout_status IN ('paid', 'confirmed')), 0
           ) as prizes_paid,
           CASE 
             WHEN t.payment_type = 'paid' THEN 
@@ -304,7 +305,7 @@ class FinancialService {
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
         WHERE t.transaction_type = 'prize'
-        AND t.payout_status = 'completed'
+        AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at DESC
         LIMIT 100
@@ -342,7 +343,7 @@ class FinancialService {
         FROM transactions t
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
         WHERE t.transaction_type = 'prize'
-        AND t.payout_status = 'completed'
+        AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY gs.game_mode
       `);
@@ -438,7 +439,7 @@ class FinancialService {
         SELECT COALESCE(SUM(amount), 0) as total
         FROM transactions
         WHERE transaction_type = 'prize'
-        AND payout_status = 'completed'
+        AND payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
@@ -527,7 +528,7 @@ class FinancialService {
           COUNT(*) as count
         FROM transactions
         WHERE transaction_type = 'prize'
-        AND payout_status = 'completed'
+        AND payout_status IN ('paid', 'confirmed')
         AND created_at >= CURRENT_DATE - INTERVAL '${interval}'
         GROUP BY ${dateGroup}
         ORDER BY date ASC
