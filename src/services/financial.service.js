@@ -2,6 +2,7 @@
 // FILE: src/services/financial.service.js
 // COMPREHENSIVE FINANCIAL MANAGEMENT SERVICE
 // For What's Up Trivia - Financial Dashboard
+// FIXED: Correct column names for your database schema
 // ============================================
 
 const pool = require('../config/database');
@@ -17,7 +18,7 @@ class FinancialService {
     try {
       const dateFilter = this.buildDateFilter(startDate, endDate, 'created_at');
       
-      // Token Revenue (Classic Mode)
+      // Token Revenue (Classic Mode) - payment_transactions table uses 'amount'
       const tokenRevenue = await pool.query(`
         SELECT 
           COALESCE(SUM(amount), 0) as total,
@@ -27,25 +28,24 @@ class FinancialService {
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
-      // Tournament Entry Revenue
+      // Tournament Entry Revenue - tournament_entry_payments uses 'amount' not 'amount_paid'
       const tournamentRevenue = await pool.query(`
         SELECT 
-          COALESCE(SUM(amount_paid), 0) as total,
+          COALESCE(SUM(amount), 0) as total,
           COUNT(*) as transaction_count
         FROM tournament_entry_payments
         WHERE payment_status = 'success'
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
-      // Total Payouts
+      // Total Payouts - from transactions table where type is 'prize' and payout completed
       const payouts = await pool.query(`
         SELECT 
           COALESCE(SUM(t.amount), 0) as total,
           COUNT(*) as payout_count
         FROM transactions t
-        JOIN payout_history ph ON t.id = ph.transaction_id
         WHERE t.transaction_type = 'prize'
-        AND ph.action = 'completed'
+        AND t.payout_status = 'completed'
         ${dateFilter ? `AND t.${dateFilter}` : ''}
       `);
       
@@ -113,6 +113,7 @@ class FinancialService {
       `);
       
       // Also get platform breakdown
+      const platformDateFilter = this.buildDateFilter(startDate, endDate, 'created_at');
       const platformBreakdown = await pool.query(`
         SELECT 
           COALESCE(platform, 'whatsapp') as platform,
@@ -120,7 +121,7 @@ class FinancialService {
           COALESCE(SUM(amount), 0) as total_revenue
         FROM payment_transactions
         WHERE status = 'success'
-        ${dateFilter ? `AND ${dateFilter.replace('pt.', '')}` : ''}
+        ${platformDateFilter ? `AND ${platformDateFilter}` : ''}
         GROUP BY platform
       `);
       
@@ -156,7 +157,7 @@ class FinancialService {
           t.end_date,
           COUNT(DISTINCT tp.user_id) as total_participants,
           COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_participants,
-          COALESCE(SUM(tep.amount_paid) FILTER (WHERE tep.payment_status = 'success'), 0) as total_entry_fees,
+          COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) as total_entry_fees,
           COALESCE(
             (SELECT SUM(tr.amount) FROM transactions tr 
              WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
@@ -165,7 +166,7 @@ class FinancialService {
           ) as prizes_paid,
           CASE 
             WHEN t.payment_type = 'paid' THEN 
-              COALESCE(SUM(tep.amount_paid) FILTER (WHERE tep.payment_status = 'success'), 0) - t.prize_pool
+              COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) - t.prize_pool
             ELSE 0 - t.prize_pool
           END as net_profit
         FROM tournaments t
@@ -273,7 +274,7 @@ class FinancialService {
   
   async getPayoutTracking(startDate = null, endDate = null) {
     try {
-      const dateFilter = this.buildDateFilter(startDate, endDate, 'ph.created_at');
+      const dateFilter = this.buildDateFilter(startDate, endDate, 't.created_at');
       
       // Payout summary by status
       const statusSummary = await pool.query(`
@@ -283,30 +284,29 @@ class FinancialService {
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
         WHERE t.transaction_type = 'prize'
-        ${dateFilter ? `AND ${dateFilter.replace('ph.', 't.')}` : ''}
+        ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY t.payout_status
       `);
       
       // Completed payouts with details
       const completedPayouts = await pool.query(`
         SELECT 
-          ph.id,
+          t.id,
           t.amount,
           u.username,
           u.phone_number,
           pd.bank_name,
           pd.account_number,
           gs.game_mode,
-          ph.created_at as completed_at,
-          ph.notes
-        FROM payout_history ph
-        JOIN transactions t ON ph.transaction_id = t.id
+          t.created_at as completed_at
+        FROM transactions t
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE ph.action = 'completed'
+        WHERE t.transaction_type = 'prize'
+        AND t.payout_status = 'completed'
         ${dateFilter ? `AND ${dateFilter}` : ''}
-        ORDER BY ph.created_at DESC
+        ORDER BY t.created_at DESC
         LIMIT 100
       `);
       
@@ -329,7 +329,7 @@ class FinancialService {
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
         WHERE t.transaction_type = 'prize'
         AND t.payout_status IN ('pending', 'details_collected', 'approved')
-        ${dateFilter ? `AND ${dateFilter.replace('ph.', 't.')}` : ''}
+        ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at ASC
       `);
       
@@ -339,10 +339,10 @@ class FinancialService {
           gs.game_mode,
           COUNT(*) as payout_count,
           COALESCE(SUM(t.amount), 0) as total_amount
-        FROM payout_history ph
-        JOIN transactions t ON ph.transaction_id = t.id
+        FROM transactions t
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE ph.action = 'completed'
+        WHERE t.transaction_type = 'prize'
+        AND t.payout_status = 'completed'
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY gs.game_mode
       `);
@@ -417,18 +417,17 @@ class FinancialService {
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
-      // Total revenue
-      const totalRevenue = await pool.query(`
-        SELECT 
-          COALESCE(SUM(amount), 0) as token_revenue
+      // Total token revenue
+      const totalTokenRevenue = await pool.query(`
+        SELECT COALESCE(SUM(amount), 0) as token_revenue
         FROM payment_transactions
         WHERE status = 'success'
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
+      // Total tournament revenue
       const tournamentRevenue = await pool.query(`
-        SELECT 
-          COALESCE(SUM(amount_paid), 0) as tournament_revenue
+        SELECT COALESCE(SUM(amount), 0) as tournament_revenue
         FROM tournament_entry_payments
         WHERE payment_status = 'success'
         ${dateFilter ? `AND ${dateFilter}` : ''}
@@ -436,16 +435,15 @@ class FinancialService {
       
       // Total payouts
       const totalPayouts = await pool.query(`
-        SELECT COALESCE(SUM(t.amount), 0) as total
-        FROM transactions t
-        JOIN payout_history ph ON t.id = ph.transaction_id
-        WHERE t.transaction_type = 'prize'
-        AND ph.action = 'completed'
-        ${dateFilter ? `AND t.${dateFilter}` : ''}
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM transactions
+        WHERE transaction_type = 'prize'
+        AND payout_status = 'completed'
+        ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
       // Calculate LTV (simple: total revenue / total users)
-      const totalRev = parseFloat(totalRevenue.rows[0].token_revenue) + parseFloat(tournamentRevenue.rows[0].tournament_revenue);
+      const totalRev = parseFloat(totalTokenRevenue.rows[0].token_revenue) + parseFloat(tournamentRevenue.rows[0].tournament_revenue);
       const users = parseInt(totalUsers.rows[0].count);
       const payers = parseInt(payingUsers.rows[0].count);
       const payoutTotal = parseFloat(totalPayouts.rows[0].total);
@@ -512,7 +510,7 @@ class FinancialService {
       const tournamentTrend = await pool.query(`
         SELECT 
           ${dateGroup} as date,
-          COALESCE(SUM(amount_paid), 0) as revenue,
+          COALESCE(SUM(amount), 0) as revenue,
           COUNT(*) as transactions
         FROM tournament_entry_payments
         WHERE payment_status = 'success'
@@ -524,14 +522,14 @@ class FinancialService {
       // Payout trend
       const payoutTrend = await pool.query(`
         SELECT 
-          ${dateGroup.replace('created_at', 'ph.created_at')} as date,
-          COALESCE(SUM(t.amount), 0) as amount,
+          ${dateGroup} as date,
+          COALESCE(SUM(amount), 0) as amount,
           COUNT(*) as count
-        FROM payout_history ph
-        JOIN transactions t ON ph.transaction_id = t.id
-        WHERE ph.action = 'completed'
-        AND ph.created_at >= CURRENT_DATE - INTERVAL '${interval}'
-        GROUP BY ${dateGroup.replace('created_at', 'ph.created_at')}
+        FROM transactions
+        WHERE transaction_type = 'prize'
+        AND payout_status = 'completed'
+        AND created_at >= CURRENT_DATE - INTERVAL '${interval}'
+        GROUP BY ${dateGroup}
         ORDER BY date ASC
       `);
       
@@ -558,7 +556,6 @@ class FinancialService {
           u.username,
           u.phone_number,
           u.full_name,
-          u.email,
           gs.game_mode,
           gs.final_score,
           gs.questions_answered,
@@ -566,15 +563,11 @@ class FinancialService {
           gs.completed_at as game_completed,
           pd.bank_name,
           pd.account_number,
-          pd.account_name,
-          ph.action as payout_action,
-          ph.created_at as payout_date,
-          ph.admin_id as processed_by
+          pd.account_name
         FROM transactions t
         JOIN users u ON t.user_id = u.id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-        LEFT JOIN payout_history ph ON t.id = ph.transaction_id AND ph.action = 'completed'
         WHERE t.id = $1
       `, [transactionId]);
       
@@ -591,9 +584,9 @@ class FinancialService {
   
   async getUserFinancialProfile(userId) {
     try {
-      // User basic info
+      // User basic info - removed 'email' column as it doesn't exist
       const user = await pool.query(`
-        SELECT id, username, phone_number, full_name, email, 
+        SELECT id, username, phone_number, full_name, 
                total_winnings, total_games_played, created_at
         FROM users WHERE id = $1
       `, [userId]);
@@ -633,7 +626,7 @@ class FinancialService {
       const tournaments = await pool.query(`
         SELECT 
           tep.id,
-          tep.amount_paid,
+          tep.amount,
           tep.payment_status,
           tep.created_at,
           t.tournament_name
@@ -652,7 +645,7 @@ class FinancialService {
       
       const tournamentSpent = tournaments.rows
         .filter(t => t.payment_status === 'success')
-        .reduce((sum, t) => sum + parseFloat(t.amount_paid), 0);
+        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
       
       return {
         user: user.rows[0],
@@ -885,6 +878,10 @@ class FinancialService {
       let query;
       const params = [];
       
+      const dateCondition = startDate || endDate 
+        ? `${startDate ? `created_at >= '${startDate}'` : ''} ${startDate && endDate ? 'AND' : ''} ${endDate ? `created_at <= '${endDate}'` : ''}`
+        : '';
+      
       if (type === 'revenue') {
         query = `
           SELECT 
@@ -893,33 +890,31 @@ class FinancialService {
             pt.amount,
             pt.games_purchased,
             pt.status,
-            pt.platform,
+            COALESCE(pt.platform, 'whatsapp') as platform,
             u.username,
             u.phone_number,
             pt.created_at
           FROM payment_transactions pt
           JOIN users u ON pt.user_id = u.id
           WHERE pt.status = 'success'
-          ${startDate ? `AND pt.created_at >= $1` : ''}
-          ${endDate ? `AND pt.created_at <= $${startDate ? 2 : 1}` : ''}
+          ${dateCondition ? `AND ${dateCondition.replace('created_at', 'pt.created_at')}` : ''}
           
           UNION ALL
           
           SELECT 
             'Tournament Entry' as type,
-            tep.reference,
-            tep.amount_paid as amount,
+            tep.payment_reference as reference,
+            tep.amount,
             1 as games_purchased,
             tep.payment_status as status,
-            tep.platform,
+            COALESCE(tep.platform, 'whatsapp') as platform,
             u.username,
             u.phone_number,
             tep.created_at
           FROM tournament_entry_payments tep
           JOIN users u ON tep.user_id = u.id
           WHERE tep.payment_status = 'success'
-          ${startDate ? `AND tep.created_at >= $1` : ''}
-          ${endDate ? `AND tep.created_at <= $${startDate ? 2 : 1}` : ''}
+          ${dateCondition ? `AND ${dateCondition.replace('created_at', 'tep.created_at')}` : ''}
           
           ORDER BY created_at DESC
         `;
@@ -934,16 +929,13 @@ class FinancialService {
             pd.bank_name,
             pd.account_number,
             gs.game_mode,
-            t.created_at as win_date,
-            ph.created_at as payout_date
+            t.created_at as win_date
           FROM transactions t
           JOIN users u ON t.user_id = u.id
           LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-          LEFT JOIN payout_history ph ON t.id = ph.transaction_id AND ph.action = 'completed'
           LEFT JOIN game_sessions gs ON t.session_id = gs.id
           WHERE t.transaction_type = 'prize'
-          ${startDate ? `AND t.created_at >= $1` : ''}
-          ${endDate ? `AND t.created_at <= $${startDate ? 2 : 1}` : ''}
+          ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ORDER BY t.created_at DESC
         `;
       } else {
@@ -961,15 +953,14 @@ class FinancialService {
               pt.created_at
             FROM payment_transactions pt
             JOIN users u ON pt.user_id = u.id
-            ${startDate ? `WHERE pt.created_at >= $1` : ''}
-            ${endDate ? `${startDate ? 'AND' : 'WHERE'} pt.created_at <= $${startDate ? 2 : 1}` : ''}
+            ${dateCondition ? `WHERE ${dateCondition.replace('created_at', 'pt.created_at')}` : ''}
             
             UNION ALL
             
             SELECT 
               'Tournament Entry' as type,
               tep.id,
-              tep.amount_paid as amount,
+              tep.amount,
               'revenue' as category,
               tep.payment_status as status,
               u.username,
@@ -977,8 +968,7 @@ class FinancialService {
               tep.created_at
             FROM tournament_entry_payments tep
             JOIN users u ON tep.user_id = u.id
-            ${startDate ? `WHERE tep.created_at >= $1` : ''}
-            ${endDate ? `${startDate ? 'AND' : 'WHERE'} tep.created_at <= $${startDate ? 2 : 1}` : ''}
+            ${dateCondition ? `WHERE ${dateCondition.replace('created_at', 'tep.created_at')}` : ''}
             
             UNION ALL
             
@@ -994,17 +984,13 @@ class FinancialService {
             FROM transactions t
             JOIN users u ON t.user_id = u.id
             WHERE t.transaction_type = 'prize'
-            ${startDate ? `AND t.created_at >= $1` : ''}
-            ${endDate ? `AND t.created_at <= $${startDate ? 2 : 1}` : ''}
+            ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ) all_transactions
           ORDER BY created_at DESC
         `;
       }
       
-      if (startDate) params.push(startDate);
-      if (endDate) params.push(endDate);
-      
-      const result = await pool.query(query, params);
+      const result = await pool.query(query);
       return result.rows;
     } catch (error) {
       logger.error('Error exporting transactions:', error);
