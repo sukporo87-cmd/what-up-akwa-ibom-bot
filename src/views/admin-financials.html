@@ -293,7 +293,7 @@
     function fmtPhone(p){if(!p)return'N/A';return p.startsWith('tg_')?'📱'+p.replace('tg_',''):'📞'+p}
     function fmtDate(d){if(!d)return'N/A';return new Date(d).toLocaleDateString('en-NG',{year:'numeric',month:'short',day:'numeric'})}
     function fmtDateShort(d){if(!d)return'';return new Date(d).toLocaleDateString('en-NG',{month:'short',day:'numeric'})}
-    function getBadge(s){return{pending:'warning',details_collected:'info',approved:'info',completed:'success',rejected:'danger',failed:'danger'}[s]||'gray'}
+    function getBadge(s){return{pending:'warning',details_collected:'info',approved:'info',paid:'success',confirmed:'success',completed:'success',cancelled:'danger',rejected:'danger',failed:'danger'}[s]||'gray'}
   </script>
 </body>
 </html>

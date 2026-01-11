@@ -317,12 +317,12 @@ class PayoutService {
   // Get all pending payouts (for admin)
   async getAllPendingPayouts(statusFilter = null) {
     try {
-      let whereClause = "t.transaction_type = 'prize' AND t.payout_status != 'confirmed'";
+      let whereClause = "t.transaction_type = 'prize' AND t.payout_status NOT IN ('confirmed', 'cancelled')";
       const params = [];
 
       if (statusFilter && statusFilter !== '') {
         params.push(statusFilter);
-        whereClause += ` AND t.payout_status = $${params.length}`;
+        whereClause = `t.transaction_type = 'prize' AND t.payout_status = $${params.length}`;
       } else {
         whereClause += " AND t.payout_status IN ('pending', 'details_collected', 'approved', 'paid')";
       }

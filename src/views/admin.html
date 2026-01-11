@@ -773,6 +773,8 @@
               <option value="details_collected">Details Collected</option>
               <option value="approved">Approved</option>
               <option value="paid">Paid</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
             <button class="btn btn-primary" onclick="loadPayouts()">🔄 Refresh</button>
           </div>
@@ -2173,7 +2175,7 @@ function renderConversionFunnelChart(data) {
 function renderPayoutStatusChart(data) {
   const ctx = document.getElementById('payoutStatusChart');
   if (!ctx) return;
-  const statusNames = { pending: 'Pending', details_collected: 'Details Collected', approved: 'Approved', paid: 'Paid', confirmed: 'Confirmed' };
+  const statusNames = { pending: 'Pending', details_collected: 'Details Collected', approved: 'Approved', paid: 'Paid', confirmed: 'Confirmed', cancelled: 'Cancelled' };
   const labels = data.map(d => statusNames[d.payout_status] || d.payout_status);
   const values = data.map(d => parseInt(d.count));
   charts.payoutStatus = new Chart(ctx, {
