@@ -860,6 +860,8 @@ class FinancialService {
     if (!startDate && !endDate) return null;
     
     const conditions = [];
+    // Dates come in as local time strings like "2026-01-11 00:00:00"
+    // Database stores timestamps in local time, so direct comparison works
     if (startDate) {
       conditions.push(`${column} >= '${startDate}'`);
     }
