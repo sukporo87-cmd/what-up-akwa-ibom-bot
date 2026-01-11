@@ -660,13 +660,13 @@ Type the code, or type SKIP to continue:`
           return;
         }
         
-        // Game rate limit removed - keeping grand prize cooldown and daily win limit only
-        // const rateLimit = await antiFraudService.checkGameRateLimit(user.id);
-        // if (!rateLimit.allowed) {
-        //   await userService.clearUserState(user.phone_number);
-        //   await messagingService.sendMessage(user.phone_number, rateLimit.message);
-        //   return;
-        // }
+        // Check 15 games per hour rate limit
+        const rateLimit = await antiFraudService.checkGameRateLimit(user.id);
+        if (!rateLimit.allowed) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, rateLimit.message);
+          return;
+        }
         
         await userService.clearUserState(user.phone_number);
         await messagingService.sendMessage(
