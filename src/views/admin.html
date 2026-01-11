@@ -578,11 +578,27 @@
     </div>
     <div class="header-right">
       <div class="admin-info">
-        <div class="admin-name">👤 Admin</div>
+        <div class="admin-name" id="adminDisplayName">👤 Admin</div>
         <div class="session-timer" id="sessionTimer">Session active</div>
       </div>
       <!-- Navigation Links -->
       <div class="nav-links" style="display: flex; gap: 10px; align-items: center;">
+        <a href="/admin/financials" class="nav-link" style="
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #0f766e 0%, #0d5d56 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(15,118,110,0.4)';" 
+           onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            💰 Financials
+        </a>
         <a href="/admin/dashboard" class="nav-link" style="
             padding: 10px 16px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -1661,6 +1677,20 @@ function showDashboard() {
   document.getElementById('dashboardPage').classList.add('active');
   loadEnhancedStats();
   loadAnalytics();
+  updateAdminDisplay();
+}
+
+// Update admin name display in header
+function updateAdminDisplay() {
+  try {
+    const adminInfo = JSON.parse(localStorage.getItem('adminInfo') || '{}');
+    const displayName = document.getElementById('adminDisplayName');
+    if (displayName && adminInfo.fullName) {
+      displayName.textContent = '👤 ' + adminInfo.fullName + ' (' + (adminInfo.role || 'Admin') + ')';
+    }
+  } catch (e) {
+    console.log('Could not update admin display');
+  }
 }
 
 // Token Login Handler
@@ -1688,8 +1718,14 @@ document.getElementById('tokenLoginForm').addEventListener('submit', async (e) =
       sessionExpiry = result.expiresAt;
       localStorage.setItem('adminSessionToken', sessionToken);
       localStorage.setItem('adminSessionExpiry', sessionExpiry);
+      // Store admin info for cross-page navigation
+      if (result.admin) {
+        localStorage.setItem('adminInfo', JSON.stringify(result.admin));
+        localStorage.setItem('adminToken', sessionToken); // For financials page
+      }
       showDashboard();
       startSessionTimer();
+      updateAdminDisplay();
     } else {
       errorDiv.textContent = '❌ ' + (result.error || 'Invalid token');
       errorDiv.classList.add('show');
@@ -1729,11 +1765,13 @@ document.getElementById('usernameLoginForm').addEventListener('submit', async (e
       sessionExpiry = result.expiresAt;
       localStorage.setItem('adminSessionToken', sessionToken);
       localStorage.setItem('adminSessionExpiry', sessionExpiry);
+      localStorage.setItem('adminToken', sessionToken); // For financials page
       if (result.admin) {
         localStorage.setItem('adminInfo', JSON.stringify(result.admin));
       }
       showDashboard();
       startSessionTimer();
+      updateAdminDisplay();
     } else {
       errorDiv.textContent = '❌ ' + (result.error || 'Invalid credentials');
       errorDiv.classList.add('show');

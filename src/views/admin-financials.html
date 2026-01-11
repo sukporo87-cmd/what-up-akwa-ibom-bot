@@ -110,9 +110,11 @@
       <p>What's Up Trivia - Revenue & Payout Management</p>
     </div>
     <div class="header-right">
+      <button class="header-btn" onclick="goToMainAdmin()">📊 Main Dashboard</button>
+      <button class="header-btn" onclick="goToAudit()">📋 Audit Log</button>
       <button class="header-btn" onclick="exportData('csv')">📥 Export CSV</button>
       <button class="header-btn" onclick="printReport()">🖨️ Print</button>
-      <a href="/admin" class="header-btn">← Back</a>
+      <span id="adminInfo" style="font-size:12px;opacity:0.9;margin-right:8px;"></span>
       <button class="header-btn primary" onclick="logout()">Logout</button>
     </div>
   </header>
@@ -281,7 +283,11 @@
     function closeUserModal(){document.getElementById('userModal').classList.remove('active')}
     function exportData(f){const p=new URLSearchParams({format:f,type:'all',token:authToken});if(startDate)p.append('start_date',startDate);if(endDate)p.append('end_date',endDate);window.open(API_BASE+'/export?'+p.toString(),'_blank')}
     function printReport(){window.print()}
-    function logout(){localStorage.removeItem('adminToken');window.location.href='/admin'}
+    function logout(){localStorage.removeItem('adminToken');localStorage.removeItem('adminInfo');window.location.href='/admin'}
+    function goToMainAdmin(){window.location.href='/admin'}
+    function goToAudit(){window.location.href='/admin/audit'}
+    function displayAdminInfo(){try{const info=JSON.parse(localStorage.getItem('adminInfo')||'{}');if(info.fullName)document.getElementById('adminInfo').textContent='👤 '+info.fullName+' ('+info.role+')';}catch(e){}}
+    displayAdminInfo();
     function fmt(n){if(n==null)return'0';const x=parseFloat(n);return isNaN(x)?'0':x.toLocaleString('en-NG',{maximumFractionDigits:0})}
     function fmtPhone(p){if(!p)return'N/A';return p.startsWith('tg_')?'📱'+p.replace('tg_',''):'📞'+p}
     function fmtDate(d){if(!d)return'N/A';return new Date(d).toLocaleDateString('en-NG',{year:'numeric',month:'short',day:'numeric'})}
