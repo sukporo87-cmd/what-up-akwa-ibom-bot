@@ -279,21 +279,22 @@
       const res = await api('/questions/rotation-stats');
       if (res?.success) {
         const d = res.data;
-        document.getElementById('totalQuestions').textContent = (d.total_questions || 0).toLocaleString();
-        document.getElementById('totalUsers').textContent = (d.active_users || 0).toLocaleString();
-        document.getElementById('historyRecords').textContent = (d.history_records || 0).toLocaleString();
-        document.getElementById('avgCoverage').textContent = (d.avg_coverage || 0).toFixed(1) + '%';
+        document.getElementById('totalQuestions').textContent = (parseInt(d.total_questions) || 0).toLocaleString();
+        document.getElementById('totalUsers').textContent = (parseInt(d.active_users) || 0).toLocaleString();
+        document.getElementById('historyRecords').textContent = (parseInt(d.history_records) || 0).toLocaleString();
+        document.getElementById('avgCoverage').textContent = (parseFloat(d.avg_coverage) || 0).toFixed(1) + '%';
         
         // Health status
         const healthCard = document.getElementById('healthCard');
         const healthStatus = document.getElementById('healthStatus');
         const healthSub = document.getElementById('healthSub');
+        const totalQ = parseInt(d.total_questions) || 0;
         
-        if (d.total_questions >= 5000) {
+        if (totalQ >= 5000) {
           healthStatus.textContent = 'Excellent';
           healthSub.textContent = 'Ready for scale';
           healthCard.classList.add('success');
-        } else if (d.total_questions >= 2000) {
+        } else if (totalQ >= 2000) {
           healthStatus.textContent = 'Good';
           healthSub.textContent = 'Add more for growth';
           healthCard.classList.add('warning');
