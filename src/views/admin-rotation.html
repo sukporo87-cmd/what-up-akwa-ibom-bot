@@ -412,7 +412,7 @@
           <tbody>`;
         
         for (const user of res.data) {
-          const pct = user.coverage_percent || 0;
+          const pct = parseFloat(user.coverage_percent) || 0;
           let status = '<span class="badge fresh">Fresh Pool</span>';
           if (pct > 70) {
             status = '<span class="badge stale">Needs Refresh</span>';
@@ -423,8 +423,8 @@
           html += `
             <tr>
               <td><strong>${user.username || 'User #' + user.user_id}</strong></td>
-              <td>${user.questions_seen || 0}</td>
-              <td>${user.total_questions || 0}</td>
+              <td>${parseInt(user.questions_seen) || 0}</td>
+              <td>${parseInt(user.total_questions) || 0}</td>
               <td>${pct.toFixed(1)}%</td>
               <td>${status}</td>
             </tr>
@@ -554,11 +554,14 @@
       const res = await api('/questions/user-coverage/' + encodeURIComponent(input));
       if (res?.success) {
         const d = res.data;
+        const coveragePct = parseFloat(d.coverage_percent) || 0;
+        const questionsSeen = parseInt(d.questions_seen) || 0;
+        const totalQuestions = parseInt(d.total_questions) || 0;
         document.getElementById('userCoverageResult').innerHTML = `
           <div class="alert alert-info">
             <strong>${d.username || 'User #' + d.user_id}</strong><br>
-            Questions Seen: <strong>${d.questions_seen}</strong> / ${d.total_questions} (${d.coverage_percent.toFixed(1)}%)<br>
-            Remaining Fresh: <strong>${d.total_questions - d.questions_seen}</strong> questions
+            Questions Seen: <strong>${questionsSeen}</strong> / ${totalQuestions} (${coveragePct.toFixed(1)}%)<br>
+            Remaining Fresh: <strong>${totalQuestions - questionsSeen}</strong> questions
           </div>
         `;
       } else {
