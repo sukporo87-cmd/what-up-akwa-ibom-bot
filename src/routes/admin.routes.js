@@ -88,6 +88,11 @@ router.get('/audit', (req, res) => {
   res.sendFile('admin-audit.html', { root: './src/views' });
 });
 
+// NEW: Question Rotation dashboard
+router.get('/rotation', (req, res) => {
+  res.sendFile('admin-rotation.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -4616,6 +4621,218 @@ router.get('/api/financials/export', authenticateAdminWithQuery, requireFinancia
     logger.error('Error exporting data:', error);
     res.status(500).json({ error: 'Failed to export data' });
   }
+});
+
+// ============================================
+// QUESTION ROTATION ENDPOINTS
+// ============================================
+
+/**
+ * GET /admin/api/questions/rotation-stats
+ * Overall rotation system statistics
+ */
+router.get('/api/questions/rotation-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                (SELECT COUNT(*) FROM questions WHERE is_active = true) as total_questions,
+                (SELECT COUNT(DISTINCT id) FROM users WHERE last_active > NOW() - INTERVAL '30 days') as active_users,
+                (SELECT COUNT(*) FROM user_question_history) as history_records,
+                (SELECT ROUND(AVG(coverage), 2) FROM (
+                    SELECT 
+                        COUNT(DISTINCT uqh.question_id)::numeric / 
+                        NULLIF((SELECT COUNT(*) FROM questions WHERE is_active = true), 0) * 100 as coverage
+                    FROM users u
+                    LEFT JOIN user_question_history uqh ON u.id = uqh.user_id
+                    WHERE u.last_active > NOW() - INTERVAL '30 days'
+                    GROUP BY u.id
+                ) sub) as avg_coverage
+        `);
+        
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        logger.error('Error getting rotation stats:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /admin/api/questions/difficulty-stats
+ * Question count by difficulty level (1-15)
+ */
+router.get('/api/questions/difficulty-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT difficulty, COUNT(*) as count
+            FROM questions
+            WHERE is_active = true
+            GROUP BY difficulty
+            ORDER BY difficulty
+        `);
+        
+        // Convert to object { 1: 50, 2: 45, ... }
+        const stats = {};
+        for (let i = 1; i <= 15; i++) {
+            stats[i] = 0;
+        }
+        result.rows.forEach(row => {
+            stats[row.difficulty] = parseInt(row.count);
+        });
+        
+        res.json({ success: true, data: stats });
+    } catch (error) {
+        logger.error('Error getting difficulty stats:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /admin/api/questions/freshness-by-difficulty
+ * Freshness breakdown by difficulty level
+ */
+router.get('/api/questions/freshness-by-difficulty', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            WITH active_users AS (
+                SELECT COUNT(DISTINCT id) as count 
+                FROM users 
+                WHERE last_active > NOW() - INTERVAL '30 days'
+            ),
+            question_exposure AS (
+                SELECT 
+                    q.id,
+                    q.difficulty,
+                    COUNT(DISTINCT uqh.user_id) as users_seen,
+                    (SELECT count FROM active_users) as total_active
+                FROM questions q
+                LEFT JOIN user_question_history uqh ON q.id = uqh.question_id
+                WHERE q.is_active = true
+                GROUP BY q.id, q.difficulty
+            )
+            SELECT 
+                difficulty,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE total_active = 0 OR users_seen::float / NULLIF(total_active, 0) < 0.3) as fresh,
+                COUNT(*) FILTER (WHERE total_active > 0 AND users_seen::float / NULLIF(total_active, 0) BETWEEN 0.3 AND 0.7) as moderate,
+                COUNT(*) FILTER (WHERE total_active > 0 AND users_seen::float / NULLIF(total_active, 0) > 0.7) as stale
+            FROM question_exposure
+            GROUP BY difficulty
+            ORDER BY difficulty
+        `);
+        
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        logger.error('Error getting freshness by difficulty:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /admin/api/questions/top-users-coverage
+ * Users with highest question coverage
+ */
+router.get('/api/questions/top-users-coverage', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            WITH total AS (
+                SELECT COUNT(*) as cnt FROM questions WHERE is_active = true
+            )
+            SELECT 
+                u.id as user_id,
+                u.username,
+                COUNT(DISTINCT uqh.question_id) as questions_seen,
+                (SELECT cnt FROM total) as total_questions,
+                ROUND(COUNT(DISTINCT uqh.question_id)::numeric / NULLIF((SELECT cnt FROM total), 0) * 100, 2) as coverage_percent
+            FROM users u
+            JOIN user_question_history uqh ON u.id = uqh.user_id
+            GROUP BY u.id, u.username
+            ORDER BY questions_seen DESC
+            LIMIT 20
+        `);
+        
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        logger.error('Error getting top users coverage:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /admin/api/questions/user-coverage/:identifier
+ * Get specific user's question coverage
+ */
+router.get('/api/questions/user-coverage/:identifier', authenticateAdmin, async (req, res) => {
+    try {
+        const identifier = req.params.identifier;
+        
+        // Try to find user by ID or phone
+        let userQuery;
+        if (/^\d+$/.test(identifier)) {
+            userQuery = await pool.query('SELECT id, username FROM users WHERE id = $1', [identifier]);
+        } else {
+            userQuery = await pool.query('SELECT id, username FROM users WHERE phone_number LIKE $1', ['%' + identifier]);
+        }
+        
+        if (userQuery.rows.length === 0) {
+            return res.json({ success: false, error: 'User not found' });
+        }
+        
+        const user = userQuery.rows[0];
+        
+        const result = await pool.query(`
+            WITH total AS (
+                SELECT COUNT(*) as cnt FROM questions WHERE is_active = true
+            )
+            SELECT 
+                COUNT(DISTINCT question_id) as questions_seen,
+                (SELECT cnt FROM total) as total_questions,
+                ROUND(COUNT(DISTINCT question_id)::numeric / NULLIF((SELECT cnt FROM total), 0) * 100, 2) as coverage_percent
+            FROM user_question_history
+            WHERE user_id = $1
+        `, [user.id]);
+        
+        res.json({ 
+            success: true, 
+            data: {
+                user_id: user.id,
+                username: user.username,
+                ...result.rows[0]
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting user coverage:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /admin/api/questions/recent-rotation
+ * Recent rotation activity
+ */
+router.get('/api/questions/recent-rotation', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                uqh.user_id,
+                u.username,
+                uqh.question_id,
+                q.question_text,
+                q.difficulty,
+                uqh.asked_at,
+                (SELECT COUNT(*) FROM user_question_history 
+                 WHERE user_id = uqh.user_id AND question_id = uqh.question_id) as times_seen
+            FROM user_question_history uqh
+            JOIN users u ON uqh.user_id = u.id
+            JOIN questions q ON uqh.question_id = q.id
+            ORDER BY uqh.asked_at DESC
+            LIMIT 50
+        `);
+        
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        logger.error('Error getting recent rotation:', error);
+        res.json({ success: false, error: error.message });
+    }
 });
 
 // ============================================

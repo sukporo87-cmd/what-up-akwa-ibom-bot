@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Question Rotation Dashboard - What's Up Trivia</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --primary: #6366f1; --primary-dark: #4f46e5;
+      --success: #10b981; --success-bg: #d1fae5;
+      --danger: #ef4444; --danger-bg: #fee2e2;
+      --warning: #f59e0b; --warning-bg: #fef3c7;
+      --info: #3b82f6; --info-bg: #dbeafe;
+      --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb;
+      --gray-500: #6b7280; --gray-700: #374151; --gray-900: #111827;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--gray-100); color: var(--gray-900); }
+    .header { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 20px; }
+    .header-btns { display: flex; gap: 12px; }
+    .header-btn { padding: 8px 16px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; font-size: 13px; cursor: pointer; text-decoration: none; }
+    .header-btn:hover { background: rgba(255,255,255,0.25); }
+    .header-btn.primary { background: white; color: var(--primary); }
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: var(--primary); }
+    .stat-card .label { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
+    .stat-card .sub { font-size: 11px; color: var(--gray-500); margin-top: 8px; }
+    .stat-card.success .value { color: var(--success); }
+    .stat-card.warning .value { color: var(--warning); }
+    .stat-card.danger .value { color: var(--danger); }
+    
+    .card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; overflow: hidden; }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
+    .card-title { font-size: 16px; font-weight: 600; }
+    .card-body { padding: 20px; }
+    
+    .tabs { display: flex; border-bottom: 1px solid var(--gray-200); background: var(--gray-50); }
+    .tab { padding: 14px 24px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 14px; color: var(--gray-500); font-weight: 500; }
+    .tab:hover { color: var(--gray-700); background: white; }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); background: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    
+    .progress-bar { background: var(--gray-200); border-radius: 4px; height: 8px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+    .progress-fill.low { background: var(--danger); }
+    .progress-fill.medium { background: var(--warning); }
+    .progress-fill.high { background: var(--success); }
+    
+    .difficulty-row { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--gray-100); }
+    .difficulty-row:last-child { border-bottom: none; }
+    .difficulty-label { width: 120px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .difficulty-label .tier { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+    .tier-easy { background: var(--success-bg); color: #065f46; }
+    .tier-medium { background: var(--warning-bg); color: #92400e; }
+    .tier-hard { background: var(--danger-bg); color: #991b1b; }
+    .difficulty-progress { flex: 1; margin: 0 20px; }
+    .difficulty-stats { width: 180px; text-align: right; font-size: 13px; color: var(--gray-500); }
+    
+    .btn { padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--gray-700); }
+    .form-group input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 14px; }
+    .form-group input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+    
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+    
+    .badge { display: inline-flex; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge.fresh { background: var(--success-bg); color: #065f46; }
+    .badge.moderate { background: var(--warning-bg); color: #92400e; }
+    .badge.stale { background: var(--danger-bg); color: #991b1b; }
+    
+    .table { width: 100%; border-collapse: collapse; }
+    .table th { text-align: left; padding: 12px; font-size: 12px; color: var(--gray-500); background: var(--gray-50); border-bottom: 1px solid var(--gray-200); text-transform: uppercase; letter-spacing: 0.5px; }
+    .table td { padding: 12px; font-size: 13px; border-bottom: 1px solid var(--gray-100); }
+    .table tr:hover { background: var(--gray-50); }
+    
+    .result-box { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 20px; }
+    .result-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--gray-200); }
+    .result-item:last-child { border-bottom: none; }
+    .result-label { color: var(--gray-600); }
+    .result-value { font-weight: 600; }
+    .result-value.success { color: var(--success); }
+    .result-value.danger { color: var(--danger); }
+    .result-value.warning { color: var(--warning); }
+    
+    .loading { text-align: center; padding: 40px; color: var(--gray-500); }
+    .empty-state { text-align: center; padding: 40px; color: var(--gray-500); }
+    
+    .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+    .alert-info { background: var(--info-bg); color: #1e40af; }
+    .alert-success { background: var(--success-bg); color: #065f46; }
+    .alert-warning { background: var(--warning-bg); color: #92400e; }
+    
+    .user-search { display: flex; gap: 12px; margin-bottom: 20px; }
+    .user-search input { flex: 1; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>🔄 Question Rotation Dashboard</h1>
+      <p style="font-size:13px;opacity:0.9">Monitor question health & plan for growth</p>
+    </div>
+    <div class="header-btns">
+      <a href="/admin" class="header-btn">🎮 Main Dashboard</a>
+      <a href="/admin/dashboard" class="header-btn">📊 Analytics</a>
+      <a href="/admin/audit" class="header-btn">📝 Audit Trail</a>
+      <button class="header-btn primary" onclick="loadAllData()">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Stats Overview -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="value" id="totalQuestions">-</div>
+        <div class="label">Total Questions</div>
+        <div class="sub">Active in rotation</div>
+      </div>
+      <div class="stat-card">
+        <div class="value" id="totalUsers">-</div>
+        <div class="label">Active Users</div>
+        <div class="sub">Last 30 days</div>
+      </div>
+      <div class="stat-card" id="healthCard">
+        <div class="value" id="healthStatus">-</div>
+        <div class="label">Bank Health</div>
+        <div class="sub" id="healthSub">Checking...</div>
+      </div>
+      <div class="stat-card">
+        <div class="value" id="avgCoverage">-</div>
+        <div class="label">Avg User Coverage</div>
+        <div class="sub">% of questions seen</div>
+      </div>
+      <div class="stat-card">
+        <div class="value" id="historyRecords">-</div>
+        <div class="label">History Records</div>
+        <div class="sub">Question views tracked</div>
+      </div>
+    </div>
+
+    <!-- Main Tabs -->
+    <div class="card">
+      <div class="tabs">
+        <div class="tab active" onclick="showTab('priority')">📊 Priority</div>
+        <div class="tab" onclick="showTab('freshness')">🔄 Freshness</div>
+        <div class="tab" onclick="showTab('calculator')">🧮 Calculator</div>
+        <div class="tab" onclick="showTab('users')">👥 User Coverage</div>
+      </div>
+
+      <!-- Priority Tab -->
+      <div class="tab-content active" id="tab-priority">
+        <div class="card-body">
+          <h3 style="margin-bottom:8px">Question Distribution by Difficulty</h3>
+          <p style="color:var(--gray-500);margin-bottom:20px;font-size:14px">
+            Recommended: At least 50 questions per difficulty level for smooth rotation
+          </p>
+          <div id="difficultyProgress" class="loading">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Freshness Tab -->
+      <div class="tab-content" id="tab-freshness">
+        <div class="card-body">
+          <h3 style="margin-bottom:8px">Question Freshness by Difficulty</h3>
+          <p style="color:var(--gray-500);margin-bottom:20px;font-size:14px">
+            <span class="badge fresh">Fresh</span> = &lt;30% of users have seen &nbsp;
+            <span class="badge moderate">Moderate</span> = 30-70% &nbsp;
+            <span class="badge stale">Stale</span> = &gt;70% (need more questions!)
+          </p>
+          <div id="freshnessReport" class="loading">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Calculator Tab -->
+      <div class="tab-content" id="tab-calculator">
+        <div class="card-body">
+          <h3 style="margin-bottom:20px">Question Bank Size Calculator</h3>
+          <div class="grid-2">
+            <div>
+              <div class="form-group">
+                <label>Target Active Users</label>
+                <input type="number" id="calcUsers" value="1000" min="1">
+              </div>
+              <div class="form-group">
+                <label>Games per User per Day</label>
+                <input type="number" id="calcGames" value="3" min="1" max="20">
+              </div>
+              <div class="form-group">
+                <label>Questions per Game</label>
+                <input type="number" id="calcQuestions" value="15" min="1" max="50">
+              </div>
+              <div class="form-group">
+                <label>Months Before Noticeable Repeat</label>
+                <input type="number" id="calcMonths" value="6" min="1" max="24">
+              </div>
+              <button class="btn btn-primary" onclick="calculateOptimal()">Calculate Requirements</button>
+            </div>
+            <div>
+              <h4 style="margin-bottom:12px">Recommendation</h4>
+              <div class="result-box" id="calcResults">
+                <p style="color:var(--gray-500)">Enter parameters and click Calculate</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Users Tab -->
+      <div class="tab-content" id="tab-users">
+        <div class="card-body">
+          <h3 style="margin-bottom:20px">User Question Coverage</h3>
+          <div class="user-search">
+            <input type="text" id="userSearchInput" placeholder="Enter user ID or phone number...">
+            <button class="btn btn-primary" onclick="searchUser()">Search</button>
+          </div>
+          <div id="userCoverageResult"></div>
+          
+          <h4 style="margin:24px 0 12px">Top Users by Questions Seen</h4>
+          <div id="topUsersTable" class="loading">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📜 Recent Rotation Activity</span>
+      </div>
+      <div class="card-body">
+        <div id="recentActivity" class="loading">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/admin/api';
+    let authToken = localStorage.getItem('adminToken');
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!authToken) { window.location.href = '/admin'; return; }
+      loadAllData();
+    });
+
+    async function api(endpoint) {
+      try {
+        const res = await fetch(API_BASE + endpoint, {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (res.status === 401) { window.location.href = '/admin'; return null; }
+        return res.json();
+      } catch (err) {
+        console.error('API Error:', err);
+        return null;
+      }
+    }
+
+    async function loadAllData() {
+      await Promise.all([
+        loadStats(),
+        loadDifficultyProgress(),
+        loadFreshness(),
+        loadTopUsers(),
+        loadRecentActivity()
+      ]);
+    }
+
+    async function loadStats() {
+      const res = await api('/questions/rotation-stats');
+      if (res?.success) {
+        const d = res.data;
+        document.getElementById('totalQuestions').textContent = (d.total_questions || 0).toLocaleString();
+        document.getElementById('totalUsers').textContent = (d.active_users || 0).toLocaleString();
+        document.getElementById('historyRecords').textContent = (d.history_records || 0).toLocaleString();
+        document.getElementById('avgCoverage').textContent = (d.avg_coverage || 0).toFixed(1) + '%';
+        
+        // Health status
+        const healthCard = document.getElementById('healthCard');
+        const healthStatus = document.getElementById('healthStatus');
+        const healthSub = document.getElementById('healthSub');
+        
+        if (d.total_questions >= 5000) {
+          healthStatus.textContent = 'Excellent';
+          healthSub.textContent = 'Ready for scale';
+          healthCard.classList.add('success');
+        } else if (d.total_questions >= 2000) {
+          healthStatus.textContent = 'Good';
+          healthSub.textContent = 'Add more for growth';
+          healthCard.classList.add('warning');
+        } else {
+          healthStatus.textContent = 'Low';
+          healthSub.textContent = 'Need more questions!';
+          healthCard.classList.add('danger');
+        }
+      }
+    }
+
+    async function loadDifficultyProgress() {
+      const res = await api('/questions/difficulty-stats');
+      if (res?.success) {
+        const data = res.data;
+        const recommended = 80; // Recommended questions per difficulty
+        
+        let html = '';
+        for (let diff = 1; diff <= 15; diff++) {
+          const count = data[diff] || 0;
+          const pct = Math.min((count / recommended) * 100, 100);
+          const tier = diff <= 5 ? 'easy' : diff <= 10 ? 'medium' : 'hard';
+          const tierLabel = diff <= 5 ? 'Easy' : diff <= 10 ? 'Medium' : 'Hard';
+          const fillClass = pct < 30 ? 'low' : pct < 70 ? 'medium' : 'high';
+          
+          html += `
+            <div class="difficulty-row">
+              <div class="difficulty-label">
+                Q${diff}
+                <span class="tier tier-${tier}">${tierLabel}</span>
+              </div>
+              <div class="difficulty-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill ${fillClass}" style="width:${pct}%"></div>
+                </div>
+              </div>
+              <div class="difficulty-stats">
+                ${count} / ${recommended} (${Math.round(pct)}%)
+                ${count < recommended ? `<br><span style="color:var(--danger)">Need ${recommended - count} more</span>` : ''}
+              </div>
+            </div>
+          `;
+        }
+        document.getElementById('difficultyProgress').innerHTML = html;
+      } else {
+        document.getElementById('difficultyProgress').innerHTML = '<div class="empty-state">Could not load data</div>';
+      }
+    }
+
+    async function loadFreshness() {
+      const res = await api('/questions/freshness-by-difficulty');
+      if (res?.success) {
+        const data = res.data;
+        
+        let html = `<table class="table">
+          <thead>
+            <tr>
+              <th>Difficulty</th>
+              <th>Tier</th>
+              <th>Total</th>
+              <th>Fresh</th>
+              <th>Moderate</th>
+              <th>Stale</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        
+        for (let diff = 1; diff <= 15; diff++) {
+          const row = data.find(r => r.difficulty == diff) || { fresh: 0, moderate: 0, stale: 0, total: 0 };
+          const tier = diff <= 5 ? 'Easy' : diff <= 10 ? 'Medium' : 'Hard';
+          const tierClass = diff <= 5 ? 'tier-easy' : diff <= 10 ? 'tier-medium' : 'tier-hard';
+          
+          const staleRatio = row.total > 0 ? (row.stale / row.total) : 0;
+          let status = '<span class="badge fresh">Healthy</span>';
+          if (staleRatio > 0.5) {
+            status = '<span class="badge stale">Critical!</span>';
+          } else if (staleRatio > 0.3) {
+            status = '<span class="badge moderate">Warning</span>';
+          }
+          
+          html += `
+            <tr>
+              <td><strong>Q${diff}</strong></td>
+              <td><span class="tier ${tierClass}">${tier}</span></td>
+              <td>${row.total || 0}</td>
+              <td><span class="badge fresh">${row.fresh || 0}</span></td>
+              <td><span class="badge moderate">${row.moderate || 0}</span></td>
+              <td><span class="badge stale">${row.stale || 0}</span></td>
+              <td>${status}</td>
+            </tr>
+          `;
+        }
+        
+        html += '</tbody></table>';
+        document.getElementById('freshnessReport').innerHTML = html;
+      } else {
+        document.getElementById('freshnessReport').innerHTML = '<div class="empty-state">Could not load freshness data</div>';
+      }
+    }
+
+    async function loadTopUsers() {
+      const res = await api('/questions/top-users-coverage');
+      if (res?.success && res.data.length > 0) {
+        let html = `<table class="table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Questions Seen</th>
+              <th>Total Available</th>
+              <th>Coverage</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        
+        for (const user of res.data) {
+          const pct = user.coverage_percent || 0;
+          let status = '<span class="badge fresh">Fresh Pool</span>';
+          if (pct > 70) {
+            status = '<span class="badge stale">Needs Refresh</span>';
+          } else if (pct > 40) {
+            status = '<span class="badge moderate">Moderate</span>';
+          }
+          
+          html += `
+            <tr>
+              <td><strong>${user.username || 'User #' + user.user_id}</strong></td>
+              <td>${user.questions_seen || 0}</td>
+              <td>${user.total_questions || 0}</td>
+              <td>${pct.toFixed(1)}%</td>
+              <td>${status}</td>
+            </tr>
+          `;
+        }
+        
+        html += '</tbody></table>';
+        document.getElementById('topUsersTable').innerHTML = html;
+      } else {
+        document.getElementById('topUsersTable').innerHTML = '<div class="empty-state">No user history data yet</div>';
+      }
+    }
+
+    async function loadRecentActivity() {
+      const res = await api('/questions/recent-rotation');
+      if (res?.success && res.data.length > 0) {
+        let html = `<table class="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Question</th>
+              <th>Difficulty</th>
+              <th>Times Seen</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        
+        for (const row of res.data.slice(0, 20)) {
+          const timeAgo = getTimeAgo(new Date(row.asked_at));
+          html += `
+            <tr>
+              <td>${timeAgo}</td>
+              <td>${row.username || 'User #' + row.user_id}</td>
+              <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.question_text || 'Q#' + row.question_id}</td>
+              <td>Q${row.difficulty || '?'}</td>
+              <td>${row.times_seen || 1}</td>
+            </tr>
+          `;
+        }
+        
+        html += '</tbody></table>';
+        document.getElementById('recentActivity').innerHTML = html;
+      } else {
+        document.getElementById('recentActivity').innerHTML = '<div class="empty-state">No recent rotation activity</div>';
+      }
+    }
+
+    function showTab(tabId) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.getElementById('tab-' + tabId).classList.add('active');
+      event.target.classList.add('active');
+    }
+
+    function calculateOptimal() {
+      const users = parseInt(document.getElementById('calcUsers').value) || 1000;
+      const games = parseInt(document.getElementById('calcGames').value) || 3;
+      const questions = parseInt(document.getElementById('calcQuestions').value) || 15;
+      const months = parseInt(document.getElementById('calcMonths').value) || 6;
+      
+      const questionsPerDay = games * questions;
+      const questionsPerMonth = questionsPerDay * 30;
+      const targetDays = months * 30;
+      const minimumNeeded = questionsPerDay * targetDays;
+      const recommended = Math.ceil(minimumNeeded * 1.5); // 1.5x buffer
+      
+      // Get current count from stats
+      const currentCount = parseInt(document.getElementById('totalQuestions').textContent.replace(/,/g, '')) || 0;
+      const gap = Math.max(0, recommended - currentCount);
+      
+      let statusClass = 'success';
+      let statusText = 'SUFFICIENT';
+      if (currentCount < minimumNeeded) {
+        statusClass = 'danger';
+        statusText = 'INSUFFICIENT';
+      } else if (currentCount < recommended) {
+        statusClass = 'warning';
+        statusText = 'ADEQUATE';
+      }
+      
+      document.getElementById('calcResults').innerHTML = `
+        <div class="result-item">
+          <span class="result-label">Questions per user/day</span>
+          <span class="result-value">${questionsPerDay}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Questions per user/month</span>
+          <span class="result-value">${questionsPerMonth.toLocaleString()}</span>
+        </div>
+        <hr style="margin:12px 0;border:none;border-top:1px solid var(--gray-200)">
+        <div class="result-item">
+          <span class="result-label">Minimum Required</span>
+          <span class="result-value">${minimumNeeded.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Recommended (1.5x buffer)</span>
+          <span class="result-value">${recommended.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Current Questions</span>
+          <span class="result-value">${currentCount.toLocaleString()}</span>
+        </div>
+        <hr style="margin:12px 0;border:none;border-top:1px solid var(--gray-200)">
+        <div class="result-item">
+          <span class="result-label">Status</span>
+          <span class="result-value ${statusClass}">${statusText}</span>
+        </div>
+        ${gap > 0 ? `
+        <div class="result-item">
+          <span class="result-label">Gap to Fill</span>
+          <span class="result-value danger">${gap.toLocaleString()} questions needed</span>
+        </div>
+        ` : `
+        <div class="result-item">
+          <span class="result-label">Surplus</span>
+          <span class="result-value success">+${(currentCount - recommended).toLocaleString()} questions</span>
+        </div>
+        `}
+      `;
+    }
+
+    async function searchUser() {
+      const input = document.getElementById('userSearchInput').value.trim();
+      if (!input) return;
+      
+      const res = await api('/questions/user-coverage/' + encodeURIComponent(input));
+      if (res?.success) {
+        const d = res.data;
+        document.getElementById('userCoverageResult').innerHTML = `
+          <div class="alert alert-info">
+            <strong>${d.username || 'User #' + d.user_id}</strong><br>
+            Questions Seen: <strong>${d.questions_seen}</strong> / ${d.total_questions} (${d.coverage_percent.toFixed(1)}%)<br>
+            Remaining Fresh: <strong>${d.total_questions - d.questions_seen}</strong> questions
+          </div>
+        `;
+      } else {
+        document.getElementById('userCoverageResult').innerHTML = `
+          <div class="alert alert-warning">User not found or no history</div>
+        `;
+      }
+    }
+
+    function getTimeAgo(date) {
+      const seconds = Math.floor((new Date() - date) / 1000);
+      if (seconds < 60) return seconds + 's ago';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + 'm ago';
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + 'h ago';
+      const days = Math.floor(hours / 24);
+      return days + 'd ago';
+    }
+  </script>
+</body>
+</html>

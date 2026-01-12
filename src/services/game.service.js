@@ -1184,46 +1184,131 @@ Play as many times as allowed!`;
     }
 
     // ============================================
-    // RANDOMIZED QUESTION SELECTION
+    // INTELLIGENT QUESTION ROTATION
+    // Prioritizes questions the user hasn't seen
     // ============================================
 
     async getRandomizedQuestion(userId, difficulty, excludeIds, gameMode, tournamentId) {
         try {
-            const recentResult = await pool.query(`
-                SELECT question_id FROM user_question_history
-                WHERE user_id = $1 AND asked_at >= NOW() - INTERVAL '7 days'
-            `, [userId]);
+            // Get difficulty range based on question number
+            let minDifficulty, maxDifficulty;
             
-            const recentQuestionIds = recentResult.rows.map(r => r.question_id);
-            const allExcludeIds = [...new Set([...excludeIds, ...recentQuestionIds])];
-            
-            let query = `SELECT * FROM questions WHERE difficulty = $1 AND is_active = true AND (is_disabled = false OR is_disabled IS NULL)`;
-            const params = [difficulty];
-            let paramIndex = 2;
-            
-            if (allExcludeIds.length > 0) {
-                query += ` AND id != ALL($${paramIndex})`;
-                params.push(allExcludeIds);
-                paramIndex++;
-            }
-            
-            if (gameMode === 'practice') {
-                query += ` AND question_bank_id = 2`; // practice_mode bank
+            if (difficulty >= 1 && difficulty <= 5) {
+                minDifficulty = 1;
+                maxDifficulty = 7;
+            } else if (difficulty >= 6 && difficulty <= 10) {
+                minDifficulty = 6;
+                maxDifficulty = 12;
+            } else if (difficulty >= 11 && difficulty <= 15) {
+                minDifficulty = 11;
+                maxDifficulty = 15;
             } else {
-                query += ` AND (question_bank_id = 1 OR question_bank_id IS NULL)`; // classic_mode bank
+                minDifficulty = 1;
+                maxDifficulty = 15;
             }
-            
-            query += ` ORDER BY RANDOM() LIMIT 5`;
-            
-            const result = await pool.query(query, params);
-            
-            if (result.rows.length === 0) {
-                return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+
+            // Determine question bank based on game mode
+            let bankCondition = '';
+            if (gameMode === 'practice') {
+                bankCondition = `AND (q.question_bank_id = 2)`;
+            } else {
+                bankCondition = `AND (q.question_bank_id = 1 OR q.question_bank_id IS NULL)`;
             }
+
+            // Exclude questions already asked in this game
+            const excludeClause = excludeIds.length > 0 
+                ? `AND q.id NOT IN (${excludeIds.join(',')})` 
+                : '';
+
+            // =============================================
+            // SMART ROTATION QUERY
+            // Priority: 1) Never seen  2) Seen longest ago  3) Random
+            // =============================================
+            const smartQuery = `
+                WITH user_history AS (
+                    -- Get all questions this user has seen
+                    SELECT 
+                        question_id,
+                        COUNT(*) as times_seen,
+                        MAX(asked_at) as last_seen
+                    FROM user_question_history
+                    WHERE user_id = $1
+                    GROUP BY question_id
+                ),
+                scored_questions AS (
+                    SELECT 
+                        q.*,
+                        COALESCE(uh.times_seen, 0) as user_times_seen,
+                        uh.last_seen,
+                        -- Calculate selection score
+                        -- Higher score = better candidate
+                        CASE 
+                            WHEN uh.question_id IS NULL THEN 1000  -- Never seen = highest priority
+                            ELSE 0 
+                        END
+                        + COALESCE(
+                            EXTRACT(EPOCH FROM (NOW() - uh.last_seen)) / 3600,  -- Hours since seen
+                            1000  -- Never seen gets max bonus
+                        )
+                        + (100.0 / GREATEST(q.times_asked + 1, 1))  -- Global freshness: fewer views = higher score
+                        + (RANDOM() * 50)  -- Random factor for variety
+                        AS selection_score
+                    FROM questions q
+                    LEFT JOIN user_history uh ON q.id = uh.question_id
+                    WHERE q.difficulty BETWEEN $2 AND $3
+                    AND q.is_active = true
+                    AND (q.is_disabled = false OR q.is_disabled IS NULL)
+                    ${bankCondition}
+                    ${excludeClause}
+                )
+                SELECT * FROM scored_questions
+                ORDER BY 
+                    -- Unseen questions first
+                    CASE WHEN user_times_seen = 0 THEN 0 ELSE 1 END,
+                    -- Then by score (seen longer ago = higher score)
+                    selection_score DESC
+                LIMIT 1
+            `;
+
+            const result = await pool.query(smartQuery, [userId, minDifficulty, maxDifficulty]);
+
+            if (result.rows.length > 0) {
+                const question = result.rows[0];
+                // Log for debugging (can remove in production)
+                if (question.user_times_seen > 0) {
+                    logger.info(`🔄 Rotation: User ${userId} seeing Q#${question.id} again (${question.user_times_seen}x before)`);
+                } else {
+                    logger.info(`✨ Rotation: User ${userId} seeing fresh Q#${question.id}`);
+                }
+                return question;
+            }
+
+            // Fallback if smart query fails
+            logger.warn(`Smart rotation: No questions found for user ${userId}, difficulty ${difficulty}. Using fallback.`);
             
-            return result.rows[Math.floor(Math.random() * result.rows.length)];
+            const fallbackQuery = `
+                SELECT * FROM questions
+                WHERE difficulty BETWEEN $1 AND $2
+                AND is_active = true
+                AND (is_disabled = false OR is_disabled IS NULL)
+                ${bankCondition}
+                ${excludeClause}
+                ORDER BY RANDOM()
+                LIMIT 1
+            `;
+            
+            const fallbackResult = await pool.query(fallbackQuery, [minDifficulty, maxDifficulty]);
+            
+            if (fallbackResult.rows.length > 0) {
+                return fallbackResult.rows[0];
+            }
+
+            // Last resort: question service
+            return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+
         } catch (error) {
-            logger.error('Error getting randomized question:', error);
+            logger.error('Error in smart question rotation:', error);
+            // On error, fall back to question service
             return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
         }
     }
