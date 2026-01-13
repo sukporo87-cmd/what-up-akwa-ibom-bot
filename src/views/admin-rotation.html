@@ -220,17 +220,41 @@
       <div class="tab-content" id="tab-users">
         <div class="card-body">
           <h3 style="margin-bottom:20px">User Question Coverage</h3>
-          <div class="user-search">
-            <input type="text" id="userSearchInput" placeholder="Enter user ID or phone number...">
-            <button class="btn btn-primary" onclick="searchUser()">Search User</button>
+          
+          <div class="grid-2">
+            <!-- Left: User List -->
+            <div>
+              <div class="user-search" style="margin-bottom:16px">
+                <input type="text" id="userSearchInput" placeholder="Search by ID or phone..." onkeyup="filterUserList(this.value)">
+              </div>
+              
+              <div style="max-height:500px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px">
+                <table class="table" id="usersListTable">
+                  <thead style="position:sticky;top:0;background:var(--gray-50)">
+                    <tr>
+                      <th>User</th>
+                      <th>Seen</th>
+                      <th>Coverage</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usersListBody">
+                    <tr><td colspan="4" class="loading">Loading users...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <!-- Right: User Details -->
+            <div>
+              <div id="userCoverageResult">
+                <div class="empty-state" style="padding:40px;background:var(--gray-50);border-radius:8px">
+                  👈 Click a user to see their coverage details
+                </div>
+              </div>
+              <div id="userDetailedCoverage" style="margin-top:20px"></div>
+            </div>
           </div>
-          <div id="userCoverageResult"></div>
-          
-          <!-- Detailed coverage will appear here -->
-          <div id="userDetailedCoverage" style="margin-top:20px"></div>
-          
-          <h4 style="margin:24px 0 12px">Top Users by Questions Seen</h4>
-          <div id="topUsersTable" class="loading">Loading...</div>
         </div>
       </div>
     </div>
@@ -399,45 +423,110 @@
       }
     }
 
+    let allUsersData = []; // Store for filtering
+    
     async function loadTopUsers() {
       const res = await api('/questions/top-users-coverage');
       if (res?.success && res.data.length > 0) {
-        let html = `<table class="table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Questions Seen</th>
-              <th>Total Available</th>
-              <th>Coverage</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>`;
-        
-        for (const user of res.data) {
-          const pct = parseFloat(user.coverage_percent) || 0;
-          let status = '<span class="badge fresh">Fresh Pool</span>';
-          if (pct > 70) {
-            status = '<span class="badge stale">Needs Refresh</span>';
-          } else if (pct > 40) {
-            status = '<span class="badge moderate">Moderate</span>';
-          }
-          
-          html += `
-            <tr>
-              <td><strong>${user.username || 'User #' + user.user_id}</strong></td>
-              <td>${parseInt(user.questions_seen) || 0}</td>
-              <td>${parseInt(user.total_questions) || 0}</td>
-              <td>${pct.toFixed(1)}%</td>
-              <td>${status}</td>
-            </tr>
-          `;
+        allUsersData = res.data;
+        renderUsersList(allUsersData);
+      } else {
+        document.getElementById('usersListBody').innerHTML = '<tr><td colspan="4" class="empty-state">No user history data yet</td></tr>';
+      }
+    }
+    
+    function renderUsersList(users) {
+      let html = '';
+      
+      for (const user of users) {
+        const pct = parseFloat(user.coverage_percent) || 0;
+        let statusBadge = '<span class="badge fresh">Fresh</span>';
+        if (pct >= 70) {
+          statusBadge = '<span class="badge stale">High</span>';
+        } else if (pct >= 40) {
+          statusBadge = '<span class="badge moderate">Med</span>';
         }
         
-        html += '</tbody></table>';
-        document.getElementById('topUsersTable').innerHTML = html;
+        html += `
+          <tr onclick="selectUser(${user.user_id}, '${(user.username || '').replace(/'/g, "\\'")}')" style="cursor:pointer" class="user-row" data-userid="${user.user_id}">
+            <td><strong>${user.username || 'User #' + user.user_id}</strong></td>
+            <td>${parseInt(user.questions_seen) || 0}</td>
+            <td>${pct.toFixed(0)}%</td>
+            <td>${statusBadge}</td>
+          </tr>
+        `;
+      }
+      
+      document.getElementById('usersListBody').innerHTML = html || '<tr><td colspan="4">No users found</td></tr>';
+    }
+    
+    function filterUserList(query) {
+      if (!query) {
+        renderUsersList(allUsersData);
+        return;
+      }
+      
+      const filtered = allUsersData.filter(u => 
+        (u.username && u.username.toLowerCase().includes(query.toLowerCase())) ||
+        String(u.user_id).includes(query)
+      );
+      renderUsersList(filtered);
+    }
+    
+    async function selectUser(userId, username) {
+      // Highlight selected row
+      document.querySelectorAll('.user-row').forEach(tr => tr.style.background = '');
+      const clickedRow = document.querySelector(`.user-row[data-userid="${userId}"]`);
+      if (clickedRow) clickedRow.style.background = 'var(--info-bg)';
+      
+      // Show loading
+      document.getElementById('userCoverageResult').innerHTML = '<div class="loading">Loading user details...</div>';
+      document.getElementById('userDetailedCoverage').innerHTML = '';
+      
+      // Get basic coverage
+      const res = await api('/questions/user-coverage/' + userId);
+      if (res?.success) {
+        const d = res.data;
+        const coveragePct = parseFloat(d.coverage_percent) || 0;
+        const questionsSeen = parseInt(d.questions_seen) || 0;
+        const totalQuestions = parseInt(d.total_questions) || 0;
+        
+        let statusBadge = '<span class="badge fresh">Fresh Pool</span>';
+        if (coveragePct >= 70) {
+          statusBadge = '<span class="badge stale">Near Exhaustion!</span>';
+        } else if (coveragePct >= 40) {
+          statusBadge = '<span class="badge moderate">Moderate Coverage</span>';
+        }
+        
+        document.getElementById('userCoverageResult').innerHTML = `
+          <div class="alert alert-info">
+            <strong style="font-size:16px">${d.username || 'User #' + d.user_id}</strong> ${statusBadge}<br><br>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div>
+                <div style="font-size:24px;font-weight:700;color:var(--primary)">${questionsSeen}</div>
+                <div style="font-size:12px;color:var(--gray-500)">Questions Seen</div>
+              </div>
+              <div>
+                <div style="font-size:24px;font-weight:700;color:var(--success)">${totalQuestions - questionsSeen}</div>
+                <div style="font-size:12px;color:var(--gray-500)">Fresh Remaining</div>
+              </div>
+            </div>
+            <div class="progress-bar" style="margin-top:12px;height:12px">
+              <div class="progress-fill ${coveragePct >= 70 ? 'low' : coveragePct >= 40 ? 'medium' : 'high'}" style="width:${coveragePct}%"></div>
+            </div>
+            <div style="text-align:center;margin-top:4px;font-size:13px">${coveragePct.toFixed(1)}% coverage</div>
+          </div>
+        `;
+        
+        // Get detailed per-difficulty coverage
+        const detailRes = await api('/questions/user-coverage-detailed/' + userId);
+        if (detailRes?.success) {
+          renderUserDetailedCoverage(detailRes.data, userId);
+        }
       } else {
-        document.getElementById('topUsersTable').innerHTML = '<div class="empty-state">No user history data yet</div>';
+        document.getElementById('userCoverageResult').innerHTML = `
+          <div class="alert alert-warning">Could not load user details</div>
+        `;
       }
     }
 
@@ -554,39 +643,29 @@
       const input = document.getElementById('userSearchInput').value.trim();
       if (!input) return;
       
-      // Get basic coverage
-      const res = await api('/questions/user-coverage/' + encodeURIComponent(input));
-      if (res?.success) {
-        const d = res.data;
-        const coveragePct = parseFloat(d.coverage_percent) || 0;
-        const questionsSeen = parseInt(d.questions_seen) || 0;
-        const totalQuestions = parseInt(d.total_questions) || 0;
-        
-        let statusBadge = '<span class="badge fresh">Fresh Pool</span>';
-        if (coveragePct > 70) {
-          statusBadge = '<span class="badge stale">Exhausted - Needs More Questions!</span>';
-        } else if (coveragePct > 40) {
-          statusBadge = '<span class="badge moderate">Moderate Coverage</span>';
-        }
-        
-        document.getElementById('userCoverageResult').innerHTML = `
-          <div class="alert alert-info">
-            <strong>${d.username || 'User #' + d.user_id}</strong> ${statusBadge}<br>
-            Total Questions Seen: <strong>${questionsSeen}</strong> / ${totalQuestions} (${coveragePct.toFixed(1)}%)<br>
-            Remaining Fresh: <strong>${totalQuestions - questionsSeen}</strong> questions
-          </div>
-        `;
-        
-        // Get detailed per-difficulty coverage
-        const detailRes = await api('/questions/user-coverage-detailed/' + d.user_id);
-        if (detailRes?.success) {
-          renderUserDetailedCoverage(detailRes.data, d.user_id);
-        }
+      // Try to find by ID first, then search
+      if (/^\d+$/.test(input)) {
+        await selectUser(parseInt(input), '');
       } else {
-        document.getElementById('userCoverageResult').innerHTML = `
-          <div class="alert alert-warning">User not found or no history</div>
-        `;
-        document.getElementById('userDetailedCoverage').innerHTML = '';
+        // Search in loaded users
+        const found = allUsersData.find(u => 
+          (u.username && u.username.toLowerCase().includes(input.toLowerCase())) ||
+          String(u.user_id) === input
+        );
+        if (found) {
+          await selectUser(found.user_id, found.username || '');
+        } else {
+          // Try API directly
+          const res = await api('/questions/user-coverage/' + encodeURIComponent(input));
+          if (res?.success) {
+            await selectUser(res.data.user_id, res.data.username || '');
+          } else {
+            document.getElementById('userCoverageResult').innerHTML = `
+              <div class="alert alert-warning">User not found</div>
+            `;
+            document.getElementById('userDetailedCoverage').innerHTML = '';
+          }
+        }
       }
     }
     

@@ -32,12 +32,11 @@ const REDIS_TIMEOUT_BUFFER = 15;
 // TURBO MODE CONFIGURATION (Anti-Cheat)
 // ============================================
 const TURBO_MODE_CONFIG = {
-    SUSPICIOUS_MIN_MS: 10500,      // 10.5 seconds - start of suspicious window
-    SUSPICIOUS_MAX_MS: 11990,      // 11.99 seconds - end of suspicious window
-    CONSECUTIVE_TRIGGER: 3,        // Trigger after 3 consecutive suspicious answers
-    REDUCED_TIMEOUT_MS: 10000,     // 10 seconds during turbo mode
+    SUSPICIOUS_THRESHOLD_MS: 10500,  // Any answer >= 10.5 seconds is suspicious
+    CONSECUTIVE_TRIGGER: 3,          // Trigger after 3 consecutive suspicious answers
+    REDUCED_TIMEOUT_MS: 10000,       // 10 seconds during turbo mode
     REDUCED_TIMEOUT_SECONDS: 10,
-    TURBO_QUESTIONS: 2,            // Number of questions with reduced timeout
+    TURBO_QUESTIONS: 2,              // Number of questions with reduced timeout
 };
 
 const messagingService = new MessagingService();
@@ -126,11 +125,11 @@ class GameService {
     // ============================================
 
     /**
-     * Check if response time falls in suspicious window (10.5s - 11.99s)
+     * Check if response time is suspicious (>= 10.5 seconds)
+     * Any answer taking 10.5 seconds or longer is considered suspicious
      */
-    isInSuspiciousWindow(responseTimeMs) {
-        return responseTimeMs >= TURBO_MODE_CONFIG.SUSPICIOUS_MIN_MS && 
-               responseTimeMs <= TURBO_MODE_CONFIG.SUSPICIOUS_MAX_MS;
+    isSuspiciousResponseTime(responseTimeMs) {
+        return responseTimeMs >= TURBO_MODE_CONFIG.SUSPICIOUS_THRESHOLD_MS;
     }
 
     /**
@@ -148,7 +147,7 @@ class GameService {
                 turboQuestionsRemaining: 0
             };
             
-            if (this.isInSuspiciousWindow(responseTimeMs)) {
+            if (this.isSuspiciousResponseTime(responseTimeMs)) {
                 tracking.consecutiveCount++;
                 tracking.responses.push({
                     questionNumber,
@@ -156,9 +155,9 @@ class GameService {
                     timestamp: Date.now()
                 });
                 
-                logger.warn(`⚠️ Suspicious timing: Session ${sessionKey}, Q${questionNumber}, ${responseTimeMs}ms (${tracking.consecutiveCount} consecutive)`);
+                logger.warn(`⚠️ Suspicious timing: Session ${sessionKey}, Q${questionNumber}, ${responseTimeMs}ms >= ${TURBO_MODE_CONFIG.SUSPICIOUS_THRESHOLD_MS}ms (${tracking.consecutiveCount} consecutive)`);
             } else {
-                // Reset if not in suspicious window
+                // Reset if answer was fast (not suspicious)
                 tracking.consecutiveCount = 0;
                 tracking.responses = [];
             }
