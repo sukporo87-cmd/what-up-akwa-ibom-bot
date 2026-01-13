@@ -50,6 +50,7 @@ class AuditService {
     async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount, isTurboMode = false) {
         try {
             const questionStartTime = Date.now();
+            const isSafePoint = [5, 10].includes(questionNumber);
             
             // Store question start time in Redis for response time calculation
             const redis = require('../config/redis');
@@ -76,7 +77,11 @@ class AuditService {
                     prize_at_stake: prizeAmount,
                     question_start_time: questionStartTime,
                     turbo_mode: isTurboMode,
-                    timeout_seconds: isTurboMode ? 10 : 12
+                    timeout_seconds: isTurboMode ? 10 : 12,
+                    // NEW: Rotation tracking fields
+                    times_seen_by_user: question.user_times_seen || 0,
+                    is_safe_point: isSafePoint,
+                    safe_point_note: isSafePoint ? `Q${questionNumber} is a safe checkpoint` : null
                 })
             ]);
         } catch (error) {

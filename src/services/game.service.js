@@ -1186,26 +1186,40 @@ Play as many times as allowed!`;
     // ============================================
     // INTELLIGENT QUESTION ROTATION
     // Prioritizes questions the user hasn't seen
+    // Questions are matched to specific difficulty levels
     // ============================================
 
-    async getRandomizedQuestion(userId, difficulty, excludeIds, gameMode, tournamentId) {
+    /**
+     * Get allowed difficulty levels for a question number
+     * Based on exact game design requirements
+     */
+    getDifficultyLevelsForQuestion(questionNumber) {
+        const mapping = {
+            1:  [1, 2],      // Q1: Difficulty 1 & 2
+            2:  [2, 3],      // Q2: Difficulty 2 & 3
+            3:  [3],         // Q3: Difficulty 3 only
+            4:  [4, 5],      // Q4: Difficulty 4 & 5
+            5:  [5],         // Q5: Difficulty 5 only (Safe checkpoint)
+            6:  [6, 7],      // Q6: Difficulty 6 & 7
+            7:  [7, 8],      // Q7: Difficulty 7 & 8
+            8:  [8],         // Q8: Difficulty 8 only
+            9:  [9, 10],     // Q9: Difficulty 9 & 10
+            10: [10],        // Q10: Difficulty 10 only (Safe checkpoint)
+            11: [11],        // Q11: Difficulty 11 only
+            12: [12],        // Q12: Difficulty 12 only
+            13: [13],        // Q13: Difficulty 13 only
+            14: [14],        // Q14: Difficulty 14 only
+            15: [15]         // Q15: Difficulty 15 only (Grand prize)
+        };
+        
+        return mapping[questionNumber] || [questionNumber];
+    }
+
+    async getRandomizedQuestion(userId, questionNumber, excludeIds, gameMode, tournamentId) {
         try {
-            // Get difficulty range based on question number
-            let minDifficulty, maxDifficulty;
-            
-            if (difficulty >= 1 && difficulty <= 5) {
-                minDifficulty = 1;
-                maxDifficulty = 7;
-            } else if (difficulty >= 6 && difficulty <= 10) {
-                minDifficulty = 6;
-                maxDifficulty = 12;
-            } else if (difficulty >= 11 && difficulty <= 15) {
-                minDifficulty = 11;
-                maxDifficulty = 15;
-            } else {
-                minDifficulty = 1;
-                maxDifficulty = 15;
-            }
+            // Get allowed difficulty levels for this question number
+            const allowedDifficulties = this.getDifficultyLevelsForQuestion(questionNumber);
+            const difficultyList = allowedDifficulties.join(',');
 
             // Determine question bank based on game mode
             let bankCondition = '';
@@ -1222,7 +1236,7 @@ Play as many times as allowed!`;
 
             // =============================================
             // SMART ROTATION QUERY
-            // Priority: 1) Never seen  2) Seen longest ago  3) Random
+            // Priority: 1) Unseen by user  2) Seen longest ago  3) Global freshness  4) Random
             // =============================================
             const smartQuery = `
                 WITH user_history AS (
@@ -1240,22 +1254,21 @@ Play as many times as allowed!`;
                         q.*,
                         COALESCE(uh.times_seen, 0) as user_times_seen,
                         uh.last_seen,
-                        -- Calculate selection score
-                        -- Higher score = better candidate
+                        -- Calculate selection score (higher = better candidate)
                         CASE 
-                            WHEN uh.question_id IS NULL THEN 1000  -- Never seen = highest priority
+                            WHEN uh.question_id IS NULL THEN 10000  -- Never seen = highest priority
                             ELSE 0 
                         END
                         + COALESCE(
-                            EXTRACT(EPOCH FROM (NOW() - uh.last_seen)) / 3600,  -- Hours since seen
-                            1000  -- Never seen gets max bonus
+                            EXTRACT(EPOCH FROM (NOW() - uh.last_seen)) / 3600,  -- Hours since seen (older = higher)
+                            10000  -- Never seen gets max bonus
                         )
-                        + (100.0 / GREATEST(q.times_asked + 1, 1))  -- Global freshness: fewer views = higher score
-                        + (RANDOM() * 50)  -- Random factor for variety
+                        + (100.0 / GREATEST(q.times_asked + 1, 1))  -- Global freshness: fewer total views = higher score
+                        + (RANDOM() * 50)  -- Random factor for variety within same scores
                         AS selection_score
                     FROM questions q
                     LEFT JOIN user_history uh ON q.id = uh.question_id
-                    WHERE q.difficulty BETWEEN $2 AND $3
+                    WHERE q.difficulty IN (${difficultyList})
                     AND q.is_active = true
                     AND (q.is_disabled = false OR q.is_disabled IS NULL)
                     ${bankCondition}
@@ -1263,53 +1276,65 @@ Play as many times as allowed!`;
                 )
                 SELECT * FROM scored_questions
                 ORDER BY 
-                    -- Unseen questions first
+                    -- Primary: Unseen questions first
                     CASE WHEN user_times_seen = 0 THEN 0 ELSE 1 END,
-                    -- Then by score (seen longer ago = higher score)
+                    -- Secondary: By selection score (seen longest ago wins)
                     selection_score DESC
                 LIMIT 1
             `;
 
-            const result = await pool.query(smartQuery, [userId, minDifficulty, maxDifficulty]);
+            const result = await pool.query(smartQuery, [userId]);
 
             if (result.rows.length > 0) {
                 const question = result.rows[0];
-                // Log for debugging (can remove in production)
+                const isSafePoint = [5, 10].includes(questionNumber);
+                
+                // Log rotation decision
                 if (question.user_times_seen > 0) {
-                    logger.info(`🔄 Rotation: User ${userId} seeing Q#${question.id} again (${question.user_times_seen}x before)`);
+                    logger.info(`🔄 Rotation: User ${userId} Q${questionNumber} → D${question.difficulty} (seen ${question.user_times_seen}x, last: ${question.last_seen})`);
                 } else {
-                    logger.info(`✨ Rotation: User ${userId} seeing fresh Q#${question.id}`);
+                    logger.info(`✨ Rotation: User ${userId} Q${questionNumber} → D${question.difficulty} (fresh)${isSafePoint ? ' 🔒 SAFE' : ''}`);
                 }
+                
+                // Attach times_seen for audit logging
+                question.user_times_seen = question.user_times_seen || 0;
+                
                 return question;
             }
 
-            // Fallback if smart query fails
-            logger.warn(`Smart rotation: No questions found for user ${userId}, difficulty ${difficulty}. Using fallback.`);
+            // Fallback: No questions available at allowed difficulties
+            logger.warn(`⚠️ Rotation: No D[${difficultyList}] questions for user ${userId}. Trying emergency fallback.`);
             
-            const fallbackQuery = `
-                SELECT * FROM questions
-                WHERE difficulty BETWEEN $1 AND $2
-                AND is_active = true
-                AND (is_disabled = false OR is_disabled IS NULL)
+            // Emergency: Find closest available difficulty
+            const emergencyQuery = `
+                SELECT q.*, 0 as user_times_seen FROM questions q
+                WHERE q.is_active = true
+                AND (q.is_disabled = false OR q.is_disabled IS NULL)
                 ${bankCondition}
                 ${excludeClause}
-                ORDER BY RANDOM()
+                ORDER BY 
+                    -- Prefer closest to first allowed difficulty
+                    ABS(q.difficulty - ${allowedDifficulties[0]}),
+                    RANDOM()
                 LIMIT 1
             `;
             
-            const fallbackResult = await pool.query(fallbackQuery, [minDifficulty, maxDifficulty]);
+            const emergencyResult = await pool.query(emergencyQuery);
             
-            if (fallbackResult.rows.length > 0) {
-                return fallbackResult.rows[0];
+            if (emergencyResult.rows.length > 0) {
+                const question = emergencyResult.rows[0];
+                logger.warn(`🚨 Emergency: User ${userId} Q${questionNumber} → D${question.difficulty} (no D[${difficultyList}] available)`);
+                question.user_times_seen = 0;
+                return question;
             }
 
-            // Last resort: question service
-            return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+            // Absolute last resort: question service
+            logger.error(`❌ Rotation FAILED: No questions available for user ${userId} Q${questionNumber}`);
+            return await questionService.getQuestionByDifficulty(questionNumber, excludeIds, gameMode, tournamentId);
 
         } catch (error) {
             logger.error('Error in smart question rotation:', error);
-            // On error, fall back to question service
-            return await questionService.getQuestionByDifficulty(difficulty, excludeIds, gameMode, tournamentId);
+            return await questionService.getQuestionByDifficulty(questionNumber, excludeIds, gameMode, tournamentId);
         }
     }
 

@@ -222,9 +222,12 @@
           <h3 style="margin-bottom:20px">User Question Coverage</h3>
           <div class="user-search">
             <input type="text" id="userSearchInput" placeholder="Enter user ID or phone number...">
-            <button class="btn btn-primary" onclick="searchUser()">Search</button>
+            <button class="btn btn-primary" onclick="searchUser()">Search User</button>
           </div>
           <div id="userCoverageResult"></div>
+          
+          <!-- Detailed coverage will appear here -->
+          <div id="userDetailedCoverage" style="margin-top:20px"></div>
           
           <h4 style="margin:24px 0 12px">Top Users by Questions Seen</h4>
           <div id="topUsersTable" class="loading">Loading...</div>
@@ -551,24 +554,134 @@
       const input = document.getElementById('userSearchInput').value.trim();
       if (!input) return;
       
+      // Get basic coverage
       const res = await api('/questions/user-coverage/' + encodeURIComponent(input));
       if (res?.success) {
         const d = res.data;
         const coveragePct = parseFloat(d.coverage_percent) || 0;
         const questionsSeen = parseInt(d.questions_seen) || 0;
         const totalQuestions = parseInt(d.total_questions) || 0;
+        
+        let statusBadge = '<span class="badge fresh">Fresh Pool</span>';
+        if (coveragePct > 70) {
+          statusBadge = '<span class="badge stale">Exhausted - Needs More Questions!</span>';
+        } else if (coveragePct > 40) {
+          statusBadge = '<span class="badge moderate">Moderate Coverage</span>';
+        }
+        
         document.getElementById('userCoverageResult').innerHTML = `
           <div class="alert alert-info">
-            <strong>${d.username || 'User #' + d.user_id}</strong><br>
-            Questions Seen: <strong>${questionsSeen}</strong> / ${totalQuestions} (${coveragePct.toFixed(1)}%)<br>
+            <strong>${d.username || 'User #' + d.user_id}</strong> ${statusBadge}<br>
+            Total Questions Seen: <strong>${questionsSeen}</strong> / ${totalQuestions} (${coveragePct.toFixed(1)}%)<br>
             Remaining Fresh: <strong>${totalQuestions - questionsSeen}</strong> questions
           </div>
         `;
+        
+        // Get detailed per-difficulty coverage
+        const detailRes = await api('/questions/user-coverage-detailed/' + d.user_id);
+        if (detailRes?.success) {
+          renderUserDetailedCoverage(detailRes.data, d.user_id);
+        }
       } else {
         document.getElementById('userCoverageResult').innerHTML = `
           <div class="alert alert-warning">User not found or no history</div>
         `;
+        document.getElementById('userDetailedCoverage').innerHTML = '';
       }
+    }
+    
+    function renderUserDetailedCoverage(data, userId) {
+      const questionMapping = {
+        1: [1, 2], 2: [2, 3], 3: [3], 4: [4, 5], 5: [5],
+        6: [6, 7], 7: [7, 8], 8: [8], 9: [9, 10], 10: [10],
+        11: [11], 12: [12], 13: [13], 14: [14], 15: [15]
+      };
+      
+      let html = `
+        <h4 style="margin-bottom:12px">Coverage by Difficulty Level</h4>
+        <p style="color:var(--gray-500);font-size:13px;margin-bottom:16px">
+          Shows how many questions at each difficulty this user has seen
+        </p>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Pulls From</th>
+              <th>Seen</th>
+              <th>Total</th>
+              <th>Coverage</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      for (let q = 1; q <= 15; q++) {
+        const difficulties = questionMapping[q];
+        const diffLabel = difficulties.length > 1 ? `D${difficulties[0]} & D${difficulties[1]}` : `D${difficulties[0]}`;
+        
+        // Sum up coverage for all difficulties this question pulls from
+        let totalSeen = 0;
+        let totalAvailable = 0;
+        
+        for (const diff of difficulties) {
+          const diffData = data.find(d => parseInt(d.difficulty) === diff);
+          if (diffData) {
+            totalSeen += parseInt(diffData.seen) || 0;
+            totalAvailable += parseInt(diffData.total) || 0;
+          }
+        }
+        
+        const pct = totalAvailable > 0 ? (totalSeen / totalAvailable * 100) : 0;
+        const isSafe = [5, 10].includes(q);
+        
+        let statusBadge = '<span class="badge fresh">Fresh</span>';
+        if (pct >= 100) {
+          statusBadge = '<span class="badge stale">EXHAUSTED</span>';
+        } else if (pct > 70) {
+          statusBadge = '<span class="badge stale">Low</span>';
+        } else if (pct > 40) {
+          statusBadge = '<span class="badge moderate">Moderate</span>';
+        }
+        
+        html += `
+          <tr>
+            <td><strong>Q${q}</strong>${isSafe ? ' 🔒' : ''}</td>
+            <td>${diffLabel}</td>
+            <td>${totalSeen}</td>
+            <td>${totalAvailable}</td>
+            <td>
+              <div class="progress-bar" style="width:100px;display:inline-block;vertical-align:middle">
+                <div class="progress-fill ${pct >= 70 ? 'low' : pct >= 40 ? 'medium' : 'high'}" style="width:${Math.min(pct, 100)}%"></div>
+              </div>
+              <span style="margin-left:8px">${pct.toFixed(0)}%</span>
+            </td>
+            <td>${statusBadge}</td>
+          </tr>
+        `;
+      }
+      
+      html += '</tbody></table>';
+      
+      // Add exhaustion warning if needed (70% threshold)
+      const exhaustedDiffs = data.filter(d => {
+        const pct = parseInt(d.total) > 0 ? (parseInt(d.seen) / parseInt(d.total) * 100) : 0;
+        return pct >= 70;
+      });
+      if (exhaustedDiffs.length > 0) {
+        html += `
+          <div class="alert alert-warning" style="margin-top:16px">
+            <strong>⚠️ Near Exhaustion (≥70%):</strong> This user has seen most questions at difficulty level(s): 
+            ${exhaustedDiffs.map(d => {
+              const pct = (parseInt(d.seen) / parseInt(d.total) * 100).toFixed(0);
+              return `D${d.difficulty} (${pct}%)`;
+            }).join(', ')}. 
+            They will start seeing repeated questions for these levels.
+          </div>
+        `;
+      }
+      
+      document.getElementById('userDetailedCoverage').innerHTML = html;
     }
 
     function getTimeAgo(date) {

@@ -4806,6 +4806,45 @@ router.get('/api/questions/user-coverage/:identifier', authenticateAdmin, async 
 });
 
 /**
+ * GET /admin/api/questions/user-coverage-detailed/:userId
+ * Get user's coverage broken down by difficulty level
+ */
+router.get('/api/questions/user-coverage-detailed/:userId', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        
+        const result = await pool.query(`
+            WITH difficulty_totals AS (
+                SELECT difficulty, COUNT(*) as total
+                FROM questions
+                WHERE is_active = true
+                GROUP BY difficulty
+            ),
+            user_seen AS (
+                SELECT q.difficulty, COUNT(DISTINCT uqh.question_id) as seen
+                FROM user_question_history uqh
+                JOIN questions q ON uqh.question_id = q.id
+                WHERE uqh.user_id = $1
+                GROUP BY q.difficulty
+            )
+            SELECT 
+                dt.difficulty,
+                dt.total,
+                COALESCE(us.seen, 0) as seen,
+                ROUND(COALESCE(us.seen, 0)::numeric / NULLIF(dt.total, 0) * 100, 2) as coverage_percent
+            FROM difficulty_totals dt
+            LEFT JOIN user_seen us ON dt.difficulty = us.difficulty
+            ORDER BY dt.difficulty
+        `, [userId]);
+        
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        logger.error('Error getting detailed user coverage:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /admin/api/questions/recent-rotation
  * Recent rotation activity
  */
