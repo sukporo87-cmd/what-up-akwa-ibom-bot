@@ -1468,32 +1468,34 @@ Play as many times as allowed!`;
             }
             
             try {
-                const timeout = await redis.get(timeoutKey);
+                // 🔧 FIX: Primary timeout check using anti-fraud start time
+                // This ensures consistent timing with what's logged in audit
+                const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
                 
-                // Check timeout using Redis key (primary check)
-                // The timeout value stored is the DEADLINE (Date.now() + timeout_ms)
-                if (timeout && Date.now() > Number(timeout)) {
-                    logger.info(`Answer timeout (Redis check): Session ${session.session_key}, Q${questionNumber}`);
-                    await this.handleTimeout(session, user);
-                    return;
+                if (startTime) {
+                    const elapsed = Date.now() - startTime;
+                    
+                    // Get the current timeout (normal or turbo mode)
+                    const timeoutConfig = await this.getSessionTimeout(session.session_key);
+                    const effectiveTimeout = timeoutConfig.timeoutMs;
+                    
+                    // Strict timeout enforcement - no grace period
+                    if (elapsed > effectiveTimeout) {
+                        logger.info(`⏰ Answer REJECTED (timeout): Session ${session.session_key}, Q${questionNumber}, ${elapsed}ms > ${effectiveTimeout}ms`);
+                        await redis.del(timeoutKey);
+                        this.clearQuestionTimeout(timeoutKey);
+                        await this.handleTimeout(session, user);
+                        return;
+                    }
                 }
                 
-                // Backup check: Only if Redis key doesn't exist (expired)
-                // This uses the anti-fraud start time but accounts for potential lifeline bonuses
-                // Since we reset start time when lifelines are used, this should work correctly
+                // Backup check: Redis deadline (in case anti-fraud time not found)
+                const timeout = await redis.get(timeoutKey);
                 if (!timeout) {
-                    const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
-                    if (startTime) {
-                        const elapsed = Date.now() - startTime;
-                        // Use a generous timeout for backup check (18 seconds) to account for any bonuses
-                        // The primary Redis check is the accurate one
-                        const maxAllowedTime = 18000; // 18 seconds max (12 base + 5 bonus + buffer)
-                        if (elapsed > maxAllowedTime) {
-                            logger.info(`Answer timeout (backup elapsed check): Session ${session.session_key}, Q${questionNumber}, ${elapsed}ms > ${maxAllowedTime}ms`);
-                            await this.handleTimeout(session, user);
-                            return;
-                        }
-                    }
+                    // Redis key expired or deleted - timeout already occurred
+                    logger.info(`⏰ Answer REJECTED (no timeout key): Session ${session.session_key}, Q${questionNumber}`);
+                    await this.handleTimeout(session, user);
+                    return;
                 }
                 
                 await redis.del(timeoutKey);
