@@ -2,6 +2,7 @@
 // FILE: src/routes/public.routes.js
 // PUBLIC LEADERBOARD API - No Authentication Required
 // For displaying tournament leaderboards on the website
+// FIXED: Using correct column names from actual schema
 // ============================================
 
 const express = require('express');
@@ -26,13 +27,14 @@ router.use((req, res, next) => {
 
 // ============================================
 // GET ALL TOURNAMENTS (for dropdown/selection)
+// FIXED: tournament_name instead of name
 // ============================================
 router.get('/tournaments', async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT 
                 t.id,
-                t.name,
+                t.tournament_name as name,
                 t.status,
                 t.start_date,
                 t.end_date,
@@ -69,7 +71,7 @@ router.get('/tournaments', async (req, res) => {
 
 // ============================================
 // GET TOURNAMENT LEADERBOARD BY ID
-// Shows top 50 with demarcations for top 10/20
+// FIXED: Using correct column names
 // ============================================
 router.get('/tournaments/:id/leaderboard', async (req, res) => {
     try {
@@ -82,7 +84,7 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         
         // Get tournament info
         const tournamentResult = await pool.query(`
-            SELECT id, name, status, start_date, end_date, prize_pool
+            SELECT id, tournament_name as name, status, start_date, end_date, prize_pool
             FROM tournaments WHERE id = $1
         `, [tournamentId]);
         
@@ -93,9 +95,10 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         const tournament = tournamentResult.rows[0];
         
         // Get leaderboard from tournament_participants
+        // FIXED: removed last_played_at, using joined_at or games_played for ordering
         const leaderboardResult = await pool.query(`
             SELECT 
-                RANK() OVER (ORDER BY tp.best_score DESC, tp.last_played_at ASC) as rank,
+                RANK() OVER (ORDER BY tp.best_score DESC, tp.joined_at ASC) as rank,
                 u.username,
                 tp.best_score as score,
                 tp.games_played,
@@ -104,11 +107,11 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
                     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
                     ELSE 'whatsapp'
                 END as platform,
-                tp.last_played_at as last_played
+                tp.joined_at as last_played
             FROM tournament_participants tp
             JOIN users u ON tp.user_id = u.id
             WHERE tp.tournament_id = $1 AND tp.best_score > 0
-            ORDER BY tp.best_score DESC, tp.last_played_at ASC
+            ORDER BY tp.best_score DESC, tp.joined_at ASC
             LIMIT $2
         `, [tournamentId, limit]);
         
@@ -134,7 +137,7 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
 
 // ============================================
 // GET ALL-TIME LEADERBOARD
-// Based on total winnings across all tournaments
+// FIXED: Using correct column names
 // ============================================
 router.get('/leaderboard/all-time', async (req, res) => {
     try {
@@ -151,7 +154,7 @@ router.get('/leaderboard/all-time', async (req, res) => {
                     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
                     ELSE 'whatsapp'
                 END as platform,
-                MAX(tp.last_played_at) as last_active
+                MAX(tp.joined_at) as last_active
             FROM users u
             JOIN tournament_participants tp ON u.id = tp.user_id
             WHERE tp.best_score > 0
@@ -344,7 +347,7 @@ router.get('/tournaments/active', async (req, res) => {
         const result = await pool.query(`
             SELECT 
                 t.id,
-                t.name,
+                t.tournament_name as name,
                 t.status,
                 t.start_date,
                 t.end_date,
