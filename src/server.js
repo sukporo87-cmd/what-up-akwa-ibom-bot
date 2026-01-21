@@ -11,6 +11,7 @@ const path = require('path');
 const webhookRoutes = require('./routes/webhook.routes');
 const paymentRoutes = require('./routes/payment.routes');
 const adminRoutes = require('./routes/admin.routes');
+const publicRoutes = require('./routes/public.routes');
 
 // Load environment variables
 dotenv.config();
@@ -41,6 +42,7 @@ app.get('/health', (req, res) => {
 });
 
 // Routes
+app.use('/api/public', publicRoutes);  // Public leaderboard API (no auth)
 app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
@@ -91,6 +93,7 @@ app.listen(PORT, async () => {
   console.log(`Payment Mode: ${process.env.PAYMENT_MODE || 'free'}`);
   console.log(`💬 WhatsApp Webhook: http://localhost:${PORT}/webhook/whatsapp`);
   console.log(`🔐 Admin Dashboard: http://localhost:${PORT}/admin`);
+  console.log(`🏆 Public Leaderboard API: http://localhost:${PORT}/api/public/tournaments`);
   
   // Platform status summary
   console.log('\n📊 Platform Status:');
