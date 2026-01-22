@@ -4952,10 +4952,10 @@ router.get('/tournaments/manage', async (req, res) => {
         // Generate tournament cards HTML
         let tournamentCardsHtml = '';
         tournaments.forEach(t => {
-            const statusClass = t.status === 'active' ? 'success' : t.status === 'upcoming' ? 'primary' : 'secondary';
+            const statusClass = t.status === 'active' ? 'success' : t.status === 'upcoming' ? 'primary' : t.status === 'cancelled' ? 'danger' : 'secondary';
             const actionButtons = t.status === 'active' ? `
-                <button class="btn btn-sm btn-outline-warning" onclick="previewPrizes(${t.id})"><i class="bi bi-gift"></i></button>
-                <button class="btn btn-sm btn-outline-danger" onclick="endTournament(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}')"><i class="bi bi-stop-circle"></i></button>
+                <button class="btn btn-sm btn-outline-warning" onclick="previewPrizes(${t.id})" title="Preview Prizes"><i class="bi bi-gift"></i></button>
+                <button class="btn btn-sm btn-outline-danger" onclick="endTournament(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}'" title="End Tournament"><i class="bi bi-stop-circle"></i></button>
             ` : '';
             
             tournamentCardsHtml += `
@@ -4967,18 +4967,20 @@ router.get('/tournaments/manage', async (req, res) => {
                         </div>
                         <div class="card-body">
                             <h5 class="card-title">${t.tournament_name}</h5>
+                            <p class="small text-muted mb-2">${t.tournament_type || 'Standard'} ${t.sponsor_name ? '• ' + t.sponsor_name : ''}</p>
                             <div class="row text-center mb-3">
                                 <div class="col-4"><strong class="text-primary">${t.participant_count || 0}</strong><br><small>Players</small></div>
                                 <div class="col-4"><strong class="text-success">₦${parseInt(t.prize_pool || 0).toLocaleString()}</strong><br><small>Prize</small></div>
                                 <div class="col-4"><strong class="text-info">${t.total_games_played || 0}</strong><br><small>Games</small></div>
                             </div>
                             <p class="small text-muted mb-1"><i class="bi bi-calendar me-1"></i>${new Date(t.start_date).toLocaleDateString()} - ${new Date(t.end_date).toLocaleDateString()}</p>
-                            <p class="small text-muted"><i class="bi bi-cash me-1"></i>${t.payment_type === 'free' ? 'Free' : '₦' + (t.entry_fee || 0).toLocaleString()}</p>
+                            <p class="small text-muted mb-0"><i class="bi bi-cash me-1"></i>${t.payment_type === 'free' ? 'Free Entry' : '₦' + (t.entry_fee || 0).toLocaleString() + ' Entry'}</p>
+                            ${t.uses_tokens ? '<p class="small text-warning mb-0"><i class="bi bi-coin me-1"></i>' + (t.tokens_per_entry || 1) + ' tokens/game</p>' : ''}
                         </div>
                         <div class="card-footer bg-white">
                             <div class="btn-group w-100">
-                                <button class="btn btn-sm btn-outline-primary" onclick="viewTournament(${t.id})"><i class="bi bi-eye"></i></button>
-                                <button class="btn btn-sm btn-outline-success" onclick="viewLeaderboard(${t.id})"><i class="bi bi-trophy"></i></button>
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewTournament(${t.id})" title="View Details"><i class="bi bi-eye"></i></button>
+                                <button class="btn btn-sm btn-outline-success" onclick="viewLeaderboard(${t.id})" title="View Leaderboard"><i class="bi bi-trophy"></i></button>
                                 ${actionButtons}
                             </div>
                         </div>
@@ -5010,6 +5012,19 @@ router.get('/tournaments/manage', async (req, res) => {
         .btn-orange { background: var(--primary-orange); color: white; border: none; }
         .btn-orange:hover { background: #e55a2b; color: white; }
         .modal-header { background: var(--dark-bg); color: white; }
+        .modal-header.bg-primary { background: #007bff !important; }
+        .form-section { background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+        .form-section h6 { margin-bottom: 1rem; color: var(--dark-bg); border-bottom: 2px solid var(--primary-orange); padding-bottom: 0.5rem; }
+        .prize-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; align-items: center; }
+        .prize-row .position { min-width: 40px; font-weight: bold; }
+        .toggle-btn-group { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .toggle-btn { padding: 0.5rem 1rem; border: 2px solid #dee2e6; background: white; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+        .toggle-btn.active { border-color: var(--primary-orange); background: #fff5f0; color: var(--primary-orange); font-weight: bold; }
+        .toggle-btn:hover { border-color: var(--primary-orange); }
+        .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+        .detail-item { padding: 0.75rem; background: #f8f9fa; border-radius: 8px; }
+        .detail-item label { font-size: 0.75rem; color: #6c757d; margin-bottom: 0.25rem; display: block; }
+        .detail-item .value { font-weight: 600; color: #1a1a2e; }
     </style>
 </head>
 <body>
@@ -5041,52 +5056,189 @@ router.get('/tournaments/manage', async (req, res) => {
         </div>
     </div>
 
-    <!-- Create Modal -->
+    <!-- Create Tournament Modal - ENHANCED -->
     <div class="modal fade" id="createModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-xl">
             <div class="modal-content">
-                <div class="modal-header"><h5 class="modal-title">Create Tournament</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Create Tournament</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
                 <div class="modal-body">
                     <form id="createForm">
-                        <div class="row">
-                            <div class="col-md-6 mb-3"><label class="form-label">Tournament Name *</label><input type="text" class="form-control" name="tournamentName" required></div>
-                            <div class="col-md-6 mb-3"><label class="form-label">Type</label><select class="form-select" name="tournamentType"><option value="sponsored">Sponsored</option><option value="weekly">Weekly</option><option value="special">Special</option></select></div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3"><label class="form-label">Start Date *</label><input type="datetime-local" class="form-control" name="startDate" required></div>
-                            <div class="col-md-6 mb-3"><label class="form-label">End Date *</label><input type="datetime-local" class="form-control" name="endDate" required></div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-4 mb-3"><label class="form-label">Prize Pool (₦) *</label><input type="number" class="form-control" name="prizePool" required min="0"></div>
-                            <div class="col-md-4 mb-3"><label class="form-label">Entry Type</label><select class="form-select" name="paymentType" onchange="document.getElementById('entryFeeDiv').style.display=this.value==='paid'?'block':'none'"><option value="free">Free</option><option value="paid">Paid</option></select></div>
-                            <div class="col-md-4 mb-3" id="entryFeeDiv" style="display:none;"><label class="form-label">Entry Fee (₦)</label><input type="number" class="form-control" name="entryFee" min="0"></div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3"><label class="form-label">Sponsor Name</label><input type="text" class="form-control" name="sponsorName"></div>
-                            <div class="col-md-6 mb-3"><label class="form-label">Max Participants (0=unlimited)</label><input type="number" class="form-control" name="maxParticipants" value="0" min="0"></div>
-                        </div>
-                        <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" name="description" rows="2"></textarea></div>
-                        <hr><h6>Prize Distribution (must total 100%)</h6>
-                        <div class="row">
-                            <div class="col-6">
-                                <div class="input-group mb-2"><span class="input-group-text">🥇1st</span><input type="number" class="form-control prize-pct" name="prize1" value="40"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">🥈2nd</span><input type="number" class="form-control prize-pct" name="prize2" value="20"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">🥉3rd</span><input type="number" class="form-control prize-pct" name="prize3" value="15"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">4th</span><input type="number" class="form-control prize-pct" name="prize4" value="10"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">5th</span><input type="number" class="form-control prize-pct" name="prize5" value="5"><span class="input-group-text">%</span></div>
+                        <!-- Basic Information -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-info-circle me-2"></i>Basic Information</h6>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Tournament Name *</label>
+                                    <input type="text" class="form-control" name="tournamentName" required placeholder="e.g., MTN Mega Quiz">
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label">Type</label>
+                                    <select class="form-select" name="tournamentType">
+                                        <option value="sponsored">Sponsored</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                        <option value="special">Special Event</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label">Status</label>
+                                    <select class="form-select" name="status">
+                                        <option value="upcoming">Upcoming</option>
+                                        <option value="active">Active</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="col-6">
-                                <div class="input-group mb-2"><span class="input-group-text">6th</span><input type="number" class="form-control prize-pct" name="prize6" value="3"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">7th</span><input type="number" class="form-control prize-pct" name="prize7" value="3"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">8th</span><input type="number" class="form-control prize-pct" name="prize8" value="2"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">9th</span><input type="number" class="form-control prize-pct" name="prize9" value="1"><span class="input-group-text">%</span></div>
-                                <div class="input-group mb-2"><span class="input-group-text">10th</span><input type="number" class="form-control prize-pct" name="prize10" value="1"><span class="input-group-text">%</span></div>
+                            <div class="mb-3">
+                                <label class="form-label">Description</label>
+                                <textarea class="form-control" name="description" rows="2" placeholder="Tournament description..."></textarea>
                             </div>
                         </div>
-                        <div class="alert alert-info" id="prizeTotal"><strong>Total: 100%</strong> ✅</div>
+
+                        <!-- Sponsor Information -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-building me-2"></i>Sponsor Information</h6>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Sponsor Name</label>
+                                    <input type="text" class="form-control" name="sponsorName" placeholder="e.g., MTN Nigeria">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Sponsor Logo URL</label>
+                                    <input type="url" class="form-control" name="sponsorLogoUrl" placeholder="https://...">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Payment & Prize -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-cash-stack me-2"></i>Payment & Prize</h6>
+                            <div class="row">
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label">Payment Type *</label>
+                                    <select class="form-select" name="paymentType" onchange="toggleEntryFee(this.value)">
+                                        <option value="free">Free Entry</option>
+                                        <option value="paid">Paid Entry</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3 mb-3" id="entryFeeDiv" style="display:none;">
+                                    <label class="form-label">Entry Fee (₦)</label>
+                                    <input type="number" class="form-control" name="entryFee" min="0" value="0">
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label">Prize Pool (₦) *</label>
+                                    <input type="number" class="form-control" name="prizePool" required min="0" id="prizePoolInput" oninput="updatePrizeAmounts()">
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label d-flex align-items-center">
+                                        <input type="checkbox" class="form-check-input me-2" name="usesTokens" id="usesTokensCheck" onchange="toggleTokens(this.checked)">
+                                        Use Token System
+                                    </label>
+                                    <div id="tokensDiv" style="display:none;">
+                                        <input type="number" class="form-control form-control-sm" name="tokensPerEntry" min="1" value="1" placeholder="Tokens per game">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Duration & Limits -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-calendar-range me-2"></i>Duration & Limits</h6>
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Start Date *</label>
+                                    <input type="datetime-local" class="form-control" name="startDate" required>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">End Date *</label>
+                                    <input type="datetime-local" class="form-control" name="endDate" required>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Max Participants</label>
+                                    <input type="number" class="form-control" name="maxParticipants" value="0" min="0" placeholder="0 = unlimited">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Questions & Branding -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-question-circle me-2"></i>Questions & Branding</h6>
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Question Category/Bank</label>
+                                    <input type="text" class="form-control" name="questionCategory" placeholder="Leave blank for general">
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Custom Instructions</label>
+                                    <input type="text" class="form-control" name="customInstructions" placeholder="Special rules...">
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Custom Branding Text</label>
+                                    <input type="text" class="form-control" name="customBranding" placeholder="Powered by...">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Prize Distribution -->
+                        <div class="form-section">
+                            <h6><i class="bi bi-gift me-2"></i>Prize Distribution</h6>
+                            
+                            <!-- Toggle Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Distribution Mode</label>
+                                    <div class="toggle-btn-group">
+                                        <button type="button" class="toggle-btn active" id="pctModeBtn" onclick="setPrizeMode('percentage')">Percentage %</button>
+                                        <button type="button" class="toggle-btn" id="amtModeBtn" onclick="setPrizeMode('amount')">Custom Amounts ₦</button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Winners Count</label>
+                                    <div class="toggle-btn-group">
+                                        <button type="button" class="toggle-btn active" id="top10Btn" onclick="setWinnersCount(10)">Top 10</button>
+                                        <button type="button" class="toggle-btn" id="top20Btn" onclick="setWinnersCount(20)">Top 20</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Prize Inputs -->
+                            <div class="row" id="prizeInputsContainer">
+                                <div class="col-md-6" id="prizeCol1"></div>
+                                <div class="col-md-6" id="prizeCol2"></div>
+                            </div>
+                            
+                            <div class="alert alert-info mt-3" id="prizeTotal">
+                                <strong>Total: 100%</strong> ✅
+                            </div>
+                        </div>
                     </form>
                 </div>
-                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" class="btn btn-orange" onclick="createTournament()">Create Tournament</button></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-orange" onclick="createTournament()">
+                        <i class="bi bi-save me-2"></i>Create Tournament
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Tournament Modal -->
+    <div class="modal fade" id="viewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary">
+                    <h5 class="modal-title"><i class="bi bi-eye me-2"></i>Tournament Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="viewModalBody">
+                    <div class="text-center py-5"><div class="spinner-border text-primary"></div><p class="mt-2">Loading...</p></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
             </div>
         </div>
     </div>
@@ -5095,8 +5247,13 @@ router.get('/tournaments/manage', async (req, res) => {
     <div class="modal fade" id="leaderboardModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header bg-success text-white"><h5 class="modal-title">Leaderboard</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-                <div class="modal-body" id="leaderboardBody"><div class="text-center py-5"><div class="spinner-border"></div></div></div>
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="bi bi-trophy me-2"></i>Leaderboard</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="leaderboardBody">
+                    <div class="text-center py-5"><div class="spinner-border"></div></div>
+                </div>
             </div>
         </div>
     </div>
@@ -5105,9 +5262,19 @@ router.get('/tournaments/manage', async (req, res) => {
     <div class="modal fade" id="prizeModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header bg-warning"><h5 class="modal-title">Prize Distribution Preview</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                <div class="modal-body" id="prizeBody"><div class="text-center py-5"><div class="spinner-border"></div></div></div>
-                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button><button type="button" class="btn btn-danger" id="confirmEndBtn" style="display:none;">Confirm End & Distribute</button></div>
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-gift me-2"></i>Prize Distribution Preview</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="prizeBody">
+                    <div class="text-center py-5"><div class="spinner-border"></div></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="confirmEndBtn" style="display:none;">
+                        <i class="bi bi-stop-circle me-2"></i>Confirm End & Distribute
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -5117,91 +5284,339 @@ router.get('/tournaments/manage', async (req, res) => {
         const token = localStorage.getItem('adminToken');
         if (!token) window.location.href = '/admin/login';
         
-        document.querySelectorAll('.prize-pct').forEach(i => i.addEventListener('input', () => {
-            let t = 0; document.querySelectorAll('.prize-pct').forEach(x => t += parseInt(x.value)||0);
-            const d = document.getElementById('prizeTotal');
-            d.className = t===100 ? 'alert alert-success' : 'alert alert-danger';
-            d.innerHTML = '<strong>Total: '+t+'%</strong> '+(t===100?'✅':'❌');
-        }));
+        // Prize distribution state
+        let prizeMode = 'percentage'; // 'percentage' or 'amount'
+        let winnersCount = 10; // 10 or 20
+        const defaultPcts10 = [40, 20, 15, 10, 5, 3, 3, 2, 1, 1];
+        const defaultPcts20 = [25, 15, 12, 10, 8, 6, 5, 4, 3, 2, 2, 1.5, 1.5, 1, 1, 0.8, 0.6, 0.4, 0.2, 0];
+        
+        // Initialize prize inputs on load
+        document.addEventListener('DOMContentLoaded', () => {
+            renderPrizeInputs();
+        });
+
+        // Toggle functions
+        function toggleEntryFee(value) {
+            document.getElementById('entryFeeDiv').style.display = value === 'paid' ? 'block' : 'none';
+        }
+
+        function toggleTokens(checked) {
+            document.getElementById('tokensDiv').style.display = checked ? 'block' : 'none';
+        }
+
+        function setPrizeMode(mode) {
+            prizeMode = mode;
+            document.getElementById('pctModeBtn').classList.toggle('active', mode === 'percentage');
+            document.getElementById('amtModeBtn').classList.toggle('active', mode === 'amount');
+            renderPrizeInputs();
+        }
+
+        function setWinnersCount(count) {
+            winnersCount = count;
+            document.getElementById('top10Btn').classList.toggle('active', count === 10);
+            document.getElementById('top20Btn').classList.toggle('active', count === 20);
+            renderPrizeInputs();
+        }
+
+        function renderPrizeInputs() {
+            const col1 = document.getElementById('prizeCol1');
+            const col2 = document.getElementById('prizeCol2');
+            const defaults = winnersCount === 10 ? defaultPcts10 : defaultPcts20;
+            const prizePool = parseInt(document.getElementById('prizePoolInput')?.value) || 0;
+            
+            const medals = ['🥇', '🥈', '🥉'];
+            let html1 = '', html2 = '';
+            
+            for (let i = 1; i <= winnersCount; i++) {
+                const medal = i <= 3 ? medals[i-1] : i;
+                const defaultVal = defaults[i-1] || 0;
+                const suffix = prizeMode === 'percentage' ? '%' : '₦';
+                const inputVal = prizeMode === 'percentage' ? defaultVal : Math.floor(prizePool * defaultVal / 100);
+                
+                const inputHtml = \`
+                    <div class="input-group mb-2">
+                        <span class="input-group-text" style="min-width:50px;">\${medal}</span>
+                        <input type="number" class="form-control prize-input" name="prize\${i}" value="\${inputVal}" min="0" step="\${prizeMode === 'percentage' ? '0.1' : '1000'}" oninput="updatePrizeTotal()">
+                        <span class="input-group-text">\${suffix}</span>
+                        \${prizeMode === 'percentage' ? '<span class="input-group-text prize-preview" id="preview'+i+'" style="min-width:90px;">₦0</span>' : ''}
+                    </div>
+                \`;
+                
+                if (i <= Math.ceil(winnersCount / 2)) {
+                    html1 += inputHtml;
+                } else {
+                    html2 += inputHtml;
+                }
+            }
+            
+            col1.innerHTML = html1;
+            col2.innerHTML = html2;
+            
+            updatePrizeTotal();
+        }
+
+        function updatePrizeAmounts() {
+            if (prizeMode === 'percentage') {
+                updatePrizeTotal();
+            }
+        }
+
+        function updatePrizeTotal() {
+            const prizePool = parseInt(document.getElementById('prizePoolInput')?.value) || 0;
+            const inputs = document.querySelectorAll('.prize-input');
+            let total = 0;
+            
+            inputs.forEach((input, i) => {
+                const val = parseFloat(input.value) || 0;
+                total += val;
+                
+                if (prizeMode === 'percentage') {
+                    const preview = document.getElementById('preview' + (i + 1));
+                    if (preview) {
+                        preview.textContent = '₦' + Math.floor(prizePool * val / 100).toLocaleString();
+                    }
+                }
+            });
+            
+            const alertDiv = document.getElementById('prizeTotal');
+            if (prizeMode === 'percentage') {
+                if (Math.abs(total - 100) < 0.1) {
+                    alertDiv.className = 'alert alert-success mt-3';
+                    alertDiv.innerHTML = '<strong>Total: ' + total.toFixed(1) + '%</strong> ✅ = ₦' + prizePool.toLocaleString();
+                } else {
+                    alertDiv.className = 'alert alert-danger mt-3';
+                    alertDiv.innerHTML = '<strong>Total: ' + total.toFixed(1) + '%</strong> ❌ Must equal 100%';
+                }
+            } else {
+                alertDiv.className = total <= prizePool ? 'alert alert-success mt-3' : 'alert alert-danger mt-3';
+                alertDiv.innerHTML = '<strong>Total: ₦' + total.toLocaleString() + '</strong> / ₦' + prizePool.toLocaleString() + (total <= prizePool ? ' ✅' : ' ❌ Exceeds pool!');
+            }
+        }
         
         async function createTournament() {
             const f = document.getElementById('createForm');
             const fd = new FormData(f);
+            
+            // Build prize distribution
             const pd = [];
-            for (let i=1; i<=10; i++) { const p = parseInt(fd.get('prize'+i))||0; if(p>0) pd.push(p/100); }
-            const total = pd.reduce((a,b)=>a+b,0);
-            if (Math.abs(total-1)>0.01) { alert('Prizes must total 100%'); return; }
+            const prizePool = parseInt(fd.get('prizePool')) || 0;
+            
+            for (let i = 1; i <= winnersCount; i++) {
+                const val = parseFloat(fd.get('prize' + i)) || 0;
+                if (val > 0) {
+                    if (prizeMode === 'percentage') {
+                        pd.push(val / 100);
+                    } else {
+                        pd.push(val / prizePool); // Convert amount to percentage
+                    }
+                }
+            }
+            
+            // Validate
+            if (prizeMode === 'percentage') {
+                const total = pd.reduce((a, b) => a + b, 0);
+                if (Math.abs(total - 1) > 0.01) {
+                    alert('Prize percentages must total 100%');
+                    return;
+                }
+            }
             
             const data = {
                 tournamentName: fd.get('tournamentName'),
                 tournamentType: fd.get('tournamentType'),
+                status: fd.get('status'),
+                description: fd.get('description'),
+                sponsorName: fd.get('sponsorName'),
+                sponsorLogoUrl: fd.get('sponsorLogoUrl'),
+                paymentType: fd.get('paymentType'),
+                entryFee: parseInt(fd.get('entryFee')) || 0,
+                prizePool: prizePool,
+                usesTokens: fd.get('usesTokens') === 'on',
+                tokensPerEntry: parseInt(fd.get('tokensPerEntry')) || 1,
                 startDate: fd.get('startDate'),
                 endDate: fd.get('endDate'),
-                prizePool: parseInt(fd.get('prizePool')),
-                paymentType: fd.get('paymentType'),
-                entryFee: parseInt(fd.get('entryFee'))||0,
-                sponsorName: fd.get('sponsorName'),
-                maxParticipants: parseInt(fd.get('maxParticipants'))||0,
-                description: fd.get('description'),
+                maxParticipants: parseInt(fd.get('maxParticipants')) || 0,
+                questionCategory: fd.get('questionCategory'),
+                customInstructions: fd.get('customInstructions'),
+                customBranding: fd.get('customBranding'),
                 prizeDistribution: pd
             };
             
             try {
-                const r = await fetch('/admin/api/tournaments', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(data)});
+                const r = await fetch('/admin/api/tournaments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify(data)
+                });
                 const res = await r.json();
-                if (res.success) { alert('Tournament created!'); location.reload(); } else { alert('Error: '+res.error); }
-            } catch(e) { alert('Error: '+e.message); }
+                if (res.success) {
+                    alert('Tournament created successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        // View Tournament Details
+        async function viewTournament(id) {
+            const modal = new bootstrap.Modal(document.getElementById('viewModal'));
+            modal.show();
+            
+            try {
+                const r = await fetch('/admin/api/tournaments/' + id, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const t = await r.json();
+                
+                if (t.id) {
+                    const statusColors = { active: 'success', upcoming: 'primary', completed: 'secondary', cancelled: 'danger' };
+                    document.getElementById('viewModalBody').innerHTML = \`
+                        <div class="d-flex justify-content-between align-items-start mb-4">
+                            <div>
+                                <h4 class="mb-1">\${t.tournament_name}</h4>
+                                <p class="text-muted mb-0">\${t.tournament_type || 'Standard'} Tournament \${t.sponsor_name ? '• Sponsored by ' + t.sponsor_name : ''}</p>
+                            </div>
+                            <span class="badge bg-\${statusColors[t.status] || 'secondary'} fs-6">\${t.status.toUpperCase()}</span>
+                        </div>
+                        
+                        \${t.description ? '<p class="mb-4">' + t.description + '</p>' : ''}
+                        
+                        <div class="detail-grid">
+                            <div class="detail-item">
+                                <label>Prize Pool</label>
+                                <div class="value text-success fs-5">₦\${parseInt(t.prize_pool || 0).toLocaleString()}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Entry Type</label>
+                                <div class="value">\${t.payment_type === 'free' ? '🎁 Free Entry' : '💰 ₦' + (t.entry_fee || 0).toLocaleString()}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Start Date</label>
+                                <div class="value">\${new Date(t.start_date).toLocaleString()}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>End Date</label>
+                                <div class="value">\${new Date(t.end_date).toLocaleString()}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Max Participants</label>
+                                <div class="value">\${t.max_participants > 0 ? t.max_participants : 'Unlimited'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Token System</label>
+                                <div class="value">\${t.uses_tokens ? '🎟️ ' + (t.tokens_per_entry || 1) + ' tokens/game' : '❌ Not used'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Question Category</label>
+                                <div class="value">\${t.question_category || 'General'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <label>Created</label>
+                                <div class="value">\${new Date(t.created_at).toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                        
+                        \${t.sponsor_logo_url ? '<div class="mt-4 text-center"><img src="' + t.sponsor_logo_url + '" alt="Sponsor" style="max-height:60px;"></div>' : ''}
+                        \${t.custom_branding ? '<p class="text-center text-muted mt-3">' + t.custom_branding + '</p>' : ''}
+                        \${t.custom_instructions ? '<div class="alert alert-info mt-3"><strong>Special Instructions:</strong> ' + t.custom_instructions + '</div>' : ''}
+                    \`;
+                } else {
+                    document.getElementById('viewModalBody').innerHTML = '<div class="alert alert-danger">Tournament not found</div>';
+                }
+            } catch (e) {
+                document.getElementById('viewModalBody').innerHTML = '<div class="alert alert-danger">Error loading tournament: ' + e.message + '</div>';
+            }
         }
         
         async function viewLeaderboard(id) {
-            new bootstrap.Modal(document.getElementById('leaderboardModal')).show();
+            const modal = new bootstrap.Modal(document.getElementById('leaderboardModal'));
+            modal.show();
+            
             try {
-                const r = await fetch('/admin/api/tournaments/'+id+'/participants', {headers:{'Authorization':'Bearer '+token}});
+                const r = await fetch('/admin/api/tournaments/' + id + '/participants', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
                 const d = await r.json();
-                if (d.participants && d.participants.length>0) {
-                    let h = '<table class="table table-striped"><thead><tr><th>Rank</th><th>Player</th><th>Q</th><th>Time</th><th>Games</th></tr></thead><tbody>';
-                    d.participants.forEach((p,i) => {
-                        const m = i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1);
-                        h += '<tr><td>'+m+'</td><td>@'+(p.username||'?')+'</td><td>Q'+(p.best_questions_answered||0)+'</td><td>'+(parseFloat(p.best_time_taken||999).toFixed(1))+'s</td><td>'+(p.games_played||0)+'</td></tr>';
+                
+                if (d.participants && d.participants.length > 0) {
+                    let h = '<table class="table table-striped table-hover"><thead class="table-dark"><tr><th>Rank</th><th>Player</th><th>Score</th><th>Time</th><th>Games</th><th>Platform</th></tr></thead><tbody>';
+                    d.participants.forEach((p, i) => {
+                        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+                        const platform = p.platform === 'telegram' ? '📱 Telegram' : '💬 WhatsApp';
+                        h += '<tr><td>' + medal + '</td><td><strong>@' + (p.username || '?') + '</strong></td><td>Q' + (p.best_questions_answered || 0) + '</td><td>' + (parseFloat(p.best_time_taken || 999).toFixed(1)) + 's</td><td>' + (p.games_played || 0) + '</td><td>' + platform + '</td></tr>';
                     });
                     h += '</tbody></table>';
                     document.getElementById('leaderboardBody').innerHTML = h;
-                } else { document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-info">No participants</div>'; }
-            } catch(e) { document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-danger">Error</div>'; }
+                } else {
+                    document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-info text-center"><i class="bi bi-info-circle me-2"></i>No participants yet</div>';
+                }
+            } catch (e) {
+                document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-danger">Error loading leaderboard</div>';
+            }
         }
         
         async function previewPrizes(id) {
-            new bootstrap.Modal(document.getElementById('prizeModal')).show();
+            const modal = new bootstrap.Modal(document.getElementById('prizeModal'));
+            modal.show();
+            
             try {
-                const r = await fetch('/admin/api/tournaments/'+id+'/prize-preview', {headers:{'Authorization':'Bearer '+token}});
+                const r = await fetch('/admin/api/tournaments/' + id + '/prize-preview', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
                 const d = await r.json();
-                if (d.success && d.winners && d.winners.length>0) {
-                    let h = '<div class="alert alert-warning"><strong>⚠️ PREVIEW ONLY</strong></div>';
-                    h += '<table class="table"><thead class="table-dark"><tr><th>Rank</th><th>Player</th><th>Q</th><th>Time</th><th>Prize</th></tr></thead><tbody>';
+                
+                if (d.success && d.winners && d.winners.length > 0) {
+                    let h = '<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i><strong>PREVIEW ONLY</strong> - No changes have been made yet</div>';
+                    h += '<table class="table"><thead class="table-dark"><tr><th>Rank</th><th>Player</th><th>Score</th><th>Time</th><th>Prize</th></tr></thead><tbody>';
                     d.winners.forEach(w => {
-                        const m = w.rank===1?'🥇':w.rank===2?'🥈':w.rank===3?'🥉':w.rank;
-                        h += '<tr><td>'+m+'</td><td>@'+w.username+'</td><td>Q'+w.questionsAnswered+'</td><td>'+w.timeTaken+'s</td><td class="text-success"><strong>₦'+w.prize.toLocaleString()+'</strong> ('+w.percentage+')</td></tr>';
+                        const medal = w.rank === 1 ? '🥇' : w.rank === 2 ? '🥈' : w.rank === 3 ? '🥉' : w.rank;
+                        h += '<tr><td>' + medal + '</td><td><strong>@' + w.username + '</strong><br><small class="text-muted">' + w.platform + '</small></td><td>Q' + w.questionsAnswered + '</td><td>' + w.timeTaken + 's</td><td class="text-success"><strong>₦' + w.prize.toLocaleString() + '</strong><br><small>(' + w.percentage + ')</small></td></tr>';
                     });
-                    h += '</tbody></table><div class="alert alert-success"><strong>Total:</strong> ₦'+d.totalDistributed.toLocaleString()+'</div>';
+                    h += '</tbody></table>';
+                    h += '<div class="alert alert-success"><strong>Total to Distribute:</strong> ₦' + d.totalDistributed.toLocaleString() + '</div>';
                     document.getElementById('prizeBody').innerHTML = h;
                     document.getElementById('confirmEndBtn').style.display = 'block';
                     document.getElementById('confirmEndBtn').onclick = () => confirmEnd(id);
-                } else { document.getElementById('prizeBody').innerHTML = '<div class="alert alert-info">No qualifying participants</div>'; document.getElementById('confirmEndBtn').style.display='none'; }
-            } catch(e) { document.getElementById('prizeBody').innerHTML = '<div class="alert alert-danger">Error</div>'; }
+                } else {
+                    document.getElementById('prizeBody').innerHTML = '<div class="alert alert-info text-center"><i class="bi bi-info-circle me-2"></i>No qualifying participants for prizes</div>';
+                    document.getElementById('confirmEndBtn').style.display = 'none';
+                }
+            } catch (e) {
+                document.getElementById('prizeBody').innerHTML = '<div class="alert alert-danger">Error loading preview: ' + e.message + '</div>';
+            }
         }
         
-        function endTournament(id, name) { if(confirm('End "'+name+'"? This will show prize preview.')) previewPrizes(id); }
+        function endTournament(id, name) {
+            if (confirm('Are you sure you want to END "' + name + '"?\\n\\nThis will show the prize distribution preview.')) {
+                previewPrizes(id);
+            }
+        }
         
         async function confirmEnd(id) {
-            if (!confirm('⚠️ FINAL: End tournament, distribute prizes, notify winners?')) return;
+            if (!confirm('⚠️ FINAL CONFIRMATION\\n\\nThis will:\\n• END the tournament permanently\\n• DISTRIBUTE prizes to winners\\n• NOTIFY all winners\\n\\nThis action CANNOT be undone!')) {
+                return;
+            }
+            
             try {
-                const r = await fetch('/admin/api/tournaments/'+id+'/end', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({preview:false,notifyWinners:true})});
+                const r = await fetch('/admin/api/tournaments/' + id + '/end', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ preview: false, notifyWinners: true })
+                });
                 const res = await r.json();
-                if (res.success) { alert('✅ '+res.message); location.reload(); } else { alert('Error: '+res.error); }
-            } catch(e) { alert('Error: '+e.message); }
+                if (res.success) {
+                    alert('✅ Tournament ended successfully!\\n\\n' + res.message);
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
         }
-        
-        function viewTournament(id) { alert('View details for tournament #'+id); }
     </script>
 </body>
 </html>
@@ -5251,7 +5666,7 @@ router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, r
 
 // ============================================
 // END OF TOURNAMENT MANAGEMENT ROUTES
-
+// Make sure module.exports = router; comes after this
 // ============================================
 // ============================================
 // MODULE EXPORT
