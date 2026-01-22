@@ -66,6 +66,226 @@ class ImageService {
     return filepath;
   }
 
+  /**
+   * Generate Tournament Performance Card
+   * Shows questions reached, time taken, rank instead of prize amount
+   * @param {Object} cardData - { username, city, questionsAnswered, timeTaken, rank, tournamentName, platform? }
+   * @returns {String} - Filepath to generated image
+   */
+  async generateTournamentCard(cardData) {
+    const { username, city, questionsAnswered, timeTaken, rank, tournamentName } = cardData;
+    const platform = cardData.platform || 'whatsapp';
+    const isPerfectGame = questionsAnswered === 15;
+
+    const width = 1080;
+    const height = 1080;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    if (isPerfectGame) {
+      // PERFECT GAME - Gold/Dark theme
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, width, height);
+      this.drawPatternOverlay(ctx, width, height);
+      this.drawConfetti(ctx, width, height, ['#FFD700', '#FFA500', '#FFFF00', '#00BFFF'], 60, true);
+    } else {
+      // Regular tournament card - Blue/Purple gradient
+      const gradient = ctx.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, '#1e3c72');
+      gradient.addColorStop(0.5, '#2a5298');
+      gradient.addColorStop(1, '#4B0082');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+      
+      // Confetti with tournament colors
+      this.drawConfetti(ctx, width, height, [
+        '#FFD700', '#00BFFF', '#FF6B6B', '#4ECDC4', '#FFFFFF'
+      ], 50);
+    }
+
+    // QR Code
+    await this.drawQRCode(ctx, width, isPerfectGame ? '#FFD700' : '#00BFFF', 'Join Tournament!');
+
+    // Tournament Badge
+    this.drawTournamentBadge(ctx, width, 80, tournamentName || 'TOURNAMENT', isPerfectGame);
+
+    // Performance Icon (Leaderboard/Podium instead of Trophy)
+    await this.drawLeaderboardIcon(ctx, width, 180, isPerfectGame);
+
+    // Performance Stats
+    this.drawTournamentStats(ctx, width, {
+      username,
+      city,
+      questionsAnswered,
+      timeTaken,
+      rank,
+      tournamentName,
+      isPerfectGame
+    });
+
+    // Save PNG
+    const filename = `tournament_${Date.now()}.png`;
+    const filepath = path.join(this.tempDir, filename);
+    const buffer = canvas.toBuffer('image/png', { compressionLevel: 6 });
+    fs.writeFileSync(filepath, buffer);
+
+    logger.info(`Tournament card generated: ${filename}`);
+    return filepath;
+  }
+
+  /**
+   * Draw tournament badge at top
+   */
+  drawTournamentBadge(ctx, width, y, tournamentName, isPerfect) {
+    // Background badge
+    const gradient = ctx.createLinearGradient(width/2 - 400, y, width/2 + 400, y);
+    if (isPerfect) {
+      gradient.addColorStop(0, '#FFD700');
+      gradient.addColorStop(0.5, '#FFA500');
+      gradient.addColorStop(1, '#FFD700');
+    } else {
+      gradient.addColorStop(0, '#00BFFF');
+      gradient.addColorStop(0.5, '#1E90FF');
+      gradient.addColorStop(1, '#00BFFF');
+    }
+    
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = isPerfect ? 'rgba(255, 215, 0, 0.5)' : 'rgba(0, 191, 255, 0.5)';
+    ctx.shadowBlur = 20;
+    this.roundRect(ctx, width/2 - 400, y, 800, 80, 40);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Tournament name text
+    ctx.fillStyle = isPerfect ? '#1a1a2e' : '#FFFFFF';
+    ctx.font = 'bold 36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`🏆 ${tournamentName.toUpperCase()} 🏆`, width / 2, y + 52);
+  }
+
+  /**
+   * Draw leaderboard/podium icon for tournaments
+   */
+  async drawLeaderboardIcon(ctx, width, y, isPerfect) {
+    const centerX = width / 2;
+    const iconSize = 180;
+    
+    // Draw podium bars
+    const barWidth = 50;
+    const barSpacing = 10;
+    const colors = isPerfect 
+      ? ['#FFD700', '#C0C0C0', '#CD7F32']  // Gold theme
+      : ['#FFD700', '#C0C0C0', '#CD7F32']; // Standard
+    
+    // Middle (1st place) - tallest
+    ctx.fillStyle = colors[0];
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+    ctx.shadowBlur = 20;
+    this.roundRect(ctx, centerX - barWidth/2, y + 40, barWidth, 140, 8);
+    ctx.fill();
+    
+    // Left (2nd place)
+    ctx.fillStyle = colors[1];
+    ctx.shadowColor = 'rgba(192, 192, 192, 0.5)';
+    this.roundRect(ctx, centerX - barWidth*1.5 - barSpacing, y + 70, barWidth, 110, 8);
+    ctx.fill();
+    
+    // Right (3rd place)
+    ctx.fillStyle = colors[2];
+    ctx.shadowColor = 'rgba(205, 127, 50, 0.5)';
+    this.roundRect(ctx, centerX + barWidth/2 + barSpacing, y + 90, barWidth, 90, 8);
+    ctx.fill();
+    
+    ctx.shadowBlur = 0;
+
+    // Position numbers
+    ctx.fillStyle = '#1a1a2e';
+    ctx.font = 'bold 28px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('1', centerX, y + 65);
+    ctx.fillText('2', centerX - barWidth - barSpacing, y + 95);
+    ctx.fillText('3', centerX + barWidth + barSpacing, y + 115);
+  }
+
+  /**
+   * Draw tournament performance stats
+   */
+  drawTournamentStats(ctx, width, data) {
+    const { username, city, questionsAnswered, timeTaken, rank, isPerfect } = data;
+    const textColor = isPerfect ? '#FFD700' : '#FFFFFF';
+    const secondaryColor = isPerfect ? '#FFA500' : '#00BFFF';
+    
+    // "PERFORMANCE RECORD" header
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = isPerfect ? 'rgba(255, 215, 0, 0.5)' : 'rgba(255, 255, 255, 0.3)';
+    ctx.shadowBlur = 15;
+    
+    if (isPerfect) {
+      ctx.fillText('⭐ PERFECT GAME! ⭐', width / 2, 420);
+    } else {
+      ctx.fillText('📊 TOURNAMENT RECORD', width / 2, 420);
+    }
+    ctx.shadowBlur = 0;
+
+    // Stats box
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    this.roundRect(ctx, width/2 - 350, 460, 700, 280, 20);
+    ctx.fill();
+
+    // Questions reached
+    ctx.fillStyle = secondaryColor;
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText('Questions Reached', width / 2, 510);
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 72px Arial';
+    ctx.fillText(`Q${questionsAnswered}/15`, width / 2, 580);
+
+    // Time taken
+    ctx.fillStyle = secondaryColor;
+    ctx.font = 'bold 28px Arial';
+    ctx.fillText('⏱️ Time', width / 2 - 150, 660);
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 36px Arial';
+    ctx.fillText(`${timeTaken}s`, width / 2 - 150, 710);
+
+    // Rank (if provided)
+    if (rank) {
+      ctx.fillStyle = secondaryColor;
+      ctx.font = 'bold 28px Arial';
+      ctx.fillText('🏆 Rank', width / 2 + 150, 660);
+      ctx.fillStyle = textColor;
+      ctx.font = 'bold 36px Arial';
+      ctx.fillText(`#${rank}`, width / 2 + 150, 710);
+    }
+
+    // Username and city
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 42px Arial';
+    ctx.fillText(`@${username}`, width / 2, 810);
+    
+    if (city) {
+      ctx.fillStyle = secondaryColor;
+      ctx.font = '28px Arial';
+      ctx.fillText(`📍 ${city}`, width / 2, 855);
+    }
+
+    // Call to action
+    ctx.fillStyle = isPerfect ? 'rgba(255, 215, 0, 0.3)' : 'rgba(0, 191, 255, 0.3)';
+    this.roundRect(ctx, width/2 - 300, 900, 600, 60, 30);
+    ctx.fill();
+    
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 24px Arial';
+    ctx.fillText('Join the tournament at whatsuptrivia.com.ng', width / 2, 940);
+
+    // Branding
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = '20px Arial';
+    ctx.fillText("What's Up Trivia 🎮", width / 2, 1010);
+  }
+
   // ============================================
   // WHATSAPP PNG GENERATION
   // ============================================

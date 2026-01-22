@@ -2278,6 +2278,7 @@ Reply with your choice:`
 
   // ============================================
   // VICTORY CARD HANDLER (WITH BRANDING)
+  // Supports both classic win cards and tournament performance cards
   // ============================================
 
   async handleWinShare(user, winData) {
@@ -2286,32 +2287,56 @@ Reply with your choice:`
     const fs = require('fs');
 
     try {
+      // Check if this is a tournament share
+      const isTournament = winData.isTournament || false;
+      
       await messagingService.sendMessage(
         user.phone_number,
-        '🎨 Creating your victory card... Please wait a moment! ✨'
+        isTournament 
+          ? '🎨 Creating your tournament card... Please wait a moment! ✨'
+          : '🎨 Creating your victory card... Please wait a moment! ✨'
       );
 
-      const imagePath = await imageService.generateWinImage({
-        name: user.full_name,
-        username: user.username,
-        city: user.city,
-        amount: winData.amount,
-        questionsAnswered: winData.questionsAnswered,
-        totalQuestions: winData.totalQuestions
-      });
+      let imagePath;
+      let caption;
 
-      await messagingService.sendImage(
-        user.phone_number,
-        imagePath,
-        `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`
-      );
+      if (isTournament) {
+        // Generate tournament performance card
+        imagePath = await imageService.generateTournamentCard({
+          username: user.username,
+          city: user.city,
+          questionsAnswered: winData.questionsAnswered,
+          timeTaken: winData.timeTaken || '0',
+          rank: winData.rank,
+          tournamentName: winData.tournamentName || 'Tournament'
+        });
+        
+        caption = `🏆 @${user.username} reached Q${winData.questionsAnswered} in ${winData.timeTaken}s in ${winData.tournamentName || 'the tournament'}! ` +
+                  `Think you can beat that? Join: https://whatsuptrivia.com.ng`;
+      } else {
+        // Generate classic victory card
+        imagePath = await imageService.generateWinImage({
+          name: user.full_name,
+          username: user.username,
+          city: user.city,
+          amount: winData.amount,
+          questionsAnswered: winData.questionsAnswered,
+          totalQuestions: winData.totalQuestions
+        });
+        
+        caption = `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+      }
+
+      await messagingService.sendImage(user.phone_number, imagePath, caption);
 
       // Mark ALL victory cards as shared in database (user may have multiple pending)
-      try {
-        await victoryCardsService.markAllCardsAsShared(user.id);
-        logger.info(`All pending victory cards marked as shared for user ${user.id}`);
-      } catch (vcError) {
-        logger.error('Error marking victory cards as shared:', vcError);
+      if (!isTournament) {
+        try {
+          await victoryCardsService.markAllCardsAsShared(user.id);
+          logger.info(`All pending victory cards marked as shared for user ${user.id}`);
+        } catch (vcError) {
+          logger.error('Error marking victory cards as shared:', vcError);
+        }
       }
 
       // Check and award achievements
@@ -2329,9 +2354,23 @@ Reply with your choice:`
         logger.error('Error checking achievements:', achError);
       }
 
-      await messagingService.sendMessage(
-        user.phone_number,
-        `✅ Victory card sent! 🎉
+      // Send different follow-up message based on game type
+      if (isTournament) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `✅ Tournament card sent! 🎉
+
+Save it and share on your Status to challenge others!
+
+🏆 Keep playing to improve your rank!
+
+1️⃣ Play Again
+2️⃣ View Tournament Leaderboard`
+        );
+      } else {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `✅ Victory card sent! 🎉
 
 Save it and share on your WhatsApp Status to inspire others!
 
@@ -2340,7 +2379,8 @@ You can now claim your prize! 💰
 1️⃣ Play Again
 2️⃣ View Leaderboard
 3️⃣ Claim Prize`
-      );
+        );
+      }
 
       fs.unlinkSync(imagePath);
       imageService.cleanupTempFiles();
@@ -2349,7 +2389,7 @@ You can now claim your prize! 💰
       logger.error('Error handling win share:', error);
       await messagingService.sendMessage(
         user.phone_number,
-        '❌ Sorry, something went wrong creating your victory card. Please try again later.'
+        '❌ Sorry, something went wrong creating your card. Please try again later.'
       );
     }
   }

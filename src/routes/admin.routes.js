@@ -4901,7 +4901,357 @@ router.get('/api/questions/recent-rotation', authenticateAdmin, async (req, res)
         res.json({ success: false, error: error.message });
     }
 });
+// ============================================
+// TOURNAMENT MANAGEMENT ROUTES - ADD TO admin.routes.js
+// Add this code BEFORE the "module.exports = router;" line
+// ============================================
 
+// ============================================
+// TOURNAMENT MANAGEMENT DASHBOARD PAGE
+// URL: /admin/tournaments/manage
+// ============================================
+router.get('/tournaments/manage', authenticateAdmin, async (req, res) => {
+    try {
+        // Get all tournaments with stats
+        const tournamentsResult = await pool.query(`
+            SELECT 
+                t.*,
+                COUNT(DISTINCT tp.user_id) as participant_count,
+                COUNT(DISTINCT tgs.id) as total_games_played,
+                COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) as total_entry_fees,
+                MAX(COALESCE(tp.best_questions_answered, 0)) as best_performance
+            FROM tournaments t
+            LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
+            LEFT JOIN tournament_game_sessions tgs ON t.id = tgs.tournament_id
+            LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
+            GROUP BY t.id
+            ORDER BY 
+                CASE t.status 
+                    WHEN 'active' THEN 1 
+                    WHEN 'upcoming' THEN 2
+                    WHEN 'completed' THEN 3 
+                END,
+                t.created_at DESC
+        `);
+
+        const tournaments = tournamentsResult.rows;
+
+        // Get summary stats
+        const statsResult = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE status = 'active') as active_count,
+                COUNT(*) FILTER (WHERE status = 'upcoming') as upcoming_count,
+                COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
+                COALESCE(SUM(prize_pool) FILTER (WHERE status = 'active'), 0) as active_prize_pool,
+                COALESCE(SUM(actual_prize_distributed), 0) as total_distributed
+            FROM tournaments
+        `);
+        const stats = statsResult.rows[0];
+
+        // Generate tournament cards HTML
+        let tournamentCardsHtml = '';
+        tournaments.forEach(t => {
+            const statusClass = t.status === 'active' ? 'success' : t.status === 'upcoming' ? 'primary' : 'secondary';
+            const actionButtons = t.status === 'active' ? `
+                <button class="btn btn-sm btn-outline-warning" onclick="previewPrizes(${t.id})"><i class="bi bi-gift"></i></button>
+                <button class="btn btn-sm btn-outline-danger" onclick="endTournament(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}')"><i class="bi bi-stop-circle"></i></button>
+            ` : '';
+            
+            tournamentCardsHtml += `
+                <div class="col-md-6 col-lg-4 mb-4">
+                    <div class="card tournament-card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span class="badge bg-${statusClass}">${t.status.toUpperCase()}</span>
+                            <span class="text-muted small">#${t.id}</span>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="card-title">${t.tournament_name}</h5>
+                            <div class="row text-center mb-3">
+                                <div class="col-4"><strong class="text-primary">${t.participant_count || 0}</strong><br><small>Players</small></div>
+                                <div class="col-4"><strong class="text-success">₦${parseInt(t.prize_pool || 0).toLocaleString()}</strong><br><small>Prize</small></div>
+                                <div class="col-4"><strong class="text-info">${t.total_games_played || 0}</strong><br><small>Games</small></div>
+                            </div>
+                            <p class="small text-muted mb-1"><i class="bi bi-calendar me-1"></i>${new Date(t.start_date).toLocaleDateString()} - ${new Date(t.end_date).toLocaleDateString()}</p>
+                            <p class="small text-muted"><i class="bi bi-cash me-1"></i>${t.payment_type === 'free' ? 'Free' : '₦' + (t.entry_fee || 0).toLocaleString()}</p>
+                        </div>
+                        <div class="card-footer bg-white">
+                            <div class="btn-group w-100">
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewTournament(${t.id})"><i class="bi bi-eye"></i></button>
+                                <button class="btn btn-sm btn-outline-success" onclick="viewLeaderboard(${t.id})"><i class="bi bi-trophy"></i></button>
+                                ${actionButtons}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tournament Management - What's Up Trivia Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --primary-orange: #FF6B35; --dark-bg: #1a1a2e; }
+        body { background: #f5f5f5; }
+        .navbar { background: var(--dark-bg) !important; }
+        .stat-card { border-radius: 15px; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .stat-card.active { background: linear-gradient(135deg, #28a745, #20c997); color: white; }
+        .stat-card.upcoming { background: linear-gradient(135deg, #007bff, #6610f2); color: white; }
+        .stat-card.completed { background: linear-gradient(135deg, #6c757d, #495057); color: white; }
+        .stat-card.money { background: linear-gradient(135deg, #ffc107, #fd7e14); color: #1a1a2e; }
+        .tournament-card { border-radius: 15px; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.1); transition: transform 0.2s; }
+        .tournament-card:hover { transform: translateY(-5px); }
+        .btn-orange { background: var(--primary-orange); color: white; border: none; }
+        .btn-orange:hover { background: #e55a2b; color: white; }
+        .modal-header { background: var(--dark-bg); color: white; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/admin/dashboard"><i class="bi bi-trophy-fill me-2"></i>Tournament Management</a>
+            <div>
+                <a href="/admin/dashboard" class="btn btn-outline-light btn-sm me-2"><i class="bi bi-house"></i> Dashboard</a>
+                <a href="/admin/logout" class="btn btn-outline-danger btn-sm"><i class="bi bi-box-arrow-right"></i> Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row mb-4">
+            <div class="col-md-3"><div class="card stat-card active"><div class="card-body text-center"><h2>${stats.active_count || 0}</h2><p class="mb-0">Active</p></div></div></div>
+            <div class="col-md-3"><div class="card stat-card upcoming"><div class="card-body text-center"><h2>${stats.upcoming_count || 0}</h2><p class="mb-0">Upcoming</p></div></div></div>
+            <div class="col-md-3"><div class="card stat-card completed"><div class="card-body text-center"><h2>${stats.completed_count || 0}</h2><p class="mb-0">Completed</p></div></div></div>
+            <div class="col-md-3"><div class="card stat-card money"><div class="card-body text-center"><h2>₦${parseInt(stats.active_prize_pool || 0).toLocaleString()}</h2><p class="mb-0">Active Pool</p></div></div></div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4><i class="bi bi-list-ul me-2"></i>All Tournaments</h4>
+            <button class="btn btn-orange" data-bs-toggle="modal" data-bs-target="#createModal"><i class="bi bi-plus-circle me-2"></i>Create Tournament</button>
+        </div>
+
+        <div class="row">
+            ${tournamentCardsHtml}
+        </div>
+    </div>
+
+    <!-- Create Modal -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">Create Tournament</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <form id="createForm">
+                        <div class="row">
+                            <div class="col-md-6 mb-3"><label class="form-label">Tournament Name *</label><input type="text" class="form-control" name="tournamentName" required></div>
+                            <div class="col-md-6 mb-3"><label class="form-label">Type</label><select class="form-select" name="tournamentType"><option value="sponsored">Sponsored</option><option value="weekly">Weekly</option><option value="special">Special</option></select></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3"><label class="form-label">Start Date *</label><input type="datetime-local" class="form-control" name="startDate" required></div>
+                            <div class="col-md-6 mb-3"><label class="form-label">End Date *</label><input type="datetime-local" class="form-control" name="endDate" required></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4 mb-3"><label class="form-label">Prize Pool (₦) *</label><input type="number" class="form-control" name="prizePool" required min="0"></div>
+                            <div class="col-md-4 mb-3"><label class="form-label">Entry Type</label><select class="form-select" name="paymentType" onchange="document.getElementById('entryFeeDiv').style.display=this.value==='paid'?'block':'none'"><option value="free">Free</option><option value="paid">Paid</option></select></div>
+                            <div class="col-md-4 mb-3" id="entryFeeDiv" style="display:none;"><label class="form-label">Entry Fee (₦)</label><input type="number" class="form-control" name="entryFee" min="0"></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3"><label class="form-label">Sponsor Name</label><input type="text" class="form-control" name="sponsorName"></div>
+                            <div class="col-md-6 mb-3"><label class="form-label">Max Participants (0=unlimited)</label><input type="number" class="form-control" name="maxParticipants" value="0" min="0"></div>
+                        </div>
+                        <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" name="description" rows="2"></textarea></div>
+                        <hr><h6>Prize Distribution (must total 100%)</h6>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="input-group mb-2"><span class="input-group-text">🥇1st</span><input type="number" class="form-control prize-pct" name="prize1" value="40"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">🥈2nd</span><input type="number" class="form-control prize-pct" name="prize2" value="20"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">🥉3rd</span><input type="number" class="form-control prize-pct" name="prize3" value="15"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">4th</span><input type="number" class="form-control prize-pct" name="prize4" value="10"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">5th</span><input type="number" class="form-control prize-pct" name="prize5" value="5"><span class="input-group-text">%</span></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="input-group mb-2"><span class="input-group-text">6th</span><input type="number" class="form-control prize-pct" name="prize6" value="3"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">7th</span><input type="number" class="form-control prize-pct" name="prize7" value="3"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">8th</span><input type="number" class="form-control prize-pct" name="prize8" value="2"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">9th</span><input type="number" class="form-control prize-pct" name="prize9" value="1"><span class="input-group-text">%</span></div>
+                                <div class="input-group mb-2"><span class="input-group-text">10th</span><input type="number" class="form-control prize-pct" name="prize10" value="1"><span class="input-group-text">%</span></div>
+                            </div>
+                        </div>
+                        <div class="alert alert-info" id="prizeTotal"><strong>Total: 100%</strong> ✅</div>
+                    </form>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" class="btn btn-orange" onclick="createTournament()">Create Tournament</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaderboard Modal -->
+    <div class="modal fade" id="leaderboardModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white"><h5 class="modal-title">Leaderboard</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body" id="leaderboardBody"><div class="text-center py-5"><div class="spinner-border"></div></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prize Preview Modal -->
+    <div class="modal fade" id="prizeModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-warning"><h5 class="modal-title">Prize Distribution Preview</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body" id="prizeBody"><div class="text-center py-5"><div class="spinner-border"></div></div></div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button><button type="button" class="btn btn-danger" id="confirmEndBtn" style="display:none;">Confirm End & Distribute</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const token = localStorage.getItem('adminToken');
+        if (!token) window.location.href = '/admin/login';
+        
+        document.querySelectorAll('.prize-pct').forEach(i => i.addEventListener('input', () => {
+            let t = 0; document.querySelectorAll('.prize-pct').forEach(x => t += parseInt(x.value)||0);
+            const d = document.getElementById('prizeTotal');
+            d.className = t===100 ? 'alert alert-success' : 'alert alert-danger';
+            d.innerHTML = '<strong>Total: '+t+'%</strong> '+(t===100?'✅':'❌');
+        }));
+        
+        async function createTournament() {
+            const f = document.getElementById('createForm');
+            const fd = new FormData(f);
+            const pd = [];
+            for (let i=1; i<=10; i++) { const p = parseInt(fd.get('prize'+i))||0; if(p>0) pd.push(p/100); }
+            const total = pd.reduce((a,b)=>a+b,0);
+            if (Math.abs(total-1)>0.01) { alert('Prizes must total 100%'); return; }
+            
+            const data = {
+                tournamentName: fd.get('tournamentName'),
+                tournamentType: fd.get('tournamentType'),
+                startDate: fd.get('startDate'),
+                endDate: fd.get('endDate'),
+                prizePool: parseInt(fd.get('prizePool')),
+                paymentType: fd.get('paymentType'),
+                entryFee: parseInt(fd.get('entryFee'))||0,
+                sponsorName: fd.get('sponsorName'),
+                maxParticipants: parseInt(fd.get('maxParticipants'))||0,
+                description: fd.get('description'),
+                prizeDistribution: pd
+            };
+            
+            try {
+                const r = await fetch('/admin/api/tournaments', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify(data)});
+                const res = await r.json();
+                if (res.success) { alert('Tournament created!'); location.reload(); } else { alert('Error: '+res.error); }
+            } catch(e) { alert('Error: '+e.message); }
+        }
+        
+        async function viewLeaderboard(id) {
+            new bootstrap.Modal(document.getElementById('leaderboardModal')).show();
+            try {
+                const r = await fetch('/admin/api/tournaments/'+id+'/participants', {headers:{'Authorization':'Bearer '+token}});
+                const d = await r.json();
+                if (d.participants && d.participants.length>0) {
+                    let h = '<table class="table table-striped"><thead><tr><th>Rank</th><th>Player</th><th>Q</th><th>Time</th><th>Games</th></tr></thead><tbody>';
+                    d.participants.forEach((p,i) => {
+                        const m = i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1);
+                        h += '<tr><td>'+m+'</td><td>@'+(p.username||'?')+'</td><td>Q'+(p.best_questions_answered||0)+'</td><td>'+(parseFloat(p.best_time_taken||999).toFixed(1))+'s</td><td>'+(p.games_played||0)+'</td></tr>';
+                    });
+                    h += '</tbody></table>';
+                    document.getElementById('leaderboardBody').innerHTML = h;
+                } else { document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-info">No participants</div>'; }
+            } catch(e) { document.getElementById('leaderboardBody').innerHTML = '<div class="alert alert-danger">Error</div>'; }
+        }
+        
+        async function previewPrizes(id) {
+            new bootstrap.Modal(document.getElementById('prizeModal')).show();
+            try {
+                const r = await fetch('/admin/api/tournaments/'+id+'/prize-preview', {headers:{'Authorization':'Bearer '+token}});
+                const d = await r.json();
+                if (d.success && d.winners && d.winners.length>0) {
+                    let h = '<div class="alert alert-warning"><strong>⚠️ PREVIEW ONLY</strong></div>';
+                    h += '<table class="table"><thead class="table-dark"><tr><th>Rank</th><th>Player</th><th>Q</th><th>Time</th><th>Prize</th></tr></thead><tbody>';
+                    d.winners.forEach(w => {
+                        const m = w.rank===1?'🥇':w.rank===2?'🥈':w.rank===3?'🥉':w.rank;
+                        h += '<tr><td>'+m+'</td><td>@'+w.username+'</td><td>Q'+w.questionsAnswered+'</td><td>'+w.timeTaken+'s</td><td class="text-success"><strong>₦'+w.prize.toLocaleString()+'</strong> ('+w.percentage+')</td></tr>';
+                    });
+                    h += '</tbody></table><div class="alert alert-success"><strong>Total:</strong> ₦'+d.totalDistributed.toLocaleString()+'</div>';
+                    document.getElementById('prizeBody').innerHTML = h;
+                    document.getElementById('confirmEndBtn').style.display = 'block';
+                    document.getElementById('confirmEndBtn').onclick = () => confirmEnd(id);
+                } else { document.getElementById('prizeBody').innerHTML = '<div class="alert alert-info">No qualifying participants</div>'; document.getElementById('confirmEndBtn').style.display='none'; }
+            } catch(e) { document.getElementById('prizeBody').innerHTML = '<div class="alert alert-danger">Error</div>'; }
+        }
+        
+        function endTournament(id, name) { if(confirm('End "'+name+'"? This will show prize preview.')) previewPrizes(id); }
+        
+        async function confirmEnd(id) {
+            if (!confirm('⚠️ FINAL: End tournament, distribute prizes, notify winners?')) return;
+            try {
+                const r = await fetch('/admin/api/tournaments/'+id+'/end', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({preview:false,notifyWinners:true})});
+                const res = await r.json();
+                if (res.success) { alert('✅ '+res.message); location.reload(); } else { alert('Error: '+res.error); }
+            } catch(e) { alert('Error: '+e.message); }
+        }
+        
+        function viewTournament(id) { alert('View details for tournament #'+id); }
+    </script>
+</body>
+</html>
+        `);
+    } catch (error) {
+        logger.error('Error rendering tournament management page:', error);
+        res.status(500).send('Error loading page');
+    }
+});
+
+// ============================================
+// GET TOURNAMENT PARTICIPANTS (for admin leaderboard)
+// ============================================
+router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        
+        const result = await pool.query(`
+            SELECT 
+                tp.rank,
+                tp.best_score,
+                COALESCE(tp.best_questions_answered, 0) as best_questions_answered,
+                COALESCE(tp.best_time_taken, 999) as best_time_taken,
+                tp.games_played,
+                tp.total_score,
+                tp.prize_won,
+                u.username,
+                u.full_name,
+                u.city,
+                CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' ELSE 'whatsapp' END as platform,
+                tp.joined_at
+            FROM tournament_participants tp
+            JOIN users u ON tp.user_id = u.id
+            WHERE tp.tournament_id = $1
+            ORDER BY 
+                COALESCE(tp.best_questions_answered, 0) DESC,
+                COALESCE(tp.best_time_taken, 999) ASC,
+                tp.joined_at ASC
+        `, [tournamentId]);
+
+        res.json({ participants: result.rows });
+    } catch (error) {
+        logger.error('Error getting tournament participants:', error);
+        res.status(500).json({ error: 'Failed to fetch participants' });
+    }
+});
+
+// ============================================
+// END OF TOURNAMENT MANAGEMENT ROUTES
+// Make sure module.exports = router; comes after this
+// ============================================
 // ============================================
 // MODULE EXPORT
 // ============================================

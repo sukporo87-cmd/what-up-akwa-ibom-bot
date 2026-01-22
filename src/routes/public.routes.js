@@ -82,10 +82,19 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid tournament ID' });
         }
         
-        // Get tournament info
+        // Get tournament info including prize_structure
         const tournamentResult = await pool.query(`
-            SELECT id, tournament_name as name, status, start_date, end_date, prize_pool
-            FROM tournaments WHERE id = $1
+            SELECT 
+                t.id, 
+                t.tournament_name as name, 
+                t.status, 
+                t.start_date, 
+                t.end_date, 
+                t.prize_pool,
+                ti.prize_structure
+            FROM tournaments t
+            LEFT JOIN tournament_instructions ti ON t.id = ti.tournament_id
+            WHERE t.id = $1
         `, [tournamentId]);
         
         if (tournamentResult.rows.length === 0) {
@@ -93,6 +102,21 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         }
         
         const tournament = tournamentResult.rows[0];
+        
+        // Calculate prize distribution based on prize_pool
+        // Default distribution: 40%, 20%, 15%, 10%, 5%, 3%, 3%, 2%, 1%, 1%
+        const prizePool = tournament.prize_pool || 0;
+        let prizeStructure = tournament.prize_structure;
+        
+        // If no custom prize structure, generate default
+        if (!prizeStructure && prizePool > 0) {
+            const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+            prizeStructure = defaultDistribution.map((pct, index) => ({
+                position: index + 1,
+                percentage: (pct * 100).toFixed(0) + '%',
+                amount: Math.floor(prizePool * pct)
+            }));
+        }
         
         // Get leaderboard from tournament_participants
         // Ranking: Most questions answered > Fastest time > Earlier join
@@ -125,16 +149,25 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
             LIMIT $2
         `, [tournamentId, limit]);
         
-        // Add tier classification
-        const leaderboard = leaderboardResult.rows.map(row => ({
-            ...row,
-            rank: parseInt(row.rank),
-            tier: row.rank <= 10 ? 'gold' : row.rank <= 20 ? 'silver' : 'bronze'
-        }));
+        // Add tier classification and prize amount
+        const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+        const leaderboard = leaderboardResult.rows.map(row => {
+            const rank = parseInt(row.rank);
+            const prize = rank <= 10 && prizePool > 0 ? Math.floor(prizePool * defaultDistribution[rank - 1]) : 0;
+            return {
+                ...row,
+                rank: rank,
+                tier: rank <= 3 ? 'gold' : rank <= 10 ? 'silver' : 'bronze',
+                prize_amount: prize
+            };
+        });
         
         res.json({
             success: true,
-            tournament: tournament,
+            tournament: {
+                ...tournament,
+                prize_structure: prizeStructure
+            },
             leaderboard: leaderboard,
             total_participants: leaderboard.length,
             timestamp: new Date().toISOString()

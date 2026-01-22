@@ -884,61 +884,106 @@ Play as many times as allowed!`;
                 logger.error('Error finalizing anti-fraud stats:', afError);
             }
 
-            if (session.game_type !== 'practice' && finalScore > 0) {
-                await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
-                    amount: finalScore,
-                    questionsAnswered: session.current_question - 1,
-                    totalQuestions: 15
-                }));
-
-                // Create victory card record and store win data
-                try {
-                    // Get the transaction ID for this win
-                    const txResult = await pool.query(`
-                        SELECT id FROM transactions 
-                        WHERE user_id = $1 AND transaction_type = 'prize' AND amount = $2
-                        ORDER BY created_at DESC LIMIT 1
-                    `, [user.id, finalScore]);
+            // Set up share pending data for victory/tournament card
+            if (session.game_type !== 'practice') {
+                const questionsAnswered = session.current_question - 1;
+                
+                if (session.is_tournament_game) {
+                    // Tournament game - store tournament-specific share data
+                    const timeTaken = await this.getGameTimeTaken(session.id);
+                    let tournamentName = 'Tournament';
+                    let currentRank = null;
                     
-                    if (txResult.rows.length > 0) {
-                        const transactionId = txResult.rows[0].id;
-                        
-                        // Store win data for victory card
-                        await victoryCardsService.storeWinData(transactionId, {
-                            amount: finalScore,
-                            questionsAnswered: session.current_question - 1,
-                            totalQuestions: 15,
-                            gameMode: session.game_mode,
-                            tournamentId: session.tournament_id,
-                            username: user.username,
-                            fullName: user.full_name,
-                            city: user.city,
-                            wonAt: new Date().toISOString()
-                        });
-                        
-                        // Create victory card record
-                        await victoryCardsService.createVictoryCardRecord(
-                            user.id,
-                            transactionId,
-                            session.id,
-                            {
-                                amount: finalScore,
-                                questionsAnswered: session.current_question - 1,
-                                totalQuestions: 15
+                    // Get tournament name and user's rank
+                    if (session.tournament_id) {
+                        try {
+                            const tournamentResult = await pool.query(
+                                'SELECT tournament_name FROM tournaments WHERE id = $1',
+                                [session.tournament_id]
+                            );
+                            if (tournamentResult.rows.length > 0) {
+                                tournamentName = tournamentResult.rows[0].tournament_name;
                             }
-                        );
+                            
+                            const rankResult = await pool.query(
+                                'SELECT rank FROM tournament_participants WHERE user_id = $1 AND tournament_id = $2',
+                                [user.id, session.tournament_id]
+                            );
+                            if (rankResult.rows.length > 0) {
+                                currentRank = rankResult.rows[0].rank;
+                            }
+                        } catch (err) {
+                            logger.error('Error fetching tournament info for share:', err);
+                        }
                     }
-                } catch (vcError) {
-                    logger.error('Error creating victory card record:', vcError);
-                }
+                    
+                    await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
+                        isTournament: true,
+                        questionsAnswered: questionsAnswered,
+                        timeTaken: timeTaken,
+                        tournamentName: tournamentName,
+                        tournamentId: session.tournament_id,
+                        rank: currentRank,
+                        totalQuestions: 15
+                    }));
+                } else if (finalScore > 0) {
+                    // Classic mode win - store classic share data
+                    await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
+                        isTournament: false,
+                        amount: finalScore,
+                        questionsAnswered: questionsAnswered,
+                        totalQuestions: 15
+                    }));
 
-                // Set grand prize cooldown if won grand prize (₦50,000)
-                if (wonGrandPrize) {
+                    // Create victory card record and store win data
                     try {
-                        await restrictionsService.setGrandPrizeCooldown(user.id);
-                        logger.info(`Grand prize cooldown set for user ${user.id}`);
-                    } catch (cooldownError) {
-                        logger.error('Error setting grand prize cooldown:', cooldownError);
+                        // Get the transaction ID for this win
+                        const txResult = await pool.query(`
+                            SELECT id FROM transactions 
+                            WHERE user_id = $1 AND transaction_type = 'prize' AND amount = $2
+                            ORDER BY created_at DESC LIMIT 1
+                        `, [user.id, finalScore]);
+                        
+                        if (txResult.rows.length > 0) {
+                            const transactionId = txResult.rows[0].id;
+                            
+                            // Store win data for victory card
+                            await victoryCardsService.storeWinData(transactionId, {
+                                amount: finalScore,
+                                questionsAnswered: questionsAnswered,
+                                totalQuestions: 15,
+                                gameMode: session.game_mode,
+                                tournamentId: session.tournament_id,
+                                username: user.username,
+                                fullName: user.full_name,
+                                city: user.city,
+                                wonAt: new Date().toISOString()
+                            });
+                            
+                            // Create victory card record
+                            await victoryCardsService.createVictoryCardRecord(
+                                user.id,
+                                transactionId,
+                                session.id,
+                                {
+                                    amount: finalScore,
+                                    questionsAnswered: questionsAnswered,
+                                    totalQuestions: 15
+                                }
+                            );
+                        }
+                    } catch (vcError) {
+                        logger.error('Error creating victory card record:', vcError);
+                    }
+
+                    // Set grand prize cooldown if won grand prize (₦50,000)
+                    if (wonGrandPrize) {
+                        try {
+                            await restrictionsService.setGrandPrizeCooldown(user.id);
+                            logger.info(`Grand prize cooldown set for user ${user.id}`);
+                        } catch (cooldownError) {
+                            logger.error('Error setting grand prize cooldown:', cooldownError);
+                        }
                     }
                 }
             }
@@ -951,8 +996,18 @@ Play as many times as allowed!`;
                 logger.error('Error checking achievements:', achError);
             }
 
+            // Send appropriate completion message based on game type
             if (session.game_type === 'practice') {
                 await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
+            } else if (session.is_tournament_game) {
+                // Tournament games get different messages (even for Q15 perfect games)
+                const timeTaken = await this.getGameTimeTaken(session.id);
+                if (wonGrandPrize) {
+                    // Perfect game in tournament!
+                    await this.sendGrandPrizeMessage(user, finalScore, session);
+                } else {
+                    await this.sendTournamentCompleteMessage(user, questionNumber - 1, timeTaken, session);
+                }
             } else if (wonGrandPrize) {
                 await this.sendGrandPrizeMessage(user, finalScore);
             } else if (finalScore > 0) {
@@ -964,6 +1019,8 @@ Play as many times as allowed!`;
             await redis.setex(`post_game:${user.id}`, 120, JSON.stringify({
                 timestamp: Date.now(),
                 gameType: session.game_type,
+                isTournament: session.is_tournament_game,
+                tournamentId: session.tournament_id,
                 finalScore: finalScore
             }));
 
@@ -988,20 +1045,44 @@ Play as many times as allowed!`;
         await messagingService.sendMessage(user.phone_number, message);
     }
 
-    async sendGrandPrizeMessage(user, finalScore) {
-        let message = `🎊 INCREDIBLE! 🎊\n`;
-        message += `🏆 CHAMPION! 🏆\n\n`;
-        message += `ALL 15 QUESTIONS CORRECT!\n\n`;
-        message += `💰 ₦${finalScore.toLocaleString()} WON! 💰\n\n`;
-        message += `${user.full_name.toUpperCase()}, you're in the HALL OF FAME!\n\n`;
-        message += `Prize processed in 24-48 hours.\n\n`;
-        message += `Would you like to share your win? Reply YES for victory card! 🎉\n\n`;
-        message += `1️⃣ Play Again\n`;
-        message += `2️⃣ View Leaderboard\n`;
-        message += `3️⃣ Claim Prize\n`;
-        message += `4️⃣ Share Victory Card`;
+    async sendGrandPrizeMessage(user, finalScore, session = null) {
+        // Check if this is a tournament game
+        const isTournament = session?.is_tournament_game;
         
-        await messagingService.sendMessage(user.phone_number, message);
+        if (isTournament) {
+            // Tournament grand prize message (all 15 correct!)
+            const timeTaken = await this.getGameTimeTaken(session.id);
+            
+            let message = `🎊 *PERFECT GAME!* 🎊\n`;
+            message += `🏆 *TOURNAMENT LEGEND!* 🏆\n\n`;
+            message += `*ALL 15 QUESTIONS CORRECT!*\n\n`;
+            message += `📊 *Your Performance:*\n`;
+            message += `• Questions: *15/15* ✨\n`;
+            message += `• Time: *${timeTaken}s*\n\n`;
+            message += `${user.full_name.toUpperCase()}, you're at the TOP!\n\n`;
+            message += `🌐 Check if you're #1 at:\nwhatsuptrivia.com.ng/leaderboards\n\n`;
+            message += `Share your PERFECT game? Reply YES for tournament card! 📸\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Tournament Leaderboard\n`;
+            message += `3️⃣ Share Tournament Card`;
+            
+            await messagingService.sendMessage(user.phone_number, message);
+        } else {
+            // Classic mode grand prize message
+            let message = `🎊 INCREDIBLE! 🎊\n`;
+            message += `🏆 CHAMPION! 🏆\n\n`;
+            message += `ALL 15 QUESTIONS CORRECT!\n\n`;
+            message += `💰 ₦${finalScore.toLocaleString()} WON! 💰\n\n`;
+            message += `${user.full_name.toUpperCase()}, you're in the HALL OF FAME!\n\n`;
+            message += `Prize processed in 24-48 hours.\n\n`;
+            message += `Would you like to share your win? Reply YES for victory card! 🎉\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Leaderboard\n`;
+            message += `3️⃣ Claim Prize\n`;
+            message += `4️⃣ Share Victory Card`;
+            
+            await messagingService.sendMessage(user.phone_number, message);
+        }
     }
 
     async sendWinMessage(user, finalScore, questionNumber) {
@@ -1015,6 +1096,68 @@ Play as many times as allowed!`;
         message += `💡 _Tip: Type CLAIM anytime to claim your prize_`;
         
         await messagingService.sendMessage(user.phone_number, message);
+    }
+
+    /**
+     * Send tournament game completion message
+     * Shows performance stats and leaderboard info instead of prize amounts
+     */
+    async sendTournamentCompleteMessage(user, questionsAnswered, timeTaken, session) {
+        try {
+            // Get tournament name
+            let tournamentName = 'Tournament';
+            if (session.tournament_id) {
+                const TournamentService = require('./tournament.service');
+                const tournamentService = new TournamentService();
+                const tournament = await tournamentService.getTournamentById(session.tournament_id);
+                if (tournament) {
+                    tournamentName = tournament.tournament_name;
+                }
+            }
+            
+            // Get user's current rank in tournament
+            let rankInfo = '';
+            if (session.tournament_id) {
+                const rankResult = await pool.query(`
+                    SELECT rank FROM tournament_participants 
+                    WHERE user_id = $1 AND tournament_id = $2
+                `, [user.id, session.tournament_id]);
+                if (rankResult.rows.length > 0 && rankResult.rows[0].rank) {
+                    rankInfo = `\n📍 Current Rank: #${rankResult.rows[0].rank}`;
+                }
+            }
+            
+            let message = `🏆 *TOURNAMENT GAME COMPLETE!* 🏆\n\n`;
+            message += `Well done, ${user.full_name}! 👏\n\n`;
+            message += `📊 *Your Performance:*\n`;
+            message += `• Questions Reached: *Q${questionsAnswered}*\n`;
+            message += `• Time Taken: *${timeTaken}s*${rankInfo}\n\n`;
+            
+            if (questionsAnswered >= 10) {
+                message += `🔥 Excellent run! That's a strong performance!\n\n`;
+            } else if (questionsAnswered >= 5) {
+                message += `👍 Good effort! Keep playing to improve your rank!\n\n`;
+            } else {
+                message += `💪 Don't give up! Your best game is what counts!\n\n`;
+            }
+            
+            message += `💡 *Remember:* Only your BEST game is ranked.\n`;
+            message += `Keep playing to climb the leaderboard!\n\n`;
+            message += `🌐 Check rankings at:\nwhatsuptrivia.com.ng/leaderboards\n\n`;
+            message += `Would you like to share your record? Reply YES for a tournament card! 📸\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Tournament Leaderboard\n`;
+            message += `3️⃣ Share Tournament Card\n`;
+            
+            await messagingService.sendMessage(user.phone_number, message);
+        } catch (error) {
+            logger.error('Error sending tournament complete message:', error);
+            // Fallback message
+            let message = `🏆 Tournament Game Complete!\n\n`;
+            message += `Questions: Q${questionsAnswered} | Time: ${timeTaken}s\n\n`;
+            message += `1️⃣ Play Again\n2️⃣ View Leaderboard`;
+            await messagingService.sendMessage(user.phone_number, message);
+        }
     }
 
     // ============================================
@@ -1622,12 +1765,17 @@ Play as many times as allowed!`;
 
     async handleWrongAnswer(session, user, question) {
         const questionNumber = session.current_question;
+        const isTournament = session.is_tournament_game;
+        
         let guaranteedAmount = 0;
         
-        for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
-            if (questionNumber > checkpoint) {
-                guaranteedAmount = PRIZE_LADDER[checkpoint];
-                break;
+        // Only calculate guaranteed amount for classic mode
+        if (!isTournament) {
+            for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
+                if (questionNumber > checkpoint) {
+                    guaranteedAmount = PRIZE_LADDER[checkpoint];
+                    break;
+                }
             }
         }
         
@@ -1638,37 +1786,77 @@ Play as many times as allowed!`;
         
         message += `🎮 GAME OVER 🎮\n\n`;
         
-        if (guaranteedAmount > 0) {
-            message += `You reached a safe checkpoint!\n`;
-            message += `💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`;
-            session.current_score = guaranteedAmount;
+        if (isTournament) {
+            // Tournament-specific game over message
+            const timeTaken = await this.getGameTimeTaken(session.id);
+            const questionsAnswered = questionNumber - 1;
+            
+            message += `📊 *Your Performance:*\n`;
+            message += `• Questions Reached: Q${questionsAnswered}\n`;
+            message += `• Time Taken: ${timeTaken}s\n\n`;
+            message += `🏆 Check the leaderboard to see if this gets you ranked!\n`;
+            message += `💡 _Remember: Only your BEST game counts. Keep playing to improve!_\n\n`;
+            message += `🌐 Visit whatsuptrivia.com.ng/leaderboards\n\n`;
+            message += `Well played, ${user.full_name}! 👏\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Tournament Leaderboard\n`;
+            message += `3️⃣ Exit Tournament\n`;
+            
+            session.current_score = 0; // No direct prize in tournaments
         } else {
-            message += `💰 You won: ₦0\n\n`;
-            session.current_score = 0;
-        }
-        
-        message += `Well played, ${user.full_name}! 👏\n\n`;
-        message += `1️⃣ Play Again\n`;
-        message += `2️⃣ View Leaderboard\n`;
-        if (guaranteedAmount > 0) {
-            message += `3️⃣ Claim Prize\n`;
-        } else {
-            message += `3️⃣ Main Menu\n`;
+            // Classic mode message
+            if (guaranteedAmount > 0) {
+                message += `You reached a safe checkpoint!\n`;
+                message += `💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`;
+                session.current_score = guaranteedAmount;
+            } else {
+                message += `💰 You won: ₦0\n\n`;
+                session.current_score = 0;
+            }
+            
+            message += `Well played, ${user.full_name}! 👏\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Leaderboard\n`;
+            if (guaranteedAmount > 0) {
+                message += `3️⃣ Claim Prize\n`;
+            } else {
+                message += `3️⃣ Main Menu\n`;
+            }
         }
         
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false);
     }
 
+    /**
+     * Get time taken for a game session in seconds
+     */
+    async getGameTimeTaken(sessionId) {
+        try {
+            const result = await pool.query(
+                'SELECT EXTRACT(EPOCH FROM (NOW() - started_at)) as time_taken FROM game_sessions WHERE id = $1',
+                [sessionId]
+            );
+            return result.rows[0]?.time_taken ? parseFloat(result.rows[0].time_taken).toFixed(1) : '0';
+        } catch (error) {
+            return '0';
+        }
+    }
+
     async handleTimeout(session, user) {
         // 📝 AUDIT: Log timeout
         await auditService.logTimeout(session.id, user.id, session.current_question);
         
+        const isTournament = session.is_tournament_game;
         let guaranteedAmount = 0;
-        for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
-            if (session.current_question > checkpoint) {
-                guaranteedAmount = PRIZE_LADDER[checkpoint];
-                break;
+        
+        // Only calculate guaranteed amount for classic mode
+        if (!isTournament) {
+            for (const checkpoint of [...SAFE_CHECKPOINTS].reverse()) {
+                if (session.current_question > checkpoint) {
+                    guaranteedAmount = PRIZE_LADDER[checkpoint];
+                    break;
+                }
             }
         }
         
@@ -1676,24 +1864,43 @@ Play as many times as allowed!`;
         message += `You didn't answer in time.\n\n`;
         message += `🎮 GAME OVER 🎮\n\n`;
         
-        if (guaranteedAmount > 0) {
-            message += `You reached a safe checkpoint!\n`;
-            message += `💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`;
+        if (isTournament) {
+            // Tournament-specific timeout message
+            const timeTaken = await this.getGameTimeTaken(session.id);
+            const questionsAnswered = session.current_question - 1;
+            
+            message += `📊 *Your Performance:*\n`;
+            message += `• Questions Reached: Q${questionsAnswered}\n`;
+            message += `• Time Taken: ${timeTaken}s\n\n`;
+            message += `🏆 Check the leaderboard to see if this gets you ranked!\n`;
+            message += `💡 _Remember: Only your BEST game counts. Keep playing to improve!_\n\n`;
+            message += `🌐 Visit whatsuptrivia.com.ng/leaderboards\n\n`;
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Tournament Leaderboard\n`;
+            message += `3️⃣ Exit Tournament\n`;
+            
+            session.current_score = 0;
         } else {
-            message += `💰 You won: ₦0\n\n`;
-        }
-        
-        message += `1️⃣ Play Again\n`;
-        message += `2️⃣ View Leaderboard\n`;
-        if (guaranteedAmount > 0) {
-            message += `3️⃣ Claim Prize\n`;
-        } else {
-            message += `3️⃣ Main Menu\n`;
+            // Classic mode timeout message
+            if (guaranteedAmount > 0) {
+                message += `You reached a safe checkpoint!\n`;
+                message += `💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`;
+            } else {
+                message += `💰 You won: ₦0\n\n`;
+            }
+            
+            message += `1️⃣ Play Again\n`;
+            message += `2️⃣ View Leaderboard\n`;
+            if (guaranteedAmount > 0) {
+                message += `3️⃣ Claim Prize\n`;
+            } else {
+                message += `3️⃣ Main Menu\n`;
+            }
+            
+            session.current_score = guaranteedAmount;
         }
         
         await messagingService.sendMessage(user.phone_number, message);
-        
-        session.current_score = guaranteedAmount;
         await this.completeGame(session, user, false);
     }
 
