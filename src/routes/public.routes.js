@@ -95,23 +95,33 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         const tournament = tournamentResult.rows[0];
         
         // Get leaderboard from tournament_participants
-        // FIXED: removed last_played_at, using joined_at or games_played for ordering
+        // Ranking: Most questions answered > Fastest time > Earlier join
         const leaderboardResult = await pool.query(`
             SELECT 
-                RANK() OVER (ORDER BY tp.best_score DESC, tp.joined_at ASC) as rank,
+                RANK() OVER (
+                    ORDER BY 
+                        COALESCE(tp.best_questions_answered, 0) DESC,
+                        COALESCE(tp.best_time_taken, 999) ASC,
+                        tp.joined_at ASC
+                ) as rank,
                 u.username,
+                COALESCE(tp.best_questions_answered, 0) as questions_reached,
+                COALESCE(tp.best_time_taken, 0) as time_taken,
                 tp.best_score as score,
                 tp.games_played,
-                tp.total_score,
                 CASE 
                     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
                     ELSE 'whatsapp'
                 END as platform,
-                tp.joined_at as last_played
+                COALESCE(tp.last_played_at, tp.joined_at) as last_played
             FROM tournament_participants tp
             JOIN users u ON tp.user_id = u.id
-            WHERE tp.tournament_id = $1 AND tp.best_score > 0
-            ORDER BY tp.best_score DESC, tp.joined_at ASC
+            WHERE tp.tournament_id = $1 
+              AND (tp.best_questions_answered > 0 OR tp.best_score > 0)
+            ORDER BY 
+                COALESCE(tp.best_questions_answered, 0) DESC,
+                COALESCE(tp.best_time_taken, 999) ASC,
+                tp.joined_at ASC
             LIMIT $2
         `, [tournamentId, limit]);
         

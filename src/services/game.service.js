@@ -816,7 +816,9 @@ Play as many times as allowed!`;
                 WHERE id = $3
             `, [finalScore, session.current_question, user.id]);
 
-            if (session.game_type !== 'practice' && finalScore > 0) {
+            // Only create payout transaction for CLASSIC mode wins (not tournaments or practice)
+            // Tournament prizes are handled separately when tournament ends based on final rankings
+            if (session.game_type !== 'practice' && !session.is_tournament_game && finalScore > 0) {
                 await pool.query(`
                     INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
                     VALUES ($1, $2, $3, 'prize', 'pending')
@@ -827,23 +829,35 @@ Play as many times as allowed!`;
                 const TournamentService = require('./tournament.service');
                 const tournamentService = new TournamentService();
                 
+                // Calculate time taken for this game (in seconds)
+                const gameTimeResult = await pool.query(
+                    'SELECT EXTRACT(EPOCH FROM (NOW() - started_at)) as time_taken FROM game_sessions WHERE id = $1',
+                    [session.id]
+                );
+                const timeTaken = parseFloat(gameTimeResult.rows[0]?.time_taken) || 999;
+                const questionsAnswered = session.current_question - 1;
+                
                 await pool.query(`
                     INSERT INTO tournament_game_sessions
-                    (tournament_id, user_id, game_session_id, score, questions_answered, completed, token_deducted)
-                    VALUES ($1, $2, $3, $4, $5, true, $6)
+                    (tournament_id, user_id, game_session_id, score, questions_answered, time_taken, completed, token_deducted)
+                    VALUES ($1, $2, $3, $4, $5, $6, true, $7)
                 `, [
                     session.tournament_id, 
                     user.id, 
                     session.id, 
                     finalScore, 
-                    session.current_question - 1,
+                    questionsAnswered,
+                    timeTaken,
                     session.token_deducted
                 ]);
                 
+                // Update participant with questions answered and time taken (for proper ranking)
                 await tournamentService.updateParticipantScore(
                     user.id,
                     session.tournament_id,
-                    finalScore
+                    finalScore,
+                    questionsAnswered,
+                    timeTaken
                 );
                 
                 const tokenStatus = await pool.query(`
@@ -854,7 +868,7 @@ Play as many times as allowed!`;
                 `, [user.id, session.tournament_id]);
                 
                 if (tokenStatus.rows.length > 0 && tokenStatus.rows[0].uses_tokens) {
-                    logger.info(`✅ Tournament game completed. User ${user.id} has ${tokenStatus.rows[0].tokens_remaining} tokens remaining`);
+                    logger.info(`✅ Tournament game completed. User ${user.id} reached Q${questionsAnswered} in ${timeTaken.toFixed(1)}s. Tokens remaining: ${tokenStatus.rows[0].tokens_remaining}`);
                 }
             }
 

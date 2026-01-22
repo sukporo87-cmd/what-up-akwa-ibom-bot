@@ -2120,27 +2120,55 @@ router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, r
 router.post('/api/tournaments/:id/end', authenticateAdmin, async (req, res) => {
     try {
         const tournamentId = req.params.id;
+        const { preview = false, notifyWinners = true, customDistribution = null } = req.body;
+        
         const TournamentService = require('../services/tournament.service');
         const tournamentService = new TournamentService();
         
-        const result = await tournamentService.endTournament(tournamentId);
+        const result = await tournamentService.endTournament(tournamentId, {
+            preview,
+            notifyWinners,
+            customDistribution
+        });
         
         if (result.success) {
-            await adminAuthService.logActivity(
-                req.adminSession.admin_id,
-                'end_tournament',
-                { tournament_id: tournamentId, winners: result.winnersCount },
-                getIpAddress(req),
-                req.headers['user-agent']
-            );
+            if (!preview) {
+                await adminAuthService.logActivity(
+                    req.adminSession.admin_id,
+                    'end_tournament',
+                    { 
+                        tournament_id: tournamentId, 
+                        winners_count: result.winnersCount,
+                        total_distributed: result.totalDistributed 
+                    },
+                    getIpAddress(req),
+                    req.headers['user-agent']
+                );
+            }
             
-            res.json({ success: true, message: `Tournament ended. ${result.winnersCount} winners.` });
+            res.json(result);
         } else {
             res.status(400).json({ error: result.error });
         }
     } catch (error) {
         logger.error('Error ending tournament:', error);
         res.status(500).json({ error: 'Failed to end tournament' });
+    }
+});
+
+// Preview tournament prize distribution
+router.get('/api/tournaments/:id/prize-preview', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        const TournamentService = require('../services/tournament.service');
+        const tournamentService = new TournamentService();
+        
+        const result = await tournamentService.getTournamentPrizePreview(tournamentId);
+        
+        res.json(result);
+    } catch (error) {
+        logger.error('Error getting prize preview:', error);
+        res.status(500).json({ error: 'Failed to get prize preview' });
     }
 });
 // ============================================

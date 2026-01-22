@@ -442,23 +442,60 @@ class TournamentService {
 
     /**
      * Update tournament participant score
+     * UPDATED: Now tracks questions answered and time taken for proper ranking
+     * Ranking priority: 1) Most questions answered, 2) Fastest time
      */
-    async updateParticipantScore(userId, tournamentId, score) {
+    async updateParticipantScore(userId, tournamentId, score, questionsAnswered = 0, timeTaken = 999) {
         try {
-            const result = await pool.query(
-                `UPDATE tournament_participants
-                 SET games_played = games_played + 1,
-                     best_score = GREATEST(best_score, $1),
-                     total_score = total_score + $1
-                 WHERE user_id = $2 AND tournament_id = $3
-                 RETURNING *`,
-                [score, userId, tournamentId]
+            // Get current best performance
+            const current = await pool.query(
+                'SELECT best_questions_answered, best_time_taken FROM tournament_participants WHERE user_id = $1 AND tournament_id = $2',
+                [userId, tournamentId]
             );
+            
+            const currentBest = current.rows[0] || { best_questions_answered: 0, best_time_taken: 999 };
+            
+            // Determine if this is a new best performance
+            // Better = more questions answered, OR same questions but faster time
+            let isNewBest = false;
+            if (questionsAnswered > (currentBest.best_questions_answered || 0)) {
+                isNewBest = true;
+            } else if (questionsAnswered === (currentBest.best_questions_answered || 0) && timeTaken < (currentBest.best_time_taken || 999)) {
+                isNewBest = true;
+            }
+            
+            // Build update query based on whether this is a new best
+            let result;
+            
+            if (isNewBest) {
+                result = await pool.query(
+                    `UPDATE tournament_participants
+                     SET games_played = games_played + 1,
+                         best_score = $1,
+                         best_questions_answered = $2,
+                         best_time_taken = $3,
+                         total_score = total_score + $1,
+                         last_played_at = NOW()
+                     WHERE user_id = $4 AND tournament_id = $5
+                     RETURNING *`,
+                    [score, questionsAnswered, timeTaken, userId, tournamentId]
+                );
+            } else {
+                result = await pool.query(
+                    `UPDATE tournament_participants
+                     SET games_played = games_played + 1,
+                         total_score = total_score + $1,
+                         last_played_at = NOW()
+                     WHERE user_id = $2 AND tournament_id = $3
+                     RETURNING *`,
+                    [score, userId, tournamentId]
+                );
+            }
 
             if (result.rows.length > 0) {
                 // Recalculate rankings
                 await this.updateTournamentRankings(tournamentId);
-                logger.info(`Updated tournament score for user ${userId}: ${score}`);
+                logger.info(`Updated tournament score for user ${userId}: Q${questionsAnswered} in ${timeTaken.toFixed(1)}s (best: ${isNewBest})`);
             }
 
             return result.rows[0] || null;
@@ -470,6 +507,10 @@ class TournamentService {
 
     /**
      * Update tournament rankings
+     * UPDATED: Rankings now based on:
+     * 1) Most questions answered (primary)
+     * 2) Fastest time for same questions (secondary)
+     * 3) Earlier join date (tiebreaker)
      */
     async updateTournamentRankings(tournamentId) {
         try {
@@ -477,7 +518,12 @@ class TournamentService {
                 WITH ranked_participants AS (
                     SELECT 
                         id,
-                        ROW_NUMBER() OVER (ORDER BY best_score DESC, joined_at ASC) as new_rank
+                        ROW_NUMBER() OVER (
+                            ORDER BY 
+                                COALESCE(best_questions_answered, 0) DESC,
+                                COALESCE(best_time_taken, 999) ASC,
+                                joined_at ASC
+                        ) as new_rank
                     FROM tournament_participants
                     WHERE tournament_id = $1
                 )
@@ -638,8 +684,16 @@ class TournamentService {
 
     /**
      * End a tournament and distribute prizes
+     * ENHANCED: Better prize distribution, notifications, logging
+     * @param {number} tournamentId - Tournament ID
+     * @param {object} options - Options for ending tournament
+     * @param {boolean} options.preview - If true, return preview without making changes
+     * @param {object} options.customDistribution - Optional custom prize percentages
+     * @param {boolean} options.notifyWinners - If true, send notifications to winners
      */
-    async endTournament(tournamentId) {
+    async endTournament(tournamentId, options = {}) {
+        const { preview = false, customDistribution = null, notifyWinners = true } = options;
+        
         try {
             const tournament = await this.getTournamentById(tournamentId);
 
@@ -647,59 +701,261 @@ class TournamentService {
                 return { success: false, error: 'Tournament not found' };
             }
 
-            // Get prize distribution (simple: top 10 split the pool)
-            const leaderboard = await this.getTournamentLeaderboard(tournamentId, 10);
-            
-            if (leaderboard.length === 0) {
-                // No participants, just mark as completed
-                await pool.query(
-                    'UPDATE tournaments SET status = $1 WHERE id = $2',
-                    ['completed', tournamentId]
-                );
-                return { success: true, message: 'Tournament ended with no participants' };
+            if (tournament.status === 'completed') {
+                return { success: false, error: 'Tournament already completed' };
             }
 
-            // Prize distribution percentages (top 10)
-            const prizeDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
-            
-            for (let i = 0; i < Math.min(leaderboard.length, 10); i++) {
-                const prize = Math.floor(tournament.prize_pool * prizeDistribution[i]);
-                
-                await pool.query(
-                    `UPDATE tournament_participants
-                     SET prize_won = $1
-                     WHERE tournament_id = $2 AND rank = $3`,
-                    [prize, tournamentId, i + 1]
-                );
+            // Ensure rankings are up to date before distributing prizes
+            await this.updateTournamentRankings(tournamentId);
 
-                // Create prize transaction
-                const participant = leaderboard[i];
+            // Get final leaderboard with full details
+            const leaderboardResult = await pool.query(`
+                SELECT 
+                    tp.user_id,
+                    tp.rank,
+                    tp.best_score,
+                    COALESCE(tp.best_questions_answered, 0) as questions_answered,
+                    COALESCE(tp.best_time_taken, 999) as time_taken,
+                    tp.games_played,
+                    tp.total_score,
+                    u.username,
+                    u.full_name,
+                    u.phone_number,
+                    CASE 
+                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+                        ELSE 'whatsapp'
+                    END as platform
+                FROM tournament_participants tp
+                JOIN users u ON tp.user_id = u.id
+                WHERE tp.tournament_id = $1
+                  AND (tp.best_questions_answered > 0 OR tp.best_score > 0 OR tp.games_played > 0)
+                ORDER BY 
+                    COALESCE(tp.best_questions_answered, 0) DESC,
+                    COALESCE(tp.best_time_taken, 999) ASC,
+                    tp.joined_at ASC
+                LIMIT 20
+            `, [tournamentId]);
+
+            const leaderboard = leaderboardResult.rows;
+            
+            if (leaderboard.length === 0) {
+                if (preview) {
+                    return {
+                        success: true,
+                        preview: true,
+                        message: 'Tournament has no qualifying participants',
+                        winners: [],
+                        totalPrizePool: tournament.prize_pool,
+                        distributed: 0
+                    };
+                }
+                
+                // No participants, just mark as completed
                 await pool.query(
-                    `INSERT INTO transactions (user_id, amount, transaction_type, payment_status, session_id)
-                     SELECT $1, $2, 'prize', 'pending', 
-                     (SELECT id FROM game_sessions WHERE user_id = $1 AND tournament_id = $3 ORDER BY completed_at DESC LIMIT 1)
-                     WHERE NOT EXISTS (
-                       SELECT 1 FROM transactions 
-                       WHERE user_id = $1 
-                       AND session_id = (SELECT id FROM game_sessions WHERE user_id = $1 AND tournament_id = $3 ORDER BY completed_at DESC LIMIT 1)
-                     )`,
-                    [participant.user_id, prize, tournamentId]
+                    'UPDATE tournaments SET status = $1, completed_at = NOW() WHERE id = $2',
+                    ['completed', tournamentId]
                 );
+                return { success: true, message: 'Tournament ended with no participants', winnersCount: 0 };
+            }
+
+            // Default prize distribution (customizable per tournament)
+            // Top 10 get prizes: 40%, 20%, 15%, 10%, 5%, 3%, 3%, 2%, 1%, 1%
+            const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+            const prizeDistribution = customDistribution || defaultDistribution;
+            
+            const prizePool = tournament.prize_pool || 0;
+            const winners = [];
+            let totalDistributed = 0;
+
+            // Calculate prizes for each winner
+            for (let i = 0; i < Math.min(leaderboard.length, prizeDistribution.length); i++) {
+                const participant = leaderboard[i];
+                const prizePercentage = prizeDistribution[i] || 0;
+                const prize = Math.floor(prizePool * prizePercentage);
+                
+                if (prize > 0) {
+                    winners.push({
+                        rank: i + 1,
+                        userId: participant.user_id,
+                        username: participant.username,
+                        fullName: participant.full_name,
+                        phoneNumber: participant.phone_number,
+                        platform: participant.platform,
+                        questionsAnswered: participant.questions_answered,
+                        timeTaken: parseFloat(participant.time_taken).toFixed(1),
+                        gamesPlayed: participant.games_played,
+                        bestScore: participant.best_score,
+                        prize: prize,
+                        percentage: (prizePercentage * 100).toFixed(1) + '%'
+                    });
+                    totalDistributed += prize;
+                }
+            }
+
+            // PREVIEW MODE - Return results without making changes
+            if (preview) {
+                return {
+                    success: true,
+                    preview: true,
+                    tournament: {
+                        id: tournament.id,
+                        name: tournament.tournament_name,
+                        prizePool: prizePool,
+                        participantCount: leaderboard.length,
+                        status: tournament.status
+                    },
+                    winners: winners,
+                    totalDistributed: totalDistributed,
+                    remaining: prizePool - totalDistributed,
+                    message: `Preview: ${winners.length} winners will receive ₦${totalDistributed.toLocaleString()} total`
+                };
+            }
+
+            // EXECUTE PRIZE DISTRIBUTION
+            const distributionResults = [];
+            
+            for (const winner of winners) {
+                try {
+                    // Update prize_won in tournament_participants
+                    await pool.query(
+                        `UPDATE tournament_participants
+                         SET prize_won = $1
+                         WHERE tournament_id = $2 AND user_id = $3`,
+                        [winner.prize, tournamentId, winner.userId]
+                    );
+
+                    // Create tournament prize transaction (separate from classic mode)
+                    const txResult = await pool.query(`
+                        INSERT INTO transactions (
+                            user_id, 
+                            amount, 
+                            transaction_type, 
+                            payment_status,
+                            description,
+                            created_at
+                        )
+                        VALUES ($1, $2, 'tournament_prize', 'pending', $3, NOW())
+                        RETURNING id
+                    `, [
+                        winner.userId, 
+                        winner.prize,
+                        `Tournament Prize: ${tournament.tournament_name} - Rank #${winner.rank}`
+                    ]);
+
+                    distributionResults.push({
+                        userId: winner.userId,
+                        rank: winner.rank,
+                        prize: winner.prize,
+                        transactionId: txResult.rows[0]?.id,
+                        status: 'success'
+                    });
+
+                    logger.info(`🏆 Tournament prize distributed: User ${winner.userId} (Rank #${winner.rank}) - ₦${winner.prize}`);
+                } catch (distError) {
+                    logger.error(`Error distributing prize to user ${winner.userId}:`, distError);
+                    distributionResults.push({
+                        userId: winner.userId,
+                        rank: winner.rank,
+                        prize: winner.prize,
+                        status: 'failed',
+                        error: distError.message
+                    });
+                }
             }
 
             // Mark tournament as completed
             await pool.query(
-                'UPDATE tournaments SET status = $1 WHERE id = $2',
-                ['completed', tournamentId]
+                `UPDATE tournaments 
+                 SET status = 'completed', 
+                     completed_at = NOW(),
+                     actual_prize_distributed = $1
+                 WHERE id = $2`,
+                [totalDistributed, tournamentId]
             );
 
-            logger.info(`Tournament ${tournamentId} ended. Prizes distributed to ${Math.min(leaderboard.length, 10)} winners.`);
+            // Send notifications to winners (if enabled)
+            if (notifyWinners) {
+                await this.notifyTournamentWinners(tournament, winners);
+            }
 
-            return { success: true, winnersCount: Math.min(leaderboard.length, 10) };
+            // Log tournament completion
+            logger.info(`🏆 Tournament ${tournamentId} (${tournament.tournament_name}) completed!`);
+            logger.info(`   Total prize pool: ₦${prizePool.toLocaleString()}`);
+            logger.info(`   Distributed: ₦${totalDistributed.toLocaleString()} to ${winners.length} winners`);
+
+            return { 
+                success: true, 
+                message: `Tournament ended successfully. ${winners.length} winners received ₦${totalDistributed.toLocaleString()}`,
+                winnersCount: winners.length,
+                totalDistributed: totalDistributed,
+                winners: winners,
+                distributionResults: distributionResults
+            };
         } catch (error) {
             logger.error('Error ending tournament:', error);
             return { success: false, error: error.message };
         }
+    }
+
+    /**
+     * Notify tournament winners via their platform
+     */
+    async notifyTournamentWinners(tournament, winners) {
+        const MessagingService = require('./messaging.service');
+        const messagingService = new MessagingService();
+        
+        for (const winner of winners) {
+            try {
+                const message = this.formatWinnerNotification(tournament, winner);
+                
+                // Get user details
+                const userResult = await pool.query(
+                    'SELECT phone_number FROM users WHERE id = $1',
+                    [winner.userId]
+                );
+                
+                if (userResult.rows.length > 0) {
+                    const phoneNumber = userResult.rows[0].phone_number;
+                    await messagingService.sendMessage(phoneNumber, message);
+                    logger.info(`Winner notification sent to user ${winner.userId} (Rank #${winner.rank})`);
+                }
+            } catch (notifyError) {
+                logger.error(`Error notifying winner ${winner.userId}:`, notifyError);
+            }
+        }
+    }
+
+    /**
+     * Format winner notification message
+     */
+    formatWinnerNotification(tournament, winner) {
+        const rankEmojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        const rankEmoji = rankEmojis[winner.rank - 1] || '🏆';
+        
+        let message = `${rankEmoji} *CONGRATULATIONS!* ${rankEmoji}\n\n`;
+        message += `You finished *#${winner.rank}* in the tournament:\n`;
+        message += `*${tournament.tournament_name}*\n\n`;
+        message += `📊 *Your Performance:*\n`;
+        message += `• Questions Reached: Q${winner.questionsAnswered}\n`;
+        message += `• Best Time: ${winner.timeTaken}s\n`;
+        message += `• Games Played: ${winner.gamesPlayed}\n\n`;
+        message += `💰 *Your Prize: ₦${winner.prize.toLocaleString()}*\n\n`;
+        message += `Your winnings will be added to your payout balance.\n`;
+        message += `Type WITHDRAW to cash out!\n\n`;
+        message += `Thank you for playing What's Up Trivia! 🎮`;
+        
+        return message;
+    }
+
+    /**
+     * Get tournament prize distribution preview
+     * Shows what would happen if tournament ended now
+     */
+    async getTournamentPrizePreview(tournamentId, customDistribution = null) {
+        return await this.endTournament(tournamentId, { 
+            preview: true, 
+            customDistribution 
+        });
     }
 
     /**
