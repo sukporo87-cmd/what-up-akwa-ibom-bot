@@ -4909,8 +4909,9 @@ router.get('/api/questions/recent-rotation', authenticateAdmin, async (req, res)
 // ============================================
 // TOURNAMENT MANAGEMENT DASHBOARD PAGE
 // URL: /admin/tournaments/manage
+// No server-side auth - page handles auth client-side like other admin pages
 // ============================================
-router.get('/tournaments/manage', authenticateAdmin, async (req, res) => {
+router.get('/tournaments/manage', async (req, res) => {
     try {
         // Get all tournaments with stats
         const tournamentsResult = await pool.query(`
@@ -5250,7 +5251,7 @@ router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, r
 
 // ============================================
 // END OF TOURNAMENT MANAGEMENT ROUTES
-// Make sure module.exports = router; comes after this
+
 // ============================================
 // ============================================
 // MODULE EXPORT
