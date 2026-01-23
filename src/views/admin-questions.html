@@ -1,0 +1,1485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Question Bank Manager - Admin Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --whatsapp-color: #25D366;
+            --telegram-color: #0088cc;
+            --primary-color: #667eea;
+            --danger-color: #f56565;
+            --success-color: #48bb78;
+            --warning-color: #ed8936;
+            --info-color: #4299e1;
+            --bg-dark: #1a202c;
+            --bg-card: #2d3748;
+            --bg-input: #4a5568;
+            --text-primary: #ffffff;
+            --text-secondary: #a0aec0;
+            --border-color: #4a5568;
+            --gold-color: #D4AF37;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: var(--text-primary);
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+        /* Header */
+        .header {
+            background: var(--bg-dark);
+            padding: 20px 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .header h1 { font-size: 28px; display: flex; align-items: center; gap: 10px; }
+        .header-actions { display: flex; gap: 15px; align-items: center; }
+
+        /* Navigation Links */
+        .nav-links {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .nav-link {
+            padding: 10px 20px;
+            background: var(--bg-dark);
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            background: var(--bg-dark);
+            padding: 10px;
+            border-radius: 12px;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .tab:hover { background: var(--bg-card); color: white; }
+        .tab.active { background: var(--primary-color); color: white; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Cards */
+        .card {
+            background: var(--bg-dark);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .card h2 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card h3 {
+            font-size: 1.1rem;
+            margin: 20px 0 15px;
+            color: var(--text-secondary);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .stat-card .label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+
+        /* Form Elements */
+        .form-group { margin-bottom: 20px; }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            transition: border-color 0.2s;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        textarea {
+            min-height: 200px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+        }
+
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+
+        @media (max-width: 768px) {
+            .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary-color); color: white; }
+        .btn-primary:hover { background: #5a6fd6; }
+        .btn-success { background: var(--success-color); color: white; }
+        .btn-success:hover { background: #38a169; }
+        .btn-warning { background: var(--warning-color); color: white; }
+        .btn-danger { background: var(--danger-color); color: white; }
+        .btn-info { background: var(--info-color); color: white; }
+
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+
+        /* Alerts */
+        .alert {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success { background: rgba(72, 187, 120, 0.2); border: 1px solid var(--success-color); color: var(--success-color); }
+        .alert-danger { background: rgba(245, 101, 101, 0.2); border: 1px solid var(--danger-color); color: var(--danger-color); }
+        .alert-warning { background: rgba(237, 137, 54, 0.2); border: 1px solid var(--warning-color); color: var(--warning-color); }
+        .alert-info { background: rgba(66, 153, 225, 0.2); border: 1px solid var(--info-color); color: var(--info-color); }
+
+        /* Question Preview */
+        .question-preview {
+            background: var(--bg-card);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: border-color 0.2s;
+        }
+
+        .question-preview.duplicate { border-color: var(--danger-color); background: rgba(245, 101, 101, 0.1); }
+        .question-preview.has-errors { border-color: var(--warning-color); }
+
+        .question-preview .q-number {
+            font-weight: 700;
+            color: var(--primary-color);
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+        }
+
+        .question-preview .q-text {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: white;
+        }
+
+        .question-preview .options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .question-preview .option {
+            padding: 10px 15px;
+            background: var(--bg-dark);
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+
+        .question-preview .option.correct {
+            background: rgba(72, 187, 120, 0.3);
+            border: 2px solid var(--success-color);
+            font-weight: 600;
+        }
+
+        .question-preview .meta {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 0.85rem;
+        }
+
+        .question-preview .meta span {
+            background: var(--bg-input);
+            padding: 4px 10px;
+            border-radius: 20px;
+            color: var(--text-secondary);
+        }
+
+        .question-preview .fun-fact {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(237, 137, 54, 0.2);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            color: var(--warning-color);
+        }
+
+        /* Distribution Chart */
+        .distribution-chart {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            height: 150px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            margin: 20px 0;
+        }
+
+        .distribution-bar {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .distribution-bar .bar {
+            width: 100%;
+            max-width: 60px;
+            background: var(--primary-color);
+            border-radius: 4px 4px 0 0;
+            transition: height 0.3s;
+        }
+
+        .distribution-bar .bar.unbalanced { background: var(--warning-color); }
+
+        .distribution-bar .value { font-weight: 700; font-size: 1.1rem; }
+        .distribution-bar .label { font-size: 0.85rem; color: var(--text-secondary); }
+
+        /* SQL Output */
+        .sql-output {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* Format Help */
+        .format-help {
+            background: rgba(66, 153, 225, 0.1);
+            border: 1px solid var(--info-color);
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .format-help h4 { color: var(--info-color); margin-bottom: 10px; }
+
+        .format-help pre {
+            background: var(--bg-card);
+            padding: 15px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            overflow-x: auto;
+        }
+
+        /* Category Tag Input */
+        .category-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+
+        .category-input-wrapper input { flex: 1; }
+        .category-input-wrapper button { white-space: nowrap; }
+
+        .category-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .category-tag {
+            background: var(--bg-card);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .category-tag .remove {
+            cursor: pointer;
+            color: var(--danger-color);
+            font-weight: bold;
+        }
+
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-success { background: var(--success-color); color: white; }
+        .badge-danger { background: var(--danger-color); color: white; }
+        .badge-warning { background: var(--warning-color); color: white; }
+        .badge-info { background: var(--info-color); color: white; }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .hidden { display: none !important; }
+
+        /* Progress indication */
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-card);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-bar .fill {
+            height: 100%;
+            background: var(--success-color);
+            transition: width 0.3s;
+        }
+
+        /* Log output */
+        .log-output {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+
+        .log-output .log-entry { padding: 4px 0; border-bottom: 1px solid var(--border-color); }
+        .log-output .log-success { color: var(--success-color); }
+        .log-output .log-error { color: var(--danger-color); }
+        .log-output .log-info { color: var(--info-color); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📚 Question Bank Manager</h1>
+            <div class="header-actions">
+                <span id="adminName" style="color: var(--text-secondary);"></span>
+                <button class="btn btn-danger" onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <div class="nav-links">
+            <a href="/admin" class="nav-link">🏠 Main Admin</a>
+            <a href="/admin/dashboard" class="nav-link">📊 Analytics</a>
+            <a href="/admin/tournaments/manage" class="nav-link">🏆 Tournaments</a>
+            <a href="/admin/rotation" class="nav-link">🔄 Rotation</a>
+            <a href="/admin/questions" class="nav-link active">📚 Questions</a>
+        </div>
+
+        <!-- Stats Overview -->
+        <div class="stats-grid" id="bankStatsGrid">
+            <div class="stat-card">
+                <div class="number" id="classicCount">--</div>
+                <div class="label">Classic Mode</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="practiceCount">--</div>
+                <div class="label">Practice Mode</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="tournamentCount">--</div>
+                <div class="label">Tournament Mode</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="totalCategories">--</div>
+                <div class="label">Categories</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('input')">📝 Input Questions</button>
+            <button class="tab" onclick="showTab('validate')">✅ Validate</button>
+            <button class="tab" onclick="showTab('duplicates')">🔍 Duplicates</button>
+            <button class="tab" onclick="showTab('insert')">💾 Insert</button>
+            <button class="tab" onclick="showTab('manage')">⚙️ Manage</button>
+        </div>
+
+        <!-- Tab 1: Input Questions -->
+        <div id="tab-input" class="tab-content active">
+            <div class="card">
+                <h2>📝 Input Questions</h2>
+                
+                <div class="format-help">
+                    <h4>📋 Input Format</h4>
+                    <p style="margin-bottom: 10px; color: var(--text-secondary);">Paste questions in this format (separated by blank lines):</p>
+                    <pre>Q1. What is the capital of Nigeria?
+A) Lagos
+B) Abuja
+C) Kano
+D) Port Harcourt
+Answer: B
+Difficulty: 3
+Fun Fact: Abuja became Nigeria's capital in 1991.
+
+Q2. Which river is the longest in Africa?
+A) Niger
+B) Congo
+C) Nile
+D) Zambezi
+Answer: C
+Difficulty: 5
+Fun Fact: The Nile stretches approximately 6,650 km.</pre>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="questionBank">Question Bank</label>
+                        <select id="questionBank">
+                            <!-- Populated from API -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="category">Category</label>
+                        <select id="category">
+                            <!-- Populated from API -->
+                        </select>
+                        <div class="category-input-wrapper" style="margin-top: 10px;">
+                            <input type="text" id="newCategory" placeholder="Or add new category...">
+                            <button class="btn btn-info" onclick="addCategory()">+ Add</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="difficultyMode">Difficulty Assignment</label>
+                        <select id="difficultyMode">
+                            <option value="auto">Auto-distribute (1-15)</option>
+                            <option value="manual">From input (Difficulty: X)</option>
+                            <option value="single">Single difficulty for all</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="singleDifficulty">Single Difficulty (if selected)</label>
+                        <select id="singleDifficulty">
+                            <option value="1">1 - Very Easy</option>
+                            <option value="3">3 - Easy</option>
+                            <option value="5">5 - Easy-Medium</option>
+                            <option value="7" selected>7 - Medium</option>
+                            <option value="10">10 - Medium-Hard</option>
+                            <option value="12">12 - Hard</option>
+                            <option value="15">15 - Very Hard</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="startingNumber">Starting Q# (tracking)</label>
+                        <input type="number" id="startingNumber" value="1" min="1">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="isPractice">
+                        <label for="isPractice" style="margin-bottom: 0;">Mark as Practice Questions</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="rawInput">Paste Questions Here</label>
+                    <textarea id="rawInput" rows="15" placeholder="Paste your questions here following the format above..."></textarea>
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="parseQuestions()">🔄 Parse Questions</button>
+                    <button class="btn btn-warning" onclick="clearInput()">🗑️ Clear</button>
+                    <button class="btn btn-info" onclick="loadSampleQuestions()">📥 Load Sample</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Validate -->
+        <div id="tab-validate" class="tab-content">
+            <div class="card">
+                <h2>✅ Validate & Preview</h2>
+
+                <div id="parseResults" class="hidden">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="number" id="totalParsed">0</div>
+                            <div class="label">Parsed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number" id="validCount">0</div>
+                            <div class="label">Valid</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number" id="errorCount">0</div>
+                            <div class="label">Errors</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number" id="duplicateCount">0</div>
+                            <div class="label">Duplicates</div>
+                        </div>
+                    </div>
+
+                    <h3>📊 Answer Distribution</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 10px;">Correct answers should be evenly distributed (~25% each)</p>
+                    
+                    <div class="distribution-chart" id="distributionChart">
+                        <div class="distribution-bar">
+                            <div class="bar" id="barA" style="height: 0%"></div>
+                            <div class="value" id="countA">0</div>
+                            <div class="label">A</div>
+                        </div>
+                        <div class="distribution-bar">
+                            <div class="bar" id="barB" style="height: 0%"></div>
+                            <div class="value" id="countB">0</div>
+                            <div class="label">B</div>
+                        </div>
+                        <div class="distribution-bar">
+                            <div class="bar" id="barC" style="height: 0%"></div>
+                            <div class="value" id="countC">0</div>
+                            <div class="label">C</div>
+                        </div>
+                        <div class="distribution-bar">
+                            <div class="bar" id="barD" style="height: 0%"></div>
+                            <div class="value" id="countD">0</div>
+                            <div class="label">D</div>
+                        </div>
+                    </div>
+
+                    <div id="distributionWarning" class="alert alert-warning hidden">
+                        ⚠️ Answer distribution is unbalanced. Consider redistributing for fairness.
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-warning" onclick="redistributeAnswers()">🔀 Auto-Redistribute Answers</button>
+                        <button class="btn btn-info" onclick="checkDuplicatesAPI()">🔍 Check Duplicates in DB</button>
+                    </div>
+
+                    <h3 style="margin-top: 30px;">📋 Questions Preview</h3>
+                    <div id="questionsPreview"></div>
+                </div>
+
+                <div id="noParseResults" class="alert alert-info">
+                    No questions parsed yet. Go to "Input Questions" tab and parse your questions first.
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Duplicates -->
+        <div id="tab-duplicates" class="tab-content">
+            <div class="card">
+                <h2>🔍 Check Duplicates</h2>
+                
+                <div class="alert alert-info">
+                    Click the button below to check all parsed questions against the database.
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="checkDuplicatesAPI()">🔍 Check for Duplicates</button>
+                </div>
+
+                <div id="duplicateResults" class="hidden" style="margin-top: 20px;">
+                    <h3>Results</h3>
+                    <div id="duplicatesList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Insert -->
+        <div id="tab-insert" class="tab-content">
+            <div class="card">
+                <h2>💾 Insert Questions</h2>
+
+                <div class="grid-2" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="excludeDuplicates" checked>
+                            <label for="excludeDuplicates" style="margin-bottom: 0;">Exclude flagged duplicates</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="skipErrors" checked>
+                            <label for="skipErrors" style="margin-bottom: 0;">Skip questions with errors</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="insertSummary" class="alert alert-info">
+                    Parse questions first to see insertion summary.
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="insertQuestionsAPI()" id="insertBtn" disabled>
+                        ⚡ Insert Questions to Database
+                    </button>
+                    <button class="btn btn-info" onclick="generateSQL()">📄 Generate SQL Only</button>
+                </div>
+
+                <div id="insertProgress" class="hidden" style="margin-top: 20px;">
+                    <h3>Progress</h3>
+                    <div class="progress-bar">
+                        <div class="fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="log-output" id="insertLog"></div>
+                </div>
+
+                <div id="sqlOutput" class="hidden" style="margin-top: 20px;">
+                    <h3>Generated SQL</h3>
+                    <div class="sql-output" id="sqlContent"></div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="copySQL()">📋 Copy SQL</button>
+                        <button class="btn btn-info" onclick="downloadSQL()">💾 Download .sql</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 5: Manage -->
+        <div id="tab-manage" class="tab-content">
+            <div class="card">
+                <h2>⚙️ Manage Question Banks & Categories</h2>
+
+                <h3>Question Banks</h3>
+                <div id="questionBanksList" class="loading">
+                    <div class="spinner"></div>
+                </div>
+
+                <h3 style="margin-top: 30px;">Categories</h3>
+                <div id="categoriesList" class="loading">
+                    <div class="spinner"></div>
+                </div>
+
+                <h3 style="margin-top: 30px;">Add New Category</h3>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="newCategoryName">Category Name</label>
+                        <input type="text" id="newCategoryName" placeholder="e.g., nigerian_history">
+                    </div>
+                    <div class="form-group">
+                        <label for="newCategoryDisplay">Display Name</label>
+                        <input type="text" id="newCategoryDisplay" placeholder="e.g., Nigerian History">
+                    </div>
+                </div>
+                <button class="btn btn-success" onclick="createCategory()">➕ Create Category</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION & STATE
+        // ============================================
+        let token = localStorage.getItem('adminToken');
+        let parsedQuestions = [];
+        let duplicateQuestions = [];
+        let questionBanks = [];
+        let categories = [];
+
+        const API_BASE = '/admin/api';
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        document.addEventListener('DOMContentLoaded', async function() {
+            if (!token) {
+                window.location.href = '/admin';
+                return;
+            }
+
+            // Set admin name
+            const adminInfo = localStorage.getItem('adminInfo');
+            if (adminInfo) {
+                const info = JSON.parse(adminInfo);
+                document.getElementById('adminName').textContent = `👤 ${info.username || 'Admin'}`;
+            }
+
+            // Load initial data
+            await Promise.all([
+                loadQuestionBanks(),
+                loadCategories(),
+                loadBankStats()
+            ]);
+        });
+
+        // ============================================
+        // API CALLS
+        // ============================================
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            };
+            if (body) options.body = JSON.stringify(body);
+            
+            const response = await fetch(`${API_BASE}${endpoint}`, options);
+            if (response.status === 401) {
+                localStorage.removeItem('adminToken');
+                window.location.href = '/admin';
+                return null;
+            }
+            return response.json();
+        }
+
+        async function loadQuestionBanks() {
+            const data = await apiCall('/questions/banks');
+            if (data && data.banks) {
+                questionBanks = data.banks;
+                
+                // Populate dropdown
+                const select = document.getElementById('questionBank');
+                select.innerHTML = questionBanks.map(b => 
+                    `<option value="${b.id}">${b.display_name || b.bank_name} (ID: ${b.id})</option>`
+                ).join('');
+
+                // Populate manage tab
+                document.getElementById('questionBanksList').innerHTML = questionBanks.map(b => `
+                    <div style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 10px;">
+                        <strong>${b.display_name || b.bank_name}</strong>
+                        <span class="badge badge-info" style="margin-left: 10px;">${b.for_game_mode || 'general'}</span>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 5px;">
+                            ${b.description || 'No description'} • ${b.question_count || 0} questions
+                        </div>
+                    </div>
+                `).join('') || '<p style="color: var(--text-secondary);">No question banks found</p>';
+            }
+        }
+
+        async function loadCategories() {
+            const data = await apiCall('/questions/categories');
+            if (data && data.categories) {
+                categories = data.categories;
+                
+                // Populate dropdown
+                const select = document.getElementById('category');
+                select.innerHTML = '<option value="">-- Select Category --</option>' + 
+                    categories.map(c => `<option value="${c.name}">${c.display_name || c.name}</option>`).join('');
+
+                // Populate manage tab
+                document.getElementById('categoriesList').innerHTML = categories.length > 0 ? 
+                    categories.map(c => `
+                        <span class="category-tag">
+                            ${c.display_name || c.name}
+                            <span style="color: var(--text-secondary);">(${c.question_count || 0})</span>
+                        </span>
+                    `).join('') : '<p style="color: var(--text-secondary);">No categories found</p>';
+            }
+        }
+
+        async function loadBankStats() {
+            const data = await apiCall('/questions/stats');
+            if (data && data.stats) {
+                data.stats.forEach(s => {
+                    if (s.bank_name === 'classic_mode') {
+                        document.getElementById('classicCount').textContent = s.total_questions || 0;
+                    } else if (s.bank_name === 'practice_mode') {
+                        document.getElementById('practiceCount').textContent = s.total_questions || 0;
+                    } else if (s.bank_name === 'tournaments') {
+                        document.getElementById('tournamentCount').textContent = s.total_questions || 0;
+                    }
+                });
+                document.getElementById('totalCategories').textContent = categories.length;
+            }
+        }
+
+        // ============================================
+        // TAB SWITCHING
+        // ============================================
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        // ============================================
+        // QUESTION PARSING
+        // ============================================
+        function parseQuestions() {
+            const rawInput = document.getElementById('rawInput').value.trim();
+            if (!rawInput) {
+                alert('Please enter some questions first!');
+                return;
+            }
+
+            const questionBankId = document.getElementById('questionBank').value;
+            const category = document.getElementById('category').value;
+            const difficultyMode = document.getElementById('difficultyMode').value;
+            const singleDifficulty = parseInt(document.getElementById('singleDifficulty').value);
+            const startingNumber = parseInt(document.getElementById('startingNumber').value) || 1;
+            const isPractice = document.getElementById('isPractice').checked;
+
+            // Split by double newlines or question markers
+            const blocks = rawInput.split(/\n\s*\n|\n(?=Q\d+\.)/);
+
+            parsedQuestions = [];
+            let questionNum = startingNumber;
+
+            blocks.forEach((block, index) => {
+                const q = parseQuestionBlock(block.trim(), questionNum, index);
+                if (q) {
+                    q.question_bank_id = parseInt(questionBankId);
+                    q.category = category || 'general';
+                    q.is_practice = isPractice;
+
+                    // Assign difficulty
+                    if (difficultyMode === 'single') {
+                        q.difficulty = singleDifficulty;
+                    } else if (difficultyMode === 'auto') {
+                        // Auto-distribute across difficulties 1-15
+                        q.difficulty = (index % 15) + 1;
+                    }
+                    // Manual mode: difficulty parsed from input or default to 7
+
+                    parsedQuestions.push(q);
+                    questionNum++;
+                }
+            });
+
+            if (parsedQuestions.length === 0) {
+                alert('Could not parse any questions. Please check the format.');
+                return;
+            }
+
+            updateValidationUI();
+            showTab('validate');
+        }
+
+        function parseQuestionBlock(block, num, index) {
+            if (!block) return null;
+
+            const lines = block.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length < 5) return null;
+
+            const question = {
+                number: num,
+                index: index,
+                question_text: '',
+                option_a: '',
+                option_b: '',
+                option_c: '',
+                option_d: '',
+                correct_answer: '',
+                difficulty: 7, // Default medium
+                fun_fact: '',
+                errors: []
+            };
+
+            // Parse question text (first line, may have Q# prefix)
+            const qMatch = lines[0].match(/^(?:Q\d+\.?\s*)?(.+)/i);
+            if (qMatch) {
+                question.question_text = qMatch[1].trim();
+            }
+
+            // Parse options, answer, difficulty, fun fact
+            lines.forEach(line => {
+                // Options
+                const optMatch = line.match(/^([ABCD])\)?[\.\)]\s*(.+)/i);
+                if (optMatch) {
+                    const opt = optMatch[1].toUpperCase();
+                    question[`option_${opt.toLowerCase()}`] = optMatch[2].trim();
+                }
+
+                // Answer
+                const ansMatch = line.match(/^(?:Answer|Correct|Ans)[\s:]+([ABCD])/i);
+                if (ansMatch) {
+                    question.correct_answer = ansMatch[1].toUpperCase();
+                }
+
+                // Difficulty
+                const diffMatch = line.match(/^(?:Difficulty|Diff|Level)[\s:]+(\d+)/i);
+                if (diffMatch) {
+                    question.difficulty = Math.min(15, Math.max(1, parseInt(diffMatch[1])));
+                }
+
+                // Fun fact
+                const funMatch = line.match(/^(?:Fun\s*Fact|Fact|FF)[\s:]+(.+)/i);
+                if (funMatch) {
+                    question.fun_fact = funMatch[1].trim();
+                }
+            });
+
+            // Validation
+            if (!question.question_text) question.errors.push('Missing question text');
+            if (!question.option_a) question.errors.push('Missing option A');
+            if (!question.option_b) question.errors.push('Missing option B');
+            if (!question.option_c) question.errors.push('Missing option C');
+            if (!question.option_d) question.errors.push('Missing option D');
+            if (!question.correct_answer) question.errors.push('Missing correct answer');
+
+            return question;
+        }
+
+        // ============================================
+        // VALIDATION UI
+        // ============================================
+        function updateValidationUI() {
+            document.getElementById('parseResults').classList.remove('hidden');
+            document.getElementById('noParseResults').classList.add('hidden');
+
+            const valid = parsedQuestions.filter(q => q.errors.length === 0);
+            const errors = parsedQuestions.filter(q => q.errors.length > 0);
+
+            document.getElementById('totalParsed').textContent = parsedQuestions.length;
+            document.getElementById('validCount').textContent = valid.length;
+            document.getElementById('errorCount').textContent = errors.length;
+            document.getElementById('duplicateCount').textContent = duplicateQuestions.length;
+
+            updateDistributionChart();
+            renderQuestionPreviews();
+            updateInsertSummary();
+        }
+
+        function updateDistributionChart() {
+            const counts = { A: 0, B: 0, C: 0, D: 0 };
+
+            parsedQuestions.forEach(q => {
+                if (q.correct_answer && counts.hasOwnProperty(q.correct_answer)) {
+                    counts[q.correct_answer]++;
+                }
+            });
+
+            const total = parsedQuestions.length || 1;
+            const maxCount = Math.max(...Object.values(counts), 1);
+            const ideal = total / 4;
+
+            let isUnbalanced = false;
+
+            ['A', 'B', 'C', 'D'].forEach(letter => {
+                const count = counts[letter];
+                const percentage = (count / maxCount) * 100;
+                const deviation = Math.abs(count - ideal) / ideal;
+
+                document.getElementById(`count${letter}`).textContent = count;
+                document.getElementById(`bar${letter}`).style.height = `${percentage}%`;
+
+                if (deviation > 0.3) {
+                    document.getElementById(`bar${letter}`).classList.add('unbalanced');
+                    isUnbalanced = true;
+                } else {
+                    document.getElementById(`bar${letter}`).classList.remove('unbalanced');
+                }
+            });
+
+            document.getElementById('distributionWarning').classList.toggle('hidden', !isUnbalanced);
+        }
+
+        function renderQuestionPreviews() {
+            const container = document.getElementById('questionsPreview');
+            container.innerHTML = parsedQuestions.map((q, i) => {
+                const isDuplicate = duplicateQuestions.some(d => d.question_text === q.question_text);
+                const hasErrors = q.errors.length > 0;
+
+                return `
+                    <div class="question-preview ${isDuplicate ? 'duplicate' : ''} ${hasErrors ? 'has-errors' : ''}">
+                        <div class="q-number">
+                            Q${q.number}
+                            ${isDuplicate ? '<span class="badge badge-danger">DUPLICATE</span>' : ''}
+                            ${hasErrors ? '<span class="badge badge-warning">ERRORS</span>' : ''}
+                        </div>
+                        <div class="q-text">${escapeHtml(q.question_text)}</div>
+                        <div class="options">
+                            <div class="option ${q.correct_answer === 'A' ? 'correct' : ''}">A) ${escapeHtml(q.option_a)}</div>
+                            <div class="option ${q.correct_answer === 'B' ? 'correct' : ''}">B) ${escapeHtml(q.option_b)}</div>
+                            <div class="option ${q.correct_answer === 'C' ? 'correct' : ''}">C) ${escapeHtml(q.option_c)}</div>
+                            <div class="option ${q.correct_answer === 'D' ? 'correct' : ''}">D) ${escapeHtml(q.option_d)}</div>
+                        </div>
+                        <div class="meta">
+                            <span>Answer: ${q.correct_answer}</span>
+                            <span>Difficulty: ${q.difficulty}/15</span>
+                            <span>Category: ${q.category}</span>
+                            <span>Bank ID: ${q.question_bank_id}</span>
+                        </div>
+                        ${q.fun_fact ? `<div class="fun-fact">💡 ${escapeHtml(q.fun_fact)}</div>` : ''}
+                        ${hasErrors ? `<div class="alert alert-danger" style="margin-top:10px;">Errors: ${q.errors.join(', ')}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateInsertSummary() {
+            const valid = parsedQuestions.filter(q => q.errors.length === 0);
+            const dupes = parsedQuestions.filter(q => duplicateQuestions.some(d => d.question_text === q.question_text));
+            const toInsert = valid.filter(q => !duplicateQuestions.some(d => d.question_text === q.question_text));
+
+            document.getElementById('insertSummary').innerHTML = `
+                <strong>Ready to Insert:</strong> ${toInsert.length} questions<br>
+                <small style="color: var(--text-secondary);">
+                    Total parsed: ${parsedQuestions.length} | 
+                    Valid: ${valid.length} | 
+                    Duplicates: ${dupes.length} | 
+                    Errors: ${parsedQuestions.length - valid.length}
+                </small>
+            `;
+
+            document.getElementById('insertBtn').disabled = toInsert.length === 0;
+        }
+
+        // ============================================
+        // ANSWER REDISTRIBUTION
+        // ============================================
+        function redistributeAnswers() {
+            if (parsedQuestions.length === 0) {
+                alert('No questions to redistribute!');
+                return;
+            }
+
+            const answers = ['A', 'B', 'C', 'D'];
+            const targetCount = Math.floor(parsedQuestions.length / 4);
+            const remainder = parsedQuestions.length % 4;
+
+            // Shuffle for random distribution
+            const shuffled = [...parsedQuestions].sort(() => Math.random() - 0.5);
+
+            let answerIndex = 0;
+            let countForCurrentAnswer = 0;
+
+            shuffled.forEach((q, i) => {
+                const maxForAnswer = targetCount + (answerIndex < remainder ? 1 : 0);
+
+                while (countForCurrentAnswer >= maxForAnswer && answerIndex < 3) {
+                    answerIndex++;
+                    countForCurrentAnswer = 0;
+                }
+
+                const newAnswer = answers[answerIndex];
+                const originalAnswer = q.correct_answer;
+
+                if (originalAnswer && originalAnswer !== newAnswer) {
+                    // Swap options
+                    const options = [q.option_a, q.option_b, q.option_c, q.option_d];
+                    const correctIdx = originalAnswer.charCodeAt(0) - 65;
+                    const newIdx = newAnswer.charCodeAt(0) - 65;
+
+                    [options[correctIdx], options[newIdx]] = [options[newIdx], options[correctIdx]];
+
+                    q.option_a = options[0];
+                    q.option_b = options[1];
+                    q.option_c = options[2];
+                    q.option_d = options[3];
+                    q.correct_answer = newAnswer;
+                }
+
+                countForCurrentAnswer++;
+            });
+
+            // Re-sort by original index
+            parsedQuestions.sort((a, b) => a.index - b.index);
+
+            updateValidationUI();
+            alert('Answers redistributed for better balance!');
+        }
+
+        // ============================================
+        // DUPLICATE CHECKING
+        // ============================================
+        async function checkDuplicatesAPI() {
+            if (parsedQuestions.length === 0) {
+                alert('Parse questions first!');
+                return;
+            }
+
+            const questionTexts = parsedQuestions.map(q => q.question_text).filter(t => t);
+
+            try {
+                const data = await apiCall('/questions/check-duplicates', 'POST', { questions: questionTexts });
+
+                if (data && data.duplicates) {
+                    duplicateQuestions = data.duplicates;
+
+                    document.getElementById('duplicateCount').textContent = duplicateQuestions.length;
+
+                    document.getElementById('duplicateResults').classList.remove('hidden');
+                    document.getElementById('duplicatesList').innerHTML = duplicateQuestions.length > 0 ?
+                        duplicateQuestions.map(d => `
+                            <div style="background: rgba(245,101,101,0.2); padding: 10px 15px; border-left: 4px solid var(--danger-color); margin-bottom: 10px; border-radius: 0 6px 6px 0;">
+                                <strong>${escapeHtml(d.question_text)}</strong>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 5px;">
+                                    Existing ID: ${d.id} | Bank: ${d.question_bank_id} | Category: ${d.category || 'N/A'}
+                                </div>
+                            </div>
+                        `).join('') :
+                        '<div class="alert alert-success">✅ No duplicates found! All questions are new.</div>';
+
+                    renderQuestionPreviews();
+                    updateInsertSummary();
+                }
+            } catch (error) {
+                alert('Error checking duplicates: ' + error.message);
+            }
+        }
+
+        // ============================================
+        // INSERT QUESTIONS
+        // ============================================
+        async function insertQuestionsAPI() {
+            const excludeDupes = document.getElementById('excludeDuplicates').checked;
+            const skipErrors = document.getElementById('skipErrors').checked;
+
+            let questionsToInsert = [...parsedQuestions];
+
+            if (skipErrors) {
+                questionsToInsert = questionsToInsert.filter(q => q.errors.length === 0);
+            }
+
+            if (excludeDupes) {
+                questionsToInsert = questionsToInsert.filter(q => 
+                    !duplicateQuestions.some(d => d.question_text === q.question_text)
+                );
+            }
+
+            if (questionsToInsert.length === 0) {
+                alert('No valid questions to insert!');
+                return;
+            }
+
+            if (!confirm(`Insert ${questionsToInsert.length} questions into the database?`)) {
+                return;
+            }
+
+            // Show progress
+            document.getElementById('insertProgress').classList.remove('hidden');
+            const logEl = document.getElementById('insertLog');
+            const progressEl = document.getElementById('progressFill');
+            logEl.innerHTML = '';
+
+            function log(message, type = 'info') {
+                logEl.innerHTML += `<div class="log-entry log-${type}">${new Date().toLocaleTimeString()} - ${message}</div>`;
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+
+            log('Starting bulk insert...', 'info');
+
+            try {
+                const data = await apiCall('/questions/bulk-insert', 'POST', { questions: questionsToInsert });
+
+                if (data && data.success) {
+                    progressEl.style.width = '100%';
+                    log(`✅ Successfully inserted ${data.inserted} questions!`, 'success');
+
+                    if (data.errors && data.errors.length > 0) {
+                        data.errors.forEach(e => log(`⚠️ Error: ${e}`, 'error'));
+                    }
+
+                    // Refresh stats
+                    await loadBankStats();
+
+                    alert(`Successfully inserted ${data.inserted} questions!`);
+                } else {
+                    log(`❌ Insert failed: ${data.error || 'Unknown error'}`, 'error');
+                    alert('Insert failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+                alert('Error inserting questions: ' + error.message);
+            }
+        }
+
+        // ============================================
+        // SQL GENERATION
+        // ============================================
+        function generateSQL() {
+            const excludeDupes = document.getElementById('excludeDuplicates').checked;
+            const skipErrors = document.getElementById('skipErrors').checked;
+
+            let questions = [...parsedQuestions];
+
+            if (skipErrors) {
+                questions = questions.filter(q => q.errors.length === 0);
+            }
+
+            if (excludeDupes) {
+                questions = questions.filter(q => 
+                    !duplicateQuestions.some(d => d.question_text === q.question_text)
+                );
+            }
+
+            if (questions.length === 0) {
+                alert('No valid questions for SQL generation!');
+                return;
+            }
+
+            // Generate SQL
+            let sql = `-- ============================================
+-- BULK INSERT: ${questions.length} Questions
+-- Generated: ${new Date().toISOString()}
+-- Question Bank ID: ${questions[0].question_bank_id}
+-- Category: ${questions[0].category}
+-- ============================================\n\n`;
+
+            questions.forEach((q, i) => {
+                sql += `-- Question ${i + 1}/${questions.length} (Q${q.number}) - Difficulty: ${q.difficulty}
+INSERT INTO public.questions (
+  question_text, option_a, option_b, option_c, option_d,
+  correct_answer, difficulty, category, fun_fact, question_bank_id, is_practice
+) VALUES (
+  '${escapeSql(q.question_text)}',
+  '${escapeSql(q.option_a)}',
+  '${escapeSql(q.option_b)}',
+  '${escapeSql(q.option_c)}',
+  '${escapeSql(q.option_d)}',
+  '${q.correct_answer}',
+  ${q.difficulty},
+  '${q.category}',
+  '${escapeSql(q.fun_fact)}',
+  ${q.question_bank_id},
+  ${q.is_practice}
+);\n\n`;
+            });
+
+            document.getElementById('sqlOutput').classList.remove('hidden');
+            document.getElementById('sqlContent').textContent = sql;
+        }
+
+        function copySQL() {
+            const sql = document.getElementById('sqlContent').textContent;
+            navigator.clipboard.writeText(sql).then(() => alert('SQL copied!'));
+        }
+
+        function downloadSQL() {
+            const sql = document.getElementById('sqlContent').textContent;
+            const blob = new Blob([sql], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `questions_${new Date().toISOString().split('T')[0]}.sql`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // ============================================
+        // CATEGORY MANAGEMENT
+        // ============================================
+        function addCategory() {
+            const input = document.getElementById('newCategory');
+            const value = input.value.trim().toLowerCase().replace(/\s+/g, '_');
+
+            if (value && !categories.some(c => c.name === value)) {
+                categories.push({ name: value, display_name: input.value.trim() });
+
+                const select = document.getElementById('category');
+                select.innerHTML = '<option value="">-- Select Category --</option>' + 
+                    categories.map(c => `<option value="${c.name}">${c.display_name || c.name}</option>`).join('');
+                select.value = value;
+
+                input.value = '';
+            }
+        }
+
+        async function createCategory() {
+            const name = document.getElementById('newCategoryName').value.trim().toLowerCase().replace(/\s+/g, '_');
+            const displayName = document.getElementById('newCategoryDisplay').value.trim();
+
+            if (!name || !displayName) {
+                alert('Please enter both category name and display name');
+                return;
+            }
+
+            const data = await apiCall('/questions/categories', 'POST', { name, display_name: displayName });
+
+            if (data && data.success) {
+                alert('Category created!');
+                await loadCategories();
+                document.getElementById('newCategoryName').value = '';
+                document.getElementById('newCategoryDisplay').value = '';
+            } else {
+                alert('Error: ' + (data?.error || 'Failed to create category'));
+            }
+        }
+
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+        function clearInput() {
+            document.getElementById('rawInput').value = '';
+            parsedQuestions = [];
+            duplicateQuestions = [];
+            document.getElementById('parseResults').classList.add('hidden');
+            document.getElementById('noParseResults').classList.remove('hidden');
+            document.getElementById('sqlOutput').classList.add('hidden');
+            document.getElementById('insertProgress').classList.add('hidden');
+            document.getElementById('duplicateResults').classList.add('hidden');
+        }
+
+        function loadSampleQuestions() {
+            document.getElementById('rawInput').value = `Q1. What is the capital of Nigeria?
+A) Lagos
+B) Abuja
+C) Kano
+D) Port Harcourt
+Answer: B
+Difficulty: 3
+Fun Fact: Abuja became Nigeria's capital in 1991, replacing Lagos.
+
+Q2. Which river is the longest in Africa?
+A) Niger
+B) Congo
+C) Nile
+D) Zambezi
+Answer: C
+Difficulty: 5
+Fun Fact: The Nile stretches approximately 6,650 km through northeastern Africa.
+
+Q3. What year did Nigeria gain independence?
+A) 1963
+B) 1957
+C) 1960
+D) 1956
+Answer: C
+Difficulty: 2
+Fun Fact: Nigeria gained independence from Britain on October 1, 1960.
+
+Q4. Which is Africa's largest country by area?
+A) Nigeria
+B) Algeria
+C) Sudan
+D) DRC
+Answer: B
+Difficulty: 7
+Fun Fact: Algeria covers about 2.38 million square kilometers.`;
+        }
+
+        function escapeSql(str) {
+            if (!str) return '';
+            return str.replace(/'/g, "''");
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function logout() {
+            localStorage.removeItem('adminToken');
+            localStorage.removeItem('adminInfo');
+            window.location.href = '/admin';
+        }
+    </script>
+</body>
+</html>
