@@ -1,25 +1,61 @@
-// ============================================
+// ============================================================
 // FILE: src/services/audit.service.js
-// Game Session Audit Trail Service
-// Tracks every action in a game session for dispute resolution
-// ============================================
+// COMPLETE FILE - READY TO PASTE AND REPLACE
+// CHANGES: Added logEvent() generic method, anti-cheat event
+//          logging, photo verification logging, Q1 timeout logging,
+//          perfect game flagging, session termination logging
+// ============================================================
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
 class AuditService {
     constructor() {
-        // Start the cleanup job for old audit logs
         this.startAuditCleanup();
     }
 
     // ============================================
-    // AUDIT LOG CREATION
+    // GENERIC EVENT LOGGER
+    // Used by anti-cheat system for all event types
     // ============================================
 
-    /**
-     * Log when a game session starts
-     */
+    async logEvent(sessionId, userId, eventType, eventData = {}) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, $3, $4, NOW())
+            `, [sessionId, userId, eventType, JSON.stringify(eventData)]);
+            
+            logger.info(`📝 Audit: ${eventType} - Session ${sessionId}, User ${userId}`);
+        } catch (error) {
+            logger.error(`Error logging event ${eventType}:`, error);
+        }
+    }
+
+    // ============================================
+    // ANTI-CHEAT EVENT LOGGER
+    // Writes to anti_cheat_events table
+    // ============================================
+
+    async logAntiCheatEvent(userId, sessionId, eventType, severity, details = {}) {
+        try {
+            await pool.query(`
+                INSERT INTO anti_cheat_events 
+                (user_id, session_id, event_type, severity, details, created_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+            `, [userId, sessionId, eventType, severity, JSON.stringify(details)]);
+
+            logger.warn(`🔒 Anti-Cheat: ${eventType} [${severity}] - User ${userId}, Session ${sessionId}`);
+        } catch (error) {
+            logger.error(`Error logging anti-cheat event ${eventType}:`, error);
+        }
+    }
+
+    // ============================================
+    // GAME LIFECYCLE LOGGING
+    // ============================================
+
     async logGameStart(sessionId, userId, gameMode, platform, tournamentId = null) {
         try {
             await pool.query(`
@@ -27,8 +63,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'GAME_START', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     game_mode: gameMode,
                     platform: platform,
@@ -40,20 +75,15 @@ class AuditService {
             logger.info(`📝 Audit: Game started - Session ${sessionId}, User ${userId}`);
         } catch (error) {
             logger.error('Error logging game start:', error);
-            // Don't throw - audit logging should not break the game
         }
     }
 
-    /**
-     * Log when a question is presented to the user
-     */
     async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount, isTurboMode = false) {
         try {
+            const redis = require('../config/redis');
             const questionStartTime = Date.now();
             const isSafePoint = [5, 10].includes(questionNumber);
             
-            // Store question start time in Redis for response time calculation
-            const redis = require('../config/redis');
             await redis.setex(`audit_q_start:${sessionId}:${questionNumber}`, 60, questionStartTime.toString());
             
             await pool.query(`
@@ -61,8 +91,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'QUESTION_ASKED', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     question_id: question.id,
@@ -78,7 +107,6 @@ class AuditService {
                     question_start_time: questionStartTime,
                     turbo_mode: isTurboMode,
                     timeout_seconds: isTurboMode ? 10 : 12,
-                    // NEW: Rotation tracking fields
                     times_seen_by_user: question.user_times_seen || 0,
                     is_safe_point: isSafePoint,
                     safe_point_note: isSafePoint ? `Q${questionNumber} is a safe checkpoint` : null
@@ -89,16 +117,16 @@ class AuditService {
         }
     }
 
-    /**
-     * Log when a user answers a question
-     */
-    async logAnswer(sessionId, userId, questionNumber, userAnswer, correctAnswer, isCorrect, prizeWon) {
+    async logAnswer(sessionId, userId, questionNumber, userAnswer, correctAnswer, isCorrect, prizeWon, responseTimeMs = null) {
         try {
             const redis = require('../config/redis');
-            const questionStartTime = await redis.get(`audit_q_start:${sessionId}:${questionNumber}`);
-            const responseTimeMs = questionStartTime ? Date.now() - parseInt(questionStartTime) : null;
+
+            // If responseTimeMs not provided, calculate from stored start time
+            if (responseTimeMs === null) {
+                const questionStartTime = await redis.get(`audit_q_start:${sessionId}:${questionNumber}`);
+                responseTimeMs = questionStartTime ? Date.now() - parseInt(questionStartTime) : null;
+            }
             
-            // Clean up the start time
             await redis.del(`audit_q_start:${sessionId}:${questionNumber}`);
             
             await pool.query(`
@@ -106,8 +134,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'ANSWER_GIVEN', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     user_answer: userAnswer,
@@ -126,9 +153,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Log when a lifeline is used
-     */
     async logLifelineUsed(sessionId, userId, questionNumber, lifelineType, result) {
         try {
             await pool.query(`
@@ -136,12 +160,11 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'LIFELINE_USED', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     lifeline_type: lifelineType,
-                    result: result // e.g., removed options for 50:50, or "skipped" for skip
+                    result: result
                 })
             ]);
             
@@ -151,9 +174,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Log when time runs out on a question
-     */
     async logTimeout(sessionId, userId, questionNumber) {
         try {
             const redis = require('../config/redis');
@@ -165,12 +185,11 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TIMEOUT', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     response_time_ms: responseTimeMs,
-                    reason: 'Time limit exceeded (15 seconds)'
+                    reason: 'Time limit exceeded'
                 })
             ]);
             
@@ -180,19 +199,37 @@ class AuditService {
         }
     }
 
+    async logGameEnd(sessionId, userId, finalScore, questionsAnswered, outcome, guaranteedAmount = 0) {
+        try {
+            await pool.query(`
+                INSERT INTO game_audit_logs 
+                (session_id, user_id, event_type, event_data, created_at)
+                VALUES ($1, $2, 'GAME_END', $3, NOW())
+            `, [
+                sessionId, userId,
+                JSON.stringify({
+                    final_score: finalScore,
+                    questions_answered: questionsAnswered,
+                    outcome: outcome,
+                    guaranteed_amount: guaranteedAmount,
+                    ended_at: new Date().toISOString()
+                })
+            ]);
+            
+            logger.info(`📝 Audit: Game ended - Session ${sessionId}, Score: ₦${finalScore}, Outcome: ${outcome}`);
+        } catch (error) {
+            logger.error('Error logging game end:', error);
+        }
+    }
+
     // ============================================
     // CAPTCHA AUDIT LOGGING
     // ============================================
 
-    /**
-     * Log when a CAPTCHA is shown to the user
-     */
     async logCaptchaShown(sessionId, userId, questionNumber, captchaType, captchaQuestion) {
         try {
             const redis = require('../config/redis');
             const captchaStartTime = Date.now();
-            
-            // Store CAPTCHA start time for response time calculation
             await redis.setex(`audit_captcha_start:${sessionId}:${questionNumber}`, 60, captchaStartTime.toString());
             
             await pool.query(`
@@ -200,8 +237,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'CAPTCHA_SHOWN', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     captcha_type: captchaType,
@@ -216,14 +252,9 @@ class AuditService {
         }
     }
 
-    /**
-     * Log CAPTCHA response (pass or fail)
-     */
     async logCaptchaResponse(sessionId, userId, questionNumber, captchaType, userAnswer, correctAnswer, isCorrect, responseTimeMs) {
         try {
             const redis = require('../config/redis');
-            
-            // Clean up the start time
             await redis.del(`audit_captcha_start:${sessionId}:${questionNumber}`);
             
             await pool.query(`
@@ -231,8 +262,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, $3, $4, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 isCorrect ? 'CAPTCHA_PASSED' : 'CAPTCHA_FAILED',
                 JSON.stringify({
                     question_number: questionNumber,
@@ -251,9 +281,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Log CAPTCHA timeout
-     */
     async logCaptchaTimeout(sessionId, userId, questionNumber, captchaType) {
         try {
             const redis = require('../config/redis');
@@ -267,8 +294,7 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'CAPTCHA_TIMEOUT', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     captcha_type: captchaType,
@@ -287,37 +313,35 @@ class AuditService {
     // TURBO MODE AUDIT LOGGING
     // ============================================
 
-    /**
-     * Log when Turbo Mode is activated
-     */
-    async logTurboModeActivated(sessionId, userId, questionNumber, suspiciousResponses) {
+    async logTurboModeActivated(sessionId, userId, questionNumber, suspiciousResponses, triggerType = 'last_second') {
         try {
             await pool.query(`
                 INSERT INTO game_audit_logs 
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TURBO_MODE_ACTIVATED', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
-                    trigger_reason: '3 consecutive answers in 10.5s-11.99s window',
+                    trigger_type: triggerType,
                     suspicious_responses: suspiciousResponses,
-                    reduced_timeout: '10 seconds',
-                    turbo_questions: 2,
                     activated_at: new Date().toISOString()
                 })
             ]);
+
+            // Also log to anti_cheat_events
+            await this.logAntiCheatEvent(userId, sessionId, 'turbo_triggered', 'medium', {
+                trigger_type: triggerType,
+                question_number: questionNumber,
+                suspicious_responses: suspiciousResponses
+            });
             
-            logger.info(`📝 Audit: ⚡ TURBO MODE ACTIVATED - Session ${sessionId}, Q${questionNumber}`);
+            logger.info(`📝 Audit: ⚡ TURBO MODE ACTIVATED [${triggerType}] - Session ${sessionId}, Q${questionNumber}`);
         } catch (error) {
             logger.error('Error logging turbo mode activation:', error);
         }
     }
 
-    /**
-     * Log when Turbo Mode is completed (user passed the test)
-     */
     async logTurboModeCompleted(sessionId, userId) {
         try {
             await pool.query(`
@@ -325,11 +349,10 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TURBO_MODE_COMPLETED', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     result: 'passed',
-                    message: 'User completed 2 turbo mode questions successfully',
+                    message: 'User completed turbo mode questions successfully',
                     completed_at: new Date().toISOString()
                 })
             ]);
@@ -340,9 +363,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Log when a question is asked during Turbo Mode
-     */
     async logTurboModeQuestion(sessionId, userId, questionNumber, questionsRemaining) {
         try {
             await pool.query(`
@@ -350,24 +370,18 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TURBO_MODE_QUESTION', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     question_number: questionNumber,
                     turbo_questions_remaining: questionsRemaining,
                     timeout_seconds: 10
                 })
             ]);
-            
-            logger.info(`📝 Audit: ⚡ Turbo question - Session ${sessionId}, Q${questionNumber}, ${questionsRemaining} remaining`);
         } catch (error) {
             logger.error('Error logging turbo mode question:', error);
         }
     }
 
-    /**
-     * Log when user types GO to continue turbo mode
-     */
     async logTurboModeGoReceived(sessionId, userId) {
         try {
             await pool.query(`
@@ -375,24 +389,17 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TURBO_MODE_GO_RECEIVED', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     result: 'user_acknowledged',
-                    message: 'User typed GO to continue with turbo mode',
                     received_at: new Date().toISOString()
                 })
             ]);
-            
-            logger.info(`📝 Audit: ⚡ TURBO MODE GO RECEIVED - Session ${sessionId}, User ${userId}`);
         } catch (error) {
             logger.error('Error logging turbo mode GO received:', error);
         }
     }
 
-    /**
-     * Log when user fails to type GO within 30 seconds
-     */
     async logTurboModeTimeout(sessionId, userId) {
         try {
             await pool.query(`
@@ -400,45 +407,109 @@ class AuditService {
                 (session_id, user_id, event_type, event_data, created_at)
                 VALUES ($1, $2, 'TURBO_MODE_GO_TIMEOUT', $3, NOW())
             `, [
-                sessionId,
-                userId,
+                sessionId, userId,
                 JSON.stringify({
                     result: 'timeout',
                     message: 'User failed to type GO within 30 seconds',
                     timeout_at: new Date().toISOString()
                 })
             ]);
-            
-            logger.info(`📝 Audit: ⚡ TURBO MODE GO TIMEOUT - Session ${sessionId}, User ${userId}`);
         } catch (error) {
             logger.error('Error logging turbo mode timeout:', error);
         }
     }
 
-    /**
-     * Log when a game ends
-     */
-    async logGameEnd(sessionId, userId, finalScore, questionsAnswered, outcome, guaranteedAmount = 0) {
+    // ============================================
+    // ANTI-CHEAT SPECIFIC LOGGING
+    // ============================================
+
+    async logSessionTerminated(sessionId, userId, reason, details = {}) {
         try {
-            await pool.query(`
-                INSERT INTO game_audit_logs 
-                (session_id, user_id, event_type, event_data, created_at)
-                VALUES ($1, $2, 'GAME_END', $3, NOW())
-            `, [
-                sessionId,
-                userId,
-                JSON.stringify({
-                    final_score: finalScore,
-                    questions_answered: questionsAnswered,
-                    outcome: outcome, // 'completed', 'wrong_answer', 'timeout', 'cancelled'
-                    guaranteed_amount: guaranteedAmount,
-                    ended_at: new Date().toISOString()
-                })
-            ]);
-            
-            logger.info(`📝 Audit: Game ended - Session ${sessionId}, Score: ₦${finalScore}, Outcome: ${outcome}`);
+            await this.logEvent(sessionId, userId, 'SESSION_TERMINATED', {
+                reason,
+                ...details,
+                terminated_at: new Date().toISOString()
+            });
+
+            await this.logAntiCheatEvent(userId, sessionId, 'session_terminated', 'critical', {
+                reason, ...details
+            });
         } catch (error) {
-            logger.error('Error logging game end:', error);
+            logger.error('Error logging session termination:', error);
+        }
+    }
+
+    async logPerfectGameFlagged(sessionId, userId, details = {}) {
+        try {
+            await this.logEvent(sessionId, userId, 'PERFECT_GAME_FLAGGED', {
+                message: 'Perfect 15/15 game flagged for review',
+                ...details,
+                flagged_at: new Date().toISOString()
+            });
+
+            await this.logAntiCheatEvent(userId, sessionId, 'perfect_game_flagged', 'high', details);
+        } catch (error) {
+            logger.error('Error logging perfect game flag:', error);
+        }
+    }
+
+    async logPhotoVerificationRequested(sessionId, userId, questionNumber, challengeType) {
+        try {
+            await this.logEvent(sessionId, userId, 'PHOTO_VERIFICATION_REQUESTED', {
+                question_number: questionNumber,
+                challenge_type: challengeType,
+                timeout_seconds: 20,
+                requested_at: new Date().toISOString()
+            });
+
+            await this.logAntiCheatEvent(userId, sessionId, 'photo_requested', 'medium', {
+                question_number: questionNumber,
+                challenge_type: challengeType
+            });
+        } catch (error) {
+            logger.error('Error logging photo verification request:', error);
+        }
+    }
+
+    async logPhotoVerificationResult(sessionId, userId, passed, responseType, responseTimeMs) {
+        try {
+            const eventType = passed ? 'PHOTO_VERIFICATION_PASSED' : 'PHOTO_VERIFICATION_FAILED';
+            await this.logEvent(sessionId, userId, eventType, {
+                passed,
+                response_type: responseType,
+                response_time_ms: responseTimeMs,
+                resolved_at: new Date().toISOString()
+            });
+
+            await this.logAntiCheatEvent(
+                userId, sessionId,
+                passed ? 'photo_passed' : 'photo_failed',
+                passed ? 'low' : 'high',
+                { response_type: responseType, response_time_ms: responseTimeMs }
+            );
+        } catch (error) {
+            logger.error('Error logging photo verification result:', error);
+        }
+    }
+
+    async logQ1TimeoutEvent(sessionId, userId, streak, action) {
+        try {
+            await this.logEvent(sessionId, userId, 'Q1_TIMEOUT_TRACKED', {
+                streak_count: streak,
+                action_taken: action,
+                tracked_at: new Date().toISOString()
+            });
+
+            if (action === 'warning' || action === 'suspension') {
+                await this.logAntiCheatEvent(
+                    userId, sessionId,
+                    action === 'suspension' ? 'q1_timeout_suspension' : 'q1_timeout_warning',
+                    action === 'suspension' ? 'critical' : 'high',
+                    { streak_count: streak }
+                );
+            }
+        } catch (error) {
+            logger.error('Error logging Q1 timeout event:', error);
         }
     }
 
@@ -446,9 +517,6 @@ class AuditService {
     // AUDIT LOG RETRIEVAL
     // ============================================
 
-    /**
-     * Get complete audit trail for a game session
-     */
     async getSessionAuditTrail(sessionId) {
         try {
             const result = await pool.query(`
@@ -476,9 +544,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Get audit trail for a user within a date range
-     */
     async getUserAuditTrail(userId, startDate = null, endDate = null) {
         try {
             let query = `
@@ -497,7 +562,6 @@ class AuditService {
                 query += ` AND gal.created_at >= $${params.length + 1}`;
                 params.push(startDate);
             }
-            
             if (endDate) {
                 query += ` AND gal.created_at <= $${params.length + 1}`;
                 params.push(endDate);
@@ -513,16 +577,11 @@ class AuditService {
         }
     }
 
-    /**
-     * Generate a formatted audit report for a session
-     */
     async generateSessionReport(sessionId) {
         try {
             const auditTrail = await this.getSessionAuditTrail(sessionId);
             
-            if (auditTrail.length === 0) {
-                return null;
-            }
+            if (auditTrail.length === 0) return null;
             
             const firstEntry = auditTrail[0];
             const report = {
@@ -548,7 +607,10 @@ class AuditService {
                     timeouts: 0,
                     lifelines_used: [],
                     total_response_time_ms: 0,
-                    average_response_time_ms: 0
+                    average_response_time_ms: 0,
+                    turbo_triggered: false,
+                    photo_verification: false,
+                    session_terminated: false
                 }
             };
             
@@ -563,7 +625,6 @@ class AuditService {
                     data: eventData
                 });
                 
-                // Build summary
                 switch (entry.event_type) {
                     case 'QUESTION_ASKED':
                         report.summary.total_questions++;
@@ -585,6 +646,15 @@ class AuditService {
                     case 'LIFELINE_USED':
                         report.summary.lifelines_used.push(eventData.lifeline_type);
                         break;
+                    case 'TURBO_MODE_ACTIVATED':
+                        report.summary.turbo_triggered = true;
+                        break;
+                    case 'PHOTO_VERIFICATION_REQUESTED':
+                        report.summary.photo_verification = true;
+                        break;
+                    case 'SESSION_TERMINATED':
+                        report.summary.session_terminated = true;
+                        break;
                 }
             }
             
@@ -604,16 +674,11 @@ class AuditService {
     // CLEANUP & ARCHIVAL
     // ============================================
 
-    /**
-     * Start the automatic cleanup job (runs daily)
-     */
     startAuditCleanup() {
-        // Run cleanup every 24 hours
         setInterval(async () => {
             await this.cleanupOldAuditLogs();
-        }, 24 * 60 * 60 * 1000); // 24 hours
+        }, 24 * 60 * 60 * 1000);
         
-        // Also run once at startup (delayed by 1 minute)
         setTimeout(async () => {
             await this.cleanupOldAuditLogs();
         }, 60 * 1000);
@@ -621,13 +686,8 @@ class AuditService {
         logger.info('📝 Audit cleanup job scheduled (runs every 24 hours)');
     }
 
-    /**
-     * Delete audit logs older than 7 days
-     * Optionally archive to external storage first
-     */
     async cleanupOldAuditLogs(retentionDays = 7) {
         try {
-            // First, get the logs that will be deleted (for potential archiving)
             const toDelete = await pool.query(`
                 SELECT COUNT(*) as count
                 FROM game_audit_logs
@@ -641,10 +701,6 @@ class AuditService {
                 return { deleted: 0 };
             }
             
-            // Optional: Archive before deleting (implement archiveToStorage if needed)
-            // await this.archiveToStorage(retentionDays);
-            
-            // Delete old logs
             const result = await pool.query(`
                 DELETE FROM game_audit_logs
                 WHERE created_at < NOW() - INTERVAL '${retentionDays} days'
@@ -652,7 +708,6 @@ class AuditService {
             `);
             
             logger.info(`📝 Audit cleanup: Deleted ${result.rowCount} logs older than ${retentionDays} days`);
-            
             return { deleted: result.rowCount };
         } catch (error) {
             logger.error('Error cleaning up audit logs:', error);
@@ -660,55 +715,6 @@ class AuditService {
         }
     }
 
-    /**
-     * Archive old audit logs to external storage (optional implementation)
-     * This is a placeholder - implement based on your storage preference
-     * Options: AWS S3, Cloudflare R2, Google Cloud Storage, etc.
-     */
-    async archiveToStorage(retentionDays = 7) {
-        try {
-            // Get logs to archive
-            const logsToArchive = await pool.query(`
-                SELECT * FROM game_audit_logs
-                WHERE created_at < NOW() - INTERVAL '${retentionDays} days'
-                ORDER BY created_at ASC
-            `);
-            
-            if (logsToArchive.rows.length === 0) {
-                return { archived: 0 };
-            }
-            
-            // Group by date for organized storage
-            const archiveDate = new Date().toISOString().split('T')[0];
-            const archiveData = {
-                archived_at: new Date().toISOString(),
-                retention_days: retentionDays,
-                record_count: logsToArchive.rows.length,
-                logs: logsToArchive.rows
-            };
-            
-            // TODO: Implement actual storage upload
-            // Example for AWS S3:
-            // const s3 = new AWS.S3();
-            // await s3.putObject({
-            //     Bucket: process.env.AUDIT_ARCHIVE_BUCKET,
-            //     Key: `audit-logs/${archiveDate}/audit-archive-${Date.now()}.json`,
-            //     Body: JSON.stringify(archiveData),
-            //     ContentType: 'application/json'
-            // }).promise();
-            
-            logger.info(`📝 Audit archive: ${logsToArchive.rows.length} logs ready for archival`);
-            
-            return { archived: logsToArchive.rows.length, data: archiveData };
-        } catch (error) {
-            logger.error('Error archiving audit logs:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get audit statistics for admin dashboard
-     */
     async getAuditStats() {
         try {
             const stats = await pool.query(`
@@ -721,7 +727,11 @@ class AuditService {
                     COUNT(*) FILTER (WHERE event_type = 'GAME_START') as games_started,
                     COUNT(*) FILTER (WHERE event_type = 'GAME_END') as games_ended,
                     COUNT(*) FILTER (WHERE event_type = 'ANSWER_GIVEN') as answers_logged,
-                    COUNT(*) FILTER (WHERE event_type = 'TIMEOUT') as timeouts_logged
+                    COUNT(*) FILTER (WHERE event_type = 'TIMEOUT') as timeouts_logged,
+                    COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_ACTIVATED') as turbo_activations,
+                    COUNT(*) FILTER (WHERE event_type = 'SESSION_TERMINATED') as sessions_terminated,
+                    COUNT(*) FILTER (WHERE event_type = 'PERFECT_GAME_FLAGGED') as perfect_games_flagged,
+                    COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_REQUESTED') as photo_verifications
                 FROM game_audit_logs
                 WHERE created_at > NOW() - INTERVAL '7 days'
             `);

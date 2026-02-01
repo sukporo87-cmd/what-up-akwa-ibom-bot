@@ -1,20 +1,25 @@
-// ============================================
+// ============================================================
 // FILE: src/services/captcha.service.js
-// Handles: CAPTCHA generation and validation
-// Types: Emoji, Math, Count, Reverse
-// ============================================
+// COMPLETE FILE - READY TO PASTE AND REPLACE
+// CHANGES: Added 3 new CAPTCHA types (emoji_grid, odd_one_out, 
+//          emoji_sequence) with mixed noise emojis. Harder for bots.
+// ============================================================
 
 const { logger } = require('../utils/logger');
 const pool = require('../config/database');
 
 class CaptchaService {
     constructor() {
-        // CAPTCHA type distribution
+        // CAPTCHA type distribution — 7 types total
         this.captchaTypes = [
-            { type: 'emoji', weight: 30 },
-            { type: 'math', weight: 25 },
-            { type: 'count', weight: 25 },
-            { type: 'reverse', weight: 20 }
+            { type: 'emoji', weight: 15 },
+            { type: 'math', weight: 15 },
+            { type: 'count', weight: 10 },
+            { type: 'reverse', weight: 10 },
+            // NEW enhanced types — harder for text-parsing bots
+            { type: 'emoji_grid', weight: 20 },
+            { type: 'odd_one_out', weight: 15 },
+            { type: 'emoji_sequence', weight: 15 }
         ];
         
         // Emoji CAPTCHA data
@@ -29,9 +34,12 @@ class CaptchaService {
             BUILDING: ['🏠', '🏢', '🏥', '🏫', '🏰', '⛪', '🕌', '🏛️', '🏪', '🏨']
         };
         
-        // Non-category emojis for distractors
-        this.distractorEmojis = ['💡', '📱', '💻', '📚', '🔑', '💎', '🎁', '🎈', '🎯', '🔔', 
-                                  '⭐', '❤️', '🌍', '🔥', '💧', '🌸', '🍀', '🌙', '🎭', '🎪'];
+        // Noise / distractor emojis (not in any category)
+        this.distractorEmojis = [
+            '💡', '📱', '💻', '📚', '🔑', '💎', '🎁', '🎈', '🎯', '🔔', 
+            '⭐', '❤️', '🌍', '🔥', '💧', '🌸', '🍀', '🌙', '🎭', '🎪',
+            '🧩', '🪄', '🧸', '📌', '🗝️', '🎀', '🧲', '🪁', '📎', '🔮'
+        ];
         
         // Words for reverse CAPTCHA
         this.reverseWords = ['PLAY', 'GAME', 'QUIZ', 'CASH', 'LUCK', 'BEST', 'STAR', 'GOLD', 
@@ -39,6 +47,9 @@ class CaptchaService {
         
         // Count emojis
         this.countEmojis = ['⭐', '❤️', '🔥', '💎', '🎯', '🌟', '💫', '✨'];
+
+        // Sequence patterns for emoji_sequence
+        this.sequenceEmojis = ['🔴', '🟡', '🟢', '🔵', '🟣', '🟠', '⚫', '⚪'];
     }
     
     // ============================================
@@ -48,7 +59,6 @@ class CaptchaService {
     shouldShowCaptcha(questionNumber, shownCaptchas = []) {
         // First CAPTCHA zone: Question 6 OR 8
         if ([6, 8].includes(questionNumber) && !shownCaptchas.some(q => [6, 8].includes(q))) {
-            // 50% chance at 6, guaranteed at 8 if not shown at 6
             if (questionNumber === 6) {
                 return Math.random() < 0.5;
             }
@@ -57,7 +67,6 @@ class CaptchaService {
         
         // Second CAPTCHA zone: Question 11 OR 12
         if ([11, 12].includes(questionNumber) && !shownCaptchas.some(q => [11, 12].includes(q))) {
-            // 50% chance at 11, guaranteed at 12 if not shown at 11
             if (questionNumber === 11) {
                 return Math.random() < 0.5;
             }
@@ -83,8 +92,14 @@ class CaptchaService {
                 return this.generateCountCaptcha();
             case 'reverse':
                 return this.generateReverseCaptcha();
+            case 'emoji_grid':
+                return this.generateEmojiGridCaptcha();
+            case 'odd_one_out':
+                return this.generateOddOneOutCaptcha();
+            case 'emoji_sequence':
+                return this.generateEmojiSequenceCaptcha();
             default:
-                return this.generateMathCaptcha(); // Fallback
+                return this.generateMathCaptcha();
         }
     }
     
@@ -99,11 +114,11 @@ class CaptchaService {
             }
         }
         
-        return 'math'; // Fallback
+        return 'math';
     }
     
     // ============================================
-    // EMOJI CAPTCHA
+    // EMOJI CAPTCHA (Original)
     // ============================================
     
     generateEmojiCaptcha() {
@@ -111,10 +126,8 @@ class CaptchaService {
         const targetCategory = categories[Math.floor(Math.random() * categories.length)];
         const categoryEmojis = this.emojiCategories[targetCategory];
         
-        // Pick correct answer from category
         const correctEmoji = categoryEmojis[Math.floor(Math.random() * categoryEmojis.length)];
         
-        // Pick 3 distractors (not from target category)
         const distractors = [];
         const allOtherEmojis = [
             ...this.distractorEmojis,
@@ -129,7 +142,6 @@ class CaptchaService {
             }
         }
         
-        // Shuffle options
         const options = this.shuffleArray([correctEmoji, ...distractors]);
         const correctIndex = options.indexOf(correctEmoji) + 1;
         
@@ -145,6 +157,7 @@ class CaptchaService {
         return {
             type: 'emoji',
             question,
+            answer: correctIndex.toString(),
             correctAnswer: correctIndex.toString(),
             acceptedAnswers: [correctIndex.toString()],
             displayQuestion: `Which emoji is a ${targetCategory}?`,
@@ -153,7 +166,7 @@ class CaptchaService {
     }
     
     // ============================================
-    // MATH CAPTCHA
+    // MATH CAPTCHA (Original)
     // ============================================
     
     generateMathCaptcha() {
@@ -164,18 +177,18 @@ class CaptchaService {
         
         switch (operation) {
             case '+':
-                num1 = Math.floor(Math.random() * 15) + 3; // 3-17
-                num2 = Math.floor(Math.random() * 15) + 3; // 3-17
+                num1 = Math.floor(Math.random() * 15) + 3;
+                num2 = Math.floor(Math.random() * 15) + 3;
                 answer = num1 + num2;
                 break;
             case '-':
-                num1 = Math.floor(Math.random() * 15) + 10; // 10-24
-                num2 = Math.floor(Math.random() * num1) + 1; // 1 to num1
+                num1 = Math.floor(Math.random() * 15) + 10;
+                num2 = Math.floor(Math.random() * num1) + 1;
                 answer = num1 - num2;
                 break;
             case '×':
-                num1 = Math.floor(Math.random() * 9) + 2; // 2-10
-                num2 = Math.floor(Math.random() * 9) + 2; // 2-10
+                num1 = Math.floor(Math.random() * 9) + 2;
+                num2 = Math.floor(Math.random() * 9) + 2;
                 answer = num1 * num2;
                 break;
         }
@@ -189,6 +202,7 @@ class CaptchaService {
         return {
             type: 'math',
             question,
+            answer: answer.toString(),
             correctAnswer: answer.toString(),
             acceptedAnswers: [answer.toString()],
             displayQuestion: `What is ${num1} ${operation} ${num2}?`,
@@ -197,7 +211,7 @@ class CaptchaService {
     }
     
     // ============================================
-    // COUNT CAPTCHA
+    // COUNT CAPTCHA (Original)
     // ============================================
     
     generateCountCaptcha() {
@@ -216,6 +230,7 @@ class CaptchaService {
         return {
             type: 'count',
             question,
+            answer: count.toString(),
             correctAnswer: count.toString(),
             acceptedAnswers: [count.toString()],
             displayQuestion: `How many ${emoji} are there?`,
@@ -224,7 +239,7 @@ class CaptchaService {
     }
     
     // ============================================
-    // REVERSE CAPTCHA
+    // REVERSE CAPTCHA (Original)
     // ============================================
     
     generateReverseCaptcha() {
@@ -241,10 +256,185 @@ class CaptchaService {
         return {
             type: 'reverse',
             question,
+            answer: reversed,
             correctAnswer: reversed,
             acceptedAnswers: [reversed, reversed.toLowerCase()],
             displayQuestion: `Type ${word} backwards`,
             options: null
+        };
+    }
+
+    // ============================================
+    // NEW: EMOJI GRID CAPTCHA
+    // Shows a grid of mixed emojis with noise, 
+    // asks user to count a specific target emoji
+    // ============================================
+
+    generateEmojiGridCaptcha() {
+        const targetEmoji = this.countEmojis[Math.floor(Math.random() * this.countEmojis.length)];
+        const targetCount = Math.floor(Math.random() * 5) + 3; // 3-7
+
+        // Build grid: target emojis + noise emojis mixed
+        const noiseEmojis = this.distractorEmojis.filter(e => e !== targetEmoji);
+        const noiseCount = Math.floor(Math.random() * 6) + 5; // 5-10 noise items
+
+        const gridItems = [];
+        for (let i = 0; i < targetCount; i++) {
+            gridItems.push(targetEmoji);
+        }
+        for (let i = 0; i < noiseCount; i++) {
+            gridItems.push(noiseEmojis[Math.floor(Math.random() * noiseEmojis.length)]);
+        }
+
+        // Shuffle the grid
+        const shuffledGrid = this.shuffleArray(gridItems);
+
+        // Format into rows of 5
+        let gridDisplay = '';
+        for (let i = 0; i < shuffledGrid.length; i++) {
+            gridDisplay += shuffledGrid[i];
+            if ((i + 1) % 5 === 0 && i < shuffledGrid.length - 1) {
+                gridDisplay += '\n';
+            }
+        }
+
+        const question = `🔐 *SECURITY CHECK* 🔐\n\n` +
+                        `Count the ${targetEmoji} in this grid:\n\n` +
+                        `${gridDisplay}\n\n` +
+                        `*How many ${targetEmoji} are there?*\n\n` +
+                        `Reply with the number\n` +
+                        `⏱️ _12 seconds_`;
+
+        return {
+            type: 'emoji_grid',
+            question,
+            answer: targetCount.toString(),
+            correctAnswer: targetCount.toString(),
+            acceptedAnswers: [targetCount.toString()],
+            displayQuestion: `Count ${targetEmoji} in mixed grid`,
+            options: null
+        };
+    }
+
+    // ============================================
+    // NEW: ODD ONE OUT CAPTCHA
+    // Shows a row of identical emojis with one 
+    // different emoji hidden. User finds which position.
+    // ============================================
+
+    generateOddOneOutCaptcha() {
+        const categories = Object.keys(this.emojiCategories);
+        const category = categories[Math.floor(Math.random() * categories.length)];
+        const emojis = this.emojiCategories[category];
+
+        // Pick the majority emoji and the odd one
+        const majorityEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+        let oddEmoji;
+        do {
+            oddEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+        } while (oddEmoji === majorityEmoji);
+
+        // Build a row of 5-7 with one odd
+        const rowLength = Math.floor(Math.random() * 3) + 5; // 5-7
+        const oddPosition = Math.floor(Math.random() * rowLength) + 1; // 1-indexed
+
+        const row = [];
+        for (let i = 1; i <= rowLength; i++) {
+            if (i === oddPosition) {
+                row.push(oddEmoji);
+            } else {
+                row.push(majorityEmoji);
+            }
+        }
+
+        // Number each position
+        let display = '';
+        for (let i = 0; i < row.length; i++) {
+            display += `${i + 1}️⃣${row[i]} `;
+        }
+
+        const question = `🔐 *SECURITY CHECK* 🔐\n\n` +
+                        `Find the ODD one out!\n\n` +
+                        `${display.trim()}\n\n` +
+                        `*Which position is different?*\n\n` +
+                        `Reply with the number (1-${rowLength})\n` +
+                        `⏱️ _12 seconds_`;
+
+        return {
+            type: 'odd_one_out',
+            question,
+            answer: oddPosition.toString(),
+            correctAnswer: oddPosition.toString(),
+            acceptedAnswers: [oddPosition.toString()],
+            displayQuestion: `Find the odd one out (position ${oddPosition})`,
+            options: null
+        };
+    }
+
+    // ============================================
+    // NEW: EMOJI SEQUENCE CAPTCHA
+    // Shows a repeating pattern with one missing,
+    // user must identify the missing emoji
+    // ============================================
+
+    generateEmojiSequenceCaptcha() {
+        // Pick 2-3 emojis for the pattern
+        const patternLength = Math.floor(Math.random() * 2) + 2; // 2 or 3
+        const usedEmojis = [];
+        while (usedEmojis.length < patternLength) {
+            const emoji = this.sequenceEmojis[Math.floor(Math.random() * this.sequenceEmojis.length)];
+            if (!usedEmojis.includes(emoji)) {
+                usedEmojis.push(emoji);
+            }
+        }
+
+        // Repeat the pattern 3 times, replace one with ❓
+        const fullSequence = [];
+        for (let rep = 0; rep < 3; rep++) {
+            for (const emoji of usedEmojis) {
+                fullSequence.push(emoji);
+            }
+        }
+
+        // Pick a random position to blank out (not in first pattern cycle)
+        const blankMin = patternLength; // Start from 2nd cycle
+        const blankPos = Math.floor(Math.random() * (fullSequence.length - blankMin)) + blankMin;
+        const correctAnswer = fullSequence[blankPos];
+        fullSequence[blankPos] = '❓';
+
+        // Build display
+        let display = fullSequence.join(' ');
+
+        // Build options (correct + 2 wrong from sequenceEmojis)
+        const wrongOptions = [];
+        while (wrongOptions.length < 2) {
+            const e = this.sequenceEmojis[Math.floor(Math.random() * this.sequenceEmojis.length)];
+            if (e !== correctAnswer && !wrongOptions.includes(e)) {
+                wrongOptions.push(e);
+            }
+        }
+
+        const options = this.shuffleArray([correctAnswer, ...wrongOptions]);
+        const correctIndex = options.indexOf(correctAnswer) + 1;
+
+        const question = `🔐 *SECURITY CHECK* 🔐\n\n` +
+                        `What comes next in the pattern?\n\n` +
+                        `${display}\n\n` +
+                        `Replace the ❓:\n\n` +
+                        `1️⃣ ${options[0]}\n` +
+                        `2️⃣ ${options[1]}\n` +
+                        `3️⃣ ${options[2]}\n\n` +
+                        `Reply with *1*, *2*, or *3*\n` +
+                        `⏱️ _12 seconds_`;
+
+        return {
+            type: 'emoji_sequence',
+            question,
+            answer: correctIndex.toString(),
+            correctAnswer: correctIndex.toString(),
+            acceptedAnswers: [correctIndex.toString()],
+            displayQuestion: `Complete the pattern (❓ = ${correctAnswer})`,
+            options: options.map((e, i) => `${i + 1}. ${e}`)
         };
     }
     
@@ -278,7 +468,7 @@ class CaptchaService {
                 questionNumber,
                 captcha.type,
                 captcha.displayQuestion,
-                captcha.correctAnswer,
+                captcha.correctAnswer || captcha.answer,
                 userAnswer,
                 isCorrect,
                 responseTimeMs
@@ -330,17 +520,14 @@ class CaptchaService {
             
             const flags = [];
             
-            // Too fast responses (possible bot)
             if (minTime < 500) {
                 flags.push('captcha_too_fast');
             }
             
-            // Consistently very fast (possible automation)
             if (avgTime < 1500 && stats.total_captchas > 10) {
                 flags.push('captcha_consistently_fast');
             }
             
-            // Too many failures (possible human struggling with bot)
             if (passRate < 0.5 && stats.total_captchas > 10) {
                 flags.push('captcha_high_failure');
             }

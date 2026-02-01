@@ -1,7 +1,8 @@
 // ============================================
 // FILE: src/controllers/webhook.controller.js
-// COMPLETE MERGED VERSION
-// Part 1/6: Imports, Setup, Core Methods
+// COMPLETE MERGED VERSION + ANTI-CHEAT PATCHES
+// Includes: Temp suspension, photo verification,
+//           image message handling
 // ============================================
 
 const pool = require('../config/database');
@@ -67,8 +68,15 @@ class WebhookController {
 
         const message = messages[0];
         const from = message.from;
-        const messageBody = message.text?.body || '';
 
+        // Check for image messages (photo verification)
+        if (message.type === 'image') {
+          logger.info(`📷 Image received from ${from}`);
+          await this.handleImageMessage(from, message);
+          return;
+        }
+
+        const messageBody = message.text?.body || '';
         logger.info(`Message from ${from}: ${messageBody}`);
         await this.routeMessage(from, messageBody);
       }
@@ -121,10 +129,22 @@ class WebhookController {
       // PRIORITY 0.5: SUSPENSION CHECK (for existing users)
       // ===================================
       if (user) {
+        // Check permanent suspension
         const suspension = await restrictionsService.isUserSuspended(user.id);
         if (suspension.suspended) {
           await messagingService.sendMessage(phone, restrictionsService.getSuspensionMessage(suspension.reason));
           return;
+        }
+
+        // Check temporary suspension (Q1 timeout abuse)
+        const tempSuspension = await restrictionsService.isUserTempSuspended(user.id);
+        if (tempSuspension.suspended) {
+          // Allow practice mode even during temp suspension
+          const isPracticeRequest = input === 'PRACTICE' || input === '2';
+          if (!isPracticeRequest) {
+            await messagingService.sendMessage(phone, restrictionsService.getTempSuspensionMessage(tempSuspension));
+            return;
+          }
         }
       }
 
@@ -2006,6 +2026,19 @@ Type the code, or type SKIP to continue:`
     }
 
     // ==========================================
+    // CHECK FOR PENDING PHOTO VERIFICATION
+    // User must send an image, not text
+    // ==========================================
+    const hasPendingPhoto = await gameService.hasPendingPhotoVerification(session.session_key);
+    if (hasPendingPhoto) {
+      await messagingService.sendMessage(
+        user.phone_number,
+        '📸 *PHOTO REQUIRED*\n\nPlease send a photo to continue.\n\n⏱️ Clock is ticking...'
+      );
+      return;
+    }
+
+    // ==========================================
     // CHECK FOR TURBO MODE GO WAIT
     // User must type GO to continue after turbo mode warning
     // ==========================================
@@ -2060,6 +2093,33 @@ Type the code, or type SKIP to continue:`
         '- Type "Skip" to skip question\n' +
         '- Type "RESET" to start over'
       );
+    }
+  }
+
+  // ============================================
+  // IMAGE MESSAGE HANDLER (Photo Verification)
+  // ============================================
+  async handleImageMessage(phone, message) {
+    try {
+      const user = await userService.getUserByPhone(phone);
+      if (!user) return;
+
+      const activeSession = await gameService.getActiveSession(user.id);
+      if (!activeSession) return;
+
+      // Check if waiting for photo verification
+      const hasPendingPhoto = await gameService.hasPendingPhotoVerification(activeSession.session_key);
+      if (hasPendingPhoto) {
+        await gameService.processPhotoVerification(activeSession, user);
+      } else {
+        // Not expecting a photo - ignore or send hint
+        await messagingService.sendMessage(
+          phone,
+          '📷 Image received, but no verification is pending.\n\nPlease reply with A, B, C, or D to answer the question.'
+        );
+      }
+    } catch (error) {
+      logger.error('Error handling image message:', error);
     }
   }
 
@@ -2425,7 +2485,9 @@ module.exports = new WebhookController();
 // This is the COMPLETE webhook.controller.js with:
 // ✅ All imports and setup
 // ✅ verify() and handleMessage() methods
+// ✅ Image message detection (photo verification)
 // ✅ Complete routeMessage() with ALL state handlers
+// ✅ Permanent + temporary suspension checks
 // ✅ All registration handlers (with referrals)
 // ✅ Updated game mode selection (Practice, Classic, Tournaments)
 // ✅ Complete tournament selection and payment handlers
@@ -2433,7 +2495,8 @@ module.exports = new WebhookController();
 // ✅ Enhanced menu input handler
 // ✅ Payment handlers (buy games, package selection)
 // ✅ Complete payout handlers (full bank details flow)
-// ✅ Game input handler with lifelines
+// ✅ Game input handler with photo verification + turbo GO + CAPTCHA + lifelines
+// ✅ handleImageMessage() for photo verification via WhatsApp images
 // ✅ Reset handler
 // ✅ All menu senders (main menu, how to play)
 // ✅ Complete leaderboard handlers
