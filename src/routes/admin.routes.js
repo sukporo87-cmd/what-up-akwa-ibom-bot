@@ -3963,6 +3963,38 @@ router.get('/api/fraud/user/:id', authenticateAdmin, async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
+        // Augment with anti-cheat stats from audit logs
+        try {
+            const acStats = await pool.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE event_type = 'TURBO_MODE_ACTIVATED') as turbo_triggers,
+                    COUNT(*) FILTER (WHERE event_type = 'SESSION_TERMINATED') as sessions_terminated,
+                    COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_REQUESTED') as photo_verifications,
+                    COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_FAILED') as photo_failures,
+                    COUNT(*) FILTER (WHERE event_type = 'Q1_TIMEOUT_TRACKED') as q1_timeouts,
+                    COUNT(*) FILTER (WHERE event_type = 'PERFECT_GAME_FLAGGED') as perfect_flagged
+                FROM game_audit_logs
+                WHERE user_id = $1
+            `, [userId]);
+            
+            const userExtra = await pool.query(`
+                SELECT temp_suspended_until, temp_suspension_reason, penalty_games_remaining
+                FROM users WHERE id = $1
+            `, [userId]);
+            
+            if (acStats.rows[0]) {
+                report.stats = { ...report.stats, ...acStats.rows[0] };
+            }
+            if (userExtra.rows[0]) {
+                report.user = { ...report.user, ...userExtra.rows[0] };
+                report.stats.temp_suspensions = userExtra.rows[0].temp_suspended_until ? 1 : 0;
+                report.stats.penalty_games_remaining = userExtra.rows[0].penalty_games_remaining || 0;
+            }
+        } catch (acError) {
+            logger.error('Error augmenting fraud report with anti-cheat stats:', acError);
+            // Non-fatal — proceed with base report
+        }
+        
         res.json({ success: true, report });
     } catch (error) {
         logger.error('Error getting user fraud report:', error);
@@ -4051,6 +4083,144 @@ router.get('/api/fraud/turbo-mode-events', authenticateAdmin, async (req, res) =
     } catch (error) {
         logger.error('Error getting turbo mode events:', error);
         res.status(500).json({ error: 'Failed to get turbo mode events' });
+    }
+});
+
+// ============================================
+// ANTI-CHEAT MONITORING ENDPOINTS (NEW)
+// ============================================
+
+// Anti-cheat stats summary
+router.get('/api/fraud/anticheat-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const stats = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE event_type = 'SESSION_TERMINATED') as sessions_terminated,
+                COUNT(*) FILTER (WHERE event_type = 'PERFECT_GAME_FLAGGED') as perfect_games_flagged,
+                COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_REQUESTED') as photo_verifications,
+                COUNT(*) FILTER (WHERE event_type = 'Q1_TIMEOUT_TRACKED') as q1_timeouts
+            FROM game_audit_logs
+            WHERE created_at > NOW() - INTERVAL '7 days'
+        `);
+        
+        res.json({ success: true, stats: stats.rows[0] || {} });
+    } catch (error) {
+        logger.error('Error getting anti-cheat stats:', error);
+        res.status(500).json({ error: 'Failed to get anti-cheat stats' });
+    }
+});
+
+// Anti-cheat events list (session terminations, photo verifs, perfect game flags, Q1 timeouts)
+router.get('/api/fraud/anticheat-events', authenticateAdmin, async (req, res) => {
+    try {
+        const statsResult = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE event_type = 'SESSION_TERMINATED') as sessions_terminated,
+                COUNT(*) FILTER (WHERE event_type = 'PERFECT_GAME_FLAGGED') as perfect_games_flagged,
+                COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_REQUESTED') as photo_requested,
+                COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_PASSED') as photo_passed,
+                COUNT(*) FILTER (WHERE event_type = 'PHOTO_VERIFICATION_FAILED') as photo_failed
+            FROM game_audit_logs
+            WHERE created_at > NOW() - INTERVAL '7 days'
+        `);
+        
+        const eventsResult = await pool.query(`
+            SELECT gal.*, u.username, u.full_name
+            FROM game_audit_logs gal
+            LEFT JOIN users u ON gal.user_id = u.id
+            WHERE gal.event_type IN (
+                'SESSION_TERMINATED', 'PERFECT_GAME_FLAGGED',
+                'PHOTO_VERIFICATION_REQUESTED', 'PHOTO_VERIFICATION_PASSED', 'PHOTO_VERIFICATION_FAILED',
+                'Q1_TIMEOUT_TRACKED'
+            )
+            AND gal.created_at > NOW() - INTERVAL '7 days'
+            ORDER BY gal.created_at DESC
+            LIMIT 100
+        `);
+        
+        res.json({
+            success: true,
+            stats: statsResult.rows[0] || {},
+            events: eventsResult.rows
+        });
+    } catch (error) {
+        logger.error('Error getting anti-cheat events:', error);
+        res.status(500).json({ error: 'Failed to get anti-cheat events' });
+    }
+});
+
+// Temp suspensions and penalty games data
+router.get('/api/fraud/temp-suspensions', authenticateAdmin, async (req, res) => {
+    try {
+        // Currently temp-suspended users
+        const tempSuspended = await pool.query(`
+            SELECT id, username, full_name, phone_number, temp_suspended_until, temp_suspension_reason
+            FROM users
+            WHERE temp_suspended_until IS NOT NULL AND temp_suspended_until > NOW()
+            ORDER BY temp_suspended_until DESC
+        `);
+        
+        // Users serving penalty games
+        const penaltyUsers = await pool.query(`
+            SELECT id, username, full_name, phone_number, penalty_games_remaining, penalty_timer_seconds
+            FROM users
+            WHERE penalty_games_remaining > 0
+            ORDER BY penalty_games_remaining DESC
+        `);
+        
+        // Q1 timeout events in last 7 days
+        const q1Stats = await pool.query(`
+            SELECT COUNT(*) as count
+            FROM game_audit_logs
+            WHERE event_type = 'Q1_TIMEOUT_TRACKED'
+            AND created_at > NOW() - INTERVAL '7 days'
+        `);
+        
+        res.json({
+            success: true,
+            stats: {
+                temp_suspended: tempSuspended.rows.length,
+                serving_penalty: penaltyUsers.rows.length,
+                q1_timeouts_week: parseInt(q1Stats.rows[0]?.count || 0)
+            },
+            tempSuspended: tempSuspended.rows,
+            penaltyUsers: penaltyUsers.rows
+        });
+    } catch (error) {
+        logger.error('Error getting temp suspensions:', error);
+        res.status(500).json({ error: 'Failed to get temp suspensions' });
+    }
+});
+
+// Lift temp suspension
+router.post('/api/fraud/temp-suspension/:userId/lift', authenticateAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        await pool.query(
+            'UPDATE users SET temp_suspended_until = NULL, temp_suspension_reason = NULL WHERE id = $1',
+            [userId]
+        );
+        logger.info(`Admin lifted temp suspension for user ${userId}`);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error lifting temp suspension:', error);
+        res.status(500).json({ error: 'Failed to lift temp suspension' });
+    }
+});
+
+// Clear penalty games
+router.post('/api/fraud/penalty-games/:userId/clear', authenticateAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        await pool.query(
+            'UPDATE users SET penalty_games_remaining = 0, penalty_timer_seconds = NULL WHERE id = $1',
+            [userId]
+        );
+        logger.info(`Admin cleared penalty games for user ${userId}`);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error clearing penalty games:', error);
+        res.status(500).json({ error: 'Failed to clear penalty games' });
     }
 });
 

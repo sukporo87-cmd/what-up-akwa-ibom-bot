@@ -921,7 +921,7 @@
         </div>
         
         <!-- Fraud Stats -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px;">
           <div class="stat-card" style="background: #fee2e2;">
             <h3 style="color: #991b1b;">Flagged Users</h3>
             <div class="value" id="flaggedUsersCount" style="color: #dc2626;">-</div>
@@ -938,13 +938,31 @@
             <h3 style="color: #991b1b;">⚡ Turbo Timeouts</h3>
             <div class="value" id="turboTimeoutsCount" style="color: #dc2626;">-</div>
           </div>
+          <div class="stat-card" style="background: #fce7f3;">
+            <h3 style="color: #9d174d;">🛑 Terminated</h3>
+            <div class="value" id="terminatedSessionsCount" style="color: #be185d;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fff7ed;">
+            <h3 style="color: #9a3412;">🏆🚩 Perfect Flagged</h3>
+            <div class="value" id="perfectGamesFlaggedCount" style="color: #ea580c;">-</div>
+          </div>
+          <div class="stat-card" style="background: #ede9fe;">
+            <h3 style="color: #5b21b6;">📸 Photo Checks</h3>
+            <div class="value" id="photoVerificationsCount" style="color: #7c3aed;">-</div>
+          </div>
+          <div class="stat-card" style="background: #fef2f2;">
+            <h3 style="color: #991b1b;">⏱️ Q1 Timeouts</h3>
+            <div class="value" id="q1TimeoutsCount" style="color: #dc2626;">-</div>
+          </div>
         </div>
         
         <!-- Sub-tabs -->
-        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
           <button class="btn btn-danger" onclick="showFraudSubTab('flagged')" id="flaggedSubTab">🚩 Flagged Users</button>
           <button class="btn btn-secondary" onclick="showFraudSubTab('sessions')" id="sessionsSubTab">⚠️ Suspicious Sessions</button>
           <button class="btn btn-warning" onclick="showFraudSubTab('turbo')" id="turboSubTab">⚡ Turbo Mode Events</button>
+          <button class="btn btn-secondary" onclick="showFraudSubTab('anticheat')" id="anticheatSubTab">🛡️ Anti-Cheat Events</button>
+          <button class="btn btn-secondary" onclick="showFraudSubTab('tempsuspensions')" id="tempsuspensionsSubTab">⏱️ Temp Suspensions</button>
         </div>
         
         <!-- Flagged Users -->
@@ -978,6 +996,80 @@
             <div class="loading">
               <div class="spinner"></div>
               <p>Loading turbo mode events...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Anti-Cheat Events (NEW) -->
+        <div id="anticheatSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">🛡️ Anti-Cheat Events</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Session terminations, perfect game flags, and photo verification results from the last 7 days.</p>
+          
+          <!-- Anti-cheat sub-stats -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+            <div class="stat-card" style="background: #fef2f2; padding: 12px;">
+              <h3 style="color: #991b1b; font-size: 12px;">🛑 Terminated Sessions</h3>
+              <div class="value" id="acTerminatedCount" style="color: #dc2626; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #fff7ed; padding: 12px;">
+              <h3 style="color: #9a3412; font-size: 12px;">🏆🚩 Flagged Perfect</h3>
+              <div class="value" id="acPerfectFlaggedCount" style="color: #ea580c; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #ede9fe; padding: 12px;">
+              <h3 style="color: #5b21b6; font-size: 12px;">📸 Photo Requested</h3>
+              <div class="value" id="acPhotoRequestedCount" style="color: #7c3aed; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #dcfce7; padding: 12px;">
+              <h3 style="color: #166534; font-size: 12px;">📸✅ Photo Passed</h3>
+              <div class="value" id="acPhotoPassedCount" style="color: #16a34a; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #fee2e2; padding: 12px;">
+              <h3 style="color: #991b1b; font-size: 12px;">📸❌ Photo Failed</h3>
+              <div class="value" id="acPhotoFailedCount" style="color: #dc2626; font-size: 20px;">-</div>
+            </div>
+          </div>
+          
+          <div id="anticheatEventsTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading anti-cheat events...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Temp Suspensions (NEW) -->
+        <div id="tempsuspensionsSection" style="display: none;">
+          <h3 style="margin-bottom: 15px;">⏱️ Temporary Suspensions & Penalty Games</h3>
+          <p style="color: var(--text-gray); margin-bottom: 15px;">Users who received temp suspensions from Q1 timeout abuse, and those serving penalty games.</p>
+          
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+            <div class="stat-card" style="background: #fef2f2; padding: 12px;">
+              <h3 style="color: #991b1b; font-size: 12px;">⏱️ Currently Suspended</h3>
+              <div class="value" id="tsTempSuspendedCount" style="color: #dc2626; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #fef9c3; padding: 12px;">
+              <h3 style="color: #854d0e; font-size: 12px;">🎮 Serving Penalty</h3>
+              <div class="value" id="tsPenaltyGamesCount" style="color: #ca8a04; font-size: 20px;">-</div>
+            </div>
+            <div class="stat-card" style="background: #fff7ed; padding: 12px;">
+              <h3 style="color: #9a3412; font-size: 12px;">📊 Q1 Timeouts (7d)</h3>
+              <div class="value" id="tsQ1TimeoutsWeekCount" style="color: #ea580c; font-size: 20px;">-</div>
+            </div>
+          </div>
+          
+          <h4 style="margin: 15px 0 10px;">Currently Temp-Suspended Users</h4>
+          <div id="tempSuspendedUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading temp suspensions...</p>
+            </div>
+          </div>
+          
+          <h4 style="margin: 20px 0 10px;">Users Serving Penalty Games</h4>
+          <div id="penaltyGamesUsersTable">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Loading penalty games...</p>
             </div>
           </div>
         </div>
@@ -3130,14 +3222,24 @@ function showFraudSubTab(tab) {
   document.getElementById('flaggedUsersSection').style.display = tab === 'flagged' ? 'block' : 'none';
   document.getElementById('suspiciousSessionsSection').style.display = tab === 'sessions' ? 'block' : 'none';
   document.getElementById('turboModeSection').style.display = tab === 'turbo' ? 'block' : 'none';
+  document.getElementById('anticheatSection').style.display = tab === 'anticheat' ? 'block' : 'none';
+  document.getElementById('tempsuspensionsSection').style.display = tab === 'tempsuspensions' ? 'block' : 'none';
   
   document.getElementById('flaggedSubTab').style.background = tab === 'flagged' ? 'var(--danger)' : 'var(--secondary)';
   document.getElementById('sessionsSubTab').style.background = tab === 'sessions' ? 'var(--warning)' : 'var(--secondary)';
   document.getElementById('turboSubTab').style.background = tab === 'turbo' ? '#ca8a04' : 'var(--secondary)';
+  document.getElementById('anticheatSubTab').style.background = tab === 'anticheat' ? '#7c3aed' : 'var(--secondary)';
+  document.getElementById('tempsuspensionsSubTab').style.background = tab === 'tempsuspensions' ? '#ea580c' : 'var(--secondary)';
   
   // Load turbo mode data when tab is selected
   if (tab === 'turbo') {
     loadTurboModeEvents();
+  }
+  if (tab === 'anticheat') {
+    loadAntiCheatEvents();
+  }
+  if (tab === 'tempsuspensions') {
+    loadTempSuspensions();
   }
 }
 
@@ -3187,6 +3289,27 @@ async function loadFraudData() {
     console.error('Error loading turbo mode stats:', error);
     document.getElementById('turboTriggersCount').textContent = '0';
     document.getElementById('turboTimeoutsCount').textContent = '0';
+  }
+  
+  // Load anti-cheat stats (new)
+  try {
+    const acResponse = await fetch('/admin/api/fraud/anticheat-stats', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const acData = await acResponse.json();
+    
+    if (acData.success) {
+      document.getElementById('terminatedSessionsCount').textContent = acData.stats.sessions_terminated || 0;
+      document.getElementById('perfectGamesFlaggedCount').textContent = acData.stats.perfect_games_flagged || 0;
+      document.getElementById('photoVerificationsCount').textContent = acData.stats.photo_verifications || 0;
+      document.getElementById('q1TimeoutsCount').textContent = acData.stats.q1_timeouts || 0;
+    }
+  } catch (error) {
+    console.error('Error loading anti-cheat stats:', error);
+    document.getElementById('terminatedSessionsCount').textContent = '0';
+    document.getElementById('perfectGamesFlaggedCount').textContent = '0';
+    document.getElementById('photoVerificationsCount').textContent = '0';
+    document.getElementById('q1TimeoutsCount').textContent = '0';
   }
 }
 
@@ -3253,6 +3376,228 @@ function renderTurboModeEvents(events) {
   
   html += '</tbody></table>';
   document.getElementById('turboModeTable').innerHTML = html;
+}
+
+// ============================================
+// NEW: ANTI-CHEAT EVENTS FUNCTIONS
+// ============================================
+
+async function loadAntiCheatEvents() {
+  document.getElementById('anticheatEventsTable').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading anti-cheat events...</p></div>';
+  
+  try {
+    const response = await fetch('/admin/api/fraud/anticheat-events', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      // Update sub-stats
+      document.getElementById('acTerminatedCount').textContent = data.stats.sessions_terminated || 0;
+      document.getElementById('acPerfectFlaggedCount').textContent = data.stats.perfect_games_flagged || 0;
+      document.getElementById('acPhotoRequestedCount').textContent = data.stats.photo_requested || 0;
+      document.getElementById('acPhotoPassedCount').textContent = data.stats.photo_passed || 0;
+      document.getElementById('acPhotoFailedCount').textContent = data.stats.photo_failed || 0;
+      
+      renderAntiCheatEvents(data.events);
+    } else {
+      document.getElementById('anticheatEventsTable').innerHTML = '<p style="color: red;">Failed to load anti-cheat events</p>';
+    }
+  } catch (error) {
+    console.error('Error loading anti-cheat events:', error);
+    document.getElementById('anticheatEventsTable').innerHTML = '<p style="color: red;">Error loading anti-cheat events</p>';
+  }
+}
+
+function renderAntiCheatEvents(events) {
+  if (!events || events.length === 0) {
+    document.getElementById('anticheatEventsTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No anti-cheat events recorded yet 🛡️</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Session</th><th>Event</th><th>Details</th><th>Date</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  events.forEach(event => {
+    const eventData = typeof event.event_data === 'string' ? JSON.parse(event.event_data) : (event.event_data || {});
+    let eventBadge = '';
+    let details = '';
+    
+    switch (event.event_type) {
+      case 'SESSION_TERMINATED':
+        eventBadge = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 10px;">🛑 Terminated</span>';
+        details = eventData.reason || 'Suspicious activity';
+        break;
+      case 'PERFECT_GAME_FLAGGED':
+        eventBadge = '<span style="background: #fff7ed; color: #9a3412; padding: 2px 8px; border-radius: 10px;">🏆🚩 Perfect Flagged</span>';
+        details = `Score: ${eventData.score || 'N/A'} | Status: ${eventData.status || 'under_review'}`;
+        break;
+      case 'PHOTO_VERIFICATION_REQUESTED':
+        eventBadge = '<span style="background: #ede9fe; color: #5b21b6; padding: 2px 8px; border-radius: 10px;">📸 Photo Requested</span>';
+        details = `Q${eventData.question_number || 'N/A'} | Type: ${eventData.challenge_type || 'selfie'}`;
+        break;
+      case 'PHOTO_VERIFICATION_PASSED':
+        eventBadge = '<span style="background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 10px;">📸✅ Photo Passed</span>';
+        details = eventData.response_time_ms ? `${(eventData.response_time_ms / 1000).toFixed(1)}s` : 'N/A';
+        break;
+      case 'PHOTO_VERIFICATION_FAILED':
+        eventBadge = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 10px;">📸❌ Photo Failed</span>';
+        details = eventData.reason || 'timeout';
+        break;
+      case 'Q1_TIMEOUT_TRACKED':
+        eventBadge = '<span style="background: #fef9c3; color: #854d0e; padding: 2px 8px; border-radius: 10px;">⏱️ Q1 Timeout</span>';
+        details = `Streak: ${eventData.streak || 'N/A'} | Action: ${eventData.action || 'none'}`;
+        break;
+      default:
+        eventBadge = `<span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px;">${event.event_type}</span>`;
+        details = JSON.stringify(eventData).substring(0, 80);
+    }
+    
+    html += `<tr>
+      <td><strong>@${event.username || 'Unknown'}</strong><br><small>${event.full_name || ''}</small></td>
+      <td>#${event.session_id || 'N/A'}</td>
+      <td>${eventBadge}</td>
+      <td>${details}</td>
+      <td>${new Date(event.created_at).toLocaleString()}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${event.user_id})">👤 Profile</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('anticheatEventsTable').innerHTML = html;
+}
+
+// ============================================
+// NEW: TEMP SUSPENSIONS FUNCTIONS
+// ============================================
+
+async function loadTempSuspensions() {
+  document.getElementById('tempSuspendedUsersTable').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading...</p></div>';
+  document.getElementById('penaltyGamesUsersTable').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading...</p></div>';
+  
+  try {
+    const response = await fetch('/admin/api/fraud/temp-suspensions', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      document.getElementById('tsTempSuspendedCount').textContent = data.stats.temp_suspended || 0;
+      document.getElementById('tsPenaltyGamesCount').textContent = data.stats.serving_penalty || 0;
+      document.getElementById('tsQ1TimeoutsWeekCount').textContent = data.stats.q1_timeouts_week || 0;
+      
+      renderTempSuspendedUsers(data.tempSuspended);
+      renderPenaltyGamesUsers(data.penaltyUsers);
+    } else {
+      document.getElementById('tempSuspendedUsersTable').innerHTML = '<p style="color: red;">Failed to load</p>';
+      document.getElementById('penaltyGamesUsersTable').innerHTML = '<p style="color: red;">Failed to load</p>';
+    }
+  } catch (error) {
+    console.error('Error loading temp suspensions:', error);
+    document.getElementById('tempSuspendedUsersTable').innerHTML = '<p style="color: red;">Error loading temp suspensions</p>';
+    document.getElementById('penaltyGamesUsersTable').innerHTML = '<p style="color: red;">Error loading penalty games</p>';
+  }
+}
+
+function renderTempSuspendedUsers(users) {
+  if (!users || users.length === 0) {
+    document.getElementById('tempSuspendedUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No temporarily suspended users ✅</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Reason</th><th>Suspended Until</th><th>Time Remaining</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    const until = new Date(user.temp_suspended_until);
+    const now = new Date();
+    const remainingMs = until - now;
+    const remainingHrs = Math.max(0, (remainingMs / (1000 * 60 * 60))).toFixed(1);
+    
+    html += `<tr>
+      <td><strong>@${user.username || 'Unknown'}</strong><br><small>${user.full_name || ''}</small></td>
+      <td>${user.temp_suspension_reason || 'Q1 timeout abuse'}</td>
+      <td>${until.toLocaleString()}</td>
+      <td style="color: ${remainingMs > 0 ? '#dc2626' : '#059669'};">${remainingMs > 0 ? remainingHrs + 'h left' : 'Expired'}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
+        <button class="btn btn-success btn-sm" onclick="liftTempSuspension(${user.id})">✅ Lift Ban</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('tempSuspendedUsersTable').innerHTML = html;
+}
+
+function renderPenaltyGamesUsers(users) {
+  if (!users || users.length === 0) {
+    document.getElementById('penaltyGamesUsersTable').innerHTML = '<p style="color: var(--text-gray); text-align: center;">No users serving penalty games ✅</p>';
+    return;
+  }
+  
+  let html = `<table class="data-table"><thead><tr>
+    <th>User</th><th>Penalty Games Left</th><th>Timer (seconds)</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  
+  users.forEach(user => {
+    html += `<tr>
+      <td><strong>@${user.username || 'Unknown'}</strong><br><small>${user.full_name || ''}</small></td>
+      <td style="color: #ca8a04; font-weight: bold;">${user.penalty_games_remaining}</td>
+      <td>${user.penalty_timer_seconds || 10}s</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
+        <button class="btn btn-success btn-sm" onclick="clearPenaltyGames(${user.id})">✅ Clear Penalty</button>
+      </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('penaltyGamesUsersTable').innerHTML = html;
+}
+
+async function liftTempSuspension(userId) {
+  if (!confirm('Lift temporary suspension for this user?')) return;
+  try {
+    const response = await fetch(`/admin/api/fraud/temp-suspension/${userId}/lift`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    if (data.success) {
+      showAlert('✅ Temp suspension lifted', 'success');
+      loadTempSuspensions();
+    } else {
+      showAlert('❌ Failed to lift suspension', 'error');
+    }
+  } catch (error) {
+    console.error('Error lifting temp suspension:', error);
+    showAlert('❌ Error lifting suspension', 'error');
+  }
+}
+
+async function clearPenaltyGames(userId) {
+  if (!confirm('Clear all penalty games for this user?')) return;
+  try {
+    const response = await fetch(`/admin/api/fraud/penalty-games/${userId}/clear`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    if (data.success) {
+      showAlert('✅ Penalty games cleared', 'success');
+      loadTempSuspensions();
+    } else {
+      showAlert('❌ Failed to clear penalty', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing penalty games:', error);
+    showAlert('❌ Error clearing penalty', 'error');
+  }
 }
 
 function renderFlaggedUsers(users) {
@@ -3351,6 +3696,24 @@ function renderFraudReport(report) {
         <p><strong>Avg Response:</strong> ${stats.avg_response_time ? Math.round(stats.avg_response_time / 1000) + 's' : 'N/A'}</p>
         <p><strong>Fastest Ever:</strong> ${stats.fastest_response ? Math.round(stats.fastest_response / 1000) + 's' : 'N/A'}</p>
         <p><strong>Suspicious Sessions:</strong> <span style="color: #dc2626;">${stats.suspicious_sessions || 0}</span></p>
+      </div>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
+      <div style="background: #ede9fe; padding: 20px; border-radius: 12px;">
+        <h4>🛡️ Anti-Cheat</h4>
+        <p><strong>Turbo Triggers:</strong> ${stats.turbo_triggers || 0}</p>
+        <p><strong>Sessions Terminated:</strong> <span style="color: #dc2626;">${stats.sessions_terminated || 0}</span></p>
+        <p><strong>Photo Verifications:</strong> ${stats.photo_verifications || 0}</p>
+        <p><strong>Photo Failures:</strong> <span style="color: #dc2626;">${stats.photo_failures || 0}</span></p>
+      </div>
+      
+      <div style="background: #fff7ed; padding: 20px; border-radius: 12px;">
+        <h4>⏱️ Q1 / Penalties</h4>
+        <p><strong>Q1 Timeouts:</strong> ${stats.q1_timeouts || 0}</p>
+        <p><strong>Temp Suspensions:</strong> ${stats.temp_suspensions || 0}</p>
+        <p><strong>Penalty Games Left:</strong> ${stats.penalty_games_remaining || 0}</p>
+        <p><strong>Status:</strong> ${user.temp_suspended_until && new Date(user.temp_suspended_until) > new Date() ? '<span style="color: #dc2626;">TEMP SUSPENDED</span>' : '<span style="color: #059669;">Clear</span>'}</p>
       </div>
     </div>
     

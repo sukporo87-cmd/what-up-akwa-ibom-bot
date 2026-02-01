@@ -458,6 +458,38 @@
             border-width: 4px;
         }
 
+        .timeline-event.session-terminated {
+            border-left-color: #B71C1C;
+            background: rgba(183, 28, 28, 0.2);
+            border-width: 4px;
+        }
+
+        .timeline-event.perfect-game-flagged {
+            border-left-color: #FF6F00;
+            background: rgba(255, 111, 0, 0.2);
+            border-width: 4px;
+        }
+
+        .timeline-event.photo-requested {
+            border-left-color: #1565C0;
+            background: rgba(21, 101, 192, 0.1);
+        }
+
+        .timeline-event.photo-passed {
+            border-left-color: #2E7D32;
+            background: rgba(46, 125, 50, 0.15);
+        }
+
+        .timeline-event.photo-failed {
+            border-left-color: #C62828;
+            background: rgba(198, 40, 40, 0.15);
+        }
+
+        .timeline-event.q1-timeout {
+            border-left-color: #E65100;
+            background: rgba(230, 81, 0, 0.1);
+        }
+
         .timeline-event .event-header {
             display: flex;
             justify-content: space-between;
@@ -982,6 +1014,30 @@
                     case 'TURBO_MODE_GO_TIMEOUT':
                         eventIcon = '⚡⏰';
                         eventClass = 'turbo-timeout';
+                        break;
+                    case 'SESSION_TERMINATED':
+                        eventIcon = '🛑💀';
+                        eventClass = 'session-terminated';
+                        break;
+                    case 'PERFECT_GAME_FLAGGED':
+                        eventIcon = '🏆🚩';
+                        eventClass = 'perfect-game-flagged';
+                        break;
+                    case 'PHOTO_VERIFICATION_REQUESTED':
+                        eventIcon = '📸🔒';
+                        eventClass = 'photo-requested';
+                        break;
+                    case 'PHOTO_VERIFICATION_PASSED':
+                        eventIcon = '📸✅';
+                        eventClass = 'photo-passed';
+                        break;
+                    case 'PHOTO_VERIFICATION_FAILED':
+                        eventIcon = '📸❌';
+                        eventClass = 'photo-failed';
+                        break;
+                    case 'Q1_TIMEOUT_TRACKED':
+                        eventIcon = '⏱️⚠️';
+                        eventClass = 'q1-timeout';
                         break;
                     case 'GAME_END':
                         eventIcon = '🏁';
