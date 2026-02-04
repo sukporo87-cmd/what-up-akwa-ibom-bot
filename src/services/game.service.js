@@ -1089,6 +1089,24 @@ class GameService {
 
     async completeGame(session, user, wonGrandPrize, endReason = null) {
         try {
+            // GUARD: Prevent double completion - check if session is still active
+            const sessionCheck = await pool.query(
+                'SELECT status FROM game_sessions WHERE id = $1',
+                [session.id]
+            );
+            if (!sessionCheck.rows.length || sessionCheck.rows[0].status !== 'active') {
+                logger.warn(`⚠️ completeGame called on non-active session ${session.id} (status: ${sessionCheck.rows[0]?.status})`);
+                return; // Already completed, ignore duplicate call
+            }
+
+            // GUARD: Redis lock to prevent race conditions
+            const completionLock = `lock:complete:${session.id}`;
+            const lockAcquired = await redis.set(completionLock, '1', 'NX', 'EX', 10);
+            if (!lockAcquired) {
+                logger.warn(`⚠️ completeGame lock failed for session ${session.id} - already completing`);
+                return;
+            }
+
             const finalScore = session.current_score;
             const questionNumber = session.current_question;
             
@@ -1118,10 +1136,12 @@ class GameService {
             `, [finalScore, session.current_question, user.id]);
 
             // Create payout transaction for classic mode wins
+            // Uses ON CONFLICT to prevent duplicate transactions for same session
             if (session.game_type !== 'practice' && !session.is_tournament_game && finalScore > 0) {
                 await pool.query(`
                     INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
                     VALUES ($1, $2, $3, 'prize', 'pending')
+                    ON CONFLICT (session_id) WHERE transaction_type = 'prize' DO NOTHING
                 `, [user.id, session.id, finalScore]);
             }
 
