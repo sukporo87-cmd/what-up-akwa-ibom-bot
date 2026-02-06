@@ -492,7 +492,7 @@ class LoveQuestService {
             const result = await pool.query(`
                 SELECT * FROM love_quest_sessions 
                 WHERE player_phone = $1 AND status = 'active'
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY started_at DESC LIMIT 1
             `, [playerPhone]);
             
             return result.rows[0] || null;
@@ -512,7 +512,7 @@ class LoveQuestService {
                 FROM love_quest_sessions s
                 JOIN love_quest_bookings b ON s.booking_id = b.id
                 WHERE s.player_phone = $1 AND s.status = 'active'
-                ORDER BY s.created_at DESC LIMIT 1
+                ORDER BY s.started_at DESC LIMIT 1
             `, [playerPhone]);
             
             return result.rows[0] || null;
