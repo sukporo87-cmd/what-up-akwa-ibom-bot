@@ -10,6 +10,7 @@ const PayoutService = require('../services/payout.service');
 const WhatsAppService = require('../services/whatsapp.service');
 const AdminAuthService = require('../services/admin-auth.service');
 const FinancialService = require('../services/financial.service');
+const loveQuestService = require('../services/love-quest.service');
 const { logger } = require('../utils/logger');
 const analyticsService = require('../services/analytics.service');
 
@@ -6181,4 +6182,462 @@ router.delete('/api/questions/:id', authenticateAdmin, async (req, res) => {
 // ============================================
 // END OF QUESTION MANAGEMENT ROUTES
 // ============================================
+
+// ============================================
+// LOVE QUEST ADMIN ROUTES
+// ============================================
+
+// Get Love Quest dashboard stats
+router.get('/api/love-quest/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const stats = await loveQuestService.getBookingStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        logger.error('Error getting Love Quest stats:', error);
+        res.status(500).json({ error: 'Failed to get stats' });
+    }
+});
+
+// Get all packages
+router.get('/api/love-quest/packages', authenticateAdmin, async (req, res) => {
+    try {
+        const packages = await loveQuestService.getPackages();
+        res.json({ success: true, packages });
+    } catch (error) {
+        logger.error('Error getting packages:', error);
+        res.status(500).json({ error: 'Failed to get packages' });
+    }
+});
+
+// Get all bookings
+router.get('/api/love-quest/bookings', authenticateAdmin, async (req, res) => {
+    try {
+        const { status, limit = 50, offset = 0 } = req.query;
+        const bookings = await loveQuestService.getAllBookings(status, parseInt(limit), parseInt(offset));
+        res.json({ success: true, bookings });
+    } catch (error) {
+        logger.error('Error getting bookings:', error);
+        res.status(500).json({ error: 'Failed to get bookings' });
+    }
+});
+
+// Get single booking with full details
+router.get('/api/love-quest/bookings/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const booking = await loveQuestService.getBooking(parseInt(req.params.id));
+        if (!booking) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        
+        const questions = await loveQuestService.getQuestions(booking.id);
+        
+        const mediaResult = await pool.query(
+            'SELECT * FROM love_quest_media WHERE booking_id = $1 ORDER BY uploaded_at',
+            [booking.id]
+        );
+        
+        const sessionResult = await pool.query(
+            'SELECT * FROM love_quest_sessions WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 1',
+            [booking.id]
+        );
+        
+        const auditResult = await pool.query(
+            'SELECT * FROM love_quest_audit WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 50',
+            [booking.id]
+        );
+        
+        res.json({
+            success: true,
+            booking,
+            questions,
+            media: mediaResult.rows,
+            session: sessionResult.rows[0] || null,
+            audit: auditResult.rows
+        });
+    } catch (error) {
+        logger.error('Error getting booking details:', error);
+        res.status(500).json({ error: 'Failed to get booking details' });
+    }
+});
+
+// Create new booking (admin)
+router.post('/api/love-quest/bookings', authenticateAdmin, async (req, res) => {
+    try {
+        const { creatorPhone, playerPhone, packageCode, creatorName, playerName } = req.body;
+        
+        if (!creatorPhone || !playerPhone || !packageCode) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        const booking = await loveQuestService.createBooking(
+            creatorPhone, playerPhone, packageCode, creatorName, playerName
+        );
+        
+        res.json({ success: true, booking });
+    } catch (error) {
+        logger.error('Error creating booking:', error);
+        res.status(500).json({ error: error.message || 'Failed to create booking' });
+    }
+});
+
+// Update booking status
+router.put('/api/love-quest/bookings/:id/status', authenticateAdmin, async (req, res) => {
+    try {
+        const { status, notes } = req.body;
+        const validStatuses = [
+            'pending', 'paid', 'curating', 'ready', 'scheduled',
+            'sent', 'in_progress', 'completed', 'expired', 'cancelled', 'refunded'
+        ];
+        
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+        
+        await loveQuestService.updateBookingStatus(parseInt(req.params.id), status, notes);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error updating booking status:', error);
+        res.status(500).json({ error: 'Failed to update status' });
+    }
+});
+
+// Update booking details
+router.put('/api/love-quest/bookings/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id);
+        const {
+            creatorName, playerName, relationshipType,
+            scheduledSendAt, grandRevealText, grandRevealCashPrize,
+            curatorNotes, prizePool
+        } = req.body;
+        
+        await pool.query(`
+            UPDATE love_quest_bookings SET
+                creator_name = COALESCE($1, creator_name),
+                player_name = COALESCE($2, player_name),
+                relationship_type = COALESCE($3, relationship_type),
+                scheduled_send_at = COALESCE($4, scheduled_send_at),
+                grand_reveal_text = COALESCE($5, grand_reveal_text),
+                grand_reveal_cash_prize = COALESCE($6, grand_reveal_cash_prize),
+                curator_notes = COALESCE($7, curator_notes),
+                prize_pool = COALESCE($8, prize_pool),
+                updated_at = NOW()
+            WHERE id = $9
+        `, [
+            creatorName, playerName, relationshipType,
+            scheduledSendAt, grandRevealText, grandRevealCashPrize,
+            curatorNotes, prizePool, bookingId
+        ]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error updating booking:', error);
+        res.status(500).json({ error: 'Failed to update booking' });
+    }
+});
+
+// Mark payment received
+router.post('/api/love-quest/bookings/:id/payment', authenticateAdmin, async (req, res) => {
+    try {
+        const { amount, reference } = req.body;
+        const bookingId = parseInt(req.params.id);
+        
+        await pool.query(`
+            UPDATE love_quest_bookings 
+            SET total_paid = COALESCE(total_paid, 0) + $1, status = 'paid'
+            WHERE id = $2
+        `, [amount, bookingId]);
+        
+        await loveQuestService.logAuditEvent(bookingId, null, 'payment_received', {
+            amount, reference
+        }, 'admin', req.adminSession?.admin_id);
+        
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error recording payment:', error);
+        res.status(500).json({ error: 'Failed to record payment' });
+    }
+});
+
+// Send invitation
+router.post('/api/love-quest/bookings/:id/send-invitation', authenticateAdmin, async (req, res) => {
+    try {
+        const MessagingService = require('../services/messaging.service');
+        const messagingService = new MessagingService();
+        
+        await loveQuestService.sendInvitation(parseInt(req.params.id), messagingService);
+        res.json({ success: true, message: 'Invitation sent' });
+    } catch (error) {
+        logger.error('Error sending invitation:', error);
+        res.status(500).json({ error: error.message || 'Failed to send invitation' });
+    }
+});
+
+// Add/update question
+router.post('/api/love-quest/bookings/:id/questions', authenticateAdmin, async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id);
+        const question = await loveQuestService.addQuestion(bookingId, req.body);
+        res.json({ success: true, question });
+    } catch (error) {
+        logger.error('Error adding question:', error);
+        res.status(500).json({ error: 'Failed to add question' });
+    }
+});
+
+// Get questions for booking
+router.get('/api/love-quest/bookings/:id/questions', authenticateAdmin, async (req, res) => {
+    try {
+        const questions = await loveQuestService.getQuestions(parseInt(req.params.id));
+        res.json({ success: true, questions });
+    } catch (error) {
+        logger.error('Error getting questions:', error);
+        res.status(500).json({ error: 'Failed to get questions' });
+    }
+});
+
+// Delete question
+router.delete('/api/love-quest/questions/:id', authenticateAdmin, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM love_quest_questions WHERE id = $1', [parseInt(req.params.id)]);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error deleting question:', error);
+        res.status(500).json({ error: 'Failed to delete question' });
+    }
+});
+
+// Bulk add questions
+router.post('/api/love-quest/bookings/:id/questions/bulk', authenticateAdmin, async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id);
+        const { questions } = req.body;
+        
+        if (!Array.isArray(questions)) {
+            return res.status(400).json({ error: 'Questions must be an array' });
+        }
+        
+        const results = [];
+        for (const q of questions) {
+            const question = await loveQuestService.addQuestion(bookingId, {
+                ...q,
+                questionNumber: q.questionNumber || results.length + 1
+            });
+            results.push(question);
+        }
+        
+        res.json({ success: true, questions: results, count: results.length });
+    } catch (error) {
+        logger.error('Error bulk adding questions:', error);
+        res.status(500).json({ error: 'Failed to add questions' });
+    }
+});
+
+// Get media for booking
+router.get('/api/love-quest/bookings/:id/media', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM love_quest_media WHERE booking_id = $1 ORDER BY uploaded_at',
+            [parseInt(req.params.id)]
+        );
+        res.json({ success: true, media: result.rows });
+    } catch (error) {
+        logger.error('Error getting media:', error);
+        res.status(500).json({ error: 'Failed to get media' });
+    }
+});
+
+// Delete media
+router.delete('/api/love-quest/media/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const fs = require('fs');
+        const mediaResult = await pool.query(
+            'SELECT file_path FROM love_quest_media WHERE id = $1',
+            [parseInt(req.params.id)]
+        );
+        
+        if (mediaResult.rows[0]?.file_path) {
+            if (fs.existsSync(mediaResult.rows[0].file_path)) {
+                fs.unlinkSync(mediaResult.rows[0].file_path);
+            }
+        }
+        
+        await pool.query('DELETE FROM love_quest_media WHERE id = $1', [parseInt(req.params.id)]);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error deleting media:', error);
+        res.status(500).json({ error: 'Failed to delete media' });
+    }
+});
+
+// Get session details
+router.get('/api/love-quest/sessions/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT s.*, b.booking_code, b.creator_name, b.player_name
+            FROM love_quest_sessions s
+            JOIN love_quest_bookings b ON s.booking_id = b.id
+            WHERE s.id = $1
+        `, [parseInt(req.params.id)]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        res.json({ success: true, session: result.rows[0] });
+    } catch (error) {
+        logger.error('Error getting session:', error);
+        res.status(500).json({ error: 'Failed to get session' });
+    }
+});
+
+// Audit trail
+router.get('/api/love-quest/audit', authenticateAdmin, async (req, res) => {
+    try {
+        const { bookingId, limit = 100 } = req.query;
+        
+        let query = `
+            SELECT a.*, b.booking_code
+            FROM love_quest_audit a
+            LEFT JOIN love_quest_bookings b ON a.booking_id = b.id
+        `;
+        const params = [];
+        
+        if (bookingId) {
+            query += ' WHERE a.booking_id = $1';
+            params.push(parseInt(bookingId));
+        }
+        
+        query += ' ORDER BY a.created_at DESC LIMIT $' + (params.length + 1);
+        params.push(parseInt(limit));
+        
+        const result = await pool.query(query, params);
+        res.json({ success: true, events: result.rows });
+    } catch (error) {
+        logger.error('Error getting audit trail:', error);
+        res.status(500).json({ error: 'Failed to get audit trail' });
+    }
+});
+
+// Update package pricing
+router.put('/api/love-quest/packages/:code', authenticateAdmin, async (req, res) => {
+    try {
+        const { basePrice, isActive, description } = req.body;
+        
+        await pool.query(`
+            UPDATE love_quest_packages SET
+                base_price = COALESCE($1, base_price),
+                is_active = COALESCE($2, is_active),
+                description = COALESCE($3, description)
+            WHERE package_code = $4
+        `, [basePrice, isActive, description, req.params.code]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error updating package:', error);
+        res.status(500).json({ error: 'Failed to update package' });
+    }
+});
+
+// Process scheduled invitations
+router.post('/api/love-quest/process-scheduled', authenticateAdmin, async (req, res) => {
+    try {
+        const MessagingService = require('../services/messaging.service');
+        const messagingService = new MessagingService();
+        
+        const result = await pool.query(`
+            SELECT id FROM love_quest_bookings 
+            WHERE status = 'scheduled' 
+            AND scheduled_send_at <= NOW()
+            AND scheduled_send_at > NOW() - INTERVAL '1 hour'
+        `);
+        
+        let sent = 0;
+        for (const row of result.rows) {
+            try {
+                await loveQuestService.sendInvitation(row.id, messagingService);
+                sent++;
+            } catch (err) {
+                logger.error(`Failed to send scheduled invitation ${row.id}:`, err);
+            }
+        }
+        
+        res.json({ success: true, processed: result.rows.length, sent });
+    } catch (error) {
+        logger.error('Error processing scheduled sends:', error);
+        res.status(500).json({ error: 'Failed to process scheduled sends' });
+    }
+});
+
+// Generate default wrong responses helper
+router.post('/api/love-quest/generate-responses', authenticateAdmin, async (req, res) => {
+    try {
+        const { playerName } = req.body;
+        
+        const responses = {
+            generic: [
+                `😤 ${playerName || 'Babe'}! How could you forget that?!\n\nBut... I still love you. 💕`,
+                `😢 Ouch! That wasn't it...\n\nI'm not mad, just disappointed. 💔\n\nJust kidding! Try again!`,
+                `🙈 Nooo! That's not right!\n\nWe need to make more memories together! 💕`,
+                `😅 Wrong answer, but I'll forgive you...\n\nYou're lucky you're cute! 💕`,
+                `💔 *dramatically clutches heart*\n\nHow could you?!\n\n...I'm over it. Let's continue! 😘`
+            ],
+            correct: [
+                `✅ YES! You DO know me! 🎉💕`,
+                `✅ That's right, baby! 🥰`,
+                `✅ See? This is why I love you! 💕`,
+                `✅ PERFECT! You remembered! 🎉`
+            ]
+        };
+        
+        res.json({ 
+            success: true, 
+            responses,
+            suggestion: responses.generic[Math.floor(Math.random() * responses.generic.length)]
+        });
+    } catch (error) {
+        logger.error('Error generating responses:', error);
+        res.status(500).json({ error: 'Failed to generate responses' });
+    }
+});
+
+// Export booking data
+router.get('/api/love-quest/bookings/:id/export', authenticateAdmin, async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id);
+        
+        const booking = await loveQuestService.getBooking(bookingId);
+        const questions = await loveQuestService.getQuestions(bookingId);
+        
+        const mediaResult = await pool.query(
+            'SELECT * FROM love_quest_media WHERE booking_id = $1',
+            [bookingId]
+        );
+        
+        const sessionResult = await pool.query(
+            'SELECT * FROM love_quest_sessions WHERE booking_id = $1',
+            [bookingId]
+        );
+        
+        const exportData = {
+            exportedAt: new Date().toISOString(),
+            booking,
+            questions,
+            media: mediaResult.rows,
+            sessions: sessionResult.rows
+        };
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=love-quest-${booking.booking_code}.json`);
+        res.json(exportData);
+    } catch (error) {
+        logger.error('Error exporting booking:', error);
+        res.status(500).json({ error: 'Failed to export booking' });
+    }
+});
+
+// ============================================
+// END OF LOVE QUEST ROUTES
+// ============================================
+
 module.exports = router;

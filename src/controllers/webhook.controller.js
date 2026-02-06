@@ -2,7 +2,7 @@
 // FILE: src/controllers/webhook.controller.js
 // COMPLETE MERGED VERSION + ANTI-CHEAT PATCHES
 // Includes: Temp suspension, photo verification,
-//           image message handling
+//           image message handling, Love Quest
 // ============================================
 
 const pool = require('../config/database');
@@ -20,6 +20,7 @@ const achievementsService = require('../services/achievements.service');
 const victoryCardsService = require('../services/victory-cards.service');
 const antiFraudService = require('../services/anti-fraud.service');
 const auditService = require('../services/audit.service');
+const loveQuestService = require('../services/love-quest.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -73,6 +74,13 @@ class WebhookController {
         if (message.type === 'image') {
           logger.info(`📷 Image received from ${from}`);
           await this.handleImageMessage(from, message);
+          return;
+        }
+
+        // Check for audio messages (Love Quest voice notes)
+        if (message.type === 'audio') {
+          logger.info(`🎤 Audio received from ${from}`);
+          await this.handleAudioMessage(from, message);
           return;
         }
 
@@ -181,6 +189,47 @@ class WebhookController {
 
       if (userState && userState.state === 'REGISTRATION_REFERRAL') {
         await this.handleRegistrationReferral(phone, message, userState.data);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 1.5: LOVE QUEST STATES
+      // ===================================
+      if (userState && userState.state === 'LOVE_QUEST_PACKAGE_SELECT') {
+        await this.handleLoveQuestPackageSelection(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'LOVE_QUEST_PLAYER_PHONE') {
+        await this.handleLoveQuestPlayerPhone(phone, message, userState);
+        return;
+      }
+
+      if (userState && userState.state === 'LOVE_QUEST_VOICE_NOTE') {
+        await messagingService.sendMessage(phone, `🎤 Please send a voice note now!\n\nOr type SKIP to continue without audio.`);
+        return;
+      }
+
+      if (userState && userState.state === 'LOVE_QUEST_VOICE_MENU') {
+        await this.handleLoveQuestVoiceMenu(phone, message, userState);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 1.6: LOVE QUEST ACTIVE SESSION
+      // ===================================
+      const loveQuestSession = await loveQuestService.getActiveSession(phone);
+      if (loveQuestSession) {
+        await this.handleLoveQuestInput(phone, message, loveQuestSession);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 1.7: LOVE QUEST INVITATION CHECK
+      // ===================================
+      const loveQuestBooking = await loveQuestService.getBookingByPlayerPhone(phone);
+      if (loveQuestBooking && input === 'START') {
+        await this.startLoveQuest(phone, loveQuestBooking);
         return;
       }
 
@@ -993,6 +1042,12 @@ Type the code, or type SKIP to continue:`
   async handleMenuInput(user, message) {
     const input = message.trim().toUpperCase();
     const isPaymentEnabled = paymentService.isEnabled();
+
+    // LOVE QUEST command
+    if (input === 'LOVE QUEST' || input === 'LOVEQUEST' || input === 'LQ' || input === 'VALENTINE') {
+      await this.showLoveQuestCreatorMenu(user);
+      return;
+    }
 
     // PROFILE command
     if (input === 'PROFILE' || input.includes('PROFILE')) {
@@ -2471,6 +2526,252 @@ You can now claim your prize! 💰
       );
     }
   }
+
+  // ============================================
+  // LOVE QUEST HANDLERS
+  // ============================================
+
+  async handleAudioMessage(phone, message) {
+    try {
+      const userState = await userService.getUserState(phone);
+      
+      if (userState && userState.state === 'LOVE_QUEST_VOICE_NOTE') {
+        const { bookingCode, purpose } = userState.data || {};
+        
+        if (bookingCode && message.audio?.id) {
+          try {
+            await loveQuestService.saveVoiceNote(bookingCode, message.audio.id, purpose || 'grand_reveal');
+            
+            await messagingService.sendMessage(phone,
+              `✅ Voice note saved for "${purpose || 'grand reveal'}"! 🎤💕\n\n` +
+              `Would you like to:\n` +
+              `1️⃣ Record another voice note\n` +
+              `2️⃣ Continue with curation\n` +
+              `3️⃣ Preview the voice note`
+            );
+            
+            await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { bookingCode });
+          } catch (error) {
+            logger.error('Error saving voice note:', error);
+            await messagingService.sendMessage(phone, `❌ Sorry, there was an error saving your voice note. Please try again.`);
+          }
+          return;
+        }
+      }
+      
+      await messagingService.sendMessage(phone,
+        `🎤 Voice note received!\n\nIf you're creating a Love Quest, please use the curation menu first.`
+      );
+    } catch (error) {
+      logger.error('Error handling audio message:', error);
+    }
+  }
+
+  async startLoveQuest(phone, booking) {
+    try {
+      const existingSession = await loveQuestService.getActiveSession(phone);
+      if (existingSession) {
+        await messagingService.sendMessage(phone, `💕 You already have an active Love Quest!\n\nLet's continue where you left off...`);
+        const sessionWithBooking = await loveQuestService.getSessionWithBooking(phone);
+        await loveQuestService.sendQuestion(existingSession, sessionWithBooking, messagingService);
+        return;
+      }
+      
+      const session = await loveQuestService.startSession(booking, phone);
+      const creatorName = booking.creator_name || 'Your special someone';
+      
+      let welcomeMsg = `💘 *LOVE QUEST BEGINS!* 💘\n\n`;
+      welcomeMsg += `${creatorName} has prepared ${booking.question_count} questions about your relationship.\n\n`;
+      welcomeMsg += `🎯 Answer correctly to earn Love Points\n`;
+      welcomeMsg += `🎁 Unlock prizes along the way\n`;
+      welcomeMsg += `✨ A grand surprise awaits at the end!\n\n`;
+      
+      if (booking.allow_retries) {
+        welcomeMsg += `💡 Don't worry - you get ${booking.max_retries_per_question || 2} tries per question!\n\n`;
+      }
+      
+      welcomeMsg += `Ready? Here comes the first question... 💕`;
+      
+      await messagingService.sendMessage(phone, welcomeMsg);
+      
+      const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
+      if (media.intro_audio && require('fs').existsSync(media.intro_audio)) {
+        await loveQuestService.sendVoiceNote(phone, media.intro_audio);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      setTimeout(async () => {
+        await loveQuestService.sendQuestion(session, booking, messagingService);
+      }, 3000);
+      
+    } catch (error) {
+      logger.error('Error starting Love Quest:', error);
+      await messagingService.sendMessage(phone, `❌ Sorry, there was an error starting your Love Quest. Please try again by replying START.`);
+    }
+  }
+
+  async handleLoveQuestInput(phone, message, session) {
+    try {
+      const input = message.trim().toUpperCase();
+      const sessionWithBooking = await loveQuestService.getSessionWithBooking(phone);
+      
+      if (!sessionWithBooking) {
+        await messagingService.sendMessage(phone, `❌ Session error. Please contact support.`);
+        return;
+      }
+      
+      if (sessionWithBooking.waiting_for_treasure_confirmation) {
+        if (input === 'FOUND') {
+          await loveQuestService.confirmTreasureFound(session, sessionWithBooking, messagingService);
+          return;
+        } else {
+          await messagingService.sendMessage(phone, `🗺️ Still on the treasure hunt!\n\nReply FOUND when you reach the location 💕`);
+          return;
+        }
+      }
+      
+      if (input === 'HINT') {
+        await loveQuestService.sendHint(session, sessionWithBooking, messagingService);
+        return;
+      }
+      
+      if (['A', 'B', 'C', 'D'].includes(input)) {
+        await loveQuestService.processAnswer(session, sessionWithBooking, input, messagingService);
+        return;
+      }
+      
+      await messagingService.sendMessage(phone, `💕 Please reply with A, B, C, or D\n\nOr type HINT if you need help!`);
+    } catch (error) {
+      logger.error('Error handling Love Quest input:', error);
+      await messagingService.sendMessage(phone, `❌ Something went wrong. Please try your answer again.`);
+    }
+  }
+
+  async showLoveQuestCreatorMenu(user) {
+    let msg = `💘 *LOVE QUEST* 💘\n`;
+    msg += `Create a personalized trivia experience for your partner!\n\n`;
+    msg += `📦 *Packages:*\n\n`;
+    
+    const packages = await loveQuestService.getPackages();
+    packages.forEach((pkg, i) => {
+      msg += `${i + 1}️⃣ *${pkg.package_name}*\n`;
+      msg += `   ₦${parseFloat(pkg.base_price).toLocaleString()} • ${pkg.question_count} questions\n`;
+      if (pkg.voice_notes) msg += `   🎤 Voice notes `;
+      if (pkg.treasure_hunt) msg += `🗺️ Treasure hunt `;
+      if (pkg.dedicated_curator) msg += `👤 Dedicated curator`;
+      msg += `\n\n`;
+    });
+    
+    msg += `Reply with the package number (1-3) to get started!\n`;
+    msg += `Or visit: whatsuptrivia.com.ng/love-quest`;
+    
+    await messagingService.sendMessage(user.phone_number, msg);
+    await userService.setUserState(user.phone_number, 'LOVE_QUEST_PACKAGE_SELECT');
+  }
+
+  async handleLoveQuestPackageSelection(phone, message, userState) {
+    const input = message.trim();
+    const packages = await loveQuestService.getPackages();
+    const packageIndex = parseInt(input) - 1;
+    
+    if (packageIndex < 0 || packageIndex >= packages.length) {
+      await messagingService.sendMessage(phone, `⚠️ Please select a valid package (1-${packages.length})`);
+      return;
+    }
+    
+    const selectedPackage = packages[packageIndex];
+    
+    await userService.setUserState(phone, 'LOVE_QUEST_PLAYER_PHONE', {
+      package: selectedPackage.package_code,
+      price: parseFloat(selectedPackage.base_price)
+    });
+    
+    let msg = `✅ ${selectedPackage.package_name} selected!\n`;
+    msg += `💰 Price: ₦${parseFloat(selectedPackage.base_price).toLocaleString()}\n\n`;
+    msg += `Now, please enter your partner's phone number:\n`;
+    msg += `(Format: 08012345678)`;
+    
+    await messagingService.sendMessage(phone, msg);
+  }
+
+  async handleLoveQuestPlayerPhone(phone, message, userState) {
+    let playerPhone = message.trim().replace(/\D/g, '');
+    
+    if (playerPhone.startsWith('0')) {
+      playerPhone = '234' + playerPhone.substring(1);
+    } else if (!playerPhone.startsWith('234')) {
+      playerPhone = '234' + playerPhone;
+    }
+    
+    if (playerPhone.length < 13) {
+      await messagingService.sendMessage(phone, `⚠️ Please enter a valid phone number\n(Format: 08012345678)`);
+      return;
+    }
+    
+    try {
+      const user = await userService.getUserByPhone(phone);
+      const booking = await loveQuestService.createBooking(
+        phone, playerPhone, userState.data.package, user?.full_name, null
+      );
+      
+      await userService.clearUserState(phone);
+      
+      let msg = `🎉 *Love Quest Booking Created!*\n\n`;
+      msg += `📋 Booking Code: *${booking.booking_code}*\n`;
+      msg += `📦 Package: ${userState.data.package}\n`;
+      msg += `💰 Amount: ₦${userState.data.price.toLocaleString()}\n\n`;
+      msg += `📱 Your partner: ${playerPhone}\n\n`;
+      msg += `*Next Steps:*\n`;
+      msg += `1️⃣ Make payment to complete booking\n`;
+      msg += `2️⃣ Our Love Curator will contact you\n`;
+      msg += `3️⃣ We'll create your custom questions together\n\n`;
+      msg += `💳 *Bank Details:*\n`;
+      msg += `Bank: [Your Bank]\n`;
+      msg += `Account: [Account Number]\n`;
+      msg += `Name: What's Up Trivia\n\n`;
+      msg += `Use *${booking.booking_code}* as payment reference.\n\n`;
+      msg += `Questions? Reply HELP 💕`;
+      
+      await messagingService.sendMessage(phone, msg);
+    } catch (error) {
+      logger.error('Error creating Love Quest booking:', error);
+      await messagingService.sendMessage(phone, `❌ Error creating booking. Please try again later.`);
+      await userService.clearUserState(phone);
+    }
+  }
+
+  async handleLoveQuestVoiceMenu(phone, message, userState) {
+    const input = message.trim();
+    const { bookingCode } = userState.data || {};
+    
+    switch (input) {
+      case '1':
+        await messagingService.sendMessage(phone,
+          `🎤 What's this voice note for?\n\n` +
+          `1️⃣ Grand Reveal\n` +
+          `2️⃣ Intro Message\n` +
+          `3️⃣ Milestone Celebration\n\n` +
+          `Reply with number:`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_PURPOSE', { bookingCode });
+        break;
+        
+      case '2':
+        await messagingService.sendMessage(phone,
+          `✅ Great! A curator will be in touch to complete your questions.\n\n` +
+          `Booking Code: ${bookingCode}`
+        );
+        await userService.clearUserState(phone);
+        break;
+        
+      case '3':
+        await messagingService.sendMessage(phone, `📝 Voice note preview will be available when your curator shares the final review.`);
+        break;
+        
+      default:
+        await messagingService.sendMessage(phone, `⚠️ Please reply with 1, 2, or 3`);
+    }
+  }
 }
 
 // ============================================
@@ -2483,20 +2784,24 @@ module.exports = new WebhookController();
 // COMPLETE FILE END
 // ============================================
 // This is the COMPLETE webhook.controller.js with:
-// ✅ All imports and setup
+// ✅ All imports and setup (including Love Quest service)
 // ✅ verify() and handleMessage() methods
 // ✅ Image message detection (photo verification)
+// ✅ Audio message detection (Love Quest voice notes)
 // ✅ Complete routeMessage() with ALL state handlers
 // ✅ Permanent + temporary suspension checks
 // ✅ All registration handlers (with referrals)
+// ✅ Love Quest state handlers and gameplay
 // ✅ Updated game mode selection (Practice, Classic, Tournaments)
 // ✅ Complete tournament selection and payment handlers
 // ✅ Profile, referral, and stats commands
-// ✅ Enhanced menu input handler
+// ✅ Enhanced menu input handler (with Love Quest command)
 // ✅ Payment handlers (buy games, package selection)
 // ✅ Complete payout handlers (full bank details flow)
 // ✅ Game input handler with photo verification + turbo GO + CAPTCHA + lifelines
 // ✅ handleImageMessage() for photo verification via WhatsApp images
+// ✅ handleAudioMessage() for Love Quest voice notes
+// ✅ Love Quest creator flow and player gameplay handlers
 // ✅ Reset handler
 // ✅ All menu senders (main menu, how to play)
 // ✅ Complete leaderboard handlers
