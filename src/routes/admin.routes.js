@@ -6224,39 +6224,70 @@ router.get('/api/love-quest/bookings', authenticateAdmin, async (req, res) => {
 // Get single booking with full details
 router.get('/api/love-quest/bookings/:id', authenticateAdmin, async (req, res) => {
     try {
-        const booking = await loveQuestService.getBooking(parseInt(req.params.id));
+        const bookingId = parseInt(req.params.id);
+        console.log(`[LoveQuest] Fetching booking ${bookingId}`);
+        
+        const booking = await loveQuestService.getBooking(bookingId);
         if (!booking) {
+            console.log(`[LoveQuest] Booking ${bookingId} not found`);
             return res.status(404).json({ error: 'Booking not found' });
         }
+        console.log(`[LoveQuest] Found booking: ${booking.booking_code}`);
         
-        const questions = await loveQuestService.getQuestions(booking.id);
+        let questions = [];
+        let media = [];
+        let session = null;
+        let audit = [];
         
-        const mediaResult = await pool.query(
-            'SELECT * FROM love_quest_media WHERE booking_id = $1 ORDER BY uploaded_at',
-            [booking.id]
-        );
+        try {
+            questions = await loveQuestService.getQuestions(booking.id);
+            console.log(`[LoveQuest] Found ${questions.length} questions`);
+        } catch (qErr) {
+            console.error('[LoveQuest] Error fetching questions:', qErr.message);
+        }
         
-        const sessionResult = await pool.query(
-            'SELECT * FROM love_quest_sessions WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 1',
-            [booking.id]
-        );
+        try {
+            const mediaResult = await pool.query(
+                'SELECT * FROM love_quest_media WHERE booking_id = $1 ORDER BY uploaded_at',
+                [booking.id]
+            );
+            media = mediaResult.rows;
+        } catch (mErr) {
+            console.error('[LoveQuest] Error fetching media:', mErr.message);
+        }
         
-        const auditResult = await pool.query(
-            'SELECT * FROM love_quest_audit WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 50',
-            [booking.id]
-        );
+        try {
+            const sessionResult = await pool.query(
+                'SELECT * FROM love_quest_sessions WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 1',
+                [booking.id]
+            );
+            session = sessionResult.rows[0] || null;
+        } catch (sErr) {
+            console.error('[LoveQuest] Error fetching session:', sErr.message);
+        }
+        
+        try {
+            const auditResult = await pool.query(
+                'SELECT * FROM love_quest_audit WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 50',
+                [booking.id]
+            );
+            audit = auditResult.rows;
+        } catch (aErr) {
+            console.error('[LoveQuest] Error fetching audit:', aErr.message);
+        }
         
         res.json({
             success: true,
             booking,
             questions,
-            media: mediaResult.rows,
-            session: sessionResult.rows[0] || null,
-            audit: auditResult.rows
+            media,
+            session,
+            audit
         });
     } catch (error) {
+        console.error('[LoveQuest] Error getting booking details:', error);
         logger.error('Error getting booking details:', error);
-        res.status(500).json({ error: 'Failed to get booking details' });
+        res.status(500).json({ error: 'Failed to get booking details', details: error.message });
     }
 });
 

@@ -26,9 +26,13 @@ class LoveQuestService {
         this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
         this.whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN;
         
-        // Ensure upload directory exists
-        if (!fs.existsSync(this.uploadDir)) {
-            fs.mkdirSync(this.uploadDir, { recursive: true });
+        // Ensure upload directory exists (with error handling for read-only filesystems)
+        try {
+            if (!fs.existsSync(this.uploadDir)) {
+                fs.mkdirSync(this.uploadDir, { recursive: true });
+            }
+        } catch (err) {
+            console.warn(`[LoveQuest] Could not create upload directory: ${err.message}. Voice notes may not work.`);
         }
     }
 
@@ -108,14 +112,18 @@ class LoveQuestService {
 
     async getBooking(bookingIdOrCode) {
         try {
+            console.log(`[LoveQuestService] getBooking called with: ${bookingIdOrCode}`);
             const isCode = typeof bookingIdOrCode === 'string' && bookingIdOrCode.startsWith('LQ-');
             const query = isCode
                 ? 'SELECT * FROM love_quest_bookings WHERE booking_code = $1'
                 : 'SELECT * FROM love_quest_bookings WHERE id = $1';
             
+            console.log(`[LoveQuestService] Running query: ${query}`);
             const result = await pool.query(query, [bookingIdOrCode]);
+            console.log(`[LoveQuestService] Found ${result.rows.length} booking(s)`);
             return result.rows[0] || null;
         } catch (error) {
+            console.error('[LoveQuestService] Error getting booking:', error);
             logger.error('Error getting booking:', error);
             return null;
         }
