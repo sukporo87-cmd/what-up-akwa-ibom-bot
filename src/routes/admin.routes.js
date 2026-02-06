@@ -6258,7 +6258,7 @@ router.get('/api/love-quest/bookings/:id', authenticateAdmin, async (req, res) =
         
         try {
             const sessionResult = await pool.query(
-                'SELECT * FROM love_quest_sessions WHERE booking_id = $1 ORDER BY created_at DESC LIMIT 1',
+                'SELECT * FROM love_quest_sessions WHERE booking_id = $1 ORDER BY started_at DESC LIMIT 1',
                 [booking.id]
             );
             session = sessionResult.rows[0] || null;
