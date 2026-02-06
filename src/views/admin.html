@@ -4676,13 +4676,116 @@ async function viewLqBooking(bookingId) {
 
 function renderLqBookingDetail(data) {
   const { booking, questions } = data;
-  let html = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;"><div style="background: #fce7f3; padding: 15px; border-radius: 8px;"><h4>💘 Booking Info</h4><p><strong>Code:</strong> ${booking.booking_code}</p><p><strong>Package:</strong> ${booking.package}</p><p><strong>Status:</strong> ${booking.status}</p><p><strong>Price:</strong> ₦${parseFloat(booking.base_price).toLocaleString()}</p></div><div style="background: #dbeafe; padding: 15px; border-radius: 8px;"><h4>👥 Participants</h4><p><strong>Creator:</strong> ${booking.creator_name || booking.creator_phone}</p><p><strong>Player:</strong> ${booking.player_name || booking.player_phone}</p></div></div>`;
-  html += `<div style="margin-bottom: 20px;"><h4>Grand Reveal</h4><textarea id="lqGrandRevealText" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd;" rows="3">${booking.grand_reveal_text || ''}</textarea><div style="display: flex; gap: 10px; margin-top: 10px;"><input type="number" id="lqGrandRevealCash" value="${booking.grand_reveal_cash_prize || 0}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 150px;"><button class="btn btn-primary btn-sm" onclick="saveLqGrandReveal(${booking.id})">💾 Save</button></div>${booking.grand_reveal_audio_url ? '<p style="color: green; margin-top: 5px;">🎤 Voice note attached</p>' : ''}</div>`;
-  html += `<div style="margin-bottom: 20px;"><div style="display: flex; justify-content: space-between; align-items: center;"><h4>📝 Questions (${questions.length}/${booking.question_count})</h4><button class="btn btn-success btn-sm" onclick="addLqQuestion(${booking.id}, ${questions.length + 1})">➕ Add</button></div><div style="margin-top: 10px;">`;
-  if (questions.length === 0) { html += '<p style="color: var(--text-gray);">No questions added yet</p>'; }
-  else { questions.forEach(q => { html += `<div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #7c3aed;"><div style="display: flex; justify-content: space-between;"><strong>Q${q.question_number}:</strong><button class="btn btn-sm btn-secondary" onclick="editLqQuestion(${booking.id}, ${q.question_number})">✏️</button></div><p>${q.question_text}</p><small style="color: var(--text-gray);">Answer: ${q.correct_answer}</small></div>`; }); }
-  html += `</div></div><div style="display: flex; gap: 10px; flex-wrap: wrap;"><select id="lqStatusSelect" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;"><option value="pending" ${booking.status === 'pending' ? 'selected' : ''}>Pending</option><option value="paid" ${booking.status === 'paid' ? 'selected' : ''}>Paid</option><option value="curating" ${booking.status === 'curating' ? 'selected' : ''}>Curating</option><option value="ready" ${booking.status === 'ready' ? 'selected' : ''}>Ready</option><option value="cancelled" ${booking.status === 'cancelled' ? 'selected' : ''}>Cancelled</option></select><button class="btn btn-primary" onclick="updateLqStatus(${booking.id})">Update Status</button>${booking.status === 'ready' ? `<button class="btn btn-success" onclick="sendLqInvitation(${booking.id})">📤 Send</button>` : ''}</div>`;
+  const isPaid = parseFloat(booking.total_paid) >= parseFloat(booking.base_price);
+  
+  let html = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+    <div style="background: #fce7f3; padding: 15px; border-radius: 8px;">
+      <h4>💘 Booking Info</h4>
+      <p><strong>Code:</strong> ${booking.booking_code}</p>
+      <p><strong>Package:</strong> ${booking.package}</p>
+      <p><strong>Status:</strong> <span style="background: ${booking.status === 'completed' ? '#dcfce7' : '#fef3c7'}; padding: 2px 8px; border-radius: 10px;">${booking.status}</span></p>
+      <p><strong>Price:</strong> ₦${parseFloat(booking.base_price).toLocaleString()}</p>
+      <p><strong>Paid:</strong> <span style="color: ${isPaid ? 'green' : 'orange'};">₦${parseFloat(booking.total_paid || 0).toLocaleString()}</span> ${isPaid ? '✅' : '⏳'}</p>
+    </div>
+    <div style="background: #dbeafe; padding: 15px; border-radius: 8px;">
+      <h4>👥 Participants</h4>
+      <p><strong>Creator:</strong> ${booking.creator_name || 'N/A'}</p>
+      <p><strong>Creator Phone:</strong> ${booking.creator_phone}</p>
+      <p><strong>Player:</strong> ${booking.player_name || 'N/A'}</p>
+      <p><strong>Player Phone:</strong> ${booking.player_phone}</p>
+    </div>
+  </div>`;
+  
+  // Payment section (if not fully paid)
+  if (!isPaid) {
+    html += `<div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+      <h4>💳 Record Payment</h4>
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <input type="number" id="lqPaymentAmount" value="${booking.base_price}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 120px;">
+        <input type="text" id="lqPaymentRef" placeholder="Payment reference" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 200px;">
+        <button class="btn btn-success" onclick="recordLqPayment(${booking.id})">💰 Mark Paid</button>
+      </div>
+    </div>`;
+  }
+  
+  html += `<div style="margin-bottom: 20px;">
+    <h4>✨ Grand Reveal</h4>
+    <textarea id="lqGrandRevealText" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd;" rows="3" placeholder="Enter the heartfelt message from creator...">${booking.grand_reveal_text || ''}</textarea>
+    <div style="display: flex; gap: 10px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
+      <label>Cash Prize: ₦</label>
+      <input type="number" id="lqGrandRevealCash" value="${booking.grand_reveal_cash_prize || 0}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 120px;">
+      <button class="btn btn-primary btn-sm" onclick="saveLqGrandReveal(${booking.id})">💾 Save Reveal</button>
+    </div>
+    ${booking.grand_reveal_audio_url ? '<p style="color: green; margin-top: 5px;">🎤 Voice note attached</p>' : '<p style="color: gray; margin-top: 5px;">🎤 No voice note yet (creator can send via WhatsApp)</p>'}
+  </div>`;
+  
+  html += `<div style="margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h4>📝 Questions (${questions.length}/${booking.question_count})</h4>
+      <button class="btn btn-success btn-sm" onclick="addLqQuestion(${booking.id}, ${questions.length + 1})">➕ Add Question</button>
+    </div>
+    <div style="margin-top: 10px;">`;
+    
+  if (questions.length === 0) { 
+    html += '<p style="color: var(--text-gray);">No questions added yet. Add questions to complete curation.</p>'; 
+  } else { 
+    questions.forEach(q => { 
+      html += `<div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #7c3aed;">
+        <div style="display: flex; justify-content: space-between;">
+          <strong>Q${q.question_number}:</strong>
+          <button class="btn btn-sm btn-secondary" onclick="editLqQuestion(${booking.id}, ${q.question_number})">✏️ Edit</button>
+        </div>
+        <p>${q.question_text}</p>
+        <small style="color: var(--text-gray);">Answer: ${q.correct_answer} ${q.milestone_prize_text ? '| Prize: ' + q.milestone_prize_text : ''}</small>
+      </div>`; 
+    }); 
+  }
+  
+  html += `</div></div>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; padding-top: 15px; border-top: 1px solid #eee;">
+      <select id="lqStatusSelect" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+        <option value="pending" ${booking.status === 'pending' ? 'selected' : ''}>Pending</option>
+        <option value="paid" ${booking.status === 'paid' ? 'selected' : ''}>Paid</option>
+        <option value="curating" ${booking.status === 'curating' ? 'selected' : ''}>Curating</option>
+        <option value="ready" ${booking.status === 'ready' ? 'selected' : ''}>Ready</option>
+        <option value="scheduled" ${booking.status === 'scheduled' ? 'selected' : ''}>Scheduled</option>
+        <option value="cancelled" ${booking.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+      </select>
+      <button class="btn btn-primary" onclick="updateLqStatus(${booking.id})">Update Status</button>
+      ${booking.status === 'ready' ? `<button class="btn btn-success" onclick="sendLqInvitation(${booking.id})">📤 Send Invitation</button>` : ''}
+      ${questions.length >= booking.question_count && booking.status !== 'ready' && booking.status !== 'sent' ? `<button class="btn btn-warning" onclick="markLqReady(${booking.id})">✅ Mark Ready</button>` : ''}
+    </div>`;
+    
   document.getElementById('lqBookingContent').innerHTML = html;
+}
+
+async function recordLqPayment(bookingId) {
+  const amount = document.getElementById('lqPaymentAmount').value;
+  const reference = document.getElementById('lqPaymentRef').value;
+  if (!amount) { showAlert('⚠️ Enter payment amount', 'error'); return; }
+  try {
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/payment`, { 
+      method: 'POST', 
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ amount: parseFloat(amount), reference }) 
+    });
+    const data = await response.json();
+    if (data.success) { showAlert('✅ Payment recorded!', 'success'); viewLqBooking(bookingId); loadLoveQuestData(); }
+    else { showAlert('❌ Error: ' + (data.error || 'Failed'), 'error'); }
+  } catch (error) { console.error('Error recording payment:', error); showAlert('❌ Error recording payment', 'error'); }
+}
+
+async function markLqReady(bookingId) {
+  if (!confirm('Mark this booking as Ready to send?')) return;
+  try {
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/status`, { 
+      method: 'PUT', 
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ status: 'ready' }) 
+    });
+    const data = await response.json();
+    if (data.success) { showAlert('✅ Marked as Ready!', 'success'); viewLqBooking(bookingId); loadLoveQuestData(); }
+  } catch (error) { console.error('Error:', error); showAlert('❌ Error', 'error'); }
 }
 
 function addLqQuestion(bookingId, questionNumber) {

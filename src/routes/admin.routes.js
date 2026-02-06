@@ -172,6 +172,22 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
     const totalGames = await pool.query('SELECT COUNT(*) as count FROM game_sessions WHERE status = \'completed\'');
     const totalQuestions = await pool.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
 
+    // Love Quest stats
+    let loveQuestStats = { total: 0, revenue: 0, completed: 0 };
+    try {
+      const lqResult = await pool.query(`
+        SELECT 
+          COUNT(*) as total,
+          COALESCE(SUM(total_paid), 0) as revenue,
+          COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM love_quest_bookings
+      `);
+      loveQuestStats = lqResult.rows[0] || loveQuestStats;
+    } catch (e) {
+      // Love Quest tables may not exist yet
+      console.log('Love Quest tables not available');
+    }
+
     res.json({
       pending_count: parseInt(payoutStats.rows[0].pending_count) || 0,
       pending_amount: parseFloat(payoutStats.rows[0].pending_amount) || 0,
@@ -181,7 +197,10 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
       confirmed_amount: parseFloat(payoutStats.rows[0].confirmed_amount) || 0,
       total_users: parseInt(totalUsers.rows[0].count),
       total_games: parseInt(totalGames.rows[0].count),
-      total_questions: parseInt(totalQuestions.rows[0].count)
+      total_questions: parseInt(totalQuestions.rows[0].count),
+      love_quest_total: parseInt(loveQuestStats.total) || 0,
+      love_quest_revenue: parseFloat(loveQuestStats.revenue) || 0,
+      love_quest_completed: parseInt(loveQuestStats.completed) || 0
     });
   } catch (error) {
     logger.error('Error getting admin stats:', error);

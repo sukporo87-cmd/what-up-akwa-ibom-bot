@@ -856,40 +856,200 @@ class LoveQuestService {
 
     async sendGrandReveal(session, booking, messagingService) {
         try {
+            const playerName = booking.player_name || 'My Love';
+            const creatorName = booking.creator_name || 'Your Special Someone';
+            const finalScore = session.score || 0;
+            
             // Pause for dramatic effect
             await new Promise(resolve => setTimeout(resolve, 3000));
             
-            let message = `✨ AND NOW... ✨\n\n`;
-            message += `A special message from your love...\n\n`;
-            message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+            // Part 1: Build anticipation
+            await messagingService.sendMessage(session.player_phone, 
+                `✨ *The moment you've been waiting for...* ✨`
+            );
             
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            
+            // Part 2: Romantic poem based on score
+            const poem = this.generateLovePoem(playerName, creatorName, finalScore);
+            await messagingService.sendMessage(session.player_phone, poem);
+            
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Part 3: Personal message from creator
             if (booking.grand_reveal_text) {
-                message += `${booking.grand_reveal_text}\n\n`;
+                let personalMsg = `💌 *A Message From ${creatorName}:*\n\n`;
+                personalMsg += `┏━━━━━━━━━━━━━━━━━━━┓\n\n`;
+                personalMsg += `"${booking.grand_reveal_text}"\n\n`;
+                personalMsg += `┗━━━━━━━━━━━━━━━━━━━┛`;
+                
+                await messagingService.sendMessage(session.player_phone, personalMsg);
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
             
-            message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-            
-            if (booking.grand_reveal_cash_prize > 0) {
-                message += `💰 Grand Prize: ₦${booking.grand_reveal_cash_prize.toLocaleString()}!\n\n`;
-            }
-            
-            message += `Happy Valentine's Day! 💘`;
-            
-            await messagingService.sendMessage(session.player_phone, message);
-            
-            // Send voice note if exists
+            // Part 4: Voice note (the most personal touch)
             if (booking.grand_reveal_audio_url && fs.existsSync(booking.grand_reveal_audio_url)) {
+                await messagingService.sendMessage(session.player_phone, 
+                    `🎤 *${creatorName} recorded something special for you...*`
+                );
                 await new Promise(resolve => setTimeout(resolve, 1500));
                 await this.sendVoiceNote(session.player_phone, booking.grand_reveal_audio_url);
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
+            
+            // Part 5: Cash prize announcement & claiming
+            if (booking.grand_reveal_cash_prize > 0) {
+                await this.handleCashPrizeReveal(session, booking, messagingService);
+            }
+            
+            // Part 6: Final celebration message
+            let finalMsg = `\n🎊✨💕 *LOVE WINS!* 💕✨🎊\n\n`;
+            finalMsg += `You scored *${finalScore}/1000* Love Points!\n\n`;
+            finalMsg += `This Love Quest was created with love by ${creatorName}\n`;
+            finalMsg += `just for you, ${playerName}. 💘\n\n`;
+            finalMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+            finalMsg += `_Powered by What's Up Trivia_\n`;
+            finalMsg += `_Create your own Love Quest:_\n`;
+            finalMsg += `_Send "LOVE QUEST" to get started!_`;
+            
+            await messagingService.sendMessage(session.player_phone, finalMsg);
+            
+            // Notify creator that quest is complete
+            await this.notifyCreatorOfCompletion(session, booking, messagingService);
             
             await this.logAuditEvent(booking.id, session.id, 'grand_reveal_sent', {
                 hasAudio: !!booking.grand_reveal_audio_url,
-                hasCashPrize: booking.grand_reveal_cash_prize > 0
+                hasCashPrize: booking.grand_reveal_cash_prize > 0,
+                finalScore
             }, 'system', null);
             
         } catch (error) {
             logger.error('Error sending grand reveal:', error);
+        }
+    }
+
+    generateLovePoem(playerName, creatorName, score) {
+        // Different poems based on score
+        if (score >= 900) {
+            return `💕 *For ${playerName}* 💕\n\n` +
+                `Every answer proved what I already knew,\n` +
+                `That no one knows my heart quite like you.\n` +
+                `Through every question, every memory we share,\n` +
+                `You showed the world how much you care.\n\n` +
+                `*Perfect score. Perfect love. Perfect you.* 💘`;
+        } else if (score >= 700) {
+            return `💕 *For ${playerName}* 💕\n\n` +
+                `Some answers right, a few went astray,\n` +
+                `But love isn't measured that way.\n` +
+                `What matters most is you took this chance,\n` +
+                `To celebrate our beautiful romance.\n\n` +
+                `*Love isn't perfect, but ours is true.* 💘`;
+        } else if (score >= 500) {
+            return `💕 *For ${playerName}* 💕\n\n` +
+                `The questions were hard, the memories deep,\n` +
+                `Some got away, but our love we'll keep.\n` +
+                `Every wrong answer is a story to make,\n` +
+                `Another memory for our love's sake.\n\n` +
+                `*More memories to create together.* 💘`;
+        } else {
+            return `💕 *For ${playerName}* 💕\n\n` +
+                `You may not remember every little thing,\n` +
+                `But that's not what makes a heart sing.\n` +
+                `Love is about the moments yet to come,\n` +
+                `And with you, my heart is never numb.\n\n` +
+                `*Let's make memories you'll never forget.* 💘`;
+        }
+    }
+
+    async handleCashPrizeReveal(session, booking, messagingService) {
+        try {
+            const amount = parseFloat(booking.grand_reveal_cash_prize);
+            
+            let prizeMsg = `\n💰✨ *GRAND PRIZE UNLOCKED!* ✨💰\n\n`;
+            prizeMsg += `${booking.creator_name || 'Your love'} has gifted you:\n\n`;
+            prizeMsg += `💵 *₦${amount.toLocaleString()}*\n\n`;
+            
+            // Check if player has a registered account with bank details
+            const playerResult = await pool.query(
+                'SELECT id, bank_name, account_number FROM users WHERE phone_number = $1',
+                [session.player_phone]
+            );
+            
+            if (playerResult.rows[0]?.bank_name && playerResult.rows[0]?.account_number) {
+                // Player has bank details - credit to their wallet
+                const playerId = playerResult.rows[0].id;
+                
+                // Add to player's wallet
+                await pool.query(
+                    'UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2',
+                    [amount, playerId]
+                );
+                
+                // Record transaction
+                await pool.query(`
+                    INSERT INTO transactions (user_id, amount, transaction_type, status, notes)
+                    VALUES ($1, $2, 'love_quest_prize', 'confirmed', $3)
+                `, [playerId, amount, `Love Quest prize from booking ${booking.booking_code}`]);
+                
+                prizeMsg += `✅ *Added to your What's Up Trivia wallet!*\n`;
+                prizeMsg += `You can claim it anytime by sending CLAIM.\n\n`;
+                
+                await this.logAuditEvent(booking.id, session.id, 'cash_prize_credited', {
+                    amount, playerId, method: 'wallet'
+                }, 'system', null);
+                
+            } else {
+                // Player doesn't have account - give instructions
+                prizeMsg += `To claim your prize:\n`;
+                prizeMsg += `1️⃣ Register on What's Up Trivia (send "Hello")\n`;
+                prizeMsg += `2️⃣ Add your bank details\n`;
+                prizeMsg += `3️⃣ Send CLAIM to withdraw\n\n`;
+                prizeMsg += `Or contact us with code: *${booking.booking_code}*\n`;
+                
+                // Store unclaimed prize
+                await pool.query(`
+                    INSERT INTO love_quest_audit (booking_id, session_id, event_type, event_data, actor_type)
+                    VALUES ($1, $2, 'cash_prize_pending', $3, 'system')
+                `, [booking.id, session.id, JSON.stringify({ amount, playerPhone: session.player_phone })]);
+            }
+            
+            await messagingService.sendMessage(session.player_phone, prizeMsg);
+            
+        } catch (error) {
+            logger.error('Error handling cash prize reveal:', error);
+        }
+    }
+
+    async notifyCreatorOfCompletion(session, booking, messagingService) {
+        try {
+            const playerName = booking.player_name || 'Your partner';
+            const score = session.score || 0;
+            
+            let msg = `💘 *Love Quest Complete!* 💘\n\n`;
+            msg += `${playerName} just finished your Love Quest!\n\n`;
+            msg += `📊 *Results:*\n`;
+            msg += `Score: ${score}/1000 Love Points\n`;
+            
+            if (score >= 900) {
+                msg += `Rating: 🏆 PERFECT LOVE!\n\n`;
+                msg += `They know you inside out! 💕`;
+            } else if (score >= 700) {
+                msg += `Rating: ❤️ DEEPLY IN LOVE!\n\n`;
+                msg += `Your bond is strong! 💕`;
+            } else if (score >= 500) {
+                msg += `Rating: 💛 GROWING LOVE!\n\n`;
+                msg += `Room to make more memories! 💕`;
+            } else {
+                msg += `Rating: 💗 LOVE IN BLOOM!\n\n`;
+                msg += `Time for more adventures together! 💕`;
+            }
+            
+            msg += `\n\n_Thank you for choosing What's Up Trivia!_`;
+            
+            await messagingService.sendMessage(booking.creator_phone, msg);
+            
+        } catch (error) {
+            logger.error('Error notifying creator:', error);
         }
     }
 
