@@ -511,7 +511,7 @@ class LoveQuestService {
     async getSessionWithBooking(playerPhone) {
         try {
             const result = await pool.query(`
-                SELECT s.*, b.booking_code, b.package, b.question_count,
+                SELECT s.*, b.id as id, b.booking_code, b.package, b.question_count,
                        b.timeout_seconds, b.allow_retries, b.max_retries_per_question,
                        b.treasure_hunt_enabled, b.grand_reveal_text, b.grand_reveal_audio_url,
                        b.grand_reveal_cash_prize, b.creator_name, b.player_name, b.media
@@ -585,7 +585,9 @@ class LoveQuestService {
 
     async processAnswer(session, booking, answer, messagingService) {
         try {
-            const question = await this.getQuestion(booking.id, session.current_question);
+            // booking might be sessionWithBooking which has booking_id, not id
+            const bookingId = booking.id || session.booking_id || booking.booking_id;
+            const question = await this.getQuestion(bookingId, session.current_question);
             if (!question) throw new Error('Question not found');
             
             const isCorrect = answer.toUpperCase() === question.correct_answer;
@@ -1362,20 +1364,41 @@ class LoveQuestService {
             if (!booking) throw new Error('Booking not found');
             
             // Download video from WhatsApp
-            const filePath = await this.downloadWhatsAppMedia(mediaId);
-            if (!filePath) throw new Error('Failed to download video');
+            const media = await this.downloadWhatsAppMedia(mediaId);
+            if (!media || !media.buffer) throw new Error('Failed to download video');
+            
+            // Determine file extension
+            const ext = media.mimeType?.includes('mp4') ? 'mp4' 
+                      : media.mimeType?.includes('3gpp') ? '3gp'
+                      : media.mimeType?.includes('webm') ? 'webm'
+                      : 'mp4';
+            
+            // Save file
+            const filename = `${purpose}_video_${Date.now()}.${ext}`;
+            const bookingDir = path.join(this.uploadDir, booking.booking_code);
+            
+            if (!fs.existsSync(bookingDir)) {
+                fs.mkdirSync(bookingDir, { recursive: true });
+            }
+            
+            const filePath = path.join(bookingDir, filename);
+            fs.writeFileSync(filePath, media.buffer);
+            
+            // Get file stats
+            const stats = fs.statSync(filePath);
             
             // Save to media table (UPSERT - update if exists)
             const result = await pool.query(`
-                INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, mime_type, uploaded_by)
-                VALUES ($1, 'video', $2, $3, 'video/mp4', 'creator')
+                INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, file_size, mime_type, uploaded_by)
+                VALUES ($1, 'video', $2, $3, $4, $5, 'creator')
                 ON CONFLICT (booking_id, media_type, media_purpose) 
                 DO UPDATE SET 
                     file_path = EXCLUDED.file_path,
+                    file_size = EXCLUDED.file_size,
                     mime_type = EXCLUDED.mime_type,
                     uploaded_at = NOW()
                 RETURNING *
-            `, [booking.id, purpose, filePath]);
+            `, [booking.id, purpose, filePath, stats.size, media.mimeType || 'video/mp4']);
             
             // Update booking
             if (purpose === 'intro') {
@@ -1386,10 +1409,10 @@ class LoveQuestService {
             }
             
             await this.logAuditEvent(booking.id, null, 'video_uploaded', {
-                purpose, filePath
+                purpose, filePath, size: stats.size
             }, 'creator', booking.creator_phone);
             
-            logger.info(`🎬 Video saved for ${bookingCode}: ${purpose}`);
+            logger.info(`🎬 Video saved for ${bookingCode}: ${purpose} (${stats.size} bytes)`);
             
             return result.rows[0];
         } catch (error) {
