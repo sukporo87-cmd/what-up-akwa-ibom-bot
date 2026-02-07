@@ -227,6 +227,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'LOVE_QUEST_VIDEO_MENU') {
+        await this.handleLoveQuestVideoMenu(phone, message, userState);
+        return;
+      }
+
       // ===================================
       // PRIORITY 1.6: LOVE QUEST ACTIVE SESSION
       // ===================================
@@ -3059,6 +3064,60 @@ You can now claim your prize! 💰
           `2️⃣ Milestone voice note\n` +
           `3️⃣ Grand reveal voice note\n` +
           `4️⃣ Done recording`
+        );
+    }
+  }
+
+  async handleLoveQuestVideoMenu(phone, message, userState) {
+    const input = message.trim().toUpperCase();
+    const { bookingCode } = userState.data || {};
+    
+    switch (input) {
+      case '1':
+        // Record another intro video
+        await messagingService.sendMessage(phone,
+          `🎬 *Record Another Intro Video*\n\n` +
+          `Send a video message for your partner.\n\n` +
+          `This will replace your previous intro video.\n\n` +
+          `Send your video now! 💕`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VIDEO', { 
+          bookingCode, 
+          purpose: 'intro' 
+        });
+        break;
+        
+      case '2':
+        // Switch to voice note recording
+        await messagingService.sendMessage(phone,
+          `🎤 *Voice Note Options*\n\n` +
+          `1️⃣ Intro voice note (plays at start)\n` +
+          `2️⃣ Milestone voice note (plays at Q5/Q10)\n` +
+          `3️⃣ Grand reveal voice note (plays at end)\n` +
+          `4️⃣ Done - I'm finished recording\n\n` +
+          `Reply with a number, or send a voice note.`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { bookingCode });
+        break;
+        
+      case '3':
+      case 'DONE':
+        await messagingService.sendMessage(phone,
+          `✅ *Media upload complete!*\n\n` +
+          `Booking Code: ${bookingCode}\n\n` +
+          `Your Love Quest media has been saved.\n` +
+          `We'll notify you when it's ready to send! 💕\n\n` +
+          `Questions? Reply HELP`
+        );
+        await userService.clearUserState(phone);
+        break;
+        
+      default:
+        await messagingService.sendMessage(phone,
+          `Please reply with a number (1-3):\n\n` +
+          `1️⃣ Record another intro video\n` +
+          `2️⃣ Record a voice note instead\n` +
+          `3️⃣ Done - I'm finished`
         );
     }
   }

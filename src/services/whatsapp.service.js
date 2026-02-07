@@ -113,6 +113,101 @@ class WhatsAppService {
     
     return cleaned;
   }
+
+  async sendVideo(phoneNumber, videoBuffer, caption = '') {
+    try {
+      // Step 1: Upload video to WhatsApp
+      const mediaId = await this.uploadMediaBuffer(videoBuffer, 'video/mp4', 'video.mp4');
+      
+      // Step 2: Send video message with media ID
+      const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'video',
+        video: {
+          id: mediaId,
+          caption: caption
+        }
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      logger.info(`Video sent to ${phoneNumber}`);
+      return response.data;
+
+    } catch (error) {
+      logger.error('Error sending video:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async sendAudio(phoneNumber, audioBuffer, mimeType = 'audio/ogg') {
+    try {
+      // Step 1: Upload audio to WhatsApp
+      const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp3') ? 'mp3' : 'ogg';
+      const mediaId = await this.uploadMediaBuffer(audioBuffer, mimeType, `audio.${ext}`);
+      
+      // Step 2: Send audio message with media ID
+      const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'audio',
+        audio: {
+          id: mediaId
+        }
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      logger.info(`Audio sent to ${phoneNumber}`);
+      return response.data;
+
+    } catch (error) {
+      logger.error('Error sending audio:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async uploadMediaBuffer(buffer, mimeType, filename) {
+    try {
+      const url = `${this.apiUrl}/${this.phoneNumberId}/media`;
+      
+      const formData = new FormData();
+      formData.append('messaging_product', 'whatsapp');
+      formData.append('file', buffer, {
+        filename: filename,
+        contentType: mimeType
+      });
+
+      const response = await axios.post(url, formData, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          ...formData.getHeaders()
+        }
+      });
+
+      logger.info(`Media uploaded: ${response.data.id}`);
+      return response.data.id;
+
+    } catch (error) {
+      logger.error('Error uploading media buffer:', error.response?.data || error.message);
+      throw error;
+    }
+  }
 }
 
 module.exports = WhatsAppService;

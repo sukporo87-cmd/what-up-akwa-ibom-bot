@@ -246,6 +246,62 @@ class MessagingService {
     
     return platforms;
   }
+
+  /**
+   * Send video to any platform
+   */
+  async sendVideo(identifier, videoBuffer, caption = '') {
+    const platform = this.getPlatform(identifier);
+    const id = this.extractId(identifier);
+    
+    console.log(`🎬 Sending video via ${platform} to ${id.substring(0, 10)}...`);
+
+    try {
+      if (platform === 'telegram') {
+        // Telegram video sending (if implemented)
+        console.log('Telegram video sending not yet implemented');
+        return null;
+      } else {
+        if (!this.whatsapp?.sendVideo) {
+          console.error('❌ WhatsApp video service not available');
+          throw new Error('WhatsApp video service not available');
+        }
+        return await this.whatsapp.sendVideo(id, videoBuffer, caption);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send video via ${platform}:`, error.message);
+      logger.error(`Error sending video via ${platform}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send audio/voice note to any platform
+   */
+  async sendAudio(identifier, audioBuffer, mimeType = 'audio/ogg') {
+    const platform = this.getPlatform(identifier);
+    const id = this.extractId(identifier);
+    
+    console.log(`🎤 Sending audio via ${platform} to ${id.substring(0, 10)}...`);
+
+    try {
+      if (platform === 'telegram') {
+        // Telegram audio sending (if implemented)
+        console.log('Telegram audio sending not yet implemented');
+        return null;
+      } else {
+        if (!this.whatsapp?.sendAudio) {
+          console.error('❌ WhatsApp audio service not available');
+          throw new Error('WhatsApp audio service not available');
+        }
+        return await this.whatsapp.sendAudio(id, audioBuffer, mimeType);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send audio via ${platform}:`, error.message);
+      logger.error(`Error sending audio via ${platform}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = MessagingService;

@@ -1338,17 +1338,17 @@ class LoveQuestService {
             const booking = await this.getBooking(bookingId);
             if (!booking) throw new Error('Booking not found');
             
-            // Use paystack-api (same as payment.service.js)
-            const Paystack = require('paystack-api');
-            const paystack = Paystack(process.env.PAYSTACK_SECRET_KEY);
+            // Use PaymentService's Paystack instance (same as token purchases)
+            const PaymentService = require('./payment.service');
+            const paymentService = new PaymentService();
             
             // Use booking code as reference
             const reference = `LQ-${booking.booking_code}-${Date.now()}`;
             
             logger.info(`💳 Generating Paystack link for booking ${booking.booking_code}, amount: ${amount}`);
             
-            // Initialize Paystack transaction using SDK
-            const response = await paystack.transaction.initialize({
+            // Initialize Paystack transaction using PaymentService's paystack instance
+            const response = await paymentService.paystack.transaction.initialize({
                 email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
                 amount: Math.round(amount * 100), // Paystack uses kobo
                 reference,
@@ -1383,7 +1383,7 @@ class LoveQuestService {
                     WHERE id = $3
                 `, [reference, response.data.access_code, bookingId]);
                 
-                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${reference}`);
+                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${response.data.authorization_url}`);
                 
                 return response.data.authorization_url;
             }
