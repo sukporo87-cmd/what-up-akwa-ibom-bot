@@ -1054,6 +1054,28 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
+    // PAID command - check for Love Quest payment confirmation
+    if (input === 'PAID' || input === 'I PAID' || input === 'PAYMENT MADE') {
+      const pendingBooking = await loveQuestService.getActiveBookingByCreator(user.phone_number);
+      if (pendingBooking && pendingBooking.status === 'pending') {
+        await messagingService.sendMessage(user.phone_number,
+          `✅ *Payment Notification Received!*\n\n` +
+          `Thank you for notifying us about your payment for Love Quest *${pendingBooking.booking_code}*.\n\n` +
+          `Your payment is being verified. Once confirmed, our Love Curator will contact you to begin creating your personalized quiz!\n\n` +
+          `This usually takes 1-2 hours during business hours.\n\n` +
+          `Questions? Reply HELP 💕`
+        );
+        
+        // Log the payment claim
+        await loveQuestService.logAuditEvent(pendingBooking.id, null, 'payment_claimed', {
+          claimedAt: new Date().toISOString()
+        }, 'creator', user.phone_number);
+        
+        return;
+      }
+      // No pending Love Quest - might be regular payment
+    }
+
     // PROFILE command
     if (input === 'PROFILE' || input.includes('PROFILE')) {
       await this.handleProfileCommand(user);
@@ -2274,6 +2296,7 @@ Type the code, or type SKIP to continue:`
   }
 
   message += '\nType STREAK to see streak leaderboard 🔥\n';
+  message += 'Type LOVE QUEST to create a Valentine surprise! 💘\n';
   message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
 
   await messagingService.sendMessage(phone, message);
@@ -2662,6 +2685,17 @@ You can now claim your prize! 💰
       if (!sessionWithBooking) {
         await messagingService.sendMessage(phone, `❌ Session error. Please contact support.`);
         return;
+      }
+      
+      // Check if waiting for continue after milestone
+      if (sessionWithBooking.waiting_for_continue) {
+        if (input === 'NEXT' || input === 'CONTINUE' || input === 'YES') {
+          await loveQuestService.handleContinue(session, sessionWithBooking, messagingService);
+          return;
+        } else {
+          await messagingService.sendMessage(phone, `💕 Reply *NEXT* when you're ready for the next question!`);
+          return;
+        }
       }
       
       if (sessionWithBooking.waiting_for_treasure_confirmation) {

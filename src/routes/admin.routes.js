@@ -6564,23 +6564,134 @@ router.get('/api/love-quest/bookings/:id/media', authenticateAdmin, async (req, 
 // Delete media
 router.delete('/api/love-quest/media/:id', authenticateAdmin, async (req, res) => {
     try {
-        const fs = require('fs');
-        const mediaResult = await pool.query(
-            'SELECT file_path FROM love_quest_media WHERE id = $1',
-            [parseInt(req.params.id)]
-        );
-        
-        if (mediaResult.rows[0]?.file_path) {
-            if (fs.existsSync(mediaResult.rows[0].file_path)) {
-                fs.unlinkSync(mediaResult.rows[0].file_path);
-            }
-        }
-        
-        await pool.query('DELETE FROM love_quest_media WHERE id = $1', [parseInt(req.params.id)]);
+        await loveQuestService.deleteMedia(parseInt(req.params.id));
         res.json({ success: true });
     } catch (error) {
         logger.error('Error deleting media:', error);
         res.status(500).json({ error: 'Failed to delete media' });
+    }
+});
+
+// Stream media (for audio/video player)
+router.get('/api/love-quest/media/:id/stream', authenticateAdmin, async (req, res) => {
+    try {
+        const media = await loveQuestService.getMediaById(parseInt(req.params.id));
+        if (!media || !media.file_path) {
+            return res.status(404).json({ error: 'Media not found' });
+        }
+        
+        const fs = require('fs');
+        if (!fs.existsSync(media.file_path)) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        const stat = fs.statSync(media.file_path);
+        res.setHeader('Content-Length', stat.size);
+        res.setHeader('Content-Type', media.mime_type || 'audio/ogg');
+        
+        const stream = fs.createReadStream(media.file_path);
+        stream.pipe(res);
+    } catch (error) {
+        logger.error('Error streaming media:', error);
+        res.status(500).json({ error: 'Failed to stream media' });
+    }
+});
+
+// Download media
+router.get('/api/love-quest/media/:id/download', authenticateAdmin, async (req, res) => {
+    try {
+        const media = await loveQuestService.getMediaById(parseInt(req.params.id));
+        if (!media || !media.file_path) {
+            return res.status(404).json({ error: 'Media not found' });
+        }
+        
+        const fs = require('fs');
+        const path = require('path');
+        if (!fs.existsSync(media.file_path)) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        const filename = media.original_filename || path.basename(media.file_path);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', media.mime_type || 'application/octet-stream');
+        
+        const stream = fs.createReadStream(media.file_path);
+        stream.pipe(res);
+    } catch (error) {
+        logger.error('Error downloading media:', error);
+        res.status(500).json({ error: 'Failed to download media' });
+    }
+});
+
+// Upload media from admin
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
+
+router.post('/api/love-quest/bookings/:id/media/upload', authenticateAdmin, upload.single('file'), async (req, res) => {
+    try {
+        const { purpose, mediaType } = req.body;
+        const bookingId = parseInt(req.params.id);
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+        
+        const media = await loveQuestService.uploadMediaFromAdmin(
+            bookingId,
+            purpose || 'grand_reveal',
+            mediaType || 'audio',
+            req.file.buffer,
+            req.file.originalname
+        );
+        
+        res.json({ success: true, media });
+    } catch (error) {
+        logger.error('Error uploading media:', error);
+        res.status(500).json({ error: 'Failed to upload media' });
+    }
+});
+
+// Generate demo content
+router.post('/api/love-quest/bookings/:id/generate-demo', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await loveQuestService.generateDemoContent(parseInt(req.params.id));
+        res.json({ success: true, ...result });
+    } catch (error) {
+        logger.error('Error generating demo:', error);
+        res.status(500).json({ error: 'Failed to generate demo content' });
+    }
+});
+
+// Schedule booking send
+router.post('/api/love-quest/bookings/:id/schedule', authenticateAdmin, async (req, res) => {
+    try {
+        const { scheduledAt } = req.body;
+        
+        if (!scheduledAt) {
+            return res.status(400).json({ error: 'scheduledAt is required' });
+        }
+        
+        await loveQuestService.scheduleBooking(parseInt(req.params.id), new Date(scheduledAt));
+        res.json({ success: true, message: 'Booking scheduled' });
+    } catch (error) {
+        logger.error('Error scheduling booking:', error);
+        res.status(500).json({ error: 'Failed to schedule booking' });
+    }
+});
+
+// Update booking participants
+router.put('/api/love-quest/bookings/:id/participants', authenticateAdmin, async (req, res) => {
+    try {
+        const { creatorName, creatorPhone, playerName, playerPhone } = req.body;
+        
+        await loveQuestService.updateBookingParticipants(parseInt(req.params.id), {
+            creatorName, creatorPhone, playerName, playerPhone
+        });
+        
+        res.json({ success: true, message: 'Participants updated' });
+    } catch (error) {
+        logger.error('Error updating participants:', error);
+        res.status(500).json({ error: 'Failed to update participants' });
     }
 });
 

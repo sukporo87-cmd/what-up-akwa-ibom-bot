@@ -4675,31 +4675,47 @@ async function viewLqBooking(bookingId) {
 }
 
 function renderLqBookingDetail(data) {
-  const { booking, questions } = data;
+  const { booking, questions, media } = data;
   const isPaid = parseFloat(booking.total_paid) >= parseFloat(booking.base_price);
+  const isInternational = booking.package === 'international' || booking.currency === 'USD';
+  const currencySymbol = isInternational ? '$' : '₦';
+  
+  // Parse media for voice notes and videos
+  const voiceNotes = (media || []).filter(m => m.media_type === 'audio');
+  const videos = (media || []).filter(m => m.media_type === 'video');
+  const introAudio = voiceNotes.find(v => v.media_purpose === 'intro');
+  const milestoneAudio = voiceNotes.find(v => v.media_purpose === 'milestone' || v.media_purpose === 'milestone_5');
+  const milestone10Audio = voiceNotes.find(v => v.media_purpose === 'milestone_10');
+  const grandRevealAudio = voiceNotes.find(v => v.media_purpose === 'grand_reveal');
+  const introVideo = videos.find(v => v.media_purpose === 'intro');
   
   let html = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
     <div style="background: #fce7f3; padding: 15px; border-radius: 8px;">
       <h4>💘 Booking Info</h4>
       <p><strong>Code:</strong> ${booking.booking_code}</p>
-      <p><strong>Package:</strong> ${booking.package}</p>
+      <p><strong>Package:</strong> ${booking.package} ${isInternational ? '🌍' : ''}</p>
       <p><strong>Status:</strong> <span style="background: ${booking.status === 'completed' ? '#dcfce7' : '#fef3c7'}; padding: 2px 8px; border-radius: 10px;">${booking.status}</span></p>
-      <p><strong>Price:</strong> ₦${parseFloat(booking.base_price).toLocaleString()}</p>
-      <p><strong>Paid:</strong> <span style="color: ${isPaid ? 'green' : 'orange'};">₦${parseFloat(booking.total_paid || 0).toLocaleString()}</span> ${isPaid ? '✅' : '⏳'}</p>
+      <p><strong>Price:</strong> ${currencySymbol}${parseFloat(booking.base_price).toLocaleString()}</p>
+      <p><strong>Paid:</strong> <span style="color: ${isPaid ? 'green' : 'orange'};">${currencySymbol}${parseFloat(booking.total_paid || 0).toLocaleString()}</span> ${isPaid ? '✅' : '⏳'}</p>
     </div>
     <div style="background: #dbeafe; padding: 15px; border-radius: 8px;">
       <h4>👥 Participants</h4>
-      <p><strong>Creator:</strong> ${booking.creator_name || 'N/A'}</p>
-      <p><strong>Creator Phone:</strong> ${booking.creator_phone}</p>
-      <p><strong>Player:</strong> ${booking.player_name || 'N/A'}</p>
-      <p><strong>Player Phone:</strong> ${booking.player_phone}</p>
+      <p><strong>Creator:</strong> <input type="text" id="lqEditCreatorName" value="${booking.creator_name || ''}" style="padding: 4px; border: 1px solid #ddd; border-radius: 4px; width: 150px;"></p>
+      <p><strong>Creator Phone:</strong> <input type="text" id="lqEditCreatorPhone" value="${booking.creator_phone || ''}" style="padding: 4px; border: 1px solid #ddd; border-radius: 4px; width: 150px;"></p>
+      <p><strong>Player:</strong> <input type="text" id="lqEditPlayerName" value="${booking.player_name || ''}" style="padding: 4px; border: 1px solid #ddd; border-radius: 4px; width: 150px;"></p>
+      <p><strong>Player Phone:</strong> <input type="text" id="lqEditPlayerPhone" value="${booking.player_phone || ''}" style="padding: 4px; border: 1px solid #ddd; border-radius: 4px; width: 150px;"></p>
+      <button class="btn btn-sm btn-primary" onclick="saveLqParticipants(${booking.id})" style="margin-top: 8px;">💾 Save Changes</button>
     </div>
   </div>`;
   
-  // Payment section (if not fully paid)
+  // Payment section
   if (!isPaid) {
+    const bankDetails = isInternational 
+      ? 'Bank: First Bank of Nigeria | Account: 2032471014 | Name: Solomon Ukporo | Swift/BIC: FBNINGLA'
+      : 'Bank: Moniepoint | Account: 6529712162 | Name: SummerIsland Systems';
     html += `<div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
       <h4>💳 Record Payment</h4>
+      <p style="font-size: 12px; color: #666; margin-bottom: 10px;">${bankDetails}</p>
       <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
         <input type="number" id="lqPaymentAmount" value="${booking.base_price}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 120px;">
         <input type="text" id="lqPaymentRef" placeholder="Payment reference" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 200px;">
@@ -4708,32 +4724,132 @@ function renderLqBookingDetail(data) {
     </div>`;
   }
   
+  // Media Management Section (Voice Notes & Videos)
+  html += `<div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+    <h4>🎤 Media Management</h4>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 10px;">
+      
+      <!-- Intro Audio -->
+      <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+        <strong>🎵 Intro Audio</strong>
+        <p style="font-size: 11px; color: #666;">Plays when quest starts</p>
+        ${introAudio ? `
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${introAudio.id}/stream"></audio>
+          <div style="display: flex; gap: 5px;">
+            <a href="/admin/api/love-quest/media/${introAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${introAudio.id}, ${booking.id})">🗑️</button>
+          </div>
+        ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
+          <input type="file" accept="audio/*" onchange="uploadLqMedia(${booking.id}, 'intro', 'audio', this.files[0])">
+        `}
+      </div>
+      
+      <!-- Intro Video -->
+      <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+        <strong>🎬 Intro Video</strong>
+        <p style="font-size: 11px; color: #666;">Optional video at start</p>
+        ${introVideo ? `
+          <video controls style="width: 100%; max-height: 100px; margin: 5px 0;"><source src="/admin/api/love-quest/media/${introVideo.id}/stream"></video>
+          <div style="display: flex; gap: 5px;">
+            <a href="/admin/api/love-quest/media/${introVideo.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${introVideo.id}, ${booking.id})">🗑️</button>
+          </div>
+        ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
+          <input type="file" accept="video/*" onchange="uploadLqMedia(${booking.id}, 'intro', 'video', this.files[0])">
+        `}
+      </div>
+      
+      <!-- Milestone Audio (Q5) -->
+      <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+        <strong>🎵 Milestone Audio (Q5)</strong>
+        <p style="font-size: 11px; color: #666;">Plays after question 5</p>
+        ${milestoneAudio ? `
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${milestoneAudio.id}/stream"></audio>
+          <div style="display: flex; gap: 5px;">
+            <a href="/admin/api/love-quest/media/${milestoneAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${milestoneAudio.id}, ${booking.id})">🗑️</button>
+          </div>
+        ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
+          <input type="file" accept="audio/*" onchange="uploadLqMedia(${booking.id}, 'milestone_5', 'audio', this.files[0])">
+        `}
+      </div>
+      
+      <!-- Milestone Audio (Q10) -->
+      ${booking.question_count >= 10 ? `
+      <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+        <strong>🎵 Milestone Audio (Q10)</strong>
+        <p style="font-size: 11px; color: #666;">Plays after question 10</p>
+        ${milestone10Audio ? `
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${milestone10Audio.id}/stream"></audio>
+          <div style="display: flex; gap: 5px;">
+            <a href="/admin/api/love-quest/media/${milestone10Audio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${milestone10Audio.id}, ${booking.id})">🗑️</button>
+          </div>
+        ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
+          <input type="file" accept="audio/*" onchange="uploadLqMedia(${booking.id}, 'milestone_10', 'audio', this.files[0])">
+        `}
+      </div>` : ''}
+      
+      <!-- Grand Reveal Audio -->
+      <div style="background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+        <strong>🎵 Grand Reveal Audio</strong>
+        <p style="font-size: 11px; color: #666;">Plays at the end</p>
+        ${grandRevealAudio ? `
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${grandRevealAudio.id}/stream"></audio>
+          <div style="display: flex; gap: 5px;">
+            <a href="/admin/api/love-quest/media/${grandRevealAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${grandRevealAudio.id}, ${booking.id})">🗑️</button>
+          </div>
+        ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
+          <input type="file" accept="audio/*" onchange="uploadLqMedia(${booking.id}, 'grand_reveal', 'audio', this.files[0])">
+        `}
+      </div>
+    </div>
+  </div>`;
+  
+  // Grand Reveal Text Section
   html += `<div style="margin-bottom: 20px;">
-    <h4>✨ Grand Reveal</h4>
+    <h4>✨ Grand Reveal Message</h4>
     <textarea id="lqGrandRevealText" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd;" rows="3" placeholder="Enter the heartfelt message from creator...">${booking.grand_reveal_text || ''}</textarea>
     <div style="display: flex; gap: 10px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
-      <label>Cash Prize: ₦</label>
+      <label>Cash Prize: ${currencySymbol}</label>
       <input type="number" id="lqGrandRevealCash" value="${booking.grand_reveal_cash_prize || 0}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 120px;">
       <button class="btn btn-primary btn-sm" onclick="saveLqGrandReveal(${booking.id})">💾 Save Reveal</button>
     </div>
-    ${booking.grand_reveal_audio_url ? '<p style="color: green; margin-top: 5px;">🎤 Voice note attached</p>' : '<p style="color: gray; margin-top: 5px;">🎤 No voice note yet (creator can send via WhatsApp)</p>'}
   </div>`;
   
+  // Scheduled Send Section
+  html += `<div style="background: #ede9fe; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+    <h4>📅 Scheduled Send</h4>
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+      <input type="datetime-local" id="lqScheduledSend" value="${booking.scheduled_send_at ? new Date(booking.scheduled_send_at).toISOString().slice(0,16) : ''}" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+      <button class="btn btn-primary btn-sm" onclick="scheduleLqSend(${booking.id})">📅 Schedule</button>
+      ${booking.scheduled_send_at ? `<span style="color: green;">Scheduled for: ${new Date(booking.scheduled_send_at).toLocaleString()}</span>` : ''}
+    </div>
+  </div>`;
+  
+  // Questions Section
   html += `<div style="margin-bottom: 20px;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
       <h4>📝 Questions (${questions.length}/${booking.question_count})</h4>
-      <button class="btn btn-success btn-sm" onclick="addLqQuestion(${booking.id}, ${questions.length + 1})">➕ Add Question</button>
+      <div>
+        <button class="btn btn-warning btn-sm" onclick="generateLqDemo(${booking.id}, '${booking.package}')">🎲 Generate Demo</button>
+        <button class="btn btn-success btn-sm" onclick="addLqQuestion(${booking.id}, ${questions.length + 1})">➕ Add Question</button>
+      </div>
     </div>
     <div style="margin-top: 10px;">`;
     
   if (questions.length === 0) { 
-    html += '<p style="color: var(--text-gray);">No questions added yet. Add questions to complete curation.</p>'; 
+    html += '<p style="color: var(--text-gray);">No questions added yet. Click "Generate Demo" for test content or add questions manually.</p>'; 
   } else { 
     questions.forEach(q => { 
       html += `<div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #7c3aed;">
         <div style="display: flex; justify-content: space-between;">
           <strong>Q${q.question_number}:</strong>
-          <button class="btn btn-sm btn-secondary" onclick="editLqQuestion(${booking.id}, ${q.question_number})">✏️ Edit</button>
+          <div>
+            <button class="btn btn-sm btn-secondary" onclick="editLqQuestion(${booking.id}, ${q.question_number})">✏️</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteLqQuestion(${q.id}, ${booking.id})">🗑️</button>
+          </div>
         </div>
         <p>${q.question_text}</p>
         <small style="color: var(--text-gray);">Answer: ${q.correct_answer} ${q.milestone_prize_text ? '| Prize: ' + q.milestone_prize_text : ''}</small>
@@ -4752,8 +4868,9 @@ function renderLqBookingDetail(data) {
         <option value="cancelled" ${booking.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
       </select>
       <button class="btn btn-primary" onclick="updateLqStatus(${booking.id})">Update Status</button>
-      ${booking.status === 'ready' ? `<button class="btn btn-success" onclick="sendLqInvitation(${booking.id})">📤 Send Invitation</button>` : ''}
-      ${questions.length >= booking.question_count && booking.status !== 'ready' && booking.status !== 'sent' ? `<button class="btn btn-warning" onclick="markLqReady(${booking.id})">✅ Mark Ready</button>` : ''}
+      ${booking.status === 'ready' ? `<button class="btn btn-success" onclick="sendLqInvitation(${booking.id})">📤 Send Now</button>` : ''}
+      ${questions.length >= booking.question_count && !['ready','sent','in_progress','completed'].includes(booking.status) ? `<button class="btn btn-warning" onclick="markLqReady(${booking.id})">✅ Mark Ready</button>` : ''}
+      <button class="btn btn-info" onclick="testLqPreview(${booking.id})">👁️ Preview</button>
     </div>`;
     
   document.getElementById('lqBookingContent').innerHTML = html;
@@ -4941,12 +5058,118 @@ async function loadLqPackages() {
         if (p.treasure_hunt) features.push('🗺️');
         if (p.dedicated_curator) features.push('👤');
         if (p.proposal_coordination) features.push('💍');
-        html += `<tr><td><strong>${p.package_name}</strong></td><td>₦${parseFloat(p.base_price).toLocaleString()}</td><td>${p.question_count}</td><td>${features.join(' ') || '-'}</td><td>${p.is_active ? '✅' : '❌'}</td></tr>`;
+        const isIntl = p.package_code === 'international';
+        html += `<tr><td><strong>${p.package_name}</strong></td><td>${isIntl ? '$' : '₦'}${parseFloat(p.base_price).toLocaleString()}</td><td>${p.question_count}</td><td>${features.join(' ') || '-'}</td><td>${p.is_active ? '✅' : '❌'}</td></tr>`;
       });
       html += '</tbody></table>';
       document.getElementById('lqPackagesTable').innerHTML = html;
     }
   } catch (error) { console.error('Error loading packages:', error); }
+}
+
+// Save participants (editable fields)
+async function saveLqParticipants(bookingId) {
+  const data = {
+    creatorName: document.getElementById('lqEditCreatorName').value,
+    creatorPhone: document.getElementById('lqEditCreatorPhone').value,
+    playerName: document.getElementById('lqEditPlayerName').value,
+    playerPhone: document.getElementById('lqEditPlayerPhone').value
+  };
+  try {
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/participants`, { 
+      method: 'PUT', 
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify(data) 
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Participants updated!', 'success'); }
+    else { showAlert('❌ Failed to update', 'error'); }
+  } catch (error) { console.error('Error saving participants:', error); showAlert('❌ Error saving', 'error'); }
+}
+
+// Upload media from admin
+async function uploadLqMedia(bookingId, purpose, mediaType, file) {
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('purpose', purpose);
+  formData.append('mediaType', mediaType);
+  try {
+    showAlert('⏳ Uploading...', 'info');
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/media/upload`, { 
+      method: 'POST', 
+      headers: { 'Authorization': `Bearer ${sessionToken}` }, 
+      body: formData 
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Media uploaded!', 'success'); viewLqBooking(bookingId); }
+    else { showAlert('❌ Upload failed: ' + (result.error || 'Unknown'), 'error'); }
+  } catch (error) { console.error('Error uploading:', error); showAlert('❌ Upload error', 'error'); }
+}
+
+// Delete media
+async function deleteLqMedia(mediaId, bookingId) {
+  if (!confirm('Delete this media file?')) return;
+  try {
+    const response = await fetch(`/admin/api/love-quest/media/${mediaId}`, { 
+      method: 'DELETE', 
+      headers: { 'Authorization': `Bearer ${sessionToken}` } 
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Media deleted', 'success'); viewLqBooking(bookingId); }
+  } catch (error) { console.error('Error deleting:', error); showAlert('❌ Delete error', 'error'); }
+}
+
+// Generate demo content
+async function generateLqDemo(bookingId, packageCode) {
+  if (!confirm('Generate demo questions? This will replace any existing questions.')) return;
+  try {
+    showAlert('⏳ Generating demo...', 'info');
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/generate-demo`, { 
+      method: 'POST', 
+      headers: { 'Authorization': `Bearer ${sessionToken}` } 
+    });
+    const result = await response.json();
+    if (result.success) { 
+      showAlert(`✅ Generated ${result.questionsGenerated} demo questions!`, 'success'); 
+      viewLqBooking(bookingId); 
+    }
+    else { showAlert('❌ Failed to generate', 'error'); }
+  } catch (error) { console.error('Error generating demo:', error); showAlert('❌ Error generating', 'error'); }
+}
+
+// Schedule send
+async function scheduleLqSend(bookingId) {
+  const scheduledAt = document.getElementById('lqScheduledSend').value;
+  if (!scheduledAt) { showAlert('⚠️ Please select a date and time', 'error'); return; }
+  try {
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}/schedule`, { 
+      method: 'POST', 
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ scheduledAt: new Date(scheduledAt).toISOString() }) 
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Scheduled!', 'success'); viewLqBooking(bookingId); loadLoveQuestData(); }
+    else { showAlert('❌ Failed to schedule', 'error'); }
+  } catch (error) { console.error('Error scheduling:', error); showAlert('❌ Error scheduling', 'error'); }
+}
+
+// Delete question
+async function deleteLqQuestion(questionId, bookingId) {
+  if (!confirm('Delete this question?')) return;
+  try {
+    const response = await fetch(`/admin/api/love-quest/questions/${questionId}`, { 
+      method: 'DELETE', 
+      headers: { 'Authorization': `Bearer ${sessionToken}` } 
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Question deleted', 'success'); viewLqBooking(bookingId); }
+  } catch (error) { console.error('Error deleting:', error); showAlert('❌ Delete error', 'error'); }
+}
+
+// Preview/Test Love Quest
+async function testLqPreview(bookingId) {
+  showAlert('👁️ Preview feature coming soon! Use demo to test.', 'info');
 }
 
 </script>

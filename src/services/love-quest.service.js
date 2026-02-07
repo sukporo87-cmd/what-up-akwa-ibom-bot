@@ -623,21 +623,12 @@ class LoveQuestService {
                 
                 await messagingService.sendMessage(session.player_phone, message);
                 
-                // Send milestone audio if exists
-                const mediaJson = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
-                const milestoneAudio = mediaJson[`milestone_${session.current_question}_audio`];
-                if (milestoneAudio && fs.existsSync(milestoneAudio)) {
-                    await this.sendVoiceNote(session.player_phone, milestoneAudio);
-                }
-                
-                // Update session
+                // Update session FIRST
                 const nextQuestion = session.current_question + 1;
+                const isComplete = nextQuestion > booking.question_count;
+                const currentQ = session.current_question; // Question we just answered
                 
-                if (nextQuestion > booking.question_count) {
-                    // Game complete!
-                    await this.completeGame(session, booking, newScore, responses, messagingService);
-                } else {
-                    // Continue to next question
+                if (!isComplete) {
                     await pool.query(`
                         UPDATE love_quest_sessions 
                         SET current_question = $1, score = $2, player_responses = $3, last_activity_at = NOW()
@@ -646,7 +637,64 @@ class LoveQuestService {
                     
                     session.current_question = nextQuestion;
                     session.score = newScore;
+                }
+                
+                // Check for milestone media (Q5 or Q10) - from database table
+                const isMilestoneQ5 = currentQ === 5;
+                const isMilestoneQ10 = currentQ === 10 && booking.question_count >= 10;
+                
+                if (isMilestoneQ5 || isMilestoneQ10) {
+                    const milestonePurpose = isMilestoneQ5 ? 'milestone_5' : 'milestone_10';
+                    let milestoneMedia = await this.getMediaByPurpose(booking.id, milestonePurpose);
                     
+                    // Also check for generic 'milestone' purpose as fallback
+                    if (!milestoneMedia && isMilestoneQ5) {
+                        milestoneMedia = await this.getMediaByPurpose(booking.id, 'milestone');
+                    }
+                    
+                    if (milestoneMedia && milestoneMedia.file_path && fs.existsSync(milestoneMedia.file_path)) {
+                        await new Promise(r => setTimeout(r, 1500));
+                        await messagingService.sendMessage(session.player_phone, 
+                            `🎉 *MILESTONE ${currentQ} REACHED!*\n\n${booking.creator_name || 'Your love'} has something special for you...`
+                        );
+                        await new Promise(r => setTimeout(r, 1000));
+                        
+                        if (milestoneMedia.media_type === 'video') {
+                            await this.sendVideo(session.player_phone, milestoneMedia.file_path);
+                        } else {
+                            await this.sendVoiceNote(session.player_phone, milestoneMedia.file_path);
+                        }
+                        
+                        // Wait then prompt to continue (not for last question)
+                        if (!isComplete) {
+                            await new Promise(r => setTimeout(r, 3000));
+                            await messagingService.sendMessage(session.player_phone, 
+                                `💕 Ready to continue?\n\nReply *NEXT* for the next question!`
+                            );
+                            
+                            // Set waiting state
+                            await pool.query(
+                                'UPDATE love_quest_sessions SET waiting_for_continue = true WHERE id = $1',
+                                [session.id]
+                            );
+                            
+                            await this.logAuditEvent(booking.id, session.id, 'answer_correct', {
+                                questionNumber: currentQ,
+                                answer,
+                                points,
+                                newScore,
+                                waitingForContinue: true
+                            }, 'player', session.player_phone);
+                            
+                            return; // Don't auto-send next question
+                        }
+                    }
+                }
+                
+                if (isComplete) {
+                    // Game complete!
+                    await this.completeGame(session, booking, newScore, responses, messagingService);
+                } else {
                     // Check for treasure hunt
                     if (booking.treasure_hunt_enabled && question.treasure_clue) {
                         await this.sendTreasureClue(session, question, messagingService);
@@ -659,7 +707,7 @@ class LoveQuestService {
                 }
                 
                 await this.logAuditEvent(booking.id, session.id, 'answer_correct', {
-                    questionNumber: session.current_question,
+                    questionNumber: currentQ,
                     answer,
                     points,
                     newScore
@@ -1374,6 +1422,192 @@ class LoveQuestService {
         } catch (error) {
             logger.error('Error scheduling booking:', error);
             return false;
+        }
+    }
+
+    // Handle continue after milestone
+    async handleContinue(session, booking, messagingService) {
+        try {
+            // Clear waiting state
+            await pool.query(
+                'UPDATE love_quest_sessions SET waiting_for_continue = false WHERE id = $1',
+                [session.id]
+            );
+            
+            // Send next question
+            await this.sendQuestion(session, booking, messagingService);
+        } catch (error) {
+            logger.error('Error handling continue:', error);
+        }
+    }
+
+    // Get media by purpose
+    async getMediaByPurpose(bookingId, purpose) {
+        try {
+            const result = await pool.query(
+                'SELECT * FROM love_quest_media WHERE booking_id = $1 AND media_purpose = $2',
+                [bookingId, purpose]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            logger.error('Error getting media by purpose:', error);
+            return null;
+        }
+    }
+
+    // Get media by ID
+    async getMediaById(mediaId) {
+        try {
+            const result = await pool.query('SELECT * FROM love_quest_media WHERE id = $1', [mediaId]);
+            return result.rows[0] || null;
+        } catch (error) {
+            logger.error('Error getting media by id:', error);
+            return null;
+        }
+    }
+
+    // Delete media
+    async deleteMedia(mediaId) {
+        try {
+            const media = await this.getMediaById(mediaId);
+            if (media && media.file_path && fs.existsSync(media.file_path)) {
+                fs.unlinkSync(media.file_path);
+            }
+            await pool.query('DELETE FROM love_quest_media WHERE id = $1', [mediaId]);
+            return true;
+        } catch (error) {
+            logger.error('Error deleting media:', error);
+            return false;
+        }
+    }
+
+    // Upload media from admin
+    async uploadMediaFromAdmin(bookingId, purpose, mediaType, fileBuffer, originalName) {
+        try {
+            const ext = mediaType === 'video' ? '.mp4' : '.ogg';
+            const fileName = `${bookingId}_${purpose}_${Date.now()}${ext}`;
+            const filePath = path.join(this.uploadDir, fileName);
+            
+            fs.writeFileSync(filePath, fileBuffer);
+            
+            const result = await pool.query(`
+                INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, mime_type, uploaded_by, original_filename)
+                VALUES ($1, $2, $3, $4, $5, 'admin', $6)
+                ON CONFLICT (booking_id, media_type, media_purpose) DO UPDATE SET
+                    file_path = EXCLUDED.file_path,
+                    original_filename = EXCLUDED.original_filename,
+                    uploaded_at = NOW()
+                RETURNING *
+            `, [bookingId, mediaType, purpose, filePath, mediaType === 'video' ? 'video/mp4' : 'audio/ogg', originalName]);
+            
+            return result.rows[0];
+        } catch (error) {
+            logger.error('Error uploading media from admin:', error);
+            throw error;
+        }
+    }
+
+    // Update booking participants
+    async updateBookingParticipants(bookingId, { creatorName, creatorPhone, playerName, playerPhone }) {
+        try {
+            await pool.query(`
+                UPDATE love_quest_bookings 
+                SET creator_name = COALESCE($1, creator_name),
+                    creator_phone = COALESCE($2, creator_phone),
+                    player_name = COALESCE($3, player_name),
+                    player_phone = COALESCE($4, player_phone),
+                    updated_at = NOW()
+                WHERE id = $5
+            `, [creatorName, creatorPhone, playerName, playerPhone, bookingId]);
+            return true;
+        } catch (error) {
+            logger.error('Error updating booking participants:', error);
+            return false;
+        }
+    }
+
+    // Send video
+    async sendVideo(phone, filePath) {
+        try {
+            if (!fs.existsSync(filePath)) {
+                logger.warn('Video file not found:', filePath);
+                return false;
+            }
+            const MessagingService = require('./messaging.service');
+            const messagingService = new MessagingService();
+            const videoBuffer = fs.readFileSync(filePath);
+            await messagingService.sendVideo(phone, videoBuffer);
+            return true;
+        } catch (error) {
+            logger.error('Error sending video:', error);
+            return false;
+        }
+    }
+
+    // Demo content generator
+    async generateDemoContent(bookingId) {
+        const DEMO_QUESTIONS = [
+            { q: "What's my favorite color?", a: "Blue", b: "Red", c: "Green", d: "Purple", correct: "A", correct_resp: "You know me so well! 💙", wrong_resp: "Hmm, pay more attention! 😅" },
+            { q: "Where did we have our first date?", a: "A restaurant", b: "A movie theater", c: "A park", d: "At home", correct: "A", correct_resp: "That magical evening! 🍽️💕", wrong_resp: "How could you forget?! 😭" },
+            { q: "What's my favorite food?", a: "Pizza", b: "Jollof Rice", c: "Pasta", d: "Sushi", correct: "B", correct_resp: "You've been paying attention! 🍚", wrong_resp: "Come on, you know this! 🙈" },
+            { q: "What do I do when I'm stressed?", a: "Sleep", b: "Exercise", c: "Listen to music", d: "Eat snacks", correct: "C", correct_resp: "Music is my therapy! 🎵", wrong_resp: "Oops, wrong answer love! 💔" },
+            { q: "What's my dream vacation spot?", a: "Paris", b: "Maldives", c: "Dubai", d: "Santorini", correct: "B", correct_resp: "Beach paradise awaits! 🏝️", wrong_resp: "Let's plan more trips! ✈️" },
+            { q: "What movie did we first watch together?", a: "A comedy", b: "A romance", c: "Action movie", d: "Horror film", correct: "B", correct_resp: "So romantic! 🎬💕", wrong_resp: "Time for a movie marathon! 📺" },
+            { q: "What's my love language?", a: "Words of affirmation", b: "Quality time", c: "Gifts", d: "Physical touch", correct: "D", correct_resp: "Hugs are the best! 🤗", wrong_resp: "Read up on love languages! 📖" },
+            { q: "What song reminds me of us?", a: "Perfect - Ed Sheeran", b: "All of Me - John Legend", c: "Thinking Out Loud", d: "A Thousand Years", correct: "B", correct_resp: "All of me loves all of you! 🎤", wrong_resp: "Let's make a playlist! 🎶" },
+            { q: "What's my biggest pet peeve?", a: "Lateness", b: "Loud chewing", c: "Dishonesty", d: "Messiness", correct: "A", correct_resp: "Time is precious! ⏰", wrong_resp: "Still learning about each other! 💝" },
+            { q: "What do I want us to do more?", a: "Travel", b: "Cook together", c: "Date nights", d: "All of the above", correct: "D", correct_resp: "Everything with you is perfect! 💕", wrong_resp: "MORE time together! 🥰" },
+            { q: "What's my favorite thing about you?", a: "Your smile", b: "Your laugh", c: "Your kindness", d: "Everything", correct: "D", correct_resp: "You're perfect to me! ❤️", wrong_resp: "Hint: I love EVERYTHING! 😘" },
+            { q: "How do I like my morning coffee?", a: "Black", b: "With milk", c: "Very sweet", d: "I don't drink it", correct: "C", correct_resp: "Sweet like you! ☕", wrong_resp: "Pay attention at breakfast! 🌅" },
+            { q: "Longest we've gone without talking?", a: "A few hours", b: "A day", c: "A week", d: "Never more than hours", correct: "D", correct_resp: "Can't stay away! 📱💕", wrong_resp: "We talk ALL the time! 📞" },
+            { q: "What do I call you in my phone?", a: "Your name", b: "Baby/Babe", c: "Special nickname", d: "My Love", correct: "C", correct_resp: "Only you have that name! 📱", wrong_resp: "Check my phone sometime! 😏" },
+            { q: "What's our couple goal?", a: "Travel the world", b: "Build a home", c: "Grow old together", d: "All of the above", correct: "D", correct_resp: "Forever with you! 💍", wrong_resp: "We want it ALL together! 🏠✈️👴👵" }
+        ];
+
+        try {
+            const booking = await this.getBooking(bookingId);
+            if (!booking) throw new Error('Booking not found');
+            
+            const questionCount = booking.question_count || 10;
+            const playerName = booking.player_name || 'Love';
+            
+            // Delete existing questions
+            await pool.query('DELETE FROM love_quest_questions WHERE booking_id = $1', [bookingId]);
+            
+            // Generate questions
+            for (let i = 0; i < Math.min(questionCount, DEMO_QUESTIONS.length); i++) {
+                const demo = DEMO_QUESTIONS[i];
+                const isMilestone = (i + 1) === 5 || (i + 1) === 10;
+                
+                await this.addQuestion(bookingId, {
+                    questionNumber: i + 1,
+                    questionText: demo.q,
+                    optionA: demo.a,
+                    optionB: demo.b,
+                    optionC: demo.c,
+                    optionD: demo.d,
+                    correctAnswer: demo.correct,
+                    correctResponse: demo.correct_resp,
+                    genericWrongResponse: demo.wrong_resp,
+                    milestonePrizeText: isMilestone ? `🎁 Demo Milestone for Q${i + 1}!` : null,
+                    milestonePrizeCash: isMilestone ? 500 : 0,
+                    hintText: `Think about our memories, ${playerName}...`
+                });
+            }
+            
+            // Set demo grand reveal
+            await pool.query(`
+                UPDATE love_quest_bookings 
+                SET grand_reveal_text = $1, updated_at = NOW()
+                WHERE id = $2
+            `, [`${playerName}, this was a DEMO Love Quest! 💕\n\nIn a real one, this would be a heartfelt message from your special someone.\n\nCreate your own at whatsuptrivia.com.ng/love-quest! 💘`, bookingId]);
+            
+            await this.logAuditEvent(bookingId, null, 'demo_generated', { questionCount }, 'admin', null);
+            
+            return { success: true, questionsGenerated: Math.min(questionCount, DEMO_QUESTIONS.length) };
+        } catch (error) {
+            logger.error('Error generating demo content:', error);
+            throw error;
         }
     }
 }
