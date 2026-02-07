@@ -205,6 +205,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'LOVE_QUEST_PLAYER_NAME') {
+        await this.handleLoveQuestPlayerName(phone, message, userState);
+        return;
+      }
+
       if (userState && userState.state === 'LOVE_QUEST_VOICE_NOTE') {
         await messagingService.sendMessage(phone, `🎤 Please send a voice note now!\n\nOr type SKIP to continue without audio.`);
         return;
@@ -2535,6 +2540,7 @@ You can now claim your prize! 💰
     try {
       const userState = await userService.getUserState(phone);
       
+      // If user is explicitly in voice note recording state
       if (userState && userState.state === 'LOVE_QUEST_VOICE_NOTE') {
         const { bookingCode, purpose } = userState.data || {};
         
@@ -2544,10 +2550,12 @@ You can now claim your prize! 💰
             
             await messagingService.sendMessage(phone,
               `✅ Voice note saved for "${purpose || 'grand reveal'}"! 🎤💕\n\n` +
-              `Would you like to:\n` +
-              `1️⃣ Record another voice note\n` +
-              `2️⃣ Continue with curation\n` +
-              `3️⃣ Preview the voice note`
+              `Would you like to record more?\n\n` +
+              `1️⃣ Intro voice note\n` +
+              `2️⃣ Milestone celebration (Q5 or Q10)\n` +
+              `3️⃣ Grand reveal voice note\n` +
+              `4️⃣ Done recording\n\n` +
+              `Reply with the number or type DONE to finish.`
             );
             
             await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { bookingCode });
@@ -2559,8 +2567,44 @@ You can now claim your prize! 💰
         }
       }
       
+      // Check if this person has an active booking as creator (CURATING status)
+      const activeBooking = await loveQuestService.getActiveBookingByCreator(phone);
+      
+      if (activeBooking && message.audio?.id) {
+        // Auto-detect: Creator is sending voice note for their active booking
+        try {
+          // Default to grand_reveal if no specific purpose set
+          const purpose = userState?.data?.purpose || 'grand_reveal';
+          await loveQuestService.saveVoiceNote(activeBooking.booking_code, message.audio.id, purpose);
+          
+          await messagingService.sendMessage(phone,
+            `✅ Voice note saved for your Love Quest! 🎤💕\n\n` +
+            `Booking: ${activeBooking.booking_code}\n\n` +
+            `Want to record more voice notes?\n\n` +
+            `1️⃣ Intro voice note (plays at start)\n` +
+            `2️⃣ Milestone voice note (plays at Q5/Q10)\n` +
+            `3️⃣ Grand reveal voice note (plays at end)\n` +
+            `4️⃣ Done - I'm finished recording\n\n` +
+            `Reply with a number, or send another voice note.`
+          );
+          
+          await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { 
+            bookingCode: activeBooking.booking_code,
+            purpose: 'grand_reveal'
+          });
+          
+        } catch (error) {
+          logger.error('Error auto-saving voice note:', error);
+          await messagingService.sendMessage(phone, `❌ Error saving voice note. Please try again.`);
+        }
+        return;
+      }
+      
+      // No active Love Quest - generic response
       await messagingService.sendMessage(phone,
-        `🎤 Voice note received!\n\nIf you're creating a Love Quest, please use the curation menu first.`
+        `🎤 Voice note received!\n\n` +
+        `To add voice notes to a Love Quest, you need an active booking in "curating" status.\n\n` +
+        `Type *LOVE QUEST* to create a new booking.`
       );
     } catch (error) {
       logger.error('Error handling audio message:', error);
@@ -2654,15 +2698,28 @@ You can now claim your prize! 💰
     
     const packages = await loveQuestService.getPackages();
     packages.forEach((pkg, i) => {
+      const isInternational = pkg.package_code === 'international';
+      const priceDisplay = isInternational 
+        ? `$${parseFloat(pkg.base_price)}` 
+        : `₦${parseFloat(pkg.base_price).toLocaleString()}`;
+      
       msg += `${i + 1}️⃣ *${pkg.package_name}*\n`;
-      msg += `   ₦${parseFloat(pkg.base_price).toLocaleString()} • ${pkg.question_count} questions\n`;
-      if (pkg.voice_notes) msg += `   🎤 Voice notes `;
-      if (pkg.treasure_hunt) msg += `🗺️ Treasure hunt `;
-      if (pkg.dedicated_curator) msg += `👤 Dedicated curator`;
-      msg += `\n\n`;
+      msg += `   ${priceDisplay} • ${pkg.question_count} questions\n`;
+      
+      let features = [];
+      if (pkg.voice_notes) features.push('🎤 Voice notes');
+      if (pkg.video_support) features.push('🎬 Video');
+      if (pkg.treasure_hunt) features.push('🗺️ Treasure hunt');
+      if (pkg.dedicated_curator) features.push('👤 Curator');
+      if (pkg.proposal_coordination) features.push('💍 Proposal');
+      
+      if (features.length > 0) {
+        msg += `   ${features.join(' • ')}\n`;
+      }
+      msg += `\n`;
     });
     
-    msg += `Reply with the package number (1-3) to get started!\n`;
+    msg += `Reply with the package number (1-${packages.length}) to get started!\n`;
     msg += `Or visit: whatsuptrivia.com.ng/love-quest`;
     
     await messagingService.sendMessage(user.phone_number, msg);
@@ -2680,16 +2737,22 @@ You can now claim your prize! 💰
     }
     
     const selectedPackage = packages[packageIndex];
+    const isInternational = selectedPackage.package_code === 'international';
+    const currency = isInternational ? 'USD' : 'NGN';
+    const priceDisplay = isInternational 
+      ? `$${parseFloat(selectedPackage.base_price)}` 
+      : `₦${parseFloat(selectedPackage.base_price).toLocaleString()}`;
     
     await userService.setUserState(phone, 'LOVE_QUEST_PLAYER_PHONE', {
       package: selectedPackage.package_code,
-      price: parseFloat(selectedPackage.base_price)
+      price: parseFloat(selectedPackage.base_price),
+      currency
     });
     
     let msg = `✅ ${selectedPackage.package_name} selected!\n`;
-    msg += `💰 Price: ₦${parseFloat(selectedPackage.base_price).toLocaleString()}\n\n`;
+    msg += `💰 Price: ${priceDisplay}\n\n`;
     msg += `Now, please enter your partner's phone number:\n`;
-    msg += `(Format: 08012345678)`;
+    msg += `(Format: 08012345678 or with country code)`;
     
     await messagingService.sendMessage(phone, msg);
   }
@@ -2708,31 +2771,77 @@ You can now claim your prize! 💰
       return;
     }
     
+    // Save player phone and ask for their name
+    await userService.setUserState(phone, 'LOVE_QUEST_PLAYER_NAME', {
+      ...userState.data,
+      playerPhone
+    });
+    
+    await messagingService.sendMessage(phone,
+      `💕 Great! Now, what's your partner's name?\n\n` +
+      `(This will be used to personalize the messages)`
+    );
+  }
+
+  async handleLoveQuestPlayerName(phone, message, userState) {
+    const playerName = message.trim();
+    
+    if (playerName.length < 2) {
+      await messagingService.sendMessage(phone, `⚠️ Please enter a valid name`);
+      return;
+    }
+    
     try {
       const user = await userService.getUserByPhone(phone);
+      const { package: packageCode, price, playerPhone, currency } = userState.data;
+      
       const booking = await loveQuestService.createBooking(
-        phone, playerPhone, userState.data.package, user?.full_name, null
+        phone, playerPhone, packageCode, user?.full_name, playerName
       );
       
       await userService.clearUserState(phone);
       
+      const isInternational = currency === 'USD';
+      const priceDisplay = isInternational ? `$${price}` : `₦${price.toLocaleString()}`;
+      
       let msg = `🎉 *Love Quest Booking Created!*\n\n`;
       msg += `📋 Booking Code: *${booking.booking_code}*\n`;
-      msg += `📦 Package: ${userState.data.package}\n`;
-      msg += `💰 Amount: ₦${userState.data.price.toLocaleString()}\n\n`;
-      msg += `📱 Your partner: ${playerPhone}\n\n`;
-      msg += `*Next Steps:*\n`;
-      msg += `1️⃣ Make payment to complete booking\n`;
-      msg += `2️⃣ Our Love Curator will contact you\n`;
-      msg += `3️⃣ We'll create your custom questions together\n\n`;
-      msg += `💳 *Bank Details:*\n`;
-      msg += `Bank: [Your Bank]\n`;
-      msg += `Account: [Account Number]\n`;
-      msg += `Name: What's Up Trivia\n\n`;
-      msg += `Use *${booking.booking_code}* as payment reference.\n\n`;
+      msg += `📦 Package: ${packageCode}\n`;
+      msg += `💰 Amount: ${priceDisplay}\n\n`;
+      msg += `👤 For: ${playerName}\n`;
+      msg += `📱 Phone: ${playerPhone}\n\n`;
+      
+      msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+      msg += `*💳 PAYMENT OPTIONS:*\n`;
+      msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      if (!isInternational) {
+        msg += `*Option 1: Pay with Paystack (Card/Transfer)*\n`;
+        msg += `Click here: https://paystack.com/pay/lovequest-${booking.booking_code.toLowerCase()}\n\n`;
+      }
+      
+      msg += `*Option ${isInternational ? '1' : '2'}: Direct Bank Transfer*\n`;
+      msg += `🏦 Bank: Moniepoint\n`;
+      msg += `💳 Account: 6529712162\n`;
+      msg += `👤 Name: SummerIsland Systems\n`;
+      msg += `📝 Reference: ${booking.booking_code}\n\n`;
+      
+      msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      msg += `After payment, reply *PAID* or wait for automatic confirmation.\n\n`;
       msg += `Questions? Reply HELP 💕`;
       
       await messagingService.sendMessage(phone, msg);
+      
+      // Generate Paystack link in background
+      if (!isInternational) {
+        try {
+          await loveQuestService.generatePaystackLink(booking.id, phone, price);
+        } catch (e) {
+          logger.error('Error generating Paystack link:', e);
+        }
+      }
+      
     } catch (error) {
       logger.error('Error creating Love Quest booking:', error);
       await messagingService.sendMessage(phone, `❌ Error creating booking. Please try again later.`);
@@ -2741,35 +2850,75 @@ You can now claim your prize! 💰
   }
 
   async handleLoveQuestVoiceMenu(phone, message, userState) {
-    const input = message.trim();
+    const input = message.trim().toUpperCase();
     const { bookingCode } = userState.data || {};
     
     switch (input) {
       case '1':
+        // Intro voice note
         await messagingService.sendMessage(phone,
-          `🎤 What's this voice note for?\n\n` +
-          `1️⃣ Grand Reveal\n` +
-          `2️⃣ Intro Message\n` +
-          `3️⃣ Milestone Celebration\n\n` +
-          `Reply with number:`
+          `🎤 *Intro Voice Note*\n\n` +
+          `This plays when your partner starts the quest.\n\n` +
+          `Record a sweet greeting like:\n` +
+          `"Hey babe! I made this special quiz just for you..."\n\n` +
+          `Send your voice note now! 💕`
         );
-        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_PURPOSE', { bookingCode });
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_NOTE', { 
+          bookingCode, 
+          purpose: 'intro' 
+        });
         break;
         
       case '2':
+        // Milestone voice note
         await messagingService.sendMessage(phone,
-          `✅ Great! A curator will be in touch to complete your questions.\n\n` +
-          `Booking Code: ${bookingCode}`
+          `🎤 *Milestone Voice Note*\n\n` +
+          `This plays when your partner reaches the halfway point.\n\n` +
+          `Record something encouraging like:\n` +
+          `"You're doing great! Keep going..."\n\n` +
+          `Send your voice note now! 💕`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_NOTE', { 
+          bookingCode, 
+          purpose: 'milestone' 
+        });
+        break;
+        
+      case '3':
+        // Grand reveal voice note
+        await messagingService.sendMessage(phone,
+          `🎤 *Grand Reveal Voice Note*\n\n` +
+          `This is the big moment! This plays at the end.\n\n` +
+          `Pour your heart out:\n` +
+          `"I love you because..." or "Will you..."\n\n` +
+          `Send your voice note now! 💕`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_NOTE', { 
+          bookingCode, 
+          purpose: 'grand_reveal' 
+        });
+        break;
+        
+      case '4':
+      case 'DONE':
+        await messagingService.sendMessage(phone,
+          `✅ *Voice notes complete!*\n\n` +
+          `Booking Code: ${bookingCode}\n\n` +
+          `Your Love Quest is being prepared.\n` +
+          `We'll notify you when it's ready to send! 💕\n\n` +
+          `Questions? Reply HELP`
         );
         await userService.clearUserState(phone);
         break;
         
-      case '3':
-        await messagingService.sendMessage(phone, `📝 Voice note preview will be available when your curator shares the final review.`);
-        break;
-        
       default:
-        await messagingService.sendMessage(phone, `⚠️ Please reply with 1, 2, or 3`);
+        await messagingService.sendMessage(phone,
+          `Please reply with a number (1-4) or DONE:\n\n` +
+          `1️⃣ Intro voice note\n` +
+          `2️⃣ Milestone voice note\n` +
+          `3️⃣ Grand reveal voice note\n` +
+          `4️⃣ Done recording`
+        );
     }
   }
 }

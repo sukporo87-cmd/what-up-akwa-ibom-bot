@@ -4693,6 +4693,70 @@ router.get('/api/financials/tournament-revenue', authenticateAdmin, requireFinan
   }
 });
 
+// Love Quest Revenue
+router.get('/api/financials/love-quest-revenue', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_love_quest_revenue', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
+    
+    // Build date filter
+    let dateFilter = '';
+    const params = [];
+    if (start_date) {
+      params.push(start_date);
+      dateFilter += ` AND b.created_at >= $${params.length}`;
+    }
+    if (end_date) {
+      params.push(end_date);
+      dateFilter += ` AND b.created_at <= $${params.length}`;
+    }
+    
+    // Get revenue by package
+    const packageResult = await pool.query(`
+      SELECT 
+        p.package_code,
+        p.package_name,
+        p.base_price,
+        p.question_count,
+        CASE WHEN p.package_code = 'international' THEN 'USD' ELSE 'NGN' END as currency,
+        COUNT(b.id) as booking_count,
+        COALESCE(SUM(b.total_paid), 0) as total_revenue
+      FROM love_quest_packages p
+      LEFT JOIN love_quest_bookings b ON p.package_code = b.package ${dateFilter ? 'AND b.total_paid > 0' + dateFilter : ''}
+      WHERE p.is_active = true
+      GROUP BY p.package_code, p.package_name, p.base_price, p.question_count, p.display_order
+      ORDER BY p.display_order
+    `, params);
+    
+    // Get totals
+    const totalResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_bookings,
+        COUNT(*) FILTER (WHERE total_paid > 0) as paid_bookings,
+        COALESCE(SUM(total_paid), 0) as total_revenue,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed_bookings
+      FROM love_quest_bookings
+      ${dateFilter ? 'WHERE 1=1' + dateFilter : ''}
+    `, params);
+    
+    const totals = totalResult.rows[0];
+    
+    res.json({ 
+      success: true, 
+      data: {
+        by_package: packageResult.rows,
+        total_bookings: parseInt(totals.total_bookings) || 0,
+        paid_bookings: parseInt(totals.paid_bookings) || 0,
+        total_revenue: parseFloat(totals.total_revenue) || 0,
+        completed_bookings: parseInt(totals.completed_bookings) || 0
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting love quest revenue:', error);
+    res.status(500).json({ error: 'Failed to fetch love quest revenue' });
+  }
+});
+
 // Classic Mode Winnings
 router.get('/api/financials/classic-winnings', authenticateAdmin, requireFinancialAccess, async (req, res) => {
   try {

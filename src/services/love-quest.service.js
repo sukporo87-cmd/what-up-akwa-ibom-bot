@@ -1198,6 +1198,184 @@ class LoveQuestService {
             return [];
         }
     }
+
+    // Get active booking by creator phone (for voice note auto-detection)
+    async getActiveBookingByCreator(phone) {
+        try {
+            const result = await pool.query(`
+                SELECT * FROM love_quest_bookings 
+                WHERE creator_phone = $1 
+                AND status IN ('paid', 'curating')
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [phone]);
+            return result.rows[0] || null;
+        } catch (error) {
+            logger.error('Error getting active booking by creator:', error);
+            return null;
+        }
+    }
+
+    // Generate Paystack payment link
+    async generatePaystackLink(bookingId, email, amount) {
+        try {
+            const booking = await this.getBooking(bookingId);
+            if (!booking) throw new Error('Booking not found');
+            
+            const PaymentService = require('./payment.service');
+            const paymentService = new PaymentService();
+            
+            // Use booking code as reference
+            const reference = `LQ-${booking.booking_code}-${Date.now()}`;
+            
+            // Initialize Paystack transaction
+            const paystackResponse = await paymentService.initializePaystackTransaction({
+                email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
+                amount: amount * 100, // Paystack uses kobo
+                reference,
+                callback_url: `${process.env.BASE_URL || 'https://whatsuptrivia.com.ng'}/api/love-quest/payment/callback`,
+                metadata: {
+                    booking_id: bookingId,
+                    booking_code: booking.booking_code,
+                    type: 'love_quest'
+                }
+            });
+            
+            if (paystackResponse?.data?.authorization_url) {
+                await pool.query(`
+                    UPDATE love_quest_bookings 
+                    SET paystack_reference = $1, paystack_access_code = $2
+                    WHERE id = $3
+                `, [reference, paystackResponse.data.access_code, bookingId]);
+                
+                return paystackResponse.data.authorization_url;
+            }
+            
+            return null;
+        } catch (error) {
+            logger.error('Error generating Paystack link:', error);
+            return null;
+        }
+    }
+
+    // Verify Paystack payment
+    async verifyPaystackPayment(reference) {
+        try {
+            const PaymentService = require('./payment.service');
+            const paymentService = new PaymentService();
+            
+            const verification = await paymentService.verifyPaystackTransaction(reference);
+            
+            if (verification?.data?.status === 'success') {
+                const metadata = verification.data.metadata;
+                const bookingId = metadata?.booking_id;
+                
+                if (bookingId) {
+                    // Update booking as paid
+                    await pool.query(`
+                        UPDATE love_quest_bookings 
+                        SET total_paid = $1, status = 'paid', payment_method = 'paystack', payment_reference = $2
+                        WHERE id = $3
+                    `, [verification.data.amount / 100, reference, bookingId]);
+                    
+                    // Record payment
+                    await pool.query(`
+                        INSERT INTO love_quest_payments (booking_id, amount, currency, payment_method, paystack_reference, status, confirmed_at, confirmed_by)
+                        VALUES ($1, $2, 'NGN', 'paystack', $3, 'confirmed', NOW(), 'paystack_webhook')
+                    `, [bookingId, verification.data.amount / 100, reference]);
+                    
+                    await this.logAuditEvent(bookingId, null, 'payment_confirmed', {
+                        amount: verification.data.amount / 100,
+                        reference,
+                        method: 'paystack'
+                    }, 'system', 'paystack');
+                    
+                    return { success: true, bookingId };
+                }
+            }
+            
+            return { success: false };
+        } catch (error) {
+            logger.error('Error verifying Paystack payment:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // Save video (intro)
+    async saveVideo(bookingCode, mediaId, purpose = 'intro') {
+        try {
+            const booking = await this.getBookingByCode(bookingCode);
+            if (!booking) throw new Error('Booking not found');
+            
+            // Download video from WhatsApp
+            const filePath = await this.downloadWhatsAppMedia(mediaId);
+            if (!filePath) throw new Error('Failed to download video');
+            
+            // Save to media table
+            const result = await pool.query(`
+                INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, mime_type, uploaded_by)
+                VALUES ($1, 'video', $2, $3, 'video/mp4', 'creator')
+                RETURNING *
+            `, [booking.id, purpose, filePath]);
+            
+            // Update booking
+            if (purpose === 'intro') {
+                await pool.query(
+                    'UPDATE love_quest_bookings SET intro_video_url = $1 WHERE id = $2',
+                    [filePath, booking.id]
+                );
+            }
+            
+            await this.logAuditEvent(booking.id, null, 'video_uploaded', {
+                purpose, filePath
+            }, 'creator', booking.creator_phone);
+            
+            return result.rows[0];
+        } catch (error) {
+            logger.error('Error saving video:', error);
+            throw error;
+        }
+    }
+
+    async getBookingByCode(bookingCode) {
+        return this.getBooking(bookingCode);
+    }
+
+    // For scheduled sending
+    async getScheduledBookings() {
+        try {
+            const result = await pool.query(`
+                SELECT * FROM love_quest_bookings 
+                WHERE status = 'scheduled' 
+                AND scheduled_send_at <= NOW()
+                AND scheduled_send_at > NOW() - INTERVAL '1 hour'
+            `);
+            return result.rows;
+        } catch (error) {
+            logger.error('Error getting scheduled bookings:', error);
+            return [];
+        }
+    }
+
+    // Schedule a booking to send at specific time
+    async scheduleBooking(bookingId, sendAt) {
+        try {
+            await pool.query(`
+                UPDATE love_quest_bookings 
+                SET status = 'scheduled', scheduled_send_at = $1
+                WHERE id = $2
+            `, [sendAt, bookingId]);
+            
+            await this.logAuditEvent(bookingId, null, 'booking_scheduled', {
+                sendAt
+            }, 'admin', null);
+            
+            return true;
+        } catch (error) {
+            logger.error('Error scheduling booking:', error);
+            return false;
+        }
+    }
 }
 
 module.exports = new LoveQuestService();
