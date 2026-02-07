@@ -84,6 +84,13 @@ class WebhookController {
           return;
         }
 
+        // Check for video messages (Love Quest videos)
+        if (message.type === 'video') {
+          logger.info(`🎬 Video received from ${from}`);
+          await this.handleVideoMessage(from, message);
+          return;
+        }
+
         const messageBody = message.text?.body || '';
         logger.info(`Message from ${from}: ${messageBody}`);
         await this.routeMessage(from, messageBody);
@@ -326,8 +333,10 @@ class WebhookController {
       // ===================================
       // PRIORITY 8.5: PAYMENT CONFIRMATION (RECEIVED)
       // Must come before active game check so users can confirm payments mid-game
+      // Handle common misspellings: recieved, receved, etc.
       // ===================================
-      if (input === 'RECEIVED' || input === 'CONFIRM' || input === 'CONFIRMED') {
+      const receivedVariants = ['RECEIVED', 'RECIEVED', 'RECEVED', 'RECIVED', 'CONFIRM', 'CONFIRMED'];
+      if (receivedVariants.includes(input) || input.includes('CONFIRM')) {
         await this.handlePaymentConfirmation(user);
         return;
       }
@@ -1094,8 +1103,9 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
-    // RECEIVED confirmation
-    if (input === 'RECEIVED' || input.includes('CONFIRM')) {
+    // RECEIVED confirmation (including common misspellings)
+    const receivedWords = ['RECEIVED', 'RECIEVED', 'RECEVED', 'RECIVED'];
+    if (receivedWords.includes(input) || input.includes('CONFIRM')) {
       await this.handlePaymentConfirmation(user);
       return;
     }
@@ -2631,6 +2641,77 @@ You can now claim your prize! 💰
       );
     } catch (error) {
       logger.error('Error handling audio message:', error);
+    }
+  }
+
+  async handleVideoMessage(phone, message) {
+    try {
+      const userState = await userService.getUserState(phone);
+      
+      // Check if this person has an active booking as creator
+      const activeBooking = await loveQuestService.getActiveBookingByCreator(phone);
+      
+      if (activeBooking && message.video?.id) {
+        try {
+          // Determine purpose from state or default to intro
+          const purpose = userState?.data?.videoPurpose || 'intro';
+          await loveQuestService.saveVideo(activeBooking.booking_code, message.video.id, purpose);
+          
+          await messagingService.sendMessage(phone,
+            `✅ Video saved for your Love Quest! 🎬💕\n\n` +
+            `Booking: ${activeBooking.booking_code}\n\n` +
+            `Want to add more media?\n\n` +
+            `1️⃣ Record another intro video\n` +
+            `2️⃣ Record a voice note instead\n` +
+            `3️⃣ Done - I'm finished\n\n` +
+            `Reply with a number, or send another video/voice note.`
+          );
+          
+          await userService.setUserState(phone, 'LOVE_QUEST_VIDEO_MENU', { 
+            bookingCode: activeBooking.booking_code
+          });
+          
+        } catch (error) {
+          logger.error('Error saving video:', error);
+          await messagingService.sendMessage(phone, `❌ Error saving video. Please try again.`);
+        }
+        return;
+      }
+      
+      // If user is explicitly in video recording state
+      if (userState && userState.state === 'LOVE_QUEST_VIDEO' && message.video?.id) {
+        const { bookingCode, purpose } = userState.data || {};
+        
+        if (bookingCode) {
+          try {
+            await loveQuestService.saveVideo(bookingCode, message.video.id, purpose || 'intro');
+            
+            await messagingService.sendMessage(phone,
+              `✅ Video saved for "${purpose || 'intro'}"! 🎬💕\n\n` +
+              `Would you like to record more?\n\n` +
+              `1️⃣ Record another video\n` +
+              `2️⃣ Record a voice note\n` +
+              `3️⃣ Done recording\n\n` +
+              `Reply with the number or type DONE to finish.`
+            );
+            
+            await userService.setUserState(phone, 'LOVE_QUEST_VIDEO_MENU', { bookingCode });
+          } catch (error) {
+            logger.error('Error saving video:', error);
+            await messagingService.sendMessage(phone, `❌ Error saving video. Please try again.`);
+          }
+          return;
+        }
+      }
+      
+      // No active Love Quest - generic response
+      await messagingService.sendMessage(phone,
+        `🎬 Video received!\n\n` +
+        `To add videos to a Love Quest, you need an active booking.\n\n` +
+        `Type *LOVE QUEST* to create a new booking.`
+      );
+    } catch (error) {
+      logger.error('Error handling video message:', error);
     }
   }
 

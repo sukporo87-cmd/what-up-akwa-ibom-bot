@@ -325,11 +325,17 @@ class LoveQuestService {
             // Get file stats
             const stats = fs.statSync(filePath);
             
-            // Store in database
+            // Store in database (UPSERT - update if exists)
             await pool.query(`
                 INSERT INTO love_quest_media (
                     booking_id, media_type, media_purpose, file_path, file_size, mime_type
                 ) VALUES ($1, 'audio', $2, $3, $4, $5)
+                ON CONFLICT (booking_id, media_type, media_purpose) 
+                DO UPDATE SET 
+                    file_path = EXCLUDED.file_path,
+                    file_size = EXCLUDED.file_size,
+                    mime_type = EXCLUDED.mime_type,
+                    uploaded_at = NOW()
             `, [booking.id, purpose, filePath, stats.size, media.mimeType]);
             
             // Update booking media JSON
@@ -1359,10 +1365,15 @@ class LoveQuestService {
             const filePath = await this.downloadWhatsAppMedia(mediaId);
             if (!filePath) throw new Error('Failed to download video');
             
-            // Save to media table
+            // Save to media table (UPSERT - update if exists)
             const result = await pool.query(`
                 INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, mime_type, uploaded_by)
                 VALUES ($1, 'video', $2, $3, 'video/mp4', 'creator')
+                ON CONFLICT (booking_id, media_type, media_purpose) 
+                DO UPDATE SET 
+                    file_path = EXCLUDED.file_path,
+                    mime_type = EXCLUDED.mime_type,
+                    uploaded_at = NOW()
                 RETURNING *
             `, [booking.id, purpose, filePath]);
             
@@ -1377,6 +1388,8 @@ class LoveQuestService {
             await this.logAuditEvent(booking.id, null, 'video_uploaded', {
                 purpose, filePath
             }, 'creator', booking.creator_phone);
+            
+            logger.info(`🎬 Video saved for ${bookingCode}: ${purpose}`);
             
             return result.rows[0];
         } catch (error) {

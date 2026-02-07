@@ -4680,6 +4680,9 @@ function renderLqBookingDetail(data) {
   const isInternational = booking.package === 'international' || booking.currency === 'USD';
   const currencySymbol = isInternational ? '$' : '₦';
   
+  // Helper to add token to media URLs
+  const mediaUrl = (mediaId, action) => `/admin/api/love-quest/media/${mediaId}/${action}?token=${sessionToken}`;
+  
   // Parse media for voice notes and videos
   const voiceNotes = (media || []).filter(m => m.media_type === 'audio');
   const videos = (media || []).filter(m => m.media_type === 'video');
@@ -4734,9 +4737,9 @@ function renderLqBookingDetail(data) {
         <strong>🎵 Intro Audio</strong>
         <p style="font-size: 11px; color: #666;">Plays when quest starts</p>
         ${introAudio ? `
-          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${introAudio.id}/stream"></audio>
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="${mediaUrl(introAudio.id, 'stream')}"></audio>
           <div style="display: flex; gap: 5px;">
-            <a href="/admin/api/love-quest/media/${introAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <a href="${mediaUrl(introAudio.id, 'download')}" class="btn btn-sm btn-secondary">⬇️</a>
             <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${introAudio.id}, ${booking.id})">🗑️</button>
           </div>
         ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
@@ -4749,9 +4752,9 @@ function renderLqBookingDetail(data) {
         <strong>🎬 Intro Video</strong>
         <p style="font-size: 11px; color: #666;">Optional video at start</p>
         ${introVideo ? `
-          <video controls style="width: 100%; max-height: 100px; margin: 5px 0;"><source src="/admin/api/love-quest/media/${introVideo.id}/stream"></video>
+          <video controls style="width: 100%; max-height: 100px; margin: 5px 0;"><source src="${mediaUrl(introVideo.id, 'stream')}"></video>
           <div style="display: flex; gap: 5px;">
-            <a href="/admin/api/love-quest/media/${introVideo.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <a href="${mediaUrl(introVideo.id, 'download')}" class="btn btn-sm btn-secondary">⬇️</a>
             <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${introVideo.id}, ${booking.id})">🗑️</button>
           </div>
         ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
@@ -4764,9 +4767,9 @@ function renderLqBookingDetail(data) {
         <strong>🎵 Milestone Audio (Q5)</strong>
         <p style="font-size: 11px; color: #666;">Plays after question 5</p>
         ${milestoneAudio ? `
-          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${milestoneAudio.id}/stream"></audio>
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="${mediaUrl(milestoneAudio.id, 'stream')}"></audio>
           <div style="display: flex; gap: 5px;">
-            <a href="/admin/api/love-quest/media/${milestoneAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <a href="${mediaUrl(milestoneAudio.id, 'download')}" class="btn btn-sm btn-secondary">⬇️</a>
             <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${milestoneAudio.id}, ${booking.id})">🗑️</button>
           </div>
         ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
@@ -4780,9 +4783,9 @@ function renderLqBookingDetail(data) {
         <strong>🎵 Milestone Audio (Q10)</strong>
         <p style="font-size: 11px; color: #666;">Plays after question 10</p>
         ${milestone10Audio ? `
-          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${milestone10Audio.id}/stream"></audio>
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="${mediaUrl(milestone10Audio.id, 'stream')}"></audio>
           <div style="display: flex; gap: 5px;">
-            <a href="/admin/api/love-quest/media/${milestone10Audio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <a href="${mediaUrl(milestone10Audio.id, 'download')}" class="btn btn-sm btn-secondary">⬇️</a>
             <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${milestone10Audio.id}, ${booking.id})">🗑️</button>
           </div>
         ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
@@ -4795,9 +4798,9 @@ function renderLqBookingDetail(data) {
         <strong>🎵 Grand Reveal Audio</strong>
         <p style="font-size: 11px; color: #666;">Plays at the end</p>
         ${grandRevealAudio ? `
-          <audio controls style="width: 100%; margin: 5px 0;"><source src="/admin/api/love-quest/media/${grandRevealAudio.id}/stream"></audio>
+          <audio controls style="width: 100%; margin: 5px 0;"><source src="${mediaUrl(grandRevealAudio.id, 'stream')}"></audio>
           <div style="display: flex; gap: 5px;">
-            <a href="/admin/api/love-quest/media/${grandRevealAudio.id}/download" class="btn btn-sm btn-secondary">⬇️</a>
+            <a href="${mediaUrl(grandRevealAudio.id, 'download')}" class="btn btn-sm btn-secondary">⬇️</a>
             <button class="btn btn-sm btn-danger" onclick="deleteLqMedia(${grandRevealAudio.id}, ${booking.id})">🗑️</button>
           </div>
         ` : `<p style="color: #999; font-size: 12px;">Not uploaded</p>
@@ -5169,7 +5172,89 @@ async function deleteLqQuestion(questionId, bookingId) {
 
 // Preview/Test Love Quest
 async function testLqPreview(bookingId) {
-  showAlert('👁️ Preview feature coming soon! Use demo to test.', 'info');
+  try {
+    // Fetch booking details
+    const response = await fetch(`/admin/api/love-quest/bookings/${bookingId}`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success) {
+      showAlert('❌ Failed to load booking for preview', 'error');
+      return;
+    }
+    
+    const { booking, questions, media } = data;
+    
+    if (!questions || questions.length === 0) {
+      showAlert('⚠️ No questions to preview. Add questions first!', 'error');
+      return;
+    }
+    
+    // Build preview HTML
+    let previewHtml = `
+      <div style="max-height: 70vh; overflow-y: auto;">
+        <h3 style="color: #ec4899; margin-bottom: 15px;">💘 Love Quest Preview: ${booking.booking_code}</h3>
+        <p><strong>Player:</strong> ${booking.player_name || 'N/A'} | <strong>Questions:</strong> ${questions.length}</p>
+        <hr style="margin: 15px 0;">
+        
+        <h4>📝 Question Flow:</h4>
+    `;
+    
+    questions.forEach((q, i) => {
+      const isCorrect = ['A', 'B', 'C', 'D'].includes(q.correct_answer);
+      previewHtml += `
+        <div style="background: #f8fafc; padding: 10px; border-radius: 8px; margin: 10px 0; border-left: 3px solid ${i === 4 || i === 9 ? '#f59e0b' : '#7c3aed'};">
+          <strong>Q${q.question_number}:</strong> ${q.question_text}
+          <div style="margin: 5px 0; font-size: 13px;">
+            <span style="color: ${q.correct_answer === 'A' ? 'green' : 'inherit'};">A) ${q.option_a}</span> | 
+            <span style="color: ${q.correct_answer === 'B' ? 'green' : 'inherit'};">B) ${q.option_b}</span>
+            ${q.option_c ? ` | <span style="color: ${q.correct_answer === 'C' ? 'green' : 'inherit'};">C) ${q.option_c}</span>` : ''}
+            ${q.option_d ? ` | <span style="color: ${q.correct_answer === 'D' ? 'green' : 'inherit'};">D) ${q.option_d}</span>` : ''}
+          </div>
+          <small style="color: #666;">✅ ${q.correct_response || 'Default response'}</small>
+          ${q.milestone_prize_text ? `<br><small style="color: #f59e0b;">🎁 ${q.milestone_prize_text}</small>` : ''}
+          ${(i === 4 || i === 9) ? '<br><small style="color: #ec4899;">📍 Milestone - Voice note plays here</small>' : ''}
+        </div>
+      `;
+    });
+    
+    // Media summary
+    const voiceNotes = (media || []).filter(m => m.media_type === 'audio');
+    const videos = (media || []).filter(m => m.media_type === 'video');
+    
+    previewHtml += `
+        <hr style="margin: 15px 0;">
+        <h4>🎤 Media Summary:</h4>
+        <ul style="margin: 10px 0;">
+          <li>Voice Notes: ${voiceNotes.length} uploaded</li>
+          <li>Videos: ${videos.length} uploaded</li>
+        </ul>
+        
+        <h4>✨ Grand Reveal:</h4>
+        <div style="background: #fce7f3; padding: 10px; border-radius: 8px;">
+          ${booking.grand_reveal_text || '<em style="color: #999;">No message set</em>'}
+          ${booking.grand_reveal_cash_prize > 0 ? `<br><strong>💰 Cash Prize: ₦${parseFloat(booking.grand_reveal_cash_prize).toLocaleString()}</strong>` : ''}
+        </div>
+      </div>
+    `;
+    
+    // Show in a modal (reuse existing modal structure)
+    const modalContent = document.getElementById('lqBookingContent');
+    const originalContent = modalContent.innerHTML;
+    
+    modalContent.innerHTML = previewHtml + `
+      <div style="margin-top: 20px; text-align: center;">
+        <button class="btn btn-secondary" onclick="viewLqBooking(${bookingId})">← Back to Booking</button>
+      </div>
+    `;
+    
+    showAlert('👁️ Preview loaded! Scroll to see full quest flow.', 'success');
+    
+  } catch (error) {
+    console.error('Error loading preview:', error);
+    showAlert('❌ Error loading preview', 'error');
+  }
 }
 
 </script>

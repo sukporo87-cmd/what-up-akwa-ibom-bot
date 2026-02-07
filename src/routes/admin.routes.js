@@ -6576,8 +6576,33 @@ router.delete('/api/love-quest/media/:id', authenticateAdmin, async (req, res) =
     }
 });
 
-// Stream media (for audio/video player)
-router.get('/api/love-quest/media/:id/stream', authenticateAdmin, async (req, res) => {
+// Auth middleware that also accepts token from query string (for media embeds)
+const authenticateAdminOrQuery = async (req, res, next) => {
+    // First check header token
+    const headerToken = req.headers.authorization?.replace('Bearer ', '');
+    // Then check query string token
+    const queryToken = req.query.token;
+    
+    const token = headerToken || queryToken;
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized - No token provided' });
+    }
+    
+    try {
+        const session = await adminAuthService.validateSession(token);
+        if (!session) {
+            return res.status(401).json({ error: 'Invalid or expired session' });
+        }
+        req.adminSession = session;
+        next();
+    } catch (error) {
+        return res.status(401).json({ error: 'Authentication failed' });
+    }
+};
+
+// Stream media (for audio/video player) - accepts token from query param
+router.get('/api/love-quest/media/:id/stream', authenticateAdminOrQuery, async (req, res) => {
     try {
         const media = await loveQuestService.getMediaById(parseInt(req.params.id));
         if (!media || !media.file_path) {
@@ -6592,6 +6617,7 @@ router.get('/api/love-quest/media/:id/stream', authenticateAdmin, async (req, re
         const stat = fs.statSync(media.file_path);
         res.setHeader('Content-Length', stat.size);
         res.setHeader('Content-Type', media.mime_type || 'audio/ogg');
+        res.setHeader('Accept-Ranges', 'bytes');
         
         const stream = fs.createReadStream(media.file_path);
         stream.pipe(res);
@@ -6601,8 +6627,8 @@ router.get('/api/love-quest/media/:id/stream', authenticateAdmin, async (req, re
     }
 });
 
-// Download media
-router.get('/api/love-quest/media/:id/download', authenticateAdmin, async (req, res) => {
+// Download media - accepts token from query param
+router.get('/api/love-quest/media/:id/download', authenticateAdminOrQuery, async (req, res) => {
     try {
         const media = await loveQuestService.getMediaById(parseInt(req.params.id));
         if (!media || !media.file_path) {
