@@ -2742,10 +2742,36 @@ You can now claim your prize! 💰
       
       await messagingService.sendMessage(phone, welcomeMsg);
       
-      const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
-      if (media.intro_audio && require('fs').existsSync(media.intro_audio)) {
-        await loveQuestService.sendVoiceNote(phone, media.intro_audio);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      const fs = require('fs');
+      
+      // Check for intro VIDEO in database table first
+      const introVideo = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'video');
+      if (introVideo && introVideo.file_path && fs.existsSync(introVideo.file_path)) {
+        logger.info(`🎬 Sending intro video for booking ${booking.id}`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await messagingService.sendMessage(phone, `🎬 *${creatorName} has a video message for you:*`);
+        await loveQuestService.sendVideo(phone, introVideo.file_path);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Check for intro AUDIO in database table
+      const introAudio = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'audio');
+      if (introAudio && introAudio.file_path && fs.existsSync(introAudio.file_path)) {
+        logger.info(`🎤 Sending intro voice note for booking ${booking.id}`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await messagingService.sendMessage(phone, `🎤 *${creatorName} has a voice message for you:*`);
+        await loveQuestService.sendVoiceNote(phone, introAudio.file_path);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Fallback: check legacy media JSON field for backward compatibility
+      if (!introAudio && !introVideo) {
+        const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
+        if (media.intro_audio && fs.existsSync(media.intro_audio)) {
+          logger.info(`🎤 Sending intro voice note (legacy JSON) for booking ${booking.id}`);
+          await loveQuestService.sendVoiceNote(phone, media.intro_audio);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
       }
       
       setTimeout(async () => {
