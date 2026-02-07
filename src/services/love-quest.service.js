@@ -36,6 +36,31 @@ class LoveQuestService {
         }
     }
 
+    // Helper to normalize phone numbers
+    normalizePhone(phone, isInternational = false) {
+        if (!phone) return phone;
+        
+        // Remove +, spaces, dashes, parentheses
+        let normalized = phone.replace(/[\s\-\+\(\)]/g, '');
+        
+        // Skip normalization for international package (don't add 234)
+        if (isInternational) {
+            return normalized;
+        }
+        
+        // If starts with 0, assume Nigeria and add 234
+        if (normalized.startsWith('0')) {
+            normalized = '234' + normalized.substring(1);
+        }
+        
+        // If it's 10 digits (missing country code), add 234
+        if (normalized.length === 10 && /^\d+$/.test(normalized)) {
+            normalized = '234' + normalized;
+        }
+        
+        return normalized;
+    }
+
     // ============================================
     // BOOKING MANAGEMENT
     // ============================================
@@ -54,6 +79,13 @@ class LoveQuestService {
             
             const pkg = packageResult.rows[0];
             
+            // Normalize phone numbers (skip for international package)
+            const isInternational = packageCode === 'international';
+            const normalizedCreatorPhone = this.normalizePhone(creatorPhone, isInternational);
+            const normalizedPlayerPhone = this.normalizePhone(playerPhone, isInternational);
+            
+            logger.info(`📞 Phone normalization: creator ${creatorPhone} → ${normalizedCreatorPhone}, player ${playerPhone} → ${normalizedPlayerPhone}`);
+            
             // Generate unique booking code
             const codeResult = await pool.query('SELECT generate_love_quest_code() as code');
             const bookingCode = codeResult.rows[0].code;
@@ -61,10 +93,10 @@ class LoveQuestService {
             // Check if creator is a registered user
             const creatorUser = await pool.query(
                 'SELECT id FROM users WHERE phone_number = $1',
-                [creatorPhone]
+                [normalizedCreatorPhone]
             );
             
-            // Create booking
+            // Create booking with normalized phone numbers
             const result = await pool.query(`
                 INSERT INTO love_quest_bookings (
                     booking_code, package, base_price, creator_phone, creator_name,
@@ -76,10 +108,10 @@ class LoveQuestService {
                 bookingCode,
                 packageCode,
                 pkg.base_price,
-                creatorPhone,
+                normalizedCreatorPhone,
                 creatorName,
                 creatorUser.rows[0]?.id || null,
-                playerPhone,
+                normalizedPlayerPhone,
                 playerName,
                 pkg.question_count,
                 pkg.treasure_hunt
@@ -1122,6 +1154,27 @@ class LoveQuestService {
                 throw new Error('Booking is not ready to send');
             }
             
+            // Normalize phone number for WhatsApp
+            let playerPhone = booking.player_phone;
+            
+            // Log original phone for debugging
+            logger.info(`📞 Original player phone: ${playerPhone}`);
+            
+            // Normalize: remove +, spaces, dashes
+            playerPhone = playerPhone.replace(/[\s\-\+]/g, '');
+            
+            // If starts with 0, assume Nigeria and add 234
+            if (playerPhone.startsWith('0')) {
+                playerPhone = '234' + playerPhone.substring(1);
+            }
+            
+            // If it's too short (missing country code), add 234
+            if (playerPhone.length === 10) {
+                playerPhone = '234' + playerPhone;
+            }
+            
+            logger.info(`📞 Normalized player phone: ${playerPhone}`);
+            
             const creatorName = booking.creator_name || 'Someone special';
             
             let message = `💘 *You've Been Challenged!* 💘\n\n`;
@@ -1132,14 +1185,15 @@ class LoveQuestService {
             message += `Are you ready to prove your love? 💕\n\n`;
             message += `Reply *START* to begin your quest!`;
             
-            await messagingService.sendMessage(booking.player_phone, message);
+            const sendResult = await messagingService.sendMessage(playerPhone, message);
+            logger.info(`📤 Invitation send result:`, sendResult);
             
-            // Update booking status
+            // Update booking status and normalize phone in DB
             await pool.query(`
                 UPDATE love_quest_bookings 
-                SET status = 'sent', invitation_sent_at = NOW()
-                WHERE id = $1
-            `, [bookingId]);
+                SET status = 'sent', invitation_sent_at = NOW(), player_phone = $1
+                WHERE id = $2
+            `, [playerPhone, bookingId]);
             
             // Set expiry (48 hours to complete)
             await pool.query(`
@@ -1149,10 +1203,11 @@ class LoveQuestService {
             `, [bookingId]);
             
             await this.logAuditEvent(bookingId, null, 'invitation_sent', {
-                player: booking.player_phone
+                player: playerPhone,
+                originalPhone: booking.player_phone
             }, 'system', null);
             
-            logger.info(`💘 Love Quest invitation sent: ${booking.booking_code} → ${booking.player_phone}`);
+            logger.info(`💘 Love Quest invitation sent: ${booking.booking_code} → ${playerPhone}`);
             
             return true;
         } catch (error) {
@@ -1278,33 +1333,48 @@ class LoveQuestService {
             const booking = await this.getBooking(bookingId);
             if (!booking) throw new Error('Booking not found');
             
-            const PaymentService = require('./payment.service');
-            const paymentService = new PaymentService();
+            const Paystack = require('paystack')(process.env.PAYSTACK_SECRET_KEY);
             
             // Use booking code as reference
             const reference = `LQ-${booking.booking_code}-${Date.now()}`;
             
-            // Initialize Paystack transaction
-            const paystackResponse = await paymentService.initializePaystackTransaction({
+            // Initialize Paystack transaction using SDK
+            const response = await Paystack.transaction.initialize({
                 email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
-                amount: amount * 100, // Paystack uses kobo
+                amount: Math.round(amount * 100), // Paystack uses kobo
                 reference,
-                callback_url: `${process.env.BASE_URL || 'https://whatsuptrivia.com.ng'}/api/love-quest/payment/callback`,
+                callback_url: `${process.env.APP_URL || 'https://whatsuptrivia.com.ng'}/payment/callback`,
                 metadata: {
                     booking_id: bookingId,
                     booking_code: booking.booking_code,
-                    type: 'love_quest'
-                }
+                    type: 'love_quest',
+                    creator_phone: booking.creator_phone,
+                    custom_fields: [
+                        {
+                            display_name: "Booking Code",
+                            variable_name: "booking_code",
+                            value: booking.booking_code
+                        },
+                        {
+                            display_name: "Package",
+                            variable_name: "package",
+                            value: booking.package
+                        }
+                    ]
+                },
+                channels: ['card', 'bank', 'ussd', 'mobile_money']
             });
             
-            if (paystackResponse?.data?.authorization_url) {
+            if (response?.data?.authorization_url) {
                 await pool.query(`
                     UPDATE love_quest_bookings 
                     SET paystack_reference = $1, paystack_access_code = $2
                     WHERE id = $3
-                `, [reference, paystackResponse.data.access_code, bookingId]);
+                `, [reference, response.data.access_code, bookingId]);
                 
-                return paystackResponse.data.authorization_url;
+                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${reference}`);
+                
+                return response.data.authorization_url;
             }
             
             return null;
@@ -1546,6 +1616,14 @@ class LoveQuestService {
     // Update booking participants
     async updateBookingParticipants(bookingId, { creatorName, creatorPhone, playerName, playerPhone }) {
         try {
+            // Get booking to check if international
+            const booking = await this.getBooking(bookingId);
+            const isInternational = booking?.package === 'international';
+            
+            // Normalize phone numbers if provided
+            const normalizedCreatorPhone = creatorPhone ? this.normalizePhone(creatorPhone, isInternational) : null;
+            const normalizedPlayerPhone = playerPhone ? this.normalizePhone(playerPhone, isInternational) : null;
+            
             await pool.query(`
                 UPDATE love_quest_bookings 
                 SET creator_name = COALESCE($1, creator_name),
@@ -1554,7 +1632,7 @@ class LoveQuestService {
                     player_phone = COALESCE($4, player_phone),
                     updated_at = NOW()
                 WHERE id = $5
-            `, [creatorName, creatorPhone, playerName, playerPhone, bookingId]);
+            `, [creatorName, normalizedCreatorPhone, playerName, normalizedPlayerPhone, bookingId]);
             return true;
         } catch (error) {
             logger.error('Error updating booking participants:', error);
