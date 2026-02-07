@@ -4699,16 +4699,20 @@ router.get('/api/financials/love-quest-revenue', authenticateAdmin, requireFinan
     const { start_date, end_date } = req.query;
     await adminAuthService.logActivity(req.adminSession.admin_id, 'view_love_quest_revenue', { start_date, end_date }, getIpAddress(req), req.headers['user-agent']);
     
-    // Build date filter
-    let dateFilter = '';
+    // Build date filter for package query (uses alias 'b')
+    let dateFilterB = '';
+    // Build date filter for totals query (no alias)
+    let dateFilterNoAlias = '';
     const params = [];
     if (start_date) {
       params.push(start_date);
-      dateFilter += ` AND b.created_at >= $${params.length}`;
+      dateFilterB += ` AND b.created_at >= $${params.length}`;
+      dateFilterNoAlias += ` AND created_at >= $${params.length}`;
     }
     if (end_date) {
       params.push(end_date);
-      dateFilter += ` AND b.created_at <= $${params.length}`;
+      dateFilterB += ` AND b.created_at <= $${params.length}`;
+      dateFilterNoAlias += ` AND created_at <= $${params.length}`;
     }
     
     // Get revenue by package
@@ -4722,13 +4726,13 @@ router.get('/api/financials/love-quest-revenue', authenticateAdmin, requireFinan
         COUNT(b.id) as booking_count,
         COALESCE(SUM(b.total_paid), 0) as total_revenue
       FROM love_quest_packages p
-      LEFT JOIN love_quest_bookings b ON p.package_code = b.package ${dateFilter ? 'AND b.total_paid > 0' + dateFilter : ''}
+      LEFT JOIN love_quest_bookings b ON p.package_code = b.package ${dateFilterB ? 'AND b.total_paid > 0' + dateFilterB : ''}
       WHERE p.is_active = true
       GROUP BY p.package_code, p.package_name, p.base_price, p.question_count, p.display_order
       ORDER BY p.display_order
     `, params);
     
-    // Get totals
+    // Get totals (no alias needed)
     const totalResult = await pool.query(`
       SELECT 
         COUNT(*) as total_bookings,
@@ -4736,7 +4740,7 @@ router.get('/api/financials/love-quest-revenue', authenticateAdmin, requireFinan
         COALESCE(SUM(total_paid), 0) as total_revenue,
         COUNT(*) FILTER (WHERE status = 'completed') as completed_bookings
       FROM love_quest_bookings
-      ${dateFilter ? 'WHERE 1=1' + dateFilter : ''}
+      ${dateFilterNoAlias ? 'WHERE 1=1' + dateFilterNoAlias : ''}
     `, params);
     
     const totals = totalResult.rows[0];
@@ -6623,25 +6627,26 @@ router.get('/api/love-quest/media/:id/download', authenticateAdmin, async (req, 
     }
 });
 
-// Upload media from admin
-const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
-
-router.post('/api/love-quest/bookings/:id/media/upload', authenticateAdmin, upload.single('file'), async (req, res) => {
+// Upload media from admin (using base64 - no multer needed)
+router.post('/api/love-quest/bookings/:id/media/upload', authenticateAdmin, async (req, res) => {
     try {
-        const { purpose, mediaType } = req.body;
+        const { purpose, mediaType, fileData, fileName } = req.body;
         const bookingId = parseInt(req.params.id);
         
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
+        if (!fileData) {
+            return res.status(400).json({ error: 'No file data provided' });
         }
+        
+        // Convert base64 to buffer
+        const base64Data = fileData.replace(/^data:[^;]+;base64,/, '');
+        const fileBuffer = Buffer.from(base64Data, 'base64');
         
         const media = await loveQuestService.uploadMediaFromAdmin(
             bookingId,
             purpose || 'grand_reveal',
             mediaType || 'audio',
-            req.file.buffer,
-            req.file.originalname
+            fileBuffer,
+            fileName || 'upload'
         );
         
         res.json({ success: true, media });
