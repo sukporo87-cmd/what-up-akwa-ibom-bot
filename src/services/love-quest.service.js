@@ -546,8 +546,7 @@ class LoveQuestService {
                 SELECT s.*, b.id as id, b.booking_code, b.package, b.question_count,
                        b.timeout_seconds, b.allow_retries, b.max_retries_per_question,
                        b.treasure_hunt_enabled, b.grand_reveal_text, b.grand_reveal_audio_url,
-                       b.grand_reveal_cash_prize, b.creator_name, b.creator_phone, 
-                       b.player_name, b.media, b.intro_video_url
+                       b.grand_reveal_cash_prize, b.creator_name, b.player_name, b.media
                 FROM love_quest_sessions s
                 JOIN love_quest_bookings b ON s.booking_id = b.id
                 WHERE s.player_phone = $1 AND s.status = 'active'
@@ -648,7 +647,7 @@ class LoveQuestService {
                 // Calculate points
                 const pointsTable = LOVE_POINTS[booking.question_count] || LOVE_POINTS[10];
                 const points = pointsTable[session.current_question] || 50;
-                const newScore = session.score + points;
+                const newScore = Math.min(session.score + points, 1000); // Cap at 1000
                 
                 // Build correct response
                 let message = question.correct_response || `✅ YES! That's right! 🎉\n\n`;
@@ -686,16 +685,12 @@ class LoveQuestService {
                 
                 if (isMilestoneQ5 || isMilestoneQ10) {
                     const milestonePurpose = isMilestoneQ5 ? 'milestone_5' : 'milestone_10';
-                    logger.info(`🎁 Checking milestone media: bookingId=${bookingId}, purpose=${milestonePurpose}`);
-                    
-                    let milestoneMedia = await this.getMediaByPurpose(bookingId, milestonePurpose);
+                    let milestoneMedia = await this.getMediaByPurpose(booking.id, milestonePurpose);
                     
                     // Also check for generic 'milestone' purpose as fallback
                     if (!milestoneMedia && isMilestoneQ5) {
-                        milestoneMedia = await this.getMediaByPurpose(bookingId, 'milestone');
+                        milestoneMedia = await this.getMediaByPurpose(booking.id, 'milestone');
                     }
-                    
-                    logger.info(`🎁 Milestone media result: ${milestoneMedia ? milestoneMedia.file_path : 'none'}`);
                     
                     if (milestoneMedia && milestoneMedia.file_path && fs.existsSync(milestoneMedia.file_path)) {
                         await new Promise(r => setTimeout(r, 1500));
@@ -723,7 +718,7 @@ class LoveQuestService {
                                 [session.id]
                             );
                             
-                            await this.logAuditEvent(bookingId, session.id, 'answer_correct', {
+                            await this.logAuditEvent(booking.id, session.id, 'answer_correct', {
                                 questionNumber: currentQ,
                                 answer,
                                 points,
@@ -897,12 +892,15 @@ class LoveQuestService {
 
     async completeGame(session, booking, finalScore, responses, messagingService) {
         try {
-            // Update session
+            // Cap score at 1000
+            const cappedScore = Math.min(finalScore, 1000);
+            
+            // Update session with capped score
             await pool.query(`
                 UPDATE love_quest_sessions 
                 SET status = 'completed', score = $1, player_responses = $2, completed_at = NOW()
                 WHERE id = $3
-            `, [finalScore, JSON.stringify(responses), session.id]);
+            `, [cappedScore, JSON.stringify(responses), session.id]);
             
             // Update booking
             await pool.query(`
@@ -914,15 +912,18 @@ class LoveQuestService {
             // Clear Redis
             await redis.del(`love_quest:session:${session.player_phone}`);
             
+            // Update session.score for grand reveal
+            session.score = cappedScore;
+            
             // Send completion message
             let message = `🎊 CONGRATULATIONS! 🎊\n\n`;
             message += `You completed the Love Quest!\n\n`;
-            message += `💕 Final Score: ${finalScore}/1000 Love Points\n\n`;
+            message += `💕 Final Score: ${cappedScore}/1000 Love Points\n\n`;
             
             // Rating based on score
-            if (finalScore >= 900) {
+            if (cappedScore >= 900) {
                 message += `🏆 PERFECT LOVE! You know your partner inside out! 💕\n\n`;
-            } else if (finalScore >= 700) {
+            } else if (cappedScore >= 700) {
                 message += `❤️ DEEPLY IN LOVE! Your bond is strong! 💕\n\n`;
             } else if (finalScore >= 500) {
                 message += `💛 GROWING LOVE! Every day brings you closer! 💕\n\n`;
@@ -951,7 +952,7 @@ class LoveQuestService {
         try {
             const playerName = booking.player_name || 'My Love';
             const creatorName = booking.creator_name || 'Your Special Someone';
-            const finalScore = session.score || 0;
+            const finalScore = Math.min(session.score || 0, 1000); // Cap at 1000
             
             // Pause for dramatic effect
             await new Promise(resolve => setTimeout(resolve, 3000));
@@ -1338,17 +1339,17 @@ class LoveQuestService {
             const booking = await this.getBooking(bookingId);
             if (!booking) throw new Error('Booking not found');
             
-            // Use PaymentService's Paystack instance (same as token purchases)
-            const PaymentService = require('./payment.service');
-            const paymentService = new PaymentService();
+            // Use paystack-api (same as PaymentService) - NOT 'paystack' module
+            const Paystack = require('paystack-api');
+            const paystack = Paystack(process.env.PAYSTACK_SECRET_KEY);
             
             // Use booking code as reference
             const reference = `LQ-${booking.booking_code}-${Date.now()}`;
             
-            logger.info(`💳 Generating Paystack link for booking ${booking.booking_code}, amount: ${amount}`);
+            logger.info(`💳 Initializing Paystack for Love Quest ${booking.booking_code}, amount: ${amount}`);
             
-            // Initialize Paystack transaction using PaymentService's paystack instance
-            const response = await paymentService.paystack.transaction.initialize({
+            // Initialize Paystack transaction using paystack-api
+            const response = await paystack.transaction.initialize({
                 email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
                 amount: Math.round(amount * 100), // Paystack uses kobo
                 reference,
@@ -1383,7 +1384,7 @@ class LoveQuestService {
                     WHERE id = $3
                 `, [reference, response.data.access_code, bookingId]);
                 
-                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${response.data.authorization_url}`);
+                logger.info(`💳 Paystack link generated: ${response.data.authorization_url}`);
                 
                 return response.data.authorization_url;
             }
@@ -1560,17 +1561,12 @@ class LoveQuestService {
     }
 
     // Get media by purpose
-    async getMediaByPurpose(bookingId, purpose, mediaType = null) {
+    async getMediaByPurpose(bookingId, purpose) {
         try {
-            let query = 'SELECT * FROM love_quest_media WHERE booking_id = $1 AND media_purpose = $2';
-            const params = [bookingId, purpose];
-            
-            if (mediaType) {
-                query += ' AND media_type = $3';
-                params.push(mediaType);
-            }
-            
-            const result = await pool.query(query, params);
+            const result = await pool.query(
+                'SELECT * FROM love_quest_media WHERE booking_id = $1 AND media_purpose = $2',
+                [bookingId, purpose]
+            );
             return result.rows[0] || null;
         } catch (error) {
             logger.error('Error getting media by purpose:', error);

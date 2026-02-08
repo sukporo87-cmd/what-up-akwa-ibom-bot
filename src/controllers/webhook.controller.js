@@ -227,11 +227,6 @@ class WebhookController {
         return;
       }
 
-      if (userState && userState.state === 'LOVE_QUEST_VIDEO_MENU') {
-        await this.handleLoveQuestVideoMenu(phone, message, userState);
-        return;
-      }
-
       // ===================================
       // PRIORITY 1.6: LOVE QUEST ACTIVE SESSION
       // ===================================
@@ -2747,36 +2742,10 @@ You can now claim your prize! 💰
       
       await messagingService.sendMessage(phone, welcomeMsg);
       
-      const fs = require('fs');
-      
-      // Check for intro VIDEO in database table first
-      const introVideo = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'video');
-      if (introVideo && introVideo.file_path && fs.existsSync(introVideo.file_path)) {
-        logger.info(`🎬 Sending intro video for booking ${booking.id}`);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await messagingService.sendMessage(phone, `🎬 *${creatorName} has a video message for you:*`);
-        await loveQuestService.sendVideo(phone, introVideo.file_path);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-      
-      // Check for intro AUDIO in database table
-      const introAudio = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'audio');
-      if (introAudio && introAudio.file_path && fs.existsSync(introAudio.file_path)) {
-        logger.info(`🎤 Sending intro voice note for booking ${booking.id}`);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await messagingService.sendMessage(phone, `🎤 *${creatorName} has a voice message for you:*`);
-        await loveQuestService.sendVoiceNote(phone, introAudio.file_path);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-      
-      // Fallback: check legacy media JSON field for backward compatibility
-      if (!introAudio && !introVideo) {
-        const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
-        if (media.intro_audio && fs.existsSync(media.intro_audio)) {
-          logger.info(`🎤 Sending intro voice note (legacy JSON) for booking ${booking.id}`);
-          await loveQuestService.sendVoiceNote(phone, media.intro_audio);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+      const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
+      if (media.intro_audio && require('fs').existsSync(media.intro_audio)) {
+        await loveQuestService.sendVoiceNote(phone, media.intro_audio);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       setTimeout(async () => {
@@ -2950,6 +2919,17 @@ You can now claim your prize! 💰
       const isInternational = currency === 'USD';
       const priceDisplay = isInternational ? `$${price}` : `₦${price.toLocaleString()}`;
       
+      // Generate Paystack link FIRST (for NGN bookings)
+      let paystackUrl = null;
+      if (!isInternational) {
+        try {
+          paystackUrl = await loveQuestService.generatePaystackLink(booking.id, phone, price);
+          logger.info(`💳 Paystack URL for ${booking.booking_code}: ${paystackUrl}`);
+        } catch (e) {
+          logger.error('Error generating Paystack link:', e);
+        }
+      }
+      
       let msg = `🎉 *Love Quest Booking Created!*\n\n`;
       msg += `📋 Booking Code: *${booking.booking_code}*\n`;
       msg += `📦 Package: ${packageCode}\n`;
@@ -2961,9 +2941,12 @@ You can now claim your prize! 💰
       msg += `*💳 PAYMENT OPTIONS:*\n`;
       msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
       
-      if (!isInternational) {
+      if (!isInternational && paystackUrl) {
         msg += `*Option 1: Pay with Paystack (Card/Transfer)*\n`;
-        msg += `Click here: https://paystack.com/pay/lovequest-${booking.booking_code.toLowerCase()}\n\n`;
+        msg += `Click here: ${paystackUrl}\n\n`;
+      } else if (!isInternational) {
+        msg += `*Option 1: Pay with Paystack (Card/Transfer)*\n`;
+        msg += `Link being generated... Check back in a moment or use bank transfer.\n\n`;
       }
       
       msg += `*Option ${isInternational ? '1' : '2'}: Direct Bank Transfer*\n`;
@@ -2974,19 +2957,10 @@ You can now claim your prize! 💰
       
       msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
       
-      msg += `After payment, reply *PAID* or wait for automatic confirmation.\n\n`;
+      msg += `Once payment is confirmed and curation begins, you'll be contacted right here to record your personalized voice notes and video message for your Love Quest! 💕\n\n`;
       msg += `Questions? Reply HELP 💕`;
       
       await messagingService.sendMessage(phone, msg);
-      
-      // Generate Paystack link in background
-      if (!isInternational) {
-        try {
-          await loveQuestService.generatePaystackLink(booking.id, phone, price);
-        } catch (e) {
-          logger.error('Error generating Paystack link:', e);
-        }
-      }
       
     } catch (error) {
       logger.error('Error creating Love Quest booking:', error);
@@ -3064,60 +3038,6 @@ You can now claim your prize! 💰
           `2️⃣ Milestone voice note\n` +
           `3️⃣ Grand reveal voice note\n` +
           `4️⃣ Done recording`
-        );
-    }
-  }
-
-  async handleLoveQuestVideoMenu(phone, message, userState) {
-    const input = message.trim().toUpperCase();
-    const { bookingCode } = userState.data || {};
-    
-    switch (input) {
-      case '1':
-        // Record another intro video
-        await messagingService.sendMessage(phone,
-          `🎬 *Record Another Intro Video*\n\n` +
-          `Send a video message for your partner.\n\n` +
-          `This will replace your previous intro video.\n\n` +
-          `Send your video now! 💕`
-        );
-        await userService.setUserState(phone, 'LOVE_QUEST_VIDEO', { 
-          bookingCode, 
-          purpose: 'intro' 
-        });
-        break;
-        
-      case '2':
-        // Switch to voice note recording
-        await messagingService.sendMessage(phone,
-          `🎤 *Voice Note Options*\n\n` +
-          `1️⃣ Intro voice note (plays at start)\n` +
-          `2️⃣ Milestone voice note (plays at Q5/Q10)\n` +
-          `3️⃣ Grand reveal voice note (plays at end)\n` +
-          `4️⃣ Done - I'm finished recording\n\n` +
-          `Reply with a number, or send a voice note.`
-        );
-        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { bookingCode });
-        break;
-        
-      case '3':
-      case 'DONE':
-        await messagingService.sendMessage(phone,
-          `✅ *Media upload complete!*\n\n` +
-          `Booking Code: ${bookingCode}\n\n` +
-          `Your Love Quest media has been saved.\n` +
-          `We'll notify you when it's ready to send! 💕\n\n` +
-          `Questions? Reply HELP`
-        );
-        await userService.clearUserState(phone);
-        break;
-        
-      default:
-        await messagingService.sendMessage(phone,
-          `Please reply with a number (1-3):\n\n` +
-          `1️⃣ Record another intro video\n` +
-          `2️⃣ Record a voice note instead\n` +
-          `3️⃣ Done - I'm finished`
         );
     }
   }
