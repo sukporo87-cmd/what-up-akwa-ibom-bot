@@ -227,6 +227,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'LOVE_QUEST_VIDEO_MENU') {
+        await this.handleLoveQuestVideoMenu(phone, message, userState);
+        return;
+      }
+
       // ===================================
       // PRIORITY 1.6: LOVE QUEST ACTIVE SESSION
       // ===================================
@@ -382,6 +387,7 @@ class WebhookController {
       );
     }
   }
+
 
 // ============================================
 // END OF PART 1/6
@@ -681,6 +687,7 @@ Type the code, or type SKIP to continue:`
 
     await messagingService.sendMessage(phone, welcomeMsg);
   }
+
 
 // ============================================
 // END OF PART 2/6
@@ -1039,6 +1046,7 @@ Type the code, or type SKIP to continue:`
       );
     }
   }
+
 
 // ============================================
 // END OF PART 3/6
@@ -1664,6 +1672,7 @@ Type the code, or type SKIP to continue:`
     }
   }
 
+
 // ============================================
 // END OF PART 4/6
 // Next: Payout Handlers & Menu Senders
@@ -2263,54 +2272,54 @@ Type the code, or type SKIP to continue:`
   // ============================================
 
   async sendMainMenu(phone) {
-  // 🔧 ADD THIS: Clear post-game state when showing main menu
-  const user = await userService.getUserByPhone(phone);
-  if (user) {
-    await redis.del(`post_game:${user.id}`);
-  }
-  
-  const isPaymentEnabled = paymentService.isEnabled();
-
-  let message = '🏠 MAIN MENU 🏠\n\n';
-
-  if (user) {
-    // Show streak info
-    try {
-      const streakInfo = await streakService.getStreakInfo(user.id);
-      if (streakInfo && streakInfo.currentStreak > 0) {
-        message += `🔥 Streak: ${streakInfo.currentStreak} days ${streakInfo.badgeEmoji}\n`;
-        if (!streakInfo.playedToday && streakInfo.isActive) {
-          message += `   ⚠️ Play today to keep it!\n`;
-        }
-        message += '\n';
-      }
-    } catch (err) {
-      // Don't fail menu if streak fetch fails
+    // Clear post-game state when showing main menu
+    const user = await userService.getUserByPhone(phone);
+    if (user) {
+      await redis.del(`post_game:${user.id}`);
     }
     
-    if (isPaymentEnabled) {
-      message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+    const isPaymentEnabled = paymentService.isEnabled();
+
+    let message = '🏠 MAIN MENU 🏠\n\n';
+
+    if (user) {
+      // Show streak info
+      try {
+        const streakInfo = await streakService.getStreakInfo(user.id);
+        if (streakInfo && streakInfo.currentStreak > 0) {
+          message += `🔥 Streak: ${streakInfo.currentStreak} days ${streakInfo.badgeEmoji}\n`;
+          if (!streakInfo.playedToday && streakInfo.isActive) {
+            message += `   ⚠️ Play today to keep it!\n`;
+          }
+          message += '\n';
+        }
+      } catch (err) {
+        // Don't fail menu if streak fetch fails
+      }
+      
+      if (isPaymentEnabled) {
+        message += `💎 Games Remaining: ${user.games_remaining}\n\n`;
+      }
     }
+
+    message += 'What would you like to do?\n\n';
+    message += '1️⃣ Play Now\n';
+    message += '2️⃣ How to Play\n';
+    message += '3️⃣ View Leaderboard\n';
+
+    if (isPaymentEnabled) {
+      message += '4️⃣ Buy Games\n';
+      message += '5️⃣ My Stats\n';
+    } else {
+      message += '4️⃣ My Stats\n';
+    }
+
+    message += '\nType STREAK to see streak leaderboard 🔥\n';
+    message += 'Type LOVE QUEST to create a Valentine surprise! 💘\n';
+    message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
+
+    await messagingService.sendMessage(phone, message);
   }
-
-  message += 'What would you like to do?\n\n';
-  message += '1️⃣ Play Now\n';
-  message += '2️⃣ How to Play\n';
-  message += '3️⃣ View Leaderboard\n';
-
-  if (isPaymentEnabled) {
-    message += '4️⃣ Buy Games\n';
-    message += '5️⃣ My Stats\n';
-  } else {
-    message += '4️⃣ My Stats\n';
-  }
-
-  message += '\nType STREAK to see streak leaderboard 🔥\n';
-  message += 'Type LOVE QUEST to create a Valentine surprise! 💘\n';
-  message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
-
-  await messagingService.sendMessage(phone, message);
-}
 
   async sendHowToPlay(phone) {
     let message = `📖 HOW TO PLAY 📖\n\n`;
@@ -2431,7 +2440,6 @@ Reply with your choice:`
 
   // ============================================
   // VICTORY CARD HANDLER (WITH BRANDING)
-  // Supports both classic win cards and tournament performance cards
   // ============================================
 
   async handleWinShare(user, winData) {
@@ -2742,10 +2750,36 @@ You can now claim your prize! 💰
       
       await messagingService.sendMessage(phone, welcomeMsg);
       
-      const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
-      if (media.intro_audio && require('fs').existsSync(media.intro_audio)) {
-        await loveQuestService.sendVoiceNote(phone, media.intro_audio);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      const fs = require('fs');
+      
+      // Check for intro VIDEO in database table first
+      const introVideo = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'video');
+      if (introVideo && introVideo.file_path && fs.existsSync(introVideo.file_path)) {
+        logger.info(`🎬 Sending intro video for booking ${booking.id}`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await messagingService.sendMessage(phone, `🎬 *${creatorName} has a video message for you:*`);
+        await loveQuestService.sendVideo(phone, introVideo.file_path);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Check for intro AUDIO in database table
+      const introAudio = await loveQuestService.getMediaByPurpose(booking.id, 'intro', 'audio');
+      if (introAudio && introAudio.file_path && fs.existsSync(introAudio.file_path)) {
+        logger.info(`🎤 Sending intro voice note for booking ${booking.id}`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await messagingService.sendMessage(phone, `🎤 *${creatorName} has a voice message for you:*`);
+        await loveQuestService.sendVoiceNote(phone, introAudio.file_path);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Fallback: check legacy media JSON field for backward compatibility
+      if (!introAudio && !introVideo) {
+        const media = typeof booking.media === 'string' ? JSON.parse(booking.media) : (booking.media || {});
+        if (media.intro_audio && fs.existsSync(media.intro_audio)) {
+          logger.info(`🎤 Sending intro voice note (legacy JSON) for booking ${booking.id}`);
+          await loveQuestService.sendVoiceNote(phone, media.intro_audio);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
       }
       
       setTimeout(async () => {
@@ -2898,6 +2932,13 @@ You can now claim your prize! 💰
     );
   }
 
+
+  // ============================================
+  // FIXED: handleLoveQuestPlayerName
+  // - Generates Paystack link FIRST
+  // - Includes actual URL in message
+  // - Updated confirmation text
+  // ============================================
   async handleLoveQuestPlayerName(phone, message, userState) {
     const playerName = message.trim();
     
@@ -3038,6 +3079,60 @@ You can now claim your prize! 💰
           `2️⃣ Milestone voice note\n` +
           `3️⃣ Grand reveal voice note\n` +
           `4️⃣ Done recording`
+        );
+    }
+  }
+
+  async handleLoveQuestVideoMenu(phone, message, userState) {
+    const input = message.trim().toUpperCase();
+    const { bookingCode } = userState.data || {};
+    
+    switch (input) {
+      case '1':
+        // Record another intro video
+        await messagingService.sendMessage(phone,
+          `🎬 *Record Another Intro Video*\n\n` +
+          `Send a video message for your partner.\n\n` +
+          `This will replace your previous intro video.\n\n` +
+          `Send your video now! 💕`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VIDEO', { 
+          bookingCode, 
+          purpose: 'intro' 
+        });
+        break;
+        
+      case '2':
+        // Switch to voice note recording
+        await messagingService.sendMessage(phone,
+          `🎤 *Voice Note Options*\n\n` +
+          `1️⃣ Intro voice note (plays at start)\n` +
+          `2️⃣ Milestone voice note (plays at Q5/Q10)\n` +
+          `3️⃣ Grand reveal voice note (plays at end)\n` +
+          `4️⃣ Done - I'm finished recording\n\n` +
+          `Reply with a number, or send a voice note.`
+        );
+        await userService.setUserState(phone, 'LOVE_QUEST_VOICE_MENU', { bookingCode });
+        break;
+        
+      case '3':
+      case 'DONE':
+        await messagingService.sendMessage(phone,
+          `✅ *Media upload complete!*\n\n` +
+          `Booking Code: ${bookingCode}\n\n` +
+          `Your Love Quest media has been saved.\n` +
+          `We'll notify you when it's ready to send! 💕\n\n` +
+          `Questions? Reply HELP`
+        );
+        await userService.clearUserState(phone);
+        break;
+        
+      default:
+        await messagingService.sendMessage(phone,
+          `Please reply with a number (1-3):\n\n` +
+          `1️⃣ Record another intro video\n` +
+          `2️⃣ Record a voice note instead\n` +
+          `3️⃣ Done - I'm finished`
         );
     }
   }

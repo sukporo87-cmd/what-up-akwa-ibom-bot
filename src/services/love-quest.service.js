@@ -546,7 +546,8 @@ class LoveQuestService {
                 SELECT s.*, b.id as id, b.booking_code, b.package, b.question_count,
                        b.timeout_seconds, b.allow_retries, b.max_retries_per_question,
                        b.treasure_hunt_enabled, b.grand_reveal_text, b.grand_reveal_audio_url,
-                       b.grand_reveal_cash_prize, b.creator_name, b.player_name, b.media
+                       b.grand_reveal_cash_prize, b.creator_name, b.creator_phone, 
+                       b.player_name, b.media, b.intro_video_url
                 FROM love_quest_sessions s
                 JOIN love_quest_bookings b ON s.booking_id = b.id
                 WHERE s.player_phone = $1 AND s.status = 'active'
@@ -685,12 +686,16 @@ class LoveQuestService {
                 
                 if (isMilestoneQ5 || isMilestoneQ10) {
                     const milestonePurpose = isMilestoneQ5 ? 'milestone_5' : 'milestone_10';
-                    let milestoneMedia = await this.getMediaByPurpose(booking.id, milestonePurpose);
+                    logger.info(`🎁 Checking milestone media: bookingId=${bookingId}, purpose=${milestonePurpose}`);
+                    
+                    let milestoneMedia = await this.getMediaByPurpose(bookingId, milestonePurpose);
                     
                     // Also check for generic 'milestone' purpose as fallback
                     if (!milestoneMedia && isMilestoneQ5) {
-                        milestoneMedia = await this.getMediaByPurpose(booking.id, 'milestone');
+                        milestoneMedia = await this.getMediaByPurpose(bookingId, 'milestone');
                     }
+                    
+                    logger.info(`🎁 Milestone media result: ${milestoneMedia ? milestoneMedia.file_path : 'none'}`);
                     
                     if (milestoneMedia && milestoneMedia.file_path && fs.existsSync(milestoneMedia.file_path)) {
                         await new Promise(r => setTimeout(r, 1500));
@@ -718,7 +723,7 @@ class LoveQuestService {
                                 [session.id]
                             );
                             
-                            await this.logAuditEvent(booking.id, session.id, 'answer_correct', {
+                            await this.logAuditEvent(bookingId, session.id, 'answer_correct', {
                                 questionNumber: currentQ,
                                 answer,
                                 points,
@@ -925,7 +930,7 @@ class LoveQuestService {
                 message += `🏆 PERFECT LOVE! You know your partner inside out! 💕\n\n`;
             } else if (cappedScore >= 700) {
                 message += `❤️ DEEPLY IN LOVE! Your bond is strong! 💕\n\n`;
-            } else if (finalScore >= 500) {
+            } else if (cappedScore >= 500) {
                 message += `💛 GROWING LOVE! Every day brings you closer! 💕\n\n`;
             } else {
                 message += `💗 LOVE IN BLOOM! Time to make more memories! 💕\n\n`;
@@ -937,11 +942,11 @@ class LoveQuestService {
             await this.sendGrandReveal(session, booking, messagingService);
             
             await this.logAuditEvent(booking.id, session.id, 'game_completed', {
-                finalScore,
+                finalScore: cappedScore,
                 totalQuestions: booking.question_count
             }, 'player', session.player_phone);
             
-            logger.info(`💘 Love Quest completed: ${booking.booking_code} - Score: ${finalScore}`);
+            logger.info(`💘 Love Quest completed: ${booking.booking_code} - Score: ${cappedScore}`);
             
         } catch (error) {
             logger.error('Error completing Love Quest game:', error);
@@ -1117,7 +1122,7 @@ class LoveQuestService {
     async notifyCreatorOfCompletion(session, booking, messagingService) {
         try {
             const playerName = booking.player_name || 'Your partner';
-            const score = session.score || 0;
+            const score = Math.min(session.score || 0, 1000); // Cap at 1000
             
             let msg = `💘 *Love Quest Complete!* 💘\n\n`;
             msg += `${playerName} just finished your Love Quest!\n\n`;
@@ -1339,17 +1344,17 @@ class LoveQuestService {
             const booking = await this.getBooking(bookingId);
             if (!booking) throw new Error('Booking not found');
             
-            // Use paystack-api (same as PaymentService) - NOT 'paystack' module
-            const Paystack = require('paystack-api');
-            const paystack = Paystack(process.env.PAYSTACK_SECRET_KEY);
+            // Use PaymentService's Paystack instance (same as token purchases)
+            const PaymentService = require('./payment.service');
+            const paymentService = new PaymentService();
             
             // Use booking code as reference
             const reference = `LQ-${booking.booking_code}-${Date.now()}`;
             
-            logger.info(`💳 Initializing Paystack for Love Quest ${booking.booking_code}, amount: ${amount}`);
+            logger.info(`💳 Generating Paystack link for booking ${booking.booking_code}, amount: ${amount}`);
             
-            // Initialize Paystack transaction using paystack-api
-            const response = await paystack.transaction.initialize({
+            // Initialize Paystack transaction using PaymentService's paystack instance
+            const response = await paymentService.paystack.transaction.initialize({
                 email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
                 amount: Math.round(amount * 100), // Paystack uses kobo
                 reference,
@@ -1384,7 +1389,7 @@ class LoveQuestService {
                     WHERE id = $3
                 `, [reference, response.data.access_code, bookingId]);
                 
-                logger.info(`💳 Paystack link generated: ${response.data.authorization_url}`);
+                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${response.data.authorization_url}`);
                 
                 return response.data.authorization_url;
             }
@@ -1561,12 +1566,17 @@ class LoveQuestService {
     }
 
     // Get media by purpose
-    async getMediaByPurpose(bookingId, purpose) {
+    async getMediaByPurpose(bookingId, purpose, mediaType = null) {
         try {
-            const result = await pool.query(
-                'SELECT * FROM love_quest_media WHERE booking_id = $1 AND media_purpose = $2',
-                [bookingId, purpose]
-            );
+            let query = 'SELECT * FROM love_quest_media WHERE booking_id = $1 AND media_purpose = $2';
+            const params = [bookingId, purpose];
+            
+            if (mediaType) {
+                query += ' AND media_type = $3';
+                params.push(mediaType);
+            }
+            
+            const result = await pool.query(query, params);
             return result.rows[0] || null;
         } catch (error) {
             logger.error('Error getting media by purpose:', error);
