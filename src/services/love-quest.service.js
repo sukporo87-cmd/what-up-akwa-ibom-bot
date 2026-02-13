@@ -1618,23 +1618,49 @@ class LoveQuestService {
             const fileName = `${bookingId}_${purpose}_${Date.now()}${ext}`;
             const filePath = path.join(this.uploadDir, fileName);
             
+            logger.info(`🎬 Admin upload: type=${mediaType}, purpose=${purpose}, bufferSize=${fileBuffer.length}, originalName=${originalName}`);
+            
             if (mediaType === 'video') {
-                // Save original file temporarily
-                const tempPath = path.join(this.uploadDir, `temp_${Date.now()}_${originalName}`);
+                // Save original file temporarily (sanitize filename to avoid path issues)
+                const safeName = `temp_${bookingId}_${Date.now()}`;
+                const tempPath = path.join(this.uploadDir, safeName);
                 fs.writeFileSync(tempPath, fileBuffer);
                 
-                // Convert to WhatsApp-compatible MP4 (H.264 + AAC)
+                const tempStats = fs.statSync(tempPath);
+                logger.info(`🎬 Temp file saved: ${tempPath}, size=${tempStats.size}`);
+                
+                // Probe the original file
                 const { execSync } = require('child_process');
                 try {
-                    execSync(
-                        `ffmpeg -i "${tempPath}" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart -y "${filePath}"`,
-                        { timeout: 60000 }
+                    const probe = execSync(`ffprobe -v error -show_entries format=format_name,duration -show_entries stream=codec_name,codec_type,width,height -of json "${tempPath}"`, { timeout: 10000 });
+                    logger.info(`🎬 Original file probe: ${probe.toString().trim()}`);
+                } catch (probeErr) {
+                    logger.warn(`⚠️ Original file probe failed: ${probeErr.message}`);
+                }
+                
+                // Convert to WhatsApp-compatible MP4 (H.264 + AAC)
+                try {
+                    const output = execSync(
+                        `ffmpeg -i "${tempPath}" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart -y "${filePath}" 2>&1`,
+                        { timeout: 120000 }
                     );
-                    logger.info(`🎬 Video converted to WhatsApp-compatible MP4: ${fileName}`);
+                    logger.info(`🎬 ffmpeg output: ${output.toString().substring(0, 500)}`);
+                    
+                    const convertedStats = fs.statSync(filePath);
+                    logger.info(`🎬 Converted file: ${filePath}, size=${convertedStats.size}`);
+                    
+                    // Probe converted file
+                    try {
+                        const convertedProbe = execSync(`ffprobe -v error -show_entries stream=codec_name,codec_type,width,height -of json "${filePath}"`, { timeout: 10000 });
+                        logger.info(`🎬 Converted file probe: ${convertedProbe.toString().trim()}`);
+                    } catch (e) {
+                        logger.warn(`⚠️ Converted file probe failed: ${e.message}`);
+                    }
                 } catch (ffmpegErr) {
-                    logger.warn('⚠️ ffmpeg conversion failed, saving original file:', ffmpegErr.message);
+                    logger.error(`❌ ffmpeg conversion failed: ${ffmpegErr.stdout?.toString() || ffmpegErr.message}`);
                     // Fallback: save original file as-is
                     fs.copyFileSync(tempPath, filePath);
+                    logger.warn('⚠️ Using original unconverted file as fallback');
                 }
                 
                 // Clean up temp file
