@@ -145,10 +145,11 @@ class LoveQuestService {
     async getBooking(bookingIdOrCode) {
         try {
             console.log(`[LoveQuestService] getBooking called with: ${bookingIdOrCode}`);
-            const isCode = typeof bookingIdOrCode === 'string' && bookingIdOrCode.startsWith('LQ-');
-            const query = isCode
-                ? 'SELECT * FROM love_quest_bookings WHERE booking_code = $1'
-                : 'SELECT * FROM love_quest_bookings WHERE id = $1';
+            // Detect if it's a numeric ID or a booking code string
+            const isNumericId = !isNaN(bookingIdOrCode) && Number.isInteger(Number(bookingIdOrCode));
+            const query = isNumericId
+                ? 'SELECT * FROM love_quest_bookings WHERE id = $1'
+                : 'SELECT * FROM love_quest_bookings WHERE booking_code = $1';
             
             console.log(`[LoveQuestService] Running query: ${query}`);
             const result = await pool.query(query, [bookingIdOrCode]);

@@ -25,8 +25,8 @@ app.use(helmet({
 }));
 app.use(cors());
 app.use(morgan('combined'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Serve static files from views directory (for admin dashboard)
 app.use(express.static(path.join(__dirname, 'views')));
