@@ -1618,7 +1618,30 @@ class LoveQuestService {
             const fileName = `${bookingId}_${purpose}_${Date.now()}${ext}`;
             const filePath = path.join(this.uploadDir, fileName);
             
-            fs.writeFileSync(filePath, fileBuffer);
+            if (mediaType === 'video') {
+                // Save original file temporarily
+                const tempPath = path.join(this.uploadDir, `temp_${Date.now()}_${originalName}`);
+                fs.writeFileSync(tempPath, fileBuffer);
+                
+                // Convert to WhatsApp-compatible MP4 (H.264 + AAC)
+                const { execSync } = require('child_process');
+                try {
+                    execSync(
+                        `ffmpeg -i "${tempPath}" -c:v libx264 -profile:v baseline -level 3.0 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart -y "${filePath}"`,
+                        { timeout: 60000 }
+                    );
+                    logger.info(`🎬 Video converted to WhatsApp-compatible MP4: ${fileName}`);
+                } catch (ffmpegErr) {
+                    logger.warn('⚠️ ffmpeg conversion failed, saving original file:', ffmpegErr.message);
+                    // Fallback: save original file as-is
+                    fs.copyFileSync(tempPath, filePath);
+                }
+                
+                // Clean up temp file
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            } else {
+                fs.writeFileSync(filePath, fileBuffer);
+            }
             
             const result = await pool.query(`
                 INSERT INTO love_quest_media (booking_id, media_type, media_purpose, file_path, mime_type, uploaded_by, original_filename)
