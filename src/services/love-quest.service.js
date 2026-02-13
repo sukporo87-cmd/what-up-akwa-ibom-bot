@@ -1694,9 +1694,22 @@ class LoveQuestService {
                 logger.warn('Video file not found:', filePath);
                 return false;
             }
+            const stats = fs.statSync(filePath);
+            logger.info(`🎬 sendVideo: file=${filePath}, size=${stats.size} bytes`);
+            
+            // Verify the file is a valid video by checking with ffmpeg
+            const { execSync } = require('child_process');
+            try {
+                const probe = execSync(`ffprobe -v error -show_entries format=format_name,duration -show_entries stream=codec_name,codec_type,width,height -of json "${filePath}"`, { timeout: 10000 });
+                logger.info(`🎬 Video probe: ${probe.toString().trim()}`);
+            } catch (probeErr) {
+                logger.warn(`⚠️ ffprobe failed: ${probeErr.message}`);
+            }
+            
             const MessagingService = require('./messaging.service');
             const messagingService = new MessagingService();
             const videoBuffer = fs.readFileSync(filePath);
+            logger.info(`🎬 Sending ${videoBuffer.length} byte video buffer to ${phone}`);
             await messagingService.sendVideo(phone, videoBuffer);
             return true;
         } catch (error) {
