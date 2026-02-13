@@ -86,6 +86,46 @@ async function setupTelegramWebhook() {
   }
 }
 
+// ============================================
+// LOVE QUEST SCHEDULED SEND PROCESSOR
+// Checks every 60 seconds for bookings due to send
+// ============================================
+async function startScheduledSendProcessor() {
+  const MessagingService = require('./services/messaging.service');
+  const loveQuestService = require('./services/love-quest.service');
+  const pool = require('./config/database');
+
+  const messagingService = new MessagingService();
+
+  setInterval(async () => {
+    try {
+      const result = await pool.query(`
+        SELECT id FROM love_quest_bookings 
+        WHERE status = 'scheduled' 
+        AND scheduled_send_at <= NOW()
+        AND scheduled_send_at > NOW() - INTERVAL '1 hour'
+      `);
+
+      if (result.rows.length === 0) return;
+
+      console.log(`💘 Processing ${result.rows.length} scheduled Love Quest invitation(s)...`);
+
+      for (const row of result.rows) {
+        try {
+          await loveQuestService.sendInvitation(row.id, messagingService);
+          console.log(`✅ Scheduled invitation sent: booking ${row.id}`);
+        } catch (err) {
+          console.error(`❌ Failed to send scheduled invitation ${row.id}:`, err.message);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in scheduled send processor:', error.message);
+    }
+  }, 60000); // Check every 60 seconds
+
+  console.log('✅ Love Quest scheduled send processor started (60s interval)');
+}
+
 // Start server
 app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`);
@@ -106,6 +146,9 @@ app.listen(PORT, async () => {
   if (process.env.TELEGRAM_ENABLED === 'true') {
     console.log(`   Telegram: ✅ Active`);
   }
+
+  // Start Love Quest scheduled send processor
+  startScheduledSendProcessor();
 });
 
 module.exports = app;
