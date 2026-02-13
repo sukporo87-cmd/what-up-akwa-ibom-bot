@@ -2751,19 +2751,19 @@ You can now claim your prize! 💰
       }
       
       const session = await loveQuestService.startSession(booking, phone);
-      const creatorName = booking.creator_name || 'Your special someone';
+      const creatorName = booking.creator_name || (booking.language === 'es' ? 'Tu persona especial' : 'Your special someone');
+      const { getTranslations } = require('../config/love-quest-i18n');
+      const t = getTranslations(booking.language);
       
-      let welcomeMsg = `💘 *LOVE QUEST BEGINS!* 💘\n\n`;
-      welcomeMsg += `${creatorName} has prepared ${booking.question_count} questions about your relationship.\n\n`;
-      welcomeMsg += `🎯 Answer correctly to earn Love Points\n`;
-      welcomeMsg += `🎁 Unlock prizes along the way\n`;
-      welcomeMsg += `✨ A grand surprise awaits at the end!\n\n`;
+      let welcomeMsg = `${t.welcome_title}\n\n`;
+      welcomeMsg += `${t.welcome_body(creatorName, booking.question_count)}\n\n`;
+      welcomeMsg += `${t.welcome_rules}\n\n`;
       
       if (booking.allow_retries) {
-        welcomeMsg += `💡 Don't worry - you get ${booking.max_retries_per_question || 2} tries per question!\n\n`;
+        welcomeMsg += `${t.welcome_retries(booking.max_retries_per_question || 2)}\n\n`;
       }
       
-      welcomeMsg += `Ready? Here comes the first question... 💕`;
+      welcomeMsg += t.welcome_ready;
       
       await messagingService.sendMessage(phone, welcomeMsg);
       
@@ -2774,7 +2774,7 @@ You can now claim your prize! 💰
       if (introVideo && introVideo.file_path && fs.existsSync(introVideo.file_path)) {
         logger.info(`🎬 Sending intro video for booking ${booking.id}`);
         await new Promise(resolve => setTimeout(resolve, 1500));
-        await messagingService.sendMessage(phone, `🎬 *${creatorName} has a video message for you:*`);
+        await messagingService.sendMessage(phone, t.video_message(creatorName));
         await loveQuestService.sendVideo(phone, introVideo.file_path);
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
@@ -2784,7 +2784,7 @@ You can now claim your prize! 💰
       if (introAudio && introAudio.file_path && fs.existsSync(introAudio.file_path)) {
         logger.info(`🎤 Sending intro voice note for booking ${booking.id}`);
         await new Promise(resolve => setTimeout(resolve, 1500));
-        await messagingService.sendMessage(phone, `🎤 *${creatorName} has a voice message for you:*`);
+        await messagingService.sendMessage(phone, t.voice_message(creatorName));
         await loveQuestService.sendVoiceNote(phone, introAudio.file_path);
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
@@ -2805,7 +2805,7 @@ You can now claim your prize! 💰
       
     } catch (error) {
       logger.error('Error starting Love Quest:', error);
-      await messagingService.sendMessage(phone, `❌ Sorry, there was an error starting your Love Quest. Please try again by replying START.`);
+      await messagingService.sendMessage(phone, `❌ Sorry, there was an error starting your Love Quest. Please try again by replying START. / Lo siento, hubo un error. Intenta de nuevo respondiendo START.`);
     }
   }
 
@@ -2903,7 +2903,7 @@ You can now claim your prize! 💰
     }
     
     const selectedPackage = packages[packageIndex];
-    const isInternational = selectedPackage.package_code === 'international';
+    const isInternational = selectedPackage.package_code === 'international' || selectedPackage.package_code === 'international_es';
     const currency = isInternational ? 'USD' : 'NGN';
     const priceDisplay = isInternational 
       ? `$${parseFloat(selectedPackage.base_price)}` 
@@ -2917,24 +2917,40 @@ You can now claim your prize! 💰
     
     let msg = `✅ ${selectedPackage.package_name} selected!\n`;
     msg += `💰 Price: ${priceDisplay}\n\n`;
-    msg += `Now, please enter your partner's phone number:\n`;
-    msg += `(Format: 08012345678 or with country code)`;
+    
+    if (isInternational) {
+      msg += `Now, please enter your partner's phone number with country code:\n`;
+      msg += `(Example: +521234567890)`;
+    } else {
+      msg += `Now, please enter your partner's phone number:\n`;
+      msg += `(Format: 08012345678 or with country code)`;
+    }
     
     await messagingService.sendMessage(phone, msg);
   }
 
   async handleLoveQuestPlayerPhone(phone, message, userState) {
     let playerPhone = message.trim().replace(/\D/g, '');
+    const isInternational = userState.data?.package === 'international' || userState.data?.package === 'international_es';
     
-    if (playerPhone.startsWith('0')) {
-      playerPhone = '234' + playerPhone.substring(1);
-    } else if (!playerPhone.startsWith('234')) {
-      playerPhone = '234' + playerPhone;
-    }
-    
-    if (playerPhone.length < 13) {
-      await messagingService.sendMessage(phone, `⚠️ Please enter a valid phone number\n(Format: 08012345678)`);
-      return;
+    if (isInternational) {
+      // International: accept any phone with country code, minimum 10 digits
+      if (playerPhone.length < 10) {
+        await messagingService.sendMessage(phone, `⚠️ Please enter a valid phone number with country code\n(Example: +521234567890)`);
+        return;
+      }
+    } else {
+      // Nigeria: normalize to 234 format
+      if (playerPhone.startsWith('0')) {
+        playerPhone = '234' + playerPhone.substring(1);
+      } else if (!playerPhone.startsWith('234')) {
+        playerPhone = '234' + playerPhone;
+      }
+      
+      if (playerPhone.length < 13) {
+        await messagingService.sendMessage(phone, `⚠️ Please enter a valid phone number\n(Format: 08012345678)`);
+        return;
+      }
     }
     
     // Save player phone and ask for their name

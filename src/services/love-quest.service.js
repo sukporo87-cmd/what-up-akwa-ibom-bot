@@ -7,6 +7,7 @@
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
+const { getTranslations } = require('../config/love-quest-i18n');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -79,8 +80,8 @@ class LoveQuestService {
             
             const pkg = packageResult.rows[0];
             
-            // Normalize phone numbers (skip for international package)
-            const isInternational = packageCode === 'international';
+            // Normalize phone numbers (skip for international packages)
+            const isInternational = packageCode === 'international' || packageCode === 'international_es';
             const normalizedCreatorPhone = this.normalizePhone(creatorPhone, isInternational);
             const normalizedPlayerPhone = this.normalizePhone(playerPhone, isInternational);
             
@@ -96,13 +97,16 @@ class LoveQuestService {
                 [normalizedCreatorPhone]
             );
             
+            // Determine language from package
+            const language = pkg.language || 'en';
+            
             // Create booking with normalized phone numbers
             const result = await pool.query(`
                 INSERT INTO love_quest_bookings (
                     booking_code, package, base_price, creator_phone, creator_name,
                     creator_user_id, player_phone, player_name, question_count,
-                    treasure_hunt_enabled, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+                    treasure_hunt_enabled, status, language
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)
                 RETURNING *
             `, [
                 bookingCode,
@@ -114,7 +118,8 @@ class LoveQuestService {
                 normalizedPlayerPhone,
                 playerName,
                 pkg.question_count,
-                pkg.treasure_hunt
+                pkg.treasure_hunt,
+                language
             ]);
             
             const booking = result.rows[0];
@@ -575,19 +580,20 @@ class LoveQuestService {
             
             const questionCount = booking.question_count;
             const timeout = question.custom_timeout_seconds || booking.timeout_seconds || 45;
+            const t = getTranslations(booking.language);
             
             // Build question message
-            let message = `💕 Question ${session.current_question} of ${questionCount}\n\n`;
+            let message = `${t.question_header(session.current_question, questionCount)}\n\n`;
             message += `${question.question_text}\n\n`;
             message += `A) ${question.option_a}\n`;
             message += `B) ${question.option_b}\n`;
             if (question.option_c) message += `C) ${question.option_c}\n`;
             if (question.option_d) message += `D) ${question.option_d}\n`;
-            message += `\n⏱️ Take your time, love... (${timeout}s)`;
+            message += `\n${t.question_timer(timeout)}`;
             
             // Add hint option if available
             if (question.hint_text) {
-                message += `\n\n💡 Type HINT if you need help`;
+                message += `\n\n${t.question_hint}`;
             }
             
             await messagingService.sendMessage(session.player_phone, message);
@@ -650,17 +656,21 @@ class LoveQuestService {
                 const pointsTable = LOVE_POINTS[booking.question_count] || LOVE_POINTS[10];
                 const points = pointsTable[session.current_question] || 50;
                 const newScore = Math.min(session.score + points, 1000); // Cap at 1000
+                const t = getTranslations(booking.language);
                 
                 // Build correct response
-                let message = question.correct_response || `✅ YES! That's right! 🎉\n\n`;
-                message += `💕 Love Points: ${newScore}/1000\n`;
+                let message = question.correct_response || t.correct_default;
+                message += `${t.love_points(newScore)}\n`;
                 
                 // Check for milestone prize
                 if (question.milestone_prize_text) {
-                    message += `\n🎁 Prize Unlocked: ${question.milestone_prize_text}\n`;
+                    message += `\n${t.prize_unlocked(question.milestone_prize_text)}\n`;
                 }
                 if (question.milestone_prize_cash > 0) {
-                    message += `💰 Cash: ₦${question.milestone_prize_cash.toLocaleString()}\n`;
+                    const cashDisplay = booking.language === 'es' 
+                        ? `$${question.milestone_prize_cash.toLocaleString()}`
+                        : `₦${question.milestone_prize_cash.toLocaleString()}`;
+                    message += `💰 ${cashDisplay}\n`;
                 }
                 
                 await messagingService.sendMessage(session.player_phone, message);
@@ -701,7 +711,7 @@ class LoveQuestService {
                     if (milestoneMedia && milestoneMedia.file_path && fs.existsSync(milestoneMedia.file_path)) {
                         await new Promise(r => setTimeout(r, 1500));
                         await messagingService.sendMessage(session.player_phone, 
-                            `🎉 *MILESTONE ${currentQ} REACHED!*\n\n${booking.creator_name || 'Your love'} has something special for you...`
+                            t.milestone_reached(currentQ, booking.creator_name || (booking.language === 'es' ? 'Tu amor' : 'Your love'))
                         );
                         await new Promise(r => setTimeout(r, 1000));
                         
@@ -715,7 +725,7 @@ class LoveQuestService {
                         if (!isComplete) {
                             await new Promise(r => setTimeout(r, 3000));
                             await messagingService.sendMessage(session.player_phone, 
-                                `💕 Ready to continue?\n\nReply *NEXT* for the next question!`
+                                t.milestone_continue
                             );
                             
                             // Set waiting state
@@ -762,17 +772,18 @@ class LoveQuestService {
             } else {
                 // Wrong answer
                 const canRetry = booking.allow_retries && currentRetries < (booking.max_retries_per_question || 2);
+                const t = getTranslations(booking.language);
                 
                 // Get appropriate wrong response
                 let wrongResponse = question[`wrong_response_${answer.toLowerCase()}`] 
                     || question.generic_wrong_response
-                    || this.getDefaultWrongResponse(booking.player_name || 'love');
+                    || this.getDefaultWrongResponse(booking.player_name || (booking.language === 'es' ? 'amor' : 'love'), booking.language);
                 
                 let message = wrongResponse + '\n\n';
                 
                 if (canRetry) {
-                    message += `💪 Don't give up! Try again...\n`;
-                    message += `(${booking.max_retries_per_question - currentRetries - 1} tries left)`;
+                    message += `${t.wrong_retry}\n`;
+                    message += t.wrong_tries_left(booking.max_retries_per_question - currentRetries - 1);
                     
                     // Update retry count
                     retries[session.current_question] = currentRetries + 1;
@@ -782,14 +793,14 @@ class LoveQuestService {
                     );
                 } else {
                     // No more retries - reveal answer and continue
-                    message += `The answer was: ${question.correct_answer}) `;
+                    message += `${t.wrong_answer_was} ${question.correct_answer}) `;
                     switch (question.correct_answer) {
                         case 'A': message += question.option_a; break;
                         case 'B': message += question.option_b; break;
                         case 'C': message += question.option_c; break;
                         case 'D': message += question.option_d; break;
                     }
-                    message += `\n\n💕 It's okay, love conquers all! Let's continue...`;
+                    message += `\n\n${t.wrong_continue}`;
                     
                     // Move to next question
                     const nextQuestion = session.current_question + 1;
@@ -834,6 +845,7 @@ class LoveQuestService {
 
     async sendTreasureClue(session, question, messagingService) {
         try {
+            // Note: booking not passed here, so we default to English for treasure hunts
             let message = `🗺️ TREASURE HUNT CLUE\n\n`;
             message += `${question.treasure_clue}\n\n`;
             if (question.treasure_location_hint) {
@@ -878,18 +890,13 @@ class LoveQuestService {
     async sendHint(session, booking, messagingService) {
         try {
             const question = await this.getQuestion(booking.id, session.current_question);
+            const t = getTranslations(booking.language);
             if (!question || !question.hint_text) {
-                await messagingService.sendMessage(
-                    session.player_phone,
-                    `💭 No hint available for this one... Trust your heart! 💕`
-                );
+                await messagingService.sendMessage(session.player_phone, t.no_hint);
                 return;
             }
             
-            await messagingService.sendMessage(
-                session.player_phone,
-                `💡 HINT: ${question.hint_text}\n\nNow give it another shot! 💕`
-            );
+            await messagingService.sendMessage(session.player_phone, t.hint_prefix(question.hint_text));
             
         } catch (error) {
             logger.error('Error sending hint:', error);
@@ -922,19 +929,20 @@ class LoveQuestService {
             session.score = cappedScore;
             
             // Send completion message
-            let message = `🎊 CONGRATULATIONS! 🎊\n\n`;
-            message += `You completed the Love Quest!\n\n`;
-            message += `💕 Final Score: ${cappedScore}/1000 Love Points\n\n`;
+            const t = getTranslations(booking.language);
+            let message = `${t.completion_title}\n\n`;
+            message += `${t.completion_body}\n\n`;
+            message += `${t.completion_score(cappedScore)}\n\n`;
             
             // Rating based on score
             if (cappedScore >= 900) {
-                message += `🏆 PERFECT LOVE! You know your partner inside out! 💕\n\n`;
+                message += `${t.rating_perfect}\n\n`;
             } else if (cappedScore >= 700) {
-                message += `❤️ DEEPLY IN LOVE! Your bond is strong! 💕\n\n`;
+                message += `${t.rating_deep}\n\n`;
             } else if (cappedScore >= 500) {
-                message += `💛 GROWING LOVE! Every day brings you closer! 💕\n\n`;
+                message += `${t.rating_growing}\n\n`;
             } else {
-                message += `💗 LOVE IN BLOOM! Time to make more memories! 💕\n\n`;
+                message += `${t.rating_bloom}\n\n`;
             }
             
             await messagingService.sendMessage(session.player_phone, message);
@@ -956,29 +964,30 @@ class LoveQuestService {
 
     async sendGrandReveal(session, booking, messagingService) {
         try {
-            const playerName = booking.player_name || 'My Love';
-            const creatorName = booking.creator_name || 'Your Special Someone';
+            const playerName = booking.player_name || (booking.language === 'es' ? 'Mi Amor' : 'My Love');
+            const creatorName = booking.creator_name || (booking.language === 'es' ? 'Tu Persona Especial' : 'Your Special Someone');
             const finalScore = Math.min(session.score || 0, 1000); // Cap at 1000
+            const t = getTranslations(booking.language);
             
             // Pause for dramatic effect
             await new Promise(resolve => setTimeout(resolve, 3000));
             
             // Part 1: Build anticipation
             await messagingService.sendMessage(session.player_phone, 
-                `✨ *The moment you've been waiting for...* ✨`
+                t.grand_reveal_anticipation
             );
             
             await new Promise(resolve => setTimeout(resolve, 2500));
             
             // Part 2: Romantic poem based on score
-            const poem = this.generateLovePoem(playerName, creatorName, finalScore);
+            const poem = this.generateLovePoem(playerName, creatorName, finalScore, booking.language);
             await messagingService.sendMessage(session.player_phone, poem);
             
             await new Promise(resolve => setTimeout(resolve, 3000));
             
             // Part 3: Personal message from creator
             if (booking.grand_reveal_text) {
-                let personalMsg = `💌 *A Message From ${creatorName}:*\n\n`;
+                let personalMsg = `${t.grand_reveal_personal(creatorName)}\n\n`;
                 personalMsg += `┏━━━━━━━━━━━━━━━━━━━┓\n\n`;
                 personalMsg += `"${booking.grand_reveal_text}"\n\n`;
                 personalMsg += `┗━━━━━━━━━━━━━━━━━━━┛`;
@@ -990,7 +999,7 @@ class LoveQuestService {
             // Part 4: Voice note (the most personal touch)
             if (booking.grand_reveal_audio_url && fs.existsSync(booking.grand_reveal_audio_url)) {
                 await messagingService.sendMessage(session.player_phone, 
-                    `🎤 *${creatorName} recorded something special for you...*`
+                    t.voice_special(creatorName)
                 );
                 await new Promise(resolve => setTimeout(resolve, 1500));
                 await this.sendVoiceNote(session.player_phone, booking.grand_reveal_audio_url);
@@ -1003,14 +1012,9 @@ class LoveQuestService {
             }
             
             // Part 6: Final celebration message
-            let finalMsg = `\n🎊✨💕 *LOVE WINS!* 💕✨🎊\n\n`;
-            finalMsg += `You scored *${finalScore}/1000* Love Points!\n\n`;
-            finalMsg += `This Love Quest was created with love by ${creatorName}\n`;
-            finalMsg += `just for you, ${playerName}. 💘\n\n`;
-            finalMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-            finalMsg += `_Powered by What's Up Trivia_\n`;
-            finalMsg += `_Create your own Love Quest:_\n`;
-            finalMsg += `_Send "LOVE QUEST" to get started!_`;
+            let finalMsg = `${t.grand_reveal_final_title}\n\n`;
+            finalMsg += `${t.grand_reveal_final_body(finalScore, creatorName, playerName)}\n\n`;
+            finalMsg += t.grand_reveal_footer;
             
             await messagingService.sendMessage(session.player_phone, finalMsg);
             
@@ -1028,37 +1032,12 @@ class LoveQuestService {
         }
     }
 
-    generateLovePoem(playerName, creatorName, score) {
-        // Different poems based on score
-        if (score >= 900) {
-            return `💕 *For ${playerName}* 💕\n\n` +
-                `Every answer proved what I already knew,\n` +
-                `That no one knows my heart quite like you.\n` +
-                `Through every question, every memory we share,\n` +
-                `You showed the world how much you care.\n\n` +
-                `*Perfect score. Perfect love. Perfect you.* 💘`;
-        } else if (score >= 700) {
-            return `💕 *For ${playerName}* 💕\n\n` +
-                `Some answers right, a few went astray,\n` +
-                `But love isn't measured that way.\n` +
-                `What matters most is you took this chance,\n` +
-                `To celebrate our beautiful romance.\n\n` +
-                `*Love isn't perfect, but ours is true.* 💘`;
-        } else if (score >= 500) {
-            return `💕 *For ${playerName}* 💕\n\n` +
-                `The questions were hard, the memories deep,\n` +
-                `Some got away, but our love we'll keep.\n` +
-                `Every wrong answer is a story to make,\n` +
-                `Another memory for our love's sake.\n\n` +
-                `*More memories to create together.* 💘`;
-        } else {
-            return `💕 *For ${playerName}* 💕\n\n` +
-                `You may not remember every little thing,\n` +
-                `But that's not what makes a heart sing.\n` +
-                `Love is about the moments yet to come,\n` +
-                `And with you, my heart is never numb.\n\n` +
-                `*Let's make memories you'll never forget.* 💘`;
-        }
+    generateLovePoem(playerName, creatorName, score, language = 'en') {
+        const t = getTranslations(language);
+        if (score >= 900) return t.poem_perfect(playerName, creatorName);
+        if (score >= 700) return t.poem_deep(playerName);
+        if (score >= 500) return t.poem_growing(playerName);
+        return t.poem_bloom(playerName);
     }
 
     async handleCashPrizeReveal(session, booking, messagingService) {
@@ -1187,15 +1166,13 @@ class LoveQuestService {
             
             logger.info(`📞 Normalized player phone: ${playerPhone}`);
             
-            const creatorName = booking.creator_name || 'Someone special';
+            const creatorName = booking.creator_name || (booking.language === 'es' ? 'Alguien especial' : 'Someone special');
+            const t = getTranslations(booking.language);
             
-            let message = `💘 *You've Been Challenged!* 💘\n\n`;
-            message += `${creatorName} has created a special Love Quest just for you!\n\n`;
-            message += `🎮 Answer questions about your relationship\n`;
-            message += `🎁 Win prizes at every milestone\n`;
-            message += `✨ A special surprise awaits at the end...\n\n`;
-            message += `Are you ready to prove your love? 💕\n\n`;
-            message += `Reply *START* to begin your quest!`;
+            let message = `${t.invitation_title}\n\n`;
+            message += `${t.invitation_body(creatorName)}\n\n`;
+            message += `${t.invitation_features}\n\n`;
+            message += t.invitation_cta;
             
             const sendResult = await messagingService.sendMessage(playerPhone, message);
             logger.info(`📤 Invitation send result:`, sendResult);
@@ -1232,14 +1209,9 @@ class LoveQuestService {
     // HELPERS
     // ============================================
 
-    getDefaultWrongResponse(playerName) {
-        const responses = [
-            `😤 ${playerName}! Really?! How could you forget that?!\n\nBut... I still love you. 💕`,
-            `😢 Ouch! That wasn't it...\n\nI'm not mad, just... disappointed. 💔\n\nJust kidding! Try again, love!`,
-            `🙈 Nooo! That's not right!\n\nWe need to make more memories together! 💕`,
-            `😅 Wrong answer, but I'll forgive you...\n\nYou're lucky you're cute! 💕`,
-            `💔 *dramatically clutches heart*\n\nHow could you?!\n\n...I'm over it. Let's continue! 😘`
-        ];
+    getDefaultWrongResponse(playerName, language = 'en') {
+        const t = getTranslations(language);
+        const responses = t.wrong_responses(playerName);
         return responses[Math.floor(Math.random() * responses.length)];
     }
 
