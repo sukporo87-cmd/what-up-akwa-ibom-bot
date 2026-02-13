@@ -733,6 +733,15 @@ Type the code, or type SKIP to continue:`
     switch(input) {
       case '1':
         // Free Play - Practice Mode (only checks suspension, allows during cooldown/limit)
+        
+        // Check 15 games per hour rate limit
+        const practiceRateLimit = await antiFraudService.checkGameRateLimit(user.id);
+        if (!practiceRateLimit.allowed) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, practiceRateLimit.message);
+          return;
+        }
+        
         await userService.clearUserState(user.phone_number);
         await messagingService.sendMessage(
           user.phone_number,
@@ -772,6 +781,14 @@ Type the code, or type SKIP to continue:`
         if (!tournamentRestriction.canPlay) {
           await userService.clearUserState(user.phone_number);
           await messagingService.sendMessage(user.phone_number, tournamentRestriction.message);
+          return;
+        }
+        
+        // Check 15 games per hour rate limit
+        const tournamentRateLimit = await antiFraudService.checkGameRateLimit(user.id);
+        if (!tournamentRateLimit.allowed) {
+          await userService.clearUserState(user.phone_number);
+          await messagingService.sendMessage(user.phone_number, tournamentRateLimit.message);
           return;
         }
         
