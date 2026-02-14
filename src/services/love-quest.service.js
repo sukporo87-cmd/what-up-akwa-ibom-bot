@@ -553,7 +553,7 @@ class LoveQuestService {
                        b.timeout_seconds, b.allow_retries, b.max_retries_per_question,
                        b.treasure_hunt_enabled, b.grand_reveal_text, b.grand_reveal_audio_url,
                        b.grand_reveal_cash_prize, b.creator_name, b.creator_phone, 
-                       b.player_name, b.media, b.intro_video_url
+                       b.player_name, b.media, b.intro_video_url, b.language
                 FROM love_quest_sessions s
                 JOIN love_quest_bookings b ON s.booking_id = b.id
                 WHERE s.player_phone = $1 AND s.status = 'active'
@@ -1043,10 +1043,11 @@ class LoveQuestService {
     async handleCashPrizeReveal(session, booking, messagingService) {
         try {
             const amount = parseFloat(booking.grand_reveal_cash_prize);
+            const t = getTranslations(booking.language);
+            const amountDisplay = booking.language === 'es' ? amount.toLocaleString() : amount.toLocaleString();
             
-            let prizeMsg = `\n💰✨ *GRAND PRIZE UNLOCKED!* ✨💰\n\n`;
-            prizeMsg += `${booking.creator_name || 'Your love'} has gifted you:\n\n`;
-            prizeMsg += `💵 *₦${amount.toLocaleString()}*\n\n`;
+            let prizeMsg = `${t.cash_prize_title}\n\n`;
+            prizeMsg += `${t.cash_prize_body(booking.creator_name || (booking.language === 'es' ? 'Tu amor' : 'Your love'), amountDisplay)}\n\n`;
             
             // Check if player has a registered account with bank details
             const playerResult = await pool.query(
@@ -1070,8 +1071,7 @@ class LoveQuestService {
                     VALUES ($1, $2, 'love_quest_prize', 'confirmed', $3)
                 `, [playerId, amount, `Love Quest prize from booking ${booking.booking_code}`]);
                 
-                prizeMsg += `✅ *Added to your What's Up Trivia wallet!*\n`;
-                prizeMsg += `You can claim it anytime by sending CLAIM.\n\n`;
+                prizeMsg += `${t.cash_prize_wallet}\n\n`;
                 
                 await this.logAuditEvent(booking.id, session.id, 'cash_prize_credited', {
                     amount, playerId, method: 'wallet'
@@ -1079,10 +1079,7 @@ class LoveQuestService {
                 
             } else {
                 // Player doesn't have account - give instructions
-                prizeMsg += `To claim your prize:\n`;
-                prizeMsg += `1️⃣ Register on What's Up Trivia (send "Hello")\n`;
-                prizeMsg += `2️⃣ Add your bank details\n`;
-                prizeMsg += `3️⃣ Send CLAIM to withdraw\n\n`;
+                prizeMsg += `${t.cash_prize_instructions}\n\n`;
                 prizeMsg += `Or contact us with code: *${booking.booking_code}*\n`;
                 
                 // Store unclaimed prize
