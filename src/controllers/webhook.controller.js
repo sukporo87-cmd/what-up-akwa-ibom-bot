@@ -357,6 +357,15 @@ class WebhookController {
       }
 
       // ===================================
+      // PRIORITY 8.7: HELP COMMAND
+      // Allow "HELP" keyword to work anytime
+      // ===================================
+      if (input === 'HELP' || input === 'COMMANDS') {
+        await this.sendHelpMenu(user.phone_number);
+        return;
+      }
+
+      // ===================================
       // PRIORITY 9: ACTIVE GAME SESSION
       // ===================================
       const activeSession = await gameService.getActiveSession(user.id);
@@ -661,7 +670,6 @@ Type the code, or type SKIP to continue:`
     welcomeMsg += `\n🔗 Your referral code: *${user.referral_code}*\n`;
     welcomeMsg += `Share it! Every 3 friends = 1 FREE GAME for you! 💰\n\n`;
     welcomeMsg += `_Proudly brought to you by SummerIsland Systems._\n\n`;
-    welcomeMsg += `🎆 Happy New Year! 🎆\n\n`;
 
     if (isPaymentEnabled) {
       const gamesRemaining = referrerId ? 1 : 0;
@@ -1148,6 +1156,12 @@ Type the code, or type SKIP to continue:`
       return;
     }
 
+    // HELP command
+    if (input === 'HELP' || input === 'COMMANDS') {
+      await this.sendHelpMenu(user.phone_number);
+      return;
+    }
+
     // ACHIEVEMENTS command
     if (input === 'ACHIEVEMENTS' || input === 'BADGES' || input.includes('ACHIEVEMENT')) {
       await this.handleAchievementsCommand(user);
@@ -1244,7 +1258,6 @@ Type the code, or type SKIP to continue:`
       }
 
       welcomeMessage += `_Proudly brought to you by SummerIsland Systems._\n\n`;
-      welcomeMessage += `🎆 Happy New Year! 🎆\n\n`;
       welcomeMessage += `What would you like to do?\n\n`;
       welcomeMessage += `1️⃣ Play Now\n`;
       welcomeMessage += `2️⃣ How to Play\n`;
@@ -2092,7 +2105,7 @@ Type the code, or type SKIP to continue:`
         user.phone_number,
         `✅ PAYMENT CONFIRMED!\n\n` +
         `Thank you for confirming receipt of ₦${parseFloat(transaction.amount).toLocaleString()}!\n\n` +
-        `We're glad you received it safely. 🎉\n\n` +
+        `We're glad you received it without hitch. 🎉\n\n` +
         `Keep playing to win more! 🏆\n\n` +
         `Type PLAY to start a new game.`
       );
@@ -2334,6 +2347,7 @@ Type the code, or type SKIP to continue:`
 
     message += '\nType STREAK to see streak leaderboard 🔥\n';
     message += 'Type LOVE QUEST to create a Valentine surprise! 💘\n';
+    message += 'Type HELP for all available commands.\n';
     message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
 
     await messagingService.sendMessage(phone, message);
@@ -2361,21 +2375,77 @@ Type the code, or type SKIP to continue:`
     
     message += `━━━━━━━━━━━━━━━━\n\n`;
     
-    message += `⏱️ *TIME LIMIT:* 15 seconds per question\n\n`;
+    message += `⏱️ *PROGRESSIVE TIMERS:*\n`;
+    message += `• Standard: 12 seconds per question\n`;
+    message += `• Suspicious play patterns may trigger reduced timers\n`;
+    message += `• Play fairly to keep your full time!\n\n`;
     
     message += `💎 *LIFELINES:*\n`;
-    message += `• 50:50 - Remove 2 wrong answers\n`;
-    message += `• Skip - Move to next question\n\n`;
+    message += `• 50:50 - Remove 2 wrong answers (+5s bonus)\n`;
+    message += `• Skip - Move to a different question\n\n`;
     
     message += `🏆 *PRIZE LADDER:*\n`;
     message += `Q15: ₦50,000 🥇\n`;
     message += `Q12: ₦25,000\n`;
-    message += `Q10: ₦10,000 (SAFE)\n`;
+    message += `Q10: ₦10,000 (SAFE) 🔒\n`;
     message += `Q8: ₦5,000\n`;
-    message += `Q5: ₦1,000 (SAFE)\n\n`;
+    message += `Q5: ₦1,000 (SAFE) 🔒\n\n`;
     
-    message += `Safe amounts are guaranteed!\n\n`;
+    message += `🔒 Safe amounts are guaranteed even if you get the next question wrong or time out!\n\n`;
+
+    message += `━━━━━━━━━━━━━━━━\n\n`;
+    
+    message += `⚠️ *FAIR PLAY WARNING:*\n`;
+    message += `Cheating is strictly prohibited. Using AI tools, bots, screen-sharing, or any external assistance to answer questions will result in:\n`;
+    message += `• Account suspension\n`;
+    message += `• Forfeiture of all winnings & tokens\n`;
+    message += `• Permanent ban from the platform or tournaments ineligibility\n\n`;
+    message += `_Our anti-cheat system monitors all gameplay. Play fair, win fair!_ 🛡️\n\n`;
+    
+    message += `💡 Type HELP for a list of all commands.\n\n`;
     message += `Ready to play? Reply "PLAY NOW"`;
+    
+    await messagingService.sendMessage(phone, message);
+  }
+
+  // ============================================
+  // HELP MENU
+  // ============================================
+
+  async sendHelpMenu(phone) {
+    let message = `❓ *HELP & COMMANDS* ❓\n\n`;
+    
+    message += `Here are all the commands you can use:\n\n`;
+    
+    message += `🎮 *GAMEPLAY*\n`;
+    message += `• *PLAY* — Start a new game\n`;
+    message += `• *PRACTICE* — Play practice mode (free)\n`;
+    message += `• *TOURNAMENT* — View available tournaments\n`;
+    message += `• *A / B / C / D* — Answer a question\n`;
+    message += `• *50:50* — Use 50:50 lifeline\n`;
+    message += `• *SKIP* — Use skip lifeline\n\n`;
+    
+    message += `💰 *PRIZES & PAYMENTS*\n`;
+    message += `• *CLAIM* — Claim your prize winnings\n`;
+    message += `• *BUY* — Purchase game tokens\n`;
+    message += `• *RECEIVED* — Confirm you received payment\n\n`;
+    
+    message += `📊 *INFO & STATS*\n`;
+    message += `• *STATS* — View your game statistics\n`;
+    message += `• *STREAK* — Check your daily streak\n`;
+    message += `• *ACHIEVEMENTS* — View your badges\n`;
+    message += `• *PROFILE* — View your profile\n`;
+    message += `• *LEADERBOARD* — View top players\n\n`;
+    
+    message += `🔧 *OTHER*\n`;
+    message += `• *SHARE* — Generate your victory card\n`;
+    message += `• *REFERRAL* — Get your referral code\n`;
+    message += `• *RESET* — Reset your game session\n`;
+    message += `• *MENU* — Return to main menu\n`;
+    message += `• *HELP* — Show this menu\n\n`;
+    
+    message += `━━━━━━━━━━━━━━━━\n\n`;
+    message += `💡 _Most commands work from anywhere in the app. Type any command to get started!_`;
     
     await messagingService.sendMessage(phone, message);
   }
@@ -2559,6 +2629,11 @@ You can now claim your prize! 💰
 2️⃣ View Leaderboard
 3️⃣ Claim Prize`
         );
+        // Re-set post_game so option 3 maps to Claim Prize
+        await redis.setex(`post_game:${user.id}`, 300, JSON.stringify({
+          timestamp: Date.now(), gameType: 'classic',
+          isTournament: false, finalScore: winData.amount || 0
+        }));
       }
 
       fs.unlinkSync(imagePath);

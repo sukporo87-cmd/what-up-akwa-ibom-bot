@@ -62,6 +62,25 @@ class TelegramService {
       
       logger.info(`✅ Telegram webhook set: ${webhookUrl}`);
       
+      // Set bot menu commands
+      try {
+        await this.bot.setMyCommands([
+          { command: 'play', description: 'Start a new game' },
+          { command: 'practice', description: 'Play practice mode (free)' },
+          { command: 'claim', description: 'Claim your prize winnings' },
+          { command: 'stats', description: 'View your game statistics' },
+          { command: 'leaderboard', description: 'View top players' },
+          { command: 'buy', description: 'Purchase game tokens' },
+          { command: 'streak', description: 'Check your daily streak' },
+          { command: 'profile', description: 'View your profile' },
+          { command: 'help', description: 'Show all available commands' },
+          { command: 'reset', description: 'Reset your game session' }
+        ]);
+        logger.info('✅ Telegram bot menu commands set');
+      } catch (cmdError) {
+        logger.error('Error setting Telegram menu commands:', cmdError);
+      }
+      
       const info = await this.bot.getWebHookInfo();
       logger.info('Webhook info:', {
         url: info.url,
