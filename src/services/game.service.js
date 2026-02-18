@@ -1139,12 +1139,12 @@ class GameService {
             `, [winningsToAdd, session.current_question, user.id]);
 
             // Create payout transaction for classic mode wins
-            // Uses ON CONFLICT to prevent duplicate transactions for same session
+            // Duplicate prevention: Redis lock + session status guard + DB unique index
             if (session.game_type !== 'practice' && !session.is_tournament_game && finalScore > 0) {
                 await pool.query(`
                     INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status, payout_status)
                     VALUES ($1, $2, $3, 'prize', 'pending', 'pending')
-                    ON CONFLICT (session_id) WHERE transaction_type = 'prize' DO NOTHING
+                    ON CONFLICT (session_id) WHERE transaction_type = 'prize' AND session_id IS NOT NULL DO NOTHING
                 `, [user.id, session.id, finalScore]);
             }
 

@@ -154,10 +154,9 @@ class WebhookController {
         // Check temporary suspension (Q1 timeout abuse)
         const tempSuspension = await restrictionsService.isUserTempSuspended(user.id);
         if (tempSuspension.suspended) {
-          // Allow practice mode and prize claims even during temp suspension
+          // Allow practice mode even during temp suspension
           const isPracticeRequest = input === 'PRACTICE' || input === '2';
-          const isClaimRequest = input === 'CLAIM' || input === 'CLAIM PRIZE' || input === 'CLAIMPRICE';
-          if (!isPracticeRequest && !isClaimRequest) {
+          if (!isPracticeRequest) {
             await messagingService.sendMessage(phone, restrictionsService.getTempSuspensionMessage(tempSuspension));
             return;
           }
