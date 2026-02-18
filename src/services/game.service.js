@@ -403,7 +403,7 @@ class GameService {
                 : `💰 You won: ₦0\n\n`) +
             `Better luck next time! 👋\n\n` +
             `1️⃣ Play Again\n2️⃣ View Leaderboard\n` +
-            (guaranteedAmount > 0 ? `3️⃣ Claim Prize\n` : `3️⃣ Main Menu\n`);
+            (guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`);
         
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(currentSession, user, false, 'turbo_go_timeout');
@@ -1126,6 +1126,9 @@ class GameService {
                 WHERE id = $2
             `, [finalScore, session.id]);
 
+            // Only count real winnings (not practice mode) in total_winnings
+            const winningsToAdd = session.game_type !== 'practice' ? finalScore : 0;
+            
             await pool.query(`
                 UPDATE users
                 SET total_games_played = total_games_played + 1,
@@ -1133,14 +1136,14 @@ class GameService {
                     highest_question_reached = GREATEST(highest_question_reached, $2),
                     last_active = NOW()
                 WHERE id = $3
-            `, [finalScore, session.current_question, user.id]);
+            `, [winningsToAdd, session.current_question, user.id]);
 
             // Create payout transaction for classic mode wins
             // Uses ON CONFLICT to prevent duplicate transactions for same session
             if (session.game_type !== 'practice' && !session.is_tournament_game && finalScore > 0) {
                 await pool.query(`
-                    INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status)
-                    VALUES ($1, $2, $3, 'prize', 'pending')
+                    INSERT INTO transactions (user_id, session_id, amount, transaction_type, payment_status, payout_status)
+                    VALUES ($1, $2, $3, 'prize', 'pending', 'pending')
                     ON CONFLICT (session_id) WHERE transaction_type = 'prize' DO NOTHING
                 `, [user.id, session.id, finalScore]);
             }
@@ -1243,7 +1246,7 @@ class GameService {
             }
 
             // Post-game state
-            await redis.setex(`post_game:${user.id}`, 120, JSON.stringify({
+            await redis.setex(`post_game:${user.id}`, 300, JSON.stringify({
                 timestamp: Date.now(), gameType: session.game_type,
                 isTournament: session.is_tournament_game,
                 tournamentId: session.tournament_id, finalScore
@@ -1762,11 +1765,11 @@ class GameService {
                 session.current_score = 0;
             }
             message += `Well played, ${user.full_name}! 👏\n\n1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n` : `3️⃣ Main Menu\n`;
+            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`;
         }
         
         await messagingService.sendMessage(user.phone_number, message);
-        await this.completeGame(session, user, false);
+        await this.completeGame(session, user, false, 'wrong_answer');
     }
 
     async getGameTimeTaken(sessionId) {
@@ -1781,6 +1784,14 @@ class GameService {
     // ============================================
 
     async handleTimeout(session, user) {
+        // GUARD: Prevent double timeout handling with Redis lock
+        const timeoutLockKey = `lock:timeout:${session.id}:q${session.current_question}`;
+        const lockAcquired = await redis.set(timeoutLockKey, '1', 'NX', 'EX', 10);
+        if (!lockAcquired) {
+            logger.warn(`⚠️ handleTimeout already running for session ${session.id} Q${session.current_question} - skipping duplicate`);
+            return;
+        }
+
         await auditService.logTimeout(session.id, user.id, session.current_question);
         
         // Q1 TIMEOUT TRACKING (only for classic/tournament, not practice)
@@ -1827,12 +1838,12 @@ class GameService {
                 message += `💰 You won: ₦0\n\n`;
             }
             message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n` : `3️⃣ Main Menu\n`;
+            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`;
             session.current_score = guaranteedAmount;
         }
         
         await messagingService.sendMessage(user.phone_number, message);
-        await this.completeGame(session, user, false);
+        await this.completeGame(session, user, false, 'timeout');
     }
 
     // ============================================

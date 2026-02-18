@@ -238,14 +238,55 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
     END as platform,
     COUNT(DISTINCT id) as total_users,
     COUNT(DISTINCT CASE WHEN last_active >= NOW() - INTERVAL '7 days' THEN id END) as active_users,
-    SUM(total_games_played) as total_games,
-    SUM(total_winnings) as total_revenue
+    SUM(total_games_played) as total_games
   FROM users
   GROUP BY CASE 
     WHEN phone_number LIKE 'tg_%' THEN 'telegram'
     ELSE 'whatsapp'
   END
 `);
+
+    // Get actual revenue from payment_transactions (token purchases) and tournament_entry_payments
+    const revenueResult = await pool.query(`
+  SELECT
+    CASE 
+      WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      ELSE 'whatsapp'
+    END as platform,
+    COALESCE(SUM(pt.amount), 0) as revenue
+  FROM payment_transactions pt
+  JOIN users u ON pt.user_id = u.id
+  WHERE pt.status = 'success'
+  GROUP BY CASE 
+    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    ELSE 'whatsapp'
+  END
+`);
+
+    const tournamentRevenueResult = await pool.query(`
+  SELECT
+    CASE 
+      WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      ELSE 'whatsapp'
+    END as platform,
+    COALESCE(SUM(tep.amount), 0) as revenue
+  FROM tournament_entry_payments tep
+  JOIN users u ON tep.user_id = u.id
+  WHERE tep.payment_status = 'success'
+  GROUP BY CASE 
+    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    ELSE 'whatsapp'
+  END
+`);
+
+    // Build revenue lookup
+    const revenueByPlatform = {};
+    revenueResult.rows.forEach(row => {
+      revenueByPlatform[row.platform] = (revenueByPlatform[row.platform] || 0) + parseFloat(row.revenue);
+    });
+    tournamentRevenueResult.rows.forEach(row => {
+      revenueByPlatform[row.platform] = (revenueByPlatform[row.platform] || 0) + parseFloat(row.revenue);
+    });
     
     const stats = {
       whatsapp: { users: 0, games: 0, active_rate: 0, revenue: 0 },
@@ -261,7 +302,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
         active_rate: row.total_users > 0 
           ? Math.round((parseInt(row.active_users) / parseInt(row.total_users)) * 100) 
           : 0,
-        revenue: parseFloat(row.total_revenue) || 0
+        revenue: revenueByPlatform[platform] || 0
       };
     });
     

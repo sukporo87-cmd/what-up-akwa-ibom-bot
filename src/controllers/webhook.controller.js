@@ -154,9 +154,10 @@ class WebhookController {
         // Check temporary suspension (Q1 timeout abuse)
         const tempSuspension = await restrictionsService.isUserTempSuspended(user.id);
         if (tempSuspension.suspended) {
-          // Allow practice mode even during temp suspension
+          // Allow practice mode and prize claims even during temp suspension
           const isPracticeRequest = input === 'PRACTICE' || input === '2';
-          if (!isPracticeRequest) {
+          const isClaimRequest = input === 'CLAIM' || input === 'CLAIM PRIZE' || input === 'CLAIMPRICE';
+          if (!isPracticeRequest && !isClaimRequest) {
             await messagingService.sendMessage(phone, restrictionsService.getTempSuspensionMessage(tempSuspension));
             return;
           }
@@ -285,10 +286,11 @@ class WebhookController {
       // ===================================
       if (userState && userState.state === 'SELECT_LEADERBOARD') {
         const postGameState = await redis.get(`post_game:${user.id}`);
-        if (postGameState) {
-          // User is in post-game window, clear leaderboard state so post-game menu works
+        const upperInput = message.trim().toUpperCase();
+        if (postGameState || upperInput === 'CLAIM' || upperInput.includes('CLAIM')) {
+          // User is in post-game window or trying to claim - clear leaderboard state so it can be handled
           await userService.clearUserState(phone);
-          // Don't return - let it fall through to handleMenuInput for post-game handling
+          // Don't return - let it fall through to handleMenuInput for post-game/claim handling
         } else {
           // Not in post-game, handle leaderboard selection normally
           await this.handleLeaderboardSelection(phone, message);

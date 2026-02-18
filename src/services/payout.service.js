@@ -41,7 +41,8 @@ class PayoutService {
         `SELECT * FROM transactions
          WHERE user_id = $1
          AND transaction_type = 'prize'
-         AND payout_status IN ('pending', 'details_collected', 'approved')
+         AND (payout_status IN ('pending', 'details_collected', 'approved') OR payout_status IS NULL)
+         AND amount > 0
          ORDER BY created_at DESC
          LIMIT 1`,
         [userId]
