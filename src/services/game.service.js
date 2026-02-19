@@ -1035,10 +1035,11 @@ class GameService {
                 const customInstructions = await ts.getTournamentInstructions(tournamentId);
                 gameModeText = `🏆 ${tournament.tournament_name.toUpperCase()}`;
                 if (customInstructions && customInstructions.instructions) {
-                    instructions = customInstructions.instructions;
+                    instructions = customInstructions.instructions + this.getTournamentStandardFooter();
                     branding = customInstructions.branding || branding;
                 } else {
                     instructions = await this.getDefaultTournamentInstructions(tournament);
+                    instructions += this.getTournamentStandardFooter();
                     if (tournament.custom_branding) branding = tournament.custom_branding;
                 }
                 if (tournamentUsesTokens) {
@@ -1075,12 +1076,29 @@ class GameService {
     }
 
     async getDefaultGameInstructions() {
-        return `🎮 GAME INSTRUCTIONS 🎮\n\n📋 RULES:\n- 15 questions\n- ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- Win up to ₦50,000!\n\n💎 LIFELINES:\n5️⃣0️⃣ 50:50 - Remove 2 wrong answers (Type '50' to activate)\n⏭️ Skip - Replace with new question (Type 'Skip' to activate)\n\n🏆 PRIZE LADDER:\nQ15: ₦50,000 🥇\nQ12: ₦25,000\nQ10: ₦10,000 (SAFE)\nQ8: ₦5,000\nQ5: ₦1,000 (SAFE)\n\nSafe amounts are guaranteed!`;
+        return `🎮 GAME INSTRUCTIONS 🎮\n\n` +
+            `📋 RULES:\n- 15 questions\n- ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- Win up to ₦50,000!\n\n` +
+            `⏱️ PROGRESSIVE TIMERS:\n- Standard: ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- Suspicious play patterns may trigger reduced timers\n- Play fairly to keep your full time!\n\n` +
+            `💎 LIFELINES:\n5️⃣0️⃣ 50:50 - Remove 2 wrong answers (+5s bonus) (Type '50' to activate)\n⏭️ Skip - Replace with new question (Type 'Skip' to activate)\n\n` +
+            `🏆 PRIZE LADDER:\nQ15: ₦50,000 🥇\nQ12: ₦25,000\nQ10: ₦10,000 (SAFE) 🔒\nQ8: ₦5,000\nQ5: ₦1,000 (SAFE) 🔒\n\n` +
+            `🔒 Safe amounts are guaranteed even if you get the next question wrong or time out!\n\n` +
+            `⚠️ FAIR PLAY WARNING:\nCheating is strictly prohibited. Any form of external assistance to answer questions will result in:\n• Account suspension\n• Forfeiture of all winnings & tokens\n• Permanent ban from the platform or tournaments ineligibility\n\n` +
+            `_Play fair, win fair!_ 🛡️`;
     }
 
     async getDefaultTournamentInstructions(tournament) {
-        const prizeText = tournament.prize_pool ? `Win up to ₦${tournament.prize_pool.toLocaleString()}!` : 'Compete for amazing prizes!';
-        return `🏆 TOURNAMENT INSTRUCTIONS 🏆\n\n📋 RULES:\n- 15 questions\n- ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- ${prizeText}\n- Top 10 winners share prize pool\n\n💎 LIFELINES:\n5️⃣0️⃣ 50:50 - Remove 2 wrong answers\n⏭️ Skip - Replace with new question\n\nYour BEST score counts!\nPlay as many times as allowed!`;
+        const prizeText = tournament.prize_pool ? `Win big from the ₦${tournament.prize_pool.toLocaleString()} prize pool!` : 'Compete for amazing prizes!';
+        return `🏆 TOURNAMENT INSTRUCTIONS 🏆\n\n` +
+            `📋 RULES:\n- 15 questions\n- ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- ${prizeText}\n- Top 10/20 winners share prize pool\n\n` +
+            `💎 LIFELINES:\n5️⃣0️⃣ 50:50 - Remove 2 wrong answers (+5s bonus)\n⏭️ Skip - Replace with new question\n\n` +
+            `Your BEST score counts!\nPlay as many times as allowed!`;
+    }
+
+    getTournamentStandardFooter() {
+        return `\n\n━━━━━━━━━━━━━━━━\n\n` +
+            `⏱️ PROGRESSIVE TIMERS:\n- Standard: ${QUESTION_TIMEOUT_SECONDS} seconds per question\n- Suspicious play patterns may trigger reduced timers\n- Play fairly to keep your full time!\n\n` +
+            `⚠️ FAIR PLAY WARNING:\nCheating is strictly prohibited. Any form of external assistance to answer questions will result in:\n• Account suspension\n• Forfeiture of all winnings & tokens\n• Permanent ban from the platform or tournaments ineligibility\n\n` +
+            `_Play fair, win fair!_ 🛡️`;
     }
 
     // ============================================

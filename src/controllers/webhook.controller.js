@@ -2396,7 +2396,7 @@ Type the code, or type SKIP to continue:`
     message += `━━━━━━━━━━━━━━━━\n\n`;
     
     message += `⚠️ *FAIR PLAY WARNING:*\n`;
-    message += `Cheating is strictly prohibited. Using AI tools, bots, screen-sharing, or any external assistance to answer questions will result in:\n`;
+    message += `Cheating is strictly prohibited. Any form of external assistance to answer questions will result in:\n`;
     message += `• Account suspension\n`;
     message += `• Forfeiture of all winnings & tokens\n`;
     message += `• Permanent ban from the platform or tournaments ineligibility\n\n`;
