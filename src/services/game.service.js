@@ -1270,6 +1270,22 @@ class GameService {
                 tournamentId: session.tournament_id, finalScore
             }));
 
+            // Trigger email collection prompt (delayed, non-blocking)
+            // Only runs if user hasn't provided email and cooldown expired
+            setTimeout(async () => {
+                try {
+                    const WebhookController = require('../controllers/webhook.controller');
+                    const webhookController = new WebhookController();
+                    // Re-fetch user to get latest email/prompted_at
+                    const freshUser = await pool.query('SELECT * FROM users WHERE id = $1', [user.id]);
+                    if (freshUser.rows[0]) {
+                        await webhookController.maybePromptForEmail(freshUser.rows[0]);
+                    }
+                } catch (e) {
+                    // Silent - email prompt is optional
+                }
+            }, 8000); // 8 second delay after game results
+
         } catch (error) {
             logger.error('Error completing game:', error);
             throw error;

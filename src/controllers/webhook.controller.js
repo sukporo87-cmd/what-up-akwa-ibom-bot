@@ -199,6 +199,12 @@ class WebhookController {
         return;
       }
 
+      // Email collection state
+      if (userState && userState.state === 'EMAIL_COLLECT') {
+        await this.handleEmailCollection(phone, message, user);
+        return;
+      }
+
       // ===================================
       // PRIORITY 1.5: LOVE QUEST STATES
       // ===================================
@@ -697,6 +703,90 @@ Type the code, or type SKIP to continue:`
     await messagingService.sendMessage(phone, welcomeMsg);
   }
 
+  // ============================================
+  // EMAIL COLLECTION
+  // Soft prompt after first game, respects 7-day cooldown
+  // ============================================
+  
+  async maybePromptForEmail(user) {
+    try {
+      // Skip if user already has email
+      if (user.email) return;
+      
+      // Check cooldown: don't ask again within 7 days
+      if (user.email_prompted_at) {
+        const daysSincePrompt = (Date.now() - new Date(user.email_prompted_at).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSincePrompt < 7) return;
+      }
+      
+      // Count their completed games
+      const gameCount = await pool.query(
+        'SELECT COUNT(*) as count FROM game_sessions WHERE user_id = $1 AND status = $2',
+        [user.id, 'completed']
+      );
+      const games = parseInt(gameCount.rows[0].count);
+      
+      // Only prompt after at least 1 completed game
+      if (games < 1) return;
+      
+      // Mark as prompted (even if they skip, we respect the cooldown)
+      await pool.query(
+        'UPDATE users SET email_prompted_at = NOW() WHERE id = $1',
+        [user.id]
+      );
+      
+      await userService.setUserState(user.phone_number, 'EMAIL_COLLECT');
+      
+      await messagingService.sendMessage(user.phone_number,
+        `📧 *Stay in the Loop!*\n\n` +
+        `Get notified about upcoming tournaments, events, and exclusive prizes!\n\n` +
+        `Share your email address to receive our newsletter.\n\n` +
+        `Type your email or SKIP to continue:`
+      );
+    } catch (error) {
+      logger.error('Error in email prompt:', error);
+      // Don't block gameplay on email errors
+    }
+  }
+  
+  async handleEmailCollection(phone, message, user) {
+    const input = message.trim();
+    
+    if (input.toUpperCase() === 'SKIP' || input.toUpperCase() === 'NO') {
+      await userService.clearUserState(phone);
+      await messagingService.sendMessage(phone, 
+        `👍 No problem! You can add your email anytime by typing *EMAIL*.\n\nType MENU to continue.`
+      );
+      return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(input)) {
+      await messagingService.sendMessage(phone,
+        `⚠️ That doesn't look like a valid email.\n\nPlease enter your email address or type SKIP:`
+      );
+      return;
+    }
+    
+    // Save email
+    try {
+      await pool.query(
+        'UPDATE users SET email = $1 WHERE id = $2',
+        [input.toLowerCase(), user.id]
+      );
+      
+      await userService.clearUserState(phone);
+      await messagingService.sendMessage(phone,
+        `✅ Email saved! You'll receive updates about tournaments and events.\n\nType MENU to continue.`
+      );
+    } catch (error) {
+      logger.error('Error saving email:', error);
+      await userService.clearUserState(phone);
+      await messagingService.sendMessage(phone, `❌ Error saving email. You can try again later by typing *EMAIL*.\n\nType MENU to continue.`);
+    }
+  }
+
 
 // ============================================
 // END OF PART 2/6
@@ -714,21 +804,26 @@ Type the code, or type SKIP to continue:`
   async showGameModeMenu(user) {
     await userService.setUserState(user.phone_number, 'SELECT_GAME_MODE');
     
-    let message = `🎮 SELECT GAME MODE 🎮\n\n`;
-    message += `Choose your challenge:\n\n`;
+    let message = `🎮 SELECT GAME MODE 🎮\n\nChoose your challenge:\n\n`;
+    
+    const practiceEnabled = restrictionsService.isModeEnabled('practice');
+    const classicEnabled = restrictionsService.isModeEnabled('classic');
+    const tournamentEnabled = restrictionsService.isModeEnabled('tournament');
     
     message += `1️⃣ *Free Play - Practice Mode*\n`;
-    message += `   Familiarize with gameplay\n`;
-    message += `   ⚠️ No prizes won\n`;
-    message += `   Perfect for learning!\n\n`;
+    message += practiceEnabled 
+      ? `   Familiarize with gameplay\n   ⚠️ No prizes won\n   Perfect for learning!\n\n`
+      : `   ⚠️ _Currently unavailable_\n\n`;
     
     message += `2️⃣ *Classic Mode*\n`;
-    message += `   General knowledge questions\n`;
-    message += `   Win up to ₦50,000! 💰\n\n`;
+    message += classicEnabled
+      ? `   General knowledge questions\n   Win up to ₦50,000! 💰\n\n`
+      : `   ⚠️ _Currently unavailable_\n\n`;
     
     message += `3️⃣ *Sponsored Tournaments* 🏆\n`;
-    message += `   Compete for MEGA prizes!\n`;
-    message += `   Special sponsored events\n\n`;
+    message += tournamentEnabled
+      ? `   Compete for MEGA prizes!\n   Special sponsored events\n\n`
+      : `   ⚠️ _Currently unavailable_\n\n`;
     
     message += `_Proudly brought to you by SummerIsland Systems._\n\n`;
     message += `Reply with your choice (1, 2, or 3):`;
@@ -741,7 +836,11 @@ Type the code, or type SKIP to continue:`
     
     switch(input) {
       case '1':
-        // Free Play - Practice Mode (only checks suspension, allows during cooldown/limit)
+        // Free Play - Practice Mode
+        if (!restrictionsService.isModeEnabled('practice')) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('practice'));
+          return;
+        }
         
         // Check 15 games per hour rate limit
         const practiceRateLimit = await antiFraudService.checkGameRateLimit(user.id);
@@ -760,7 +859,13 @@ Type the code, or type SKIP to continue:`
         break;
         
       case '2':
-        // Classic Mode - Check all restrictions
+        // Classic Mode
+        if (!restrictionsService.isModeEnabled('classic')) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('classic'));
+          return;
+        }
+        
+        // Check all restrictions
         const classicRestriction = await restrictionsService.canUserPlay(user.id, 'classic');
         if (!classicRestriction.canPlay) {
           await userService.clearUserState(user.phone_number);
@@ -785,7 +890,13 @@ Type the code, or type SKIP to continue:`
         break;
         
       case '3':
-        // Sponsored Tournaments - Check restrictions
+        // Sponsored Tournaments
+        if (!restrictionsService.isModeEnabled('tournament')) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('tournament'));
+          return;
+        }
+        
+        // Check restrictions
         const tournamentRestriction = await restrictionsService.canUserPlay(user.id, 'tournament');
         if (!tournamentRestriction.canPlay) {
           await userService.clearUserState(user.phone_number);
@@ -1122,6 +1233,21 @@ Type the code, or type SKIP to continue:`
     // PROFILE command
     if (input === 'PROFILE' || input.includes('PROFILE')) {
       await this.handleProfileCommand(user);
+      return;
+    }
+
+    // EMAIL command - allow users to add/update email anytime
+    if (input === 'EMAIL' || input === 'NEWSLETTER') {
+      if (user.email) {
+        await messagingService.sendMessage(user.phone_number,
+          `📧 Your email is: ${user.email}\n\nTo update it, type your new email address.\nOr type SKIP to keep the current one.`
+        );
+      } else {
+        await messagingService.sendMessage(user.phone_number,
+          `📧 *Stay in the Loop!*\n\nShare your email to get notified about tournaments, events, and prizes!\n\nType your email or SKIP:`
+        );
+      }
+      await userService.setUserState(user.phone_number, 'EMAIL_COLLECT');
       return;
     }
 
@@ -1462,7 +1588,8 @@ Type the code, or type SKIP to continue:`
       message += `*Username:* @${user.username}\n`;
       message += `*Full Name:* ${user.full_name}\n`;
       message += `*City:* ${user.city}\n`;
-      message += `*Age:* ${user.age}\n\n`;
+      message += `*Age:* ${user.age}\n`;
+      message += `*Email:* ${user.email || '_Not set_ (type EMAIL to add)'}\n\n`;
 
       message += `📊 *GAME STATS*\n`;
       message += `━━━━━━━━━━━━━━━━\n`;

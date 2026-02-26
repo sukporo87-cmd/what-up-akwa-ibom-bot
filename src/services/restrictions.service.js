@@ -42,6 +42,51 @@ class RestrictionsService {
     }
     
     // ============================================
+    // PER-MODE ENABLE/DISABLE
+    // Env vars: CLASSIC_MODE_ENABLED, TOURNAMENT_MODE_ENABLED, PRACTICE_MODE_ENABLED
+    // Default: all enabled (true) if env var not set
+    // Custom messages: CLASSIC_MODE_MESSAGE, TOURNAMENT_MODE_MESSAGE, PRACTICE_MODE_MESSAGE
+    // ============================================
+    
+    isModeEnabled(mode) {
+        const envKey = `${mode.toUpperCase()}_MODE_ENABLED`;
+        const value = process.env[envKey];
+        // Default to enabled if env var not set
+        if (value === undefined || value === null || value === '') return true;
+        return value === 'true';
+    }
+    
+    getModeDisabledMessage(mode) {
+        const envKey = `${mode.toUpperCase()}_MODE_MESSAGE`;
+        const customMessage = process.env[envKey];
+        if (customMessage) return customMessage;
+        
+        const modeNames = {
+            classic: 'Classic Mode',
+            tournament: 'Tournaments',
+            practice: 'Practice Mode'
+        };
+        const modeName = modeNames[mode] || mode;
+        
+        // Suggest available alternatives
+        const alternatives = [];
+        if (mode !== 'practice' && this.isModeEnabled('practice')) alternatives.push('Practice Mode');
+        if (mode !== 'classic' && this.isModeEnabled('classic')) alternatives.push('Classic Mode');
+        if (mode !== 'tournament' && this.isModeEnabled('tournament')) alternatives.push('Tournaments');
+        
+        let msg = `⏸️ *${modeName} Temporarily Unavailable*\n\n`;
+        msg += `${modeName} is currently disabled for maintenance.\n\n`;
+        if (alternatives.length > 0) {
+            msg += `In the meantime, try:\n`;
+            alternatives.forEach(alt => { msg += `• ${alt}\n`; });
+            msg += `\nType MENU to see available options.`;
+        } else {
+            msg += `Please check back soon!`;
+        }
+        return msg;
+    }
+    
+    // ============================================
     // USER SUSPENSION (Permanent / Admin)
     // ============================================
     

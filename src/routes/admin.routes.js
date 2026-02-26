@@ -3142,6 +3142,53 @@ function generatePrintableAuditReport(report) {
 
 
 // ============================================
+// NEWSLETTER / EMAIL ADMIN ENDPOINTS
+// ============================================
+
+// Get email collection stats
+router.get('/api/newsletter/stats', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE email IS NOT NULL) as emails_collected,
+                COUNT(*) as total_users,
+                COUNT(*) FILTER (WHERE email_prompted_at IS NOT NULL) as times_prompted,
+                COUNT(*) FILTER (WHERE email IS NOT NULL AND email_prompted_at IS NOT NULL) as converted_from_prompt
+            FROM users
+        `);
+        res.json({ success: true, stats: result.rows[0] });
+    } catch (error) {
+        logger.error('Error getting newsletter stats:', error);
+        res.status(500).json({ error: 'Failed to get newsletter stats' });
+    }
+});
+
+// Export emails for newsletter (CSV-ready)
+router.get('/api/newsletter/export', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                email, full_name, username, city, age, 
+                phone_number, platform, created_at,
+                current_streak, longest_streak,
+                (SELECT COUNT(*) FROM game_sessions WHERE user_id = users.id AND status = 'completed') as total_games
+            FROM users 
+            WHERE email IS NOT NULL 
+            ORDER BY created_at DESC
+        `);
+        
+        res.json({ 
+            success: true, 
+            count: result.rows.length,
+            subscribers: result.rows 
+        });
+    } catch (error) {
+        logger.error('Error exporting newsletter emails:', error);
+        res.status(500).json({ error: 'Failed to export emails' });
+    }
+});
+
+// ============================================
 // STREAK ADMIN ENDPOINTS
 // ============================================
 
@@ -4329,7 +4376,12 @@ router.get('/api/settings', authenticateAdmin, async (req, res) => {
                 maintenanceMessage: process.env.MAINTENANCE_MESSAGE || '',
                 grandPrizeCooldownDays: parseInt(process.env.GRAND_PRIZE_COOLDOWN_DAYS) || 7,
                 dailyWinLimit: parseInt(process.env.DAILY_WIN_LIMIT) || 30000,
-                paymentMode: process.env.PAYMENT_MODE || 'disabled'
+                paymentMode: process.env.PAYMENT_MODE || 'disabled',
+                gameModes: {
+                    practice: { enabled: process.env.PRACTICE_MODE_ENABLED !== 'false', message: process.env.PRACTICE_MODE_MESSAGE || '' },
+                    classic: { enabled: process.env.CLASSIC_MODE_ENABLED !== 'false', message: process.env.CLASSIC_MODE_MESSAGE || '' },
+                    tournament: { enabled: process.env.TOURNAMENT_MODE_ENABLED !== 'false', message: process.env.TOURNAMENT_MODE_MESSAGE || '' }
+                }
             }
         });
     } catch (error) {

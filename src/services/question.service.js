@@ -137,29 +137,48 @@ class QuestionService {
                     return null; // Return null instead of falling back to classic
                 }
                 
-                // For other modes, try fallback
-                logger.warn(`Trying fallback for ${gameMode} mode`);
+                // For other modes, try fallback WITH difficulty range preserved
+                logger.warn(`Trying fallback for ${gameMode} mode (widening difficulty to ${Math.max(1, minDifficulty - 1)}-${Math.min(5, maxDifficulty + 1)})`);
+                const fallbackMin = Math.max(1, minDifficulty - 1);
+                const fallbackMax = Math.min(5, maxDifficulty + 1);
                 let fallbackQuery;
                 if (excludeIds.length > 0) {
                     const placeholders = excludeIds.map((_, i) => `$${i + 3}`).join(',');
                     fallbackQuery = `
                         SELECT * FROM questions
                         WHERE is_active = true
+                        AND difficulty BETWEEN $1 AND $2
                         AND id NOT IN (${placeholders})
                         ORDER BY RANDOM()
                         LIMIT 1
                     `;
-                    const fallbackResult = await pool.query(fallbackQuery, [minDifficulty, maxDifficulty, ...excludeIds]);
-                    return fallbackResult.rows[0] || null;
+                    const fallbackResult = await pool.query(fallbackQuery, [fallbackMin, fallbackMax, ...excludeIds]);
+                    if (fallbackResult.rows[0]) return fallbackResult.rows[0];
+                    
+                    // Last resort: any difficulty, still exclude asked questions
+                    const lastResort = await pool.query(`
+                        SELECT * FROM questions
+                        WHERE is_active = true
+                        AND id NOT IN (${placeholders})
+                        ORDER BY RANDOM() LIMIT 1
+                    `, excludeIds);
+                    return lastResort.rows[0] || null;
                 } else {
                     fallbackQuery = `
                         SELECT * FROM questions
                         WHERE is_active = true
+                        AND difficulty BETWEEN $1 AND $2
                         ORDER BY RANDOM()
                         LIMIT 1
                     `;
-                    const fallbackResult = await pool.query(fallbackQuery);
-                    return fallbackResult.rows[0] || null;
+                    const fallbackResult = await pool.query(fallbackQuery, [fallbackMin, fallbackMax]);
+                    if (fallbackResult.rows[0]) return fallbackResult.rows[0];
+                    
+                    // Last resort: any difficulty
+                    const lastResort = await pool.query(`
+                        SELECT * FROM questions WHERE is_active = true ORDER BY RANDOM() LIMIT 1
+                    `);
+                    return lastResort.rows[0] || null;
                 }
             }
             
