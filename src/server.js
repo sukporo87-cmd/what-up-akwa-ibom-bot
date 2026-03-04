@@ -147,6 +147,28 @@ app.listen(PORT, async () => {
     console.log(`   Telegram: ✅ Active`);
   }
 
+  // Initialize error monitoring (must be first to catch startup errors)
+  const errorMonitor = require('./services/error-monitor.service');
+  errorMonitor.init();
+
+  // Initialize message queue
+  const messageQueue = require('./services/message-queue.service');
+  const WhatsAppService = require('./services/whatsapp.service');
+  const whatsappInstance = new WhatsAppService();
+  messageQueue.start(whatsappInstance, global.telegramService);
+
+  // Schedule Redis key cleanup (every 2 hours)
+  const { cleanupOrphanedKeys } = require('./config/redis-keys');
+  const redis = require('./config/redis');
+  setInterval(async () => {
+    try {
+      const cleaned = await cleanupOrphanedKeys(redis);
+      if (cleaned > 0) console.log(`🧹 Redis cleanup: fixed TTL on ${cleaned} orphaned keys`);
+    } catch (e) {
+      console.error('Redis cleanup error:', e.message);
+    }
+  }, 7200000); // Every 2 hours
+
   // Start Love Quest scheduled send processor
   startScheduledSendProcessor();
 });

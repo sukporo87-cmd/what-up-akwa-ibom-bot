@@ -3188,6 +3188,121 @@ router.get('/api/newsletter/export', authenticateAdmin, async (req, res) => {
     }
 });
 
+// Export emails as CSV download
+router.get('/api/newsletter/export-csv', authenticateAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT email, full_name, username, city, age, platform, created_at
+            FROM users WHERE email IS NOT NULL ORDER BY created_at DESC
+        `);
+        
+        const header = 'email,full_name,username,city,age,platform,registered\n';
+        const rows = result.rows.map(r => 
+            `${r.email},${(r.full_name || '').replace(/,/g, '')},${r.username},${(r.city || '').replace(/,/g, '')},${r.age},${r.platform},${new Date(r.created_at).toISOString().split('T')[0]}`
+        ).join('\n');
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=wut-newsletter-subscribers.csv');
+        res.send(header + rows);
+    } catch (error) {
+        logger.error('Error exporting CSV:', error);
+        res.status(500).json({ error: 'Failed to export CSV' });
+    }
+});
+
+// ============================================
+// MESSAGE QUEUE ADMIN ENDPOINTS
+// ============================================
+
+router.get('/api/system/message-queue', authenticateAdmin, async (req, res) => {
+    try {
+        const messageQueue = require('../services/message-queue.service');
+        const stats = await messageQueue.getStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        logger.error('Error getting MQ stats:', error);
+        res.status(500).json({ error: 'Failed to get message queue stats' });
+    }
+});
+
+router.get('/api/system/message-queue/failed', authenticateAdmin, async (req, res) => {
+    try {
+        const messageQueue = require('../services/message-queue.service');
+        const messages = await messageQueue.getFailedMessages(parseInt(req.query.limit) || 20);
+        res.json({ success: true, messages });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get failed messages' });
+    }
+});
+
+router.delete('/api/system/message-queue/failed', authenticateAdmin, async (req, res) => {
+    try {
+        const messageQueue = require('../services/message-queue.service');
+        await messageQueue.clearFailed();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to clear failed messages' });
+    }
+});
+
+// ============================================
+// REDIS ADMIN ENDPOINTS
+// ============================================
+
+router.get('/api/system/redis', authenticateAdmin, async (req, res) => {
+    try {
+        const redis = require('../config/redis');
+        const { getKeyStats } = require('../config/redis-keys');
+        const stats = await getKeyStats(redis);
+        
+        // Get Redis info
+        const info = await redis.info('memory');
+        const memMatch = info.match(/used_memory_human:(.+)/);
+        const memory = memMatch ? memMatch[1].trim() : 'unknown';
+        
+        res.json({ success: true, keys: stats, memory });
+    } catch (error) {
+        logger.error('Error getting Redis stats:', error);
+        res.status(500).json({ error: 'Failed to get Redis stats' });
+    }
+});
+
+router.post('/api/system/redis/cleanup', authenticateAdmin, async (req, res) => {
+    try {
+        const redis = require('../config/redis');
+        const { cleanupOrphanedKeys } = require('../config/redis-keys');
+        const cleaned = await cleanupOrphanedKeys(redis);
+        res.json({ success: true, cleaned });
+    } catch (error) {
+        logger.error('Error running Redis cleanup:', error);
+        res.status(500).json({ error: 'Failed to run cleanup' });
+    }
+});
+
+// ============================================
+// ERROR MONITORING ADMIN ENDPOINTS
+// ============================================
+
+router.get('/api/system/errors', authenticateAdmin, async (req, res) => {
+    try {
+        const errorMonitor = require('../services/error-monitor.service');
+        const stats = await errorMonitor.getStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get error stats' });
+    }
+});
+
+router.get('/api/system/health', authenticateAdmin, async (req, res) => {
+    try {
+        const errorMonitor = require('../services/error-monitor.service');
+        const health = await errorMonitor.performHealthCheck();
+        res.json({ success: true, health });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to run health check' });
+    }
+});
+
 // ============================================
 // STREAK ADMIN ENDPOINTS
 // ============================================

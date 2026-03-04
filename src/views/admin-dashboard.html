@@ -871,6 +871,8 @@
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('games')">🎯 Game Stats</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('settings')">⚙️ Settings</button>
             <button class="analytics-tab-btn" onclick="switchAnalyticsTab('achievements')">🏅 Achievements</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('newsletter')">📧 Newsletter</button>
+            <button class="analytics-tab-btn" onclick="switchAnalyticsTab('system')">🔧 System</button>
         </div>
         
         <!-- Tab Contents -->
@@ -1143,6 +1145,32 @@
                 </div>
             </div>
             
+            <!-- Game Mode Controls -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">🎮 Game Mode Controls</h4>
+                <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 13px;">Enable or disable individual game modes. Set env vars on Render to change.</p>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                    <div id="practiceMode" style="padding: 15px; border-radius: 10px; text-align: center; background: #d1fae5;">
+                        <div style="font-size: 28px;">🎓</div>
+                        <div style="font-weight: bold; margin: 5px 0;">Practice Mode</div>
+                        <div id="practiceModeStatus" style="font-size: 14px; font-weight: bold; color: #065f46;">ENABLED</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">PRACTICE_MODE_ENABLED</div>
+                    </div>
+                    <div id="classicMode" style="padding: 15px; border-radius: 10px; text-align: center; background: #d1fae5;">
+                        <div style="font-size: 28px;">🎯</div>
+                        <div style="font-weight: bold; margin: 5px 0;">Classic Mode</div>
+                        <div id="classicModeStatus" style="font-size: 14px; font-weight: bold; color: #065f46;">ENABLED</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">CLASSIC_MODE_ENABLED</div>
+                    </div>
+                    <div id="tournamentMode" style="padding: 15px; border-radius: 10px; text-align: center; background: #d1fae5;">
+                        <div style="font-size: 28px;">🏆</div>
+                        <div style="font-weight: bold; margin: 5px 0;">Tournaments</div>
+                        <div id="tournamentModeStatus" style="font-size: 14px; font-weight: bold; color: #065f46;">ENABLED</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">TOURNAMENT_MODE_ENABLED</div>
+                    </div>
+                </div>
+            </div>
+            
             <!-- Quick Stats -->
             <div class="card" style="padding: 20px; border-radius: 15px;">
                 <h4 style="margin-bottom: 15px;">📊 Current Restrictions Active</h4>
@@ -1187,6 +1215,160 @@
                 </div>
             </div>
         </div>
+
+        <!-- Newsletter Tab -->
+        <div id="newsletter-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">📧 Newsletter & Email Management</h3>
+            
+            <!-- Email Stats -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">📊 Collection Stats</h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+                    <div style="background: #dbeafe; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #1e40af;" id="emailsCollected">-</div>
+                        <div style="font-size: 12px; color: #1e40af;">Emails Collected</div>
+                    </div>
+                    <div style="background: #f3e8ff; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #6b21a8;" id="emailTotalUsers">-</div>
+                        <div style="font-size: 12px; color: #6b21a8;">Total Users</div>
+                    </div>
+                    <div style="background: #d1fae5; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #065f46;" id="emailConversionRate">-</div>
+                        <div style="font-size: 12px; color: #065f46;">Conversion Rate</div>
+                    </div>
+                    <div style="background: #fef3c7; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #92400e;" id="emailPrompted">-</div>
+                        <div style="font-size: 12px; color: #92400e;">Times Prompted</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Export Actions -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">📥 Export Subscribers</h4>
+                <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 13px;">Download subscriber emails for use with Brevo, Mailchimp, or other newsletter platforms.</p>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button onclick="downloadEmailCSV()" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">📥 Download CSV</button>
+                    <button onclick="loadEmailList()" style="padding: 10px 20px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer;">👁️ View List</button>
+                </div>
+            </div>
+            
+            <!-- Subscriber List -->
+            <div class="card" style="padding: 20px; border-radius: 15px; display: none;" id="emailListCard">
+                <h4 style="margin-bottom: 15px;">📋 Subscribers <span id="emailListCount" style="font-weight: normal; color: var(--text-secondary);"></span></h4>
+                <div class="table-container">
+                    <table id="emailListTable" style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Name</th>
+                                <th>Username</th>
+                                <th>City</th>
+                                <th>Platform</th>
+                                <th>Games</th>
+                                <th>Registered</th>
+                            </tr>
+                        </thead>
+                        <tbody id="emailListBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Tab -->
+        <div id="system-tab" class="analytics-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 20px;">🔧 System Health & Monitoring</h3>
+            
+            <!-- Health Check -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">💓 System Health
+                    <button onclick="loadSystemData()" style="margin-left: 10px; padding: 4px 12px; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">↻ Refresh</button>
+                </h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+                    <div id="healthDb" style="padding: 15px; border-radius: 10px; text-align: center; background: #e5e7eb;">
+                        <div style="font-size: 24px;">🗄️</div>
+                        <div style="font-weight: bold; margin: 5px 0;">Database</div>
+                        <div id="healthDbStatus" style="font-size: 13px;">Checking...</div>
+                    </div>
+                    <div id="healthRedis" style="padding: 15px; border-radius: 10px; text-align: center; background: #e5e7eb;">
+                        <div style="font-size: 24px;">⚡</div>
+                        <div style="font-weight: bold; margin: 5px 0;">Redis</div>
+                        <div id="healthRedisStatus" style="font-size: 13px;">Checking...</div>
+                    </div>
+                    <div style="padding: 15px; border-radius: 10px; text-align: center; background: var(--bg-card);">
+                        <div style="font-size: 12px; color: var(--text-secondary);">Uptime</div>
+                        <div id="systemUptime" style="font-size: 20px; font-weight: bold;">-</div>
+                    </div>
+                    <div style="padding: 15px; border-radius: 10px; text-align: center; background: var(--bg-card);">
+                        <div style="font-size: 12px; color: var(--text-secondary);">Redis Memory</div>
+                        <div id="redisMemory" style="font-size: 20px; font-weight: bold;">-</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Error Monitoring -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">🚨 Error Monitoring (Today)</h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 15px;">
+                    <div style="background: #fee2e2; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #991b1b;" id="errorsToday">-</div>
+                        <div style="font-size: 12px; color: #991b1b;">Errors Today</div>
+                    </div>
+                    <div style="background: #fef3c7; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #92400e;" id="errorsCurrentRate">-</div>
+                        <div style="font-size: 12px; color: #92400e;">Last 5 min</div>
+                    </div>
+                    <div style="background: #dbeafe; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #1e40af;" id="errorsAlertThreshold">-</div>
+                        <div style="font-size: 12px; color: #1e40af;">Alert Threshold</div>
+                    </div>
+                </div>
+                
+                <!-- Error Breakdown -->
+                <div id="errorBreakdown" style="margin-bottom: 15px;"></div>
+                
+                <!-- Recent Errors -->
+                <h5 style="margin-bottom: 10px; margin-top: 15px;">Recent Errors</h5>
+                <div id="recentErrors" style="max-height: 300px; overflow-y: auto; background: var(--bg-card); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 12px;">
+                    <div style="color: var(--text-secondary);">Loading...</div>
+                </div>
+            </div>
+            
+            <!-- Message Queue -->
+            <div class="card" style="margin-bottom: 20px; padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">📤 Message Queue</h4>
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 15px;">
+                    <div style="background: var(--bg-card); padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold;" id="mqQueueSize">-</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">Queued</div>
+                    </div>
+                    <div style="background: #d1fae5; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #065f46;" id="mqSentToday">-</div>
+                        <div style="font-size: 12px; color: #065f46;">Sent Today</div>
+                    </div>
+                    <div style="background: #fee2e2; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #991b1b;" id="mqFailedToday">-</div>
+                        <div style="font-size: 12px; color: #991b1b;">Failed Today</div>
+                    </div>
+                    <div style="background: #fef3c7; padding: 15px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 28px; font-weight: bold; color: #92400e;" id="mqFailedTotal">-</div>
+                        <div style="font-size: 12px; color: #92400e;">Pending Retry</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Redis Keys -->
+            <div class="card" style="padding: 20px; border-radius: 15px;">
+                <h4 style="margin-bottom: 15px;">🔑 Redis Key Registry
+                    <button onclick="runRedisCleanup()" style="margin-left: 10px; padding: 4px 12px; font-size: 12px; background: #f59e0b; color: white; border: none; border-radius: 6px; cursor: pointer;">🧹 Run Cleanup</button>
+                </h4>
+                <div id="redisKeyStats" style="font-size: 13px;">
+                    <div style="color: var(--text-secondary);">Loading...</div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
 </div>
@@ -1551,6 +1733,12 @@
                     break;
                 case 'achievements':
                     await loadAchievements();
+                    break;
+                case 'newsletter':
+                    await loadNewsletterData();
+                    break;
+                case 'system':
+                    await loadSystemData();
                     break;
             }
         } catch (error) {
@@ -2228,6 +2416,26 @@
                 document.getElementById('cooldownDays').textContent = settings.grandPrizeCooldownDays + ' days';
                 document.getElementById('dailyLimit').textContent = '₦' + settings.dailyWinLimit.toLocaleString();
                 document.getElementById('paymentModeValue').textContent = settings.paymentMode || 'disabled';
+                
+                // Game mode controls
+                if (settings.gameModes) {
+                    ['practice', 'classic', 'tournament'].forEach(mode => {
+                        const config = settings.gameModes[mode];
+                        const container = document.getElementById(mode + 'Mode');
+                        const statusEl = document.getElementById(mode + 'ModeStatus');
+                        if (container && statusEl && config) {
+                            if (config.enabled) {
+                                container.style.background = '#d1fae5';
+                                statusEl.textContent = 'ENABLED';
+                                statusEl.style.color = '#065f46';
+                            } else {
+                                container.style.background = '#fee2e2';
+                                statusEl.textContent = 'DISABLED';
+                                statusEl.style.color = '#991b1b';
+                            }
+                        }
+                    });
+                }
             }
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -2423,6 +2631,203 @@
     });
 
     console.log('📊 Dashboard script loaded');
+
+    // ====================================
+    // NEWSLETTER TAB
+    // ====================================
+    async function loadNewsletterData() {
+        const token = localStorage.getItem('adminSessionToken');
+        try {
+            const response = await fetch('/admin/api/newsletter/stats', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) {
+                const s = data.stats;
+                const collected = parseInt(s.emails_collected);
+                const total = parseInt(s.total_users);
+                const rate = total > 0 ? ((collected / total) * 100).toFixed(1) + '%' : '0%';
+                document.getElementById('emailsCollected').textContent = collected;
+                document.getElementById('emailTotalUsers').textContent = total;
+                document.getElementById('emailConversionRate').textContent = rate;
+                document.getElementById('emailPrompted').textContent = parseInt(s.times_prompted);
+            }
+        } catch (error) {
+            console.error('Error loading newsletter stats:', error);
+        }
+    }
+
+    async function loadEmailList() {
+        const token = localStorage.getItem('adminSessionToken');
+        const card = document.getElementById('emailListCard');
+        const tbody = document.getElementById('emailListBody');
+        card.style.display = 'block';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+        
+        try {
+            const response = await fetch('/admin/api/newsletter/export', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) {
+                document.getElementById('emailListCount').textContent = `(${data.count} subscribers)`;
+                tbody.innerHTML = data.subscribers.map(s => `
+                    <tr>
+                        <td>${s.email}</td>
+                        <td>${s.full_name || '-'}</td>
+                        <td>@${s.username || '-'}</td>
+                        <td>${s.city || '-'}</td>
+                        <td>${s.platform || '-'}</td>
+                        <td>${s.total_games || 0}</td>
+                        <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                    </tr>
+                `).join('');
+            }
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Failed to load</td></tr>';
+        }
+    }
+
+    function downloadEmailCSV() {
+        const token = localStorage.getItem('adminSessionToken');
+        const a = document.createElement('a');
+        a.href = '/admin/api/newsletter/export-csv';
+        a.download = 'wut-newsletter-subscribers.csv';
+        // Use fetch for auth then trigger download
+        fetch('/admin/api/newsletter/export-csv', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        }).then(r => r.blob()).then(blob => {
+            const url = URL.createObjectURL(blob);
+            a.href = url;
+            a.click();
+            URL.revokeObjectURL(url);
+        }).catch(e => alert('Download failed: ' + e.message));
+    }
+
+    // ====================================
+    // SYSTEM TAB
+    // ====================================
+    async function loadSystemData() {
+        const token = localStorage.getItem('adminSessionToken');
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        // Load all system data in parallel
+        const [healthRes, errorsRes, mqRes, redisRes] = await Promise.allSettled([
+            fetch('/admin/api/system/health', { headers }).then(r => r.json()),
+            fetch('/admin/api/system/errors', { headers }).then(r => r.json()),
+            fetch('/admin/api/system/message-queue', { headers }).then(r => r.json()),
+            fetch('/admin/api/system/redis', { headers }).then(r => r.json())
+        ]);
+
+        // Health
+        if (healthRes.status === 'fulfilled' && healthRes.value.success) {
+            const h = healthRes.value.health;
+            updateHealthComponent('Db', h.components.database);
+            updateHealthComponent('Redis', h.components.redis);
+            document.getElementById('systemUptime').textContent = formatUptime(h.uptime);
+        }
+
+        // Errors
+        if (errorsRes.status === 'fulfilled' && errorsRes.value.success) {
+            const s = errorsRes.value.stats;
+            document.getElementById('errorsToday').textContent = s.today.total;
+            document.getElementById('errorsCurrentRate').textContent = s.currentRate;
+            document.getElementById('errorsAlertThreshold').textContent = s.alertThreshold;
+            
+            // Error breakdown
+            const breakdown = document.getElementById('errorBreakdown');
+            const cats = Object.entries(s.today.byCategory || {}).sort((a,b) => b[1] - a[1]);
+            if (cats.length > 0) {
+                breakdown.innerHTML = '<h5 style="margin-bottom:8px;">By Category</h5>' +
+                    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                    cats.map(([cat, count]) => 
+                        `<span style="background:var(--bg-card);padding:4px 10px;border-radius:6px;font-size:12px;">${cat}: <strong>${count}</strong></span>`
+                    ).join('') + '</div>';
+            } else {
+                breakdown.innerHTML = '';
+            }
+            
+            // Recent errors
+            const errDiv = document.getElementById('recentErrors');
+            if (s.recentErrors && s.recentErrors.length > 0) {
+                errDiv.innerHTML = s.recentErrors.reverse().map(e => 
+                    `<div style="padding:4px 0;border-bottom:1px solid var(--border-color);"><span style="color:var(--text-secondary);">${new Date(e.timestamp).toLocaleTimeString()}</span> <span style="color:#991b1b;background:#fee2e2;padding:1px 6px;border-radius:3px;font-size:11px;">${e.category}</span> ${e.message.substring(0, 150)}</div>`
+                ).join('');
+            } else {
+                errDiv.innerHTML = '<div style="color:#065f46;padding:10px;">✅ No errors today!</div>';
+            }
+        }
+
+        // Message Queue
+        if (mqRes.status === 'fulfilled' && mqRes.value.success) {
+            const mq = mqRes.value.stats;
+            document.getElementById('mqQueueSize').textContent = mq.queueSize;
+            document.getElementById('mqSentToday').textContent = mq.todaySent;
+            document.getElementById('mqFailedToday').textContent = mq.todayFailed;
+            document.getElementById('mqFailedTotal').textContent = mq.failedCount;
+        }
+
+        // Redis
+        if (redisRes.status === 'fulfilled' && redisRes.value.success) {
+            document.getElementById('redisMemory').textContent = redisRes.value.memory;
+            const keyDiv = document.getElementById('redisKeyStats');
+            const keys = redisRes.value.keys;
+            const entries = Object.entries(keys).filter(([,v]) => v.count > 0);
+            if (entries.length > 0) {
+                keyDiv.innerHTML = '<table style="width:100%;font-size:12px;">' +
+                    '<tr style="border-bottom:1px solid var(--border-color);"><th style="text-align:left;padding:6px;">Key Pattern</th><th>Count</th><th>TTL</th><th>Owner</th></tr>' +
+                    entries.map(([name, info]) =>
+                        `<tr style="border-bottom:1px solid var(--border-color);">` +
+                        `<td style="padding:6px;font-family:monospace;">${name}</td>` +
+                        `<td style="text-align:center;">${info.count}</td>` +
+                        `<td style="text-align:center;">${info.ttl ? info.ttl + 's' : '∞'}</td>` +
+                        `<td style="text-align:center;color:var(--text-secondary);">${info.owner}</td></tr>`
+                    ).join('') + '</table>';
+            } else {
+                keyDiv.innerHTML = '<div style="color:var(--text-secondary);">No active Redis keys</div>';
+            }
+        }
+    }
+
+    function updateHealthComponent(name, data) {
+        const container = document.getElementById('health' + name);
+        const status = document.getElementById('health' + name + 'Status');
+        if (!container || !status || !data) return;
+        if (data.status === 'ok') {
+            container.style.background = '#d1fae5';
+            status.textContent = `OK (${data.latency}ms)`;
+            status.style.color = '#065f46';
+        } else {
+            container.style.background = '#fee2e2';
+            status.textContent = `ERROR: ${(data.error || '').substring(0, 40)}`;
+            status.style.color = '#991b1b';
+        }
+    }
+
+    function formatUptime(seconds) {
+        if (!seconds) return '-';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (h > 24) return Math.floor(h/24) + 'd ' + (h%24) + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+    }
+
+    async function runRedisCleanup() {
+        const token = localStorage.getItem('adminSessionToken');
+        if (!confirm('Run Redis key cleanup? This fixes TTLs on orphaned keys.')) return;
+        try {
+            const res = await fetch('/admin/api/system/redis/cleanup', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            alert(data.success ? `Cleanup complete: ${data.cleaned} keys fixed` : 'Cleanup failed');
+            loadSystemData();
+        } catch (e) {
+            alert('Cleanup failed: ' + e.message);
+        }
+    }
 </script>
 
 </body>
