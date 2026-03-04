@@ -277,6 +277,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'CONFIRM_TOURNAMENT_REBUY') {
+        await this.handleTournamentRebuyConfirmation(phone, message, userState.data);
+        return;
+      }
+
       // ===================================
       // PRIORITY 4: PAYMENT STATES
       // ===================================
@@ -1032,7 +1037,31 @@ Type the code, or type SKIP to continue:`
     const status = await tournamentService.getUserTournamentStatus(user.id, tournament.id);
     
     if (status && status.entry_paid) {
-      // Already joined and paid - start game
+      // Already joined and paid
+      
+      // Check if out of tokens — offer rebuy instead of starting game
+      if (tournament.uses_tokens && status.tokens_remaining !== null && status.tokens_remaining <= 0) {
+        await userService.clearUserState(user.phone_number);
+        
+        let rebuyMsg = `🏆 *${tournament.tournament_name}*\n\n`;
+        rebuyMsg += `You've used all ${tournament.tokens_per_entry} tokens!\n\n`;
+        rebuyMsg += `🎟️ *Want more attempts?*\n`;
+        rebuyMsg += `Buy ${tournament.tokens_per_entry} more tokens for ₦${Number(tournament.entry_fee).toLocaleString()}\n\n`;
+        rebuyMsg += `Reply *REBUY* to purchase more tokens\n`;
+        rebuyMsg += `Reply *MENU* to go back`;
+        
+        await userService.setUserState(user.phone_number, 'CONFIRM_TOURNAMENT_REBUY', {
+          tournamentId: tournament.id,
+          tournamentName: tournament.tournament_name,
+          entryFee: tournament.entry_fee,
+          tokensPerEntry: tournament.tokens_per_entry
+        });
+        
+        await messagingService.sendMessage(user.phone_number, rebuyMsg);
+        return;
+      }
+      
+      // Has tokens — start game
       await userService.clearUserState(user.phone_number);
       
       let startMessage = `✅ You're already in "${tournament.tournament_name}"!\n\n`;
@@ -1180,6 +1209,53 @@ Type the code, or type SKIP to continue:`
       await messagingService.sendMessage(
         phone,
         '⚠️ Please reply YES or NO'
+      );
+    }
+  }
+
+  // ============================================
+  // TOURNAMENT TOKEN REBUY CONFIRMATION
+  // ============================================
+
+  async handleTournamentRebuyConfirmation(phone, message, stateData) {
+    const input = message.trim().toUpperCase();
+    const user = await userService.getUserByPhone(phone);
+    
+    if (input === 'REBUY' || input === 'YES' || input === 'Y') {
+      try {
+        const payment = await tournamentService.initializeRebuyPayment(
+          user.id,
+          stateData.tournamentId
+        );
+        
+        await userService.clearUserState(phone);
+        
+        let msg = `🎟️ *TOKEN REBUY* 🎟️\n\n`;
+        msg += `Tournament: ${stateData.tournamentName}\n`;
+        msg += `Tokens: ${stateData.tokensPerEntry} additional attempts\n`;
+        msg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
+        msg += `Click link to pay:\n${payment.authorization_url}\n\n`;
+        msg += `Reference: ${payment.reference}\n\n`;
+        msg += `⚠️ Link expires in 30 minutes\n\n`;
+        msg += `After payment, your tokens will be added automatically!`;
+        
+        await messagingService.sendMessage(phone, msg);
+        
+      } catch (error) {
+        logger.error('Error initializing rebuy payment:', error);
+        await userService.clearUserState(phone);
+        await messagingService.sendMessage(
+          phone,
+          '❌ Error processing rebuy. Please try again.\n\nType TOURNAMENTS to view tournaments.'
+        );
+      }
+    } else if (input === 'MENU' || input === 'NO' || input === 'N' || input === 'BACK') {
+      await userService.clearUserState(phone);
+      await this.sendMainMenu(phone);
+    } else {
+      await messagingService.sendMessage(
+        phone,
+        '⚠️ Reply *REBUY* to purchase more tokens or *MENU* to go back'
       );
     }
   }

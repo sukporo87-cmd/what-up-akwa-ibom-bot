@@ -236,11 +236,12 @@ class TournamentService {
                 throw new Error('This is a free tournament');
             }
             
-            // Check if already paid
+            // Check if already paid (prevent duplicate initial entry, but allow rebuys via separate method)
             const existingPayment = await pool.query(`
                 SELECT * FROM tournament_entry_payments 
                 WHERE user_id = $1 AND tournament_id = $2 
                 AND payment_status = 'success'
+                AND payment_reference LIKE 'TRN-%'
             `, [userId, tournamentId]);
             
             if (existingPayment.rows.length > 0) {
@@ -288,11 +289,7 @@ class TournamentService {
                 INSERT INTO tournament_entry_payments 
                     (tournament_id, user_id, amount, payment_reference, payment_status, platform)
                 VALUES ($1, $2, $3, $4, 'pending', $5)
-                ON CONFLICT (tournament_id, user_id) 
-                DO UPDATE SET 
-                    payment_reference = EXCLUDED.payment_reference,
-                    payment_status = 'pending',
-                    platform = EXCLUDED.platform
+                ON CONFLICT (payment_reference) DO NOTHING
             `, [tournamentId, userId, tournament.entry_fee, reference, platform]);
             
             logger.info(`Tournament payment initialized (${platform}): ${reference}`);
@@ -368,7 +365,27 @@ class TournamentService {
             // 🔧 NEW: Get platform from metadata
             const platform = paymentData.metadata.platform || payment.platform || 'whatsapp';
             
-            // Add user to tournament participants
+            // Check if this is a rebuy payment
+            const isRebuy = reference.startsWith('TRNR-');
+            
+            if (isRebuy) {
+                // REBUY: Add tokens to existing participant
+                const tokensToAdd = paymentData.metadata.tokens_to_add || tournament.tokens_per_entry;
+                const rebuyResult = await this.processRebuyTokens(payment.tournament_id, payment.user_id, tokensToAdd);
+                
+                logger.info(`Tournament rebuy verified (${platform}): ${reference} - User ${payment.user_id} got ${tokensToAdd} tokens`);
+                
+                return {
+                    success: true,
+                    payment,
+                    tokensRemaining: rebuyResult.tokensRemaining,
+                    platform,
+                    isRebuy: true,
+                    tokensAdded: tokensToAdd
+                };
+            }
+            
+            // INITIAL ENTRY: Add user to tournament participants
             const tournament = await this.getTournamentById(payment.tournament_id);
             const tokensRemaining = tournament.uses_tokens ? tournament.tokens_per_entry : null;
             
@@ -403,6 +420,121 @@ class TournamentService {
                 ['failed', reference]
             );
             
+            throw error;
+        }
+    }
+
+    // ============================================
+    // TOURNAMENT TOKEN REBUY
+    // ============================================
+
+    /**
+     * Initialize a rebuy payment for additional tournament tokens
+     */
+    async initializeRebuyPayment(userId, tournamentId) {
+        const PaymentService = require('./payment.service');
+        const paymentService = new PaymentService();
+        
+        try {
+            const tournament = await this.getTournamentById(tournamentId);
+            
+            if (!tournament) {
+                throw new Error('Tournament not found');
+            }
+            
+            if (tournament.status !== 'active') {
+                throw new Error('Tournament is no longer active');
+            }
+            
+            if (!tournament.uses_tokens) {
+                throw new Error('This tournament has unlimited plays');
+            }
+            
+            // Verify user is already a participant
+            const status = await this.getUserTournamentStatus(userId, tournamentId);
+            if (!status || !status.entry_paid) {
+                throw new Error('You must join the tournament first');
+            }
+            
+            const user = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+            const userData = user.rows[0];
+            const platform = userData.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            
+            // Rebuy uses same entry fee 
+            const rebuyPrice = tournament.entry_fee;
+            const reference = `TRNR-${tournamentId}-${userId}-${Date.now()}`;
+            
+            const payment = await paymentService.paystack.transaction.initialize({
+                email: `${userData.phone_number}@whatsuptrivia.com`,
+                amount: rebuyPrice * 100,
+                reference: reference,
+                callback_url: `${process.env.APP_URL}/payment/tournament-callback`,
+                metadata: {
+                    user_id: userId,
+                    tournament_id: tournamentId,
+                    tournament_name: tournament.tournament_name,
+                    entry_fee: rebuyPrice,
+                    is_rebuy: true,
+                    tokens_to_add: tournament.tokens_per_entry,
+                    user_name: userData.full_name,
+                    user_phone: userData.phone_number,
+                    platform: platform,
+                    custom_fields: [
+                        { display_name: "Tournament", variable_name: "tournament", value: tournament.tournament_name },
+                        { display_name: "Type", variable_name: "type", value: "Token Rebuy" },
+                        { display_name: "Platform", variable_name: "platform", value: platform }
+                    ]
+                }
+            });
+            
+            // Save payment record
+            await pool.query(`
+                INSERT INTO tournament_entry_payments 
+                    (tournament_id, user_id, amount, payment_reference, payment_status, platform)
+                VALUES ($1, $2, $3, $4, 'pending', $5)
+            `, [tournamentId, userId, rebuyPrice, reference, platform]);
+            
+            logger.info(`Tournament rebuy payment initialized (${platform}): ${reference}`);
+            
+            return {
+                success: true,
+                authorization_url: payment.data.authorization_url,
+                reference: reference,
+                amount: rebuyPrice,
+                tokensToAdd: tournament.tokens_per_entry,
+                platform: platform
+            };
+        } catch (error) {
+            logger.error('Error initializing rebuy payment:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Process a verified rebuy payment - add tokens to existing participant
+     */
+    async processRebuyTokens(tournamentId, userId, tokensToAdd) {
+        try {
+            const result = await pool.query(`
+                UPDATE tournament_participants
+                SET tokens_remaining = tokens_remaining + $1,
+                    can_play = true
+                WHERE user_id = $2 AND tournament_id = $3
+                RETURNING tokens_remaining
+            `, [tokensToAdd, userId, tournamentId]);
+            
+            if (result.rows.length === 0) {
+                throw new Error('Participant not found');
+            }
+            
+            logger.info(`Rebuy processed: User ${userId} got ${tokensToAdd} tokens for tournament ${tournamentId}. New total: ${result.rows[0].tokens_remaining}`);
+            
+            return {
+                success: true,
+                tokensRemaining: result.rows[0].tokens_remaining
+            };
+        } catch (error) {
+            logger.error('Error processing rebuy tokens:', error);
             throw error;
         }
     }

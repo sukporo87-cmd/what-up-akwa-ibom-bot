@@ -901,7 +901,21 @@ class GameService {
                     if (!status) {
                         await messagingService.sendMessage(user.phone_number, '❌ You have not joined this tournament!\n\nType TOURNAMENTS to view available tournaments.');
                     } else if (status.uses_tokens && status.tokens_remaining <= 0) {
-                        await messagingService.sendMessage(user.phone_number, `❌ You have no tournament tokens remaining!\n\nYou've used all ${status.tokens_per_entry} attempts for this tournament.\n\nType TOURNAMENTS to view other tournaments.`);
+                        let noTokenMsg = `❌ You have no tournament tokens remaining!\n\n`;
+                        noTokenMsg += `You've used all ${status.tokens_per_entry} attempts for this tournament.\n\n`;
+                        noTokenMsg += `🎟️ *Want more attempts?*\n`;
+                        noTokenMsg += `Buy ${status.tokens_per_entry} more tokens for ₦${Number(status.entry_fee_paid || tournament.entry_fee).toLocaleString()}\n\n`;
+                        noTokenMsg += `Reply *REBUY* to purchase more tokens\n`;
+                        noTokenMsg += `Reply *MENU* to go back`;
+                        
+                        await userService.setUserState(user.phone_number, 'CONFIRM_TOURNAMENT_REBUY', {
+                            tournamentId: tournamentId,
+                            tournamentName: tournament.tournament_name,
+                            entryFee: tournament.entry_fee,
+                            tokensPerEntry: tournament.tokens_per_entry
+                        });
+                        
+                        await messagingService.sendMessage(user.phone_number, noTokenMsg);
                     } else if (status.payment_status !== 'success') {
                         await messagingService.sendMessage(user.phone_number, '❌ Payment not completed!\n\nComplete payment to access this tournament.\n\nType TOURNAMENTS to try again.');
                     }

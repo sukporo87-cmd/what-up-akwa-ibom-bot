@@ -39,7 +39,7 @@ router.post('/webhook', async (req, res) => {
             
             try {
                 // Check if this is a tournament payment
-                if (reference.startsWith('TRN-')) {
+                if (reference.startsWith('TRN-') || reference.startsWith('TRNR-')) {
                     // Handle tournament payment
                     await handleTournamentPaymentWebhook(reference, metadata);
                 } else {
@@ -109,22 +109,35 @@ async function handleTournamentPaymentWebhook(reference, metadata) {
         const user = userResult.rows[0];
         const tournament = await tournamentService.getTournamentById(verification.payment.tournament_id);
         
-        let message = `✅ TOURNAMENT PAYMENT SUCCESSFUL! ✅\n\n`;
-        message += `You've joined: ${tournament.tournament_name}\n\n`;
-        message += `Amount Paid: ₦${verification.payment.amount.toLocaleString()}\n`;
+        let message;
         
-        if (tournament.uses_tokens && verification.tokensRemaining) {
-            message += `🎟️ Tournament Tokens: ${verification.tokensRemaining}\n\n`;
+        if (verification.isRebuy) {
+            // REBUY confirmation
+            message = `✅ TOKEN REBUY SUCCESSFUL! ✅\n\n`;
+            message += `Tournament: ${tournament.tournament_name}\n\n`;
+            message += `Amount Paid: ₦${verification.payment.amount.toLocaleString()}\n`;
+            message += `🎟️ Tokens Added: +${verification.tokensAdded}\n`;
+            message += `🎟️ Total Tokens Now: ${verification.tokensRemaining}\n\n`;
+            message += `Ready for another attempt? Type PLAY to start! 🏆`;
         } else {
-            message += `♾️ Unlimited plays during tournament!\n\n`;
+            // Initial entry confirmation
+            message = `✅ TOURNAMENT PAYMENT SUCCESSFUL! ✅\n\n`;
+            message += `You've joined: ${tournament.tournament_name}\n\n`;
+            message += `Amount Paid: ₦${verification.payment.amount.toLocaleString()}\n`;
+            
+            if (tournament.uses_tokens && verification.tokensRemaining) {
+                message += `🎟️ Tournament Tokens: ${verification.tokensRemaining}\n\n`;
+            } else {
+                message += `♾️ Unlimited plays during tournament!\n\n`;
+            }
+            
+            message += `Ready to compete? Type PLAY to start! 🏆`;
         }
-        
-        message += `Ready to compete? Type PLAY to start! 🏆`;
         
         // CHANGED: Use messagingService instead of whatsappService
         await messagingService.sendMessage(user.phone_number, message);
         
-        logger.info(`Tournament payment successful: User ${user.id} joined tournament ${tournament.id}`);
+        logger.info(`Tournament payment successful${verification.isRebuy ? ' (rebuy)' : ''}: User ${user.id} tournament ${tournament.id}`);
         
     } catch (error) {
         logger.error('Error handling tournament payment webhook:', error);
@@ -327,8 +340,9 @@ router.get('/tournament-callback', async (req, res) => {
         const verification = await tournamentService.verifyTournamentPayment(reference);
 const tournament = await tournamentService.getTournamentById(verification.payment.tournament_id);
 
-// Extract user_id from reference (format: TRN-{user_id}-{timestamp}-{random})
-const userId = reference.split('-')[1];
+// Extract user_id from reference (format: TRN-{tournamentId}-{userId}-{timestamp} or TRNR-{tournamentId}-{userId}-{timestamp})
+const refParts = reference.split('-');
+const userId = refParts[2]; // userId is always the 3rd part
 
 // Get user to determine platform
 const userResult = await pool.query(
