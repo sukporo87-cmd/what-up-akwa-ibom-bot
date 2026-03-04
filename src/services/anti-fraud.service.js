@@ -181,6 +181,51 @@ class AntiFraudService {
             return { allowed: true };
         }
     }
+
+    // ============================================
+    // CHECK PRACTICE MODE RATE LIMIT (5/hour)
+    // ============================================
+
+    async checkPracticeRateLimit(userId) {
+        const PRACTICE_LIMIT = 5;
+        try {
+            const key = `practice_per_hour:${userId}`;
+            const count = await redis.incr(key);
+
+            if (count === 1) {
+                await redis.expire(key, 3600);
+            }
+
+            if (count > PRACTICE_LIMIT) {
+                // Rotate through fun conversion messages
+                const messages = [
+                    `🎓 *PRACTICE SESSION COMPLETE!* 🎓\n\n5 practice games done — you're officially warmed up! 🔥\n\nBut here's the thing... practice doesn't pay bills. 💸\n\nType *PLAY* to switch to Classic Mode and turn that brainpower into real money! 💰\n\n_Practice resets in about an hour._`,
+                    
+                    `⏰ *TIMEOUT, CHAMP!* ⏰\n\nYou've crushed 5 practice rounds — your brain is clearly ready! 🧠💪\n\nStop rehearsing, start EARNING.\n\nType *PLAY* and pick Classic Mode — same questions, but this time the money is REAL! 🤑\n\n_Practice games refresh in ~1 hour._`,
+                    
+                    `🏋️ *TRAINING COMPLETE!* 🏋️\n\n5 rounds of practice? That's elite preparation. 👏\n\nNow here's the real question:\n_Why play for free when you can play for cash?_ 😏\n\nType *PLAY* → Classic Mode → Win real Naira! 💰🇳🇬\n\n_More practice available in about an hour._`,
+                    
+                    `😤 *ENOUGH PRACTICE!* 😤\n\nYou've had your 5 warm-up games. The training wheels are OFF. 🚲➡️🏎️\n\nIt's time to step into the arena where correct answers = real money.\n\nType *PLAY* and choose Classic Mode! 🎯💰\n\n_Practice mode resets in ~1 hour._`,
+                    
+                    `🎮 *PRACTICE LIMIT REACHED* 🎮\n\nLook at you — 5 games deep and still hungry! We love the energy! ⚡\n\nBut real champions don't stay in practice forever...\n\nType *PLAY* → Classic Mode and let's turn those correct answers into Naira! 💸🏆\n\n_Practice available again in about an hour._`
+                ];
+
+                const msg = messages[Math.floor(Math.random() * messages.length)];
+                
+                return {
+                    allowed: false,
+                    count,
+                    limit: PRACTICE_LIMIT,
+                    message: msg
+                };
+            }
+
+            return { allowed: true, count, remaining: PRACTICE_LIMIT - count };
+        } catch (error) {
+            logger.error('Error checking practice rate limit:', error);
+            return { allowed: true };
+        }
+    }
     
     // ============================================
     // CHECK PERFECT GAME LIMIT

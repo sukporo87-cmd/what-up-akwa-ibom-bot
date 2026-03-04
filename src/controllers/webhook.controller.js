@@ -847,8 +847,8 @@ Type the code, or type SKIP to continue:`
           return;
         }
         
-        // Check 15 games per hour rate limit
-        const practiceRateLimit = await antiFraudService.checkGameRateLimit(user.id);
+        // Check 5 practice games per hour limit
+        const practiceRateLimit = await antiFraudService.checkPracticeRateLimit(user.id);
         if (!practiceRateLimit.allowed) {
           await userService.clearUserState(user.phone_number);
           await messagingService.sendMessage(user.phone_number, practiceRateLimit.message);
