@@ -676,11 +676,19 @@ class AuditService {
 
     startAuditCleanup() {
         setInterval(async () => {
-            await this.cleanupOldAuditLogs();
+            try {
+                await this.cleanupOldAuditLogs();
+            } catch (e) {
+                logger.error('Audit cleanup interval error (non-fatal):', e.message);
+            }
         }, 24 * 60 * 60 * 1000);
         
         setTimeout(async () => {
-            await this.cleanupOldAuditLogs();
+            try {
+                await this.cleanupOldAuditLogs();
+            } catch (e) {
+                logger.error('Audit cleanup startup error (non-fatal):', e.message);
+            }
         }, 60 * 1000);
         
         logger.info('📝 Audit cleanup job scheduled (runs every 24 hours)');
@@ -688,30 +696,40 @@ class AuditService {
 
     async cleanupOldAuditLogs(retentionDays = 7) {
         try {
-            const toDelete = await pool.query(`
-                SELECT COUNT(*) as count
-                FROM game_audit_logs
-                WHERE created_at < NOW() - INTERVAL '${retentionDays} days'
-            `);
-            
-            const deleteCount = parseInt(toDelete.rows[0].count);
-            
-            if (deleteCount === 0) {
+            // Delete in small batches to avoid connection timeouts
+            const BATCH_SIZE = 500;
+            let totalDeleted = 0;
+            let batchDeleted = 0;
+
+            do {
+                const result = await pool.query(`
+                    DELETE FROM game_audit_logs
+                    WHERE id IN (
+                        SELECT id FROM game_audit_logs
+                        WHERE created_at < NOW() - INTERVAL '${retentionDays} days'
+                        LIMIT ${BATCH_SIZE}
+                    )
+                `);
+                
+                batchDeleted = result.rowCount;
+                totalDeleted += batchDeleted;
+                
+                // Small pause between batches to not hog the connection
+                if (batchDeleted === BATCH_SIZE) {
+                    await new Promise(r => setTimeout(r, 500));
+                }
+            } while (batchDeleted === BATCH_SIZE);
+
+            if (totalDeleted > 0) {
+                logger.info(`📝 Audit cleanup: Deleted ${totalDeleted} logs older than ${retentionDays} days`);
+            } else {
                 logger.info('📝 Audit cleanup: No old logs to delete');
-                return { deleted: 0 };
             }
-            
-            const result = await pool.query(`
-                DELETE FROM game_audit_logs
-                WHERE created_at < NOW() - INTERVAL '${retentionDays} days'
-                RETURNING id
-            `);
-            
-            logger.info(`📝 Audit cleanup: Deleted ${result.rowCount} logs older than ${retentionDays} days`);
-            return { deleted: result.rowCount };
+            return { deleted: totalDeleted };
         } catch (error) {
-            logger.error('Error cleaning up audit logs:', error);
-            throw error;
+            logger.error('Error cleaning up audit logs:', error.message);
+            // Don't throw - this is a background job, never crash the server
+            return { deleted: 0, error: error.message };
         }
     }
 
