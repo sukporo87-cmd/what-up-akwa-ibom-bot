@@ -128,6 +128,28 @@ class MessagingService {
     }
   }
 
+  async sendImageByUrl(identifier, imageUrl, caption = '') {
+    const platform = this.getPlatform(identifier);
+    const id = this.extractId(identifier);
+    
+    console.log(`📸 Sending image (URL) via ${platform} to ${id.substring(0, 10)}...`);
+
+    try {
+      if (platform === 'telegram') {
+        if (!this.telegram) throw new Error('Telegram service not initialized');
+        // Telegram's sendPhoto natively supports URLs
+        return await this.telegram.sendImage(id, imageUrl, caption);
+      } else {
+        if (!this.whatsapp) throw new Error('WhatsApp service not initialized');
+        return await this.whatsapp.sendImageByUrl(id, imageUrl, caption);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send image (URL) via ${platform}:`, error.message);
+      logger.error(`Error sending image by URL via ${platform}:`, error);
+      throw error;
+    }
+  }
+
   /**
    * Format phone number (WhatsApp specific)
    */

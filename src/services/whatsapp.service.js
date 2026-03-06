@@ -143,6 +143,46 @@ class WhatsAppService {
     }
   }
 
+  async sendImageByUrl(phoneNumber, imageUrl, caption = '') {
+    try {
+      const rateCheck = this._checkPairRate(phoneNumber);
+      if (!rateCheck.allowed) {
+        logger.warn(`⚠️ Pair rate limit reached for ${phoneNumber}. Skipping image.`);
+        return { skipped: true, reason: 'pair_rate_limit' };
+      }
+
+      const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'image',
+        image: {
+          link: imageUrl,
+          caption: caption
+        }
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      logger.info(`Image (URL) sent to ${phoneNumber}`);
+      return response.data;
+
+    } catch (error) {
+      if (this._isPairRateLimit(error)) {
+        logger.warn(`⚠️ WhatsApp pair rate limit hit for ${phoneNumber}. Image not delivered.`);
+        return { skipped: true, reason: 'pair_rate_limit_api' };
+      }
+      logger.error('Error sending image by URL:', this._sanitizeError(error));
+      throw error;
+    }
+  }
+
   async uploadMedia(filepath) {
     try {
       const url = `${this.apiUrl}/${this.phoneNumberId}/media`;

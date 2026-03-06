@@ -1639,7 +1639,24 @@ class GameService {
             if (!session.lifeline_skip_used) lifelines.push('Skip');
             if (lifelines.length > 0) message += `💎 Lifelines: ${lifelines.join(' | ')}`;
             
-            await messagingService.sendMessage(user.phone_number, message);
+            // Send as image+caption for flag questions, text for regular
+            if (question.image_type === 'flag' && question.image_data) {
+                const flagBaseUrl = process.env.FLAG_BASE_URL;
+                if (flagBaseUrl) {
+                    const flagUrl = `${flagBaseUrl}${question.image_data}.png`;
+                    try {
+                        await messagingService.sendImageByUrl(user.phone_number, flagUrl, message);
+                    } catch (imgError) {
+                        logger.error('Error sending flag image, falling back to text:', imgError.message);
+                        await messagingService.sendMessage(user.phone_number, message);
+                    }
+                } else {
+                    logger.warn('FLAG_BASE_URL not set, sending flag question as text');
+                    await messagingService.sendMessage(user.phone_number, message);
+                }
+            } else {
+                await messagingService.sendMessage(user.phone_number, message);
+            }
             
             await redis.setex(timeoutKey, Math.ceil(currentTimeoutMs / 1000) + 3, (Date.now() + currentTimeoutMs).toString());
             
