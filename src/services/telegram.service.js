@@ -160,6 +160,18 @@ class TelegramService {
       logger.info(`✅ Message sent to ${chatId}`);
       return true;
     } catch (error) {
+      // If Markdown parsing fails, retry without parse_mode
+      if (error.message && error.message.includes("can't parse entities")) {
+        try {
+          logger.warn(`Markdown parse failed for ${chatId}, retrying as plain text`);
+          await this.bot.sendMessage(chatId, text, { ...options });
+          logger.info(`✅ Message sent to ${chatId} (plain text fallback)`);
+          return true;
+        } catch (retryError) {
+          logger.error(`Error sending message to ${chatId} (retry):`, retryError.message);
+          return false;
+        }
+      }
       logger.error(`Error sending message to ${chatId}:`, error.message);
       return false;
     }
@@ -195,6 +207,20 @@ class TelegramService {
       logger.info(`✅ Buttons sent to ${chatId}`);
       return true;
     } catch (error) {
+      // If Markdown parsing fails, retry without parse_mode
+      if (error.message && error.message.includes("can't parse entities")) {
+        try {
+          logger.warn(`Markdown parse failed for buttons to ${chatId}, retrying as plain text`);
+          await this.bot.sendMessage(chatId, text, {
+            reply_markup: { inline_keyboard: buttons }
+          });
+          logger.info(`✅ Buttons sent to ${chatId} (plain text fallback)`);
+          return true;
+        } catch (retryError) {
+          logger.error(`Error sending buttons (retry):`, retryError.message);
+          return false;
+        }
+      }
       logger.error(`Error sending buttons:`, error.message);
       return false;
     }

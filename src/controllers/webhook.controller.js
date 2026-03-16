@@ -1870,6 +1870,15 @@ Type the code, or type SKIP to continue:`
 
   async handlePackageSelection(user, message, stateData) {
     try {
+      if (!stateData || !stateData.packages) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          '❌ Session expired. Type BUY to see packages again.'
+        );
+        await userService.clearUserState(user.phone_number);
+        return;
+      }
+
       const packageIndex = parseInt(message.trim()) - 1;
       const packages = stateData.packages;
 
