@@ -2294,7 +2294,7 @@ Type the code, or type SKIP to continue:`
       const result = await pool.query(
         `SELECT * FROM transactions
          WHERE user_id = $1
-         AND transaction_type = 'prize'
+         AND transaction_type IN ('prize', 'tournament_prize')
          AND payout_status = 'paid'
          ORDER BY paid_at DESC
          LIMIT 1`,
