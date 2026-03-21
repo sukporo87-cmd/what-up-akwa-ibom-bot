@@ -165,7 +165,7 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
         COUNT(*) FILTER (WHERE payout_status = 'confirmed') as confirmed_count,
         COALESCE(SUM(amount) FILTER (WHERE payout_status = 'confirmed'), 0) as confirmed_amount
       FROM transactions
-      WHERE transaction_type = 'prize'
+      WHERE transaction_type IN ('prize', 'tournament_prize')
     `);
 
     const totalUsers = await pool.query('SELECT COUNT(*) as count FROM users');
@@ -585,7 +585,7 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type = 'prize'
+      WHERE t.transaction_type IN ('prize', 'tournament_prize')
       ${platformCondition}
       ${statusCondition}
       ORDER BY t.created_at DESC
@@ -596,7 +596,7 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
       SELECT COUNT(*) as total 
       FROM transactions t
       JOIN users u ON t.user_id = u.id
-      WHERE t.transaction_type = 'prize'
+      WHERE t.transaction_type IN ('prize', 'tournament_prize')
       ${platformCondition}
       ${statusCondition}
     `);
@@ -669,7 +669,7 @@ router.get('/api/payouts/recent', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type = 'prize'
+      WHERE t.transaction_type IN ('prize', 'tournament_prize')
       ORDER BY t.created_at DESC
       LIMIT $1
     `, [limit]);
@@ -687,7 +687,7 @@ router.get('/api/stats/quick', authenticateAdmin, async (req, res) => {
     const result = await pool.query(`
       SELECT
         -- Pending payouts
-        COUNT(*) FILTER (WHERE transaction_type = 'prize' AND payout_status IN ('pending', 'details_collected', 'approved')) as pending_payouts,
+        COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize') AND payout_status IN ('pending', 'details_collected', 'approved')) as pending_payouts,
         
         -- Active games now
         (SELECT COUNT(*) FROM game_sessions WHERE status = 'active') as active_games,
@@ -704,7 +704,7 @@ router.get('/api/stats/quick', authenticateAdmin, async (req, res) => {
     const yesterdayResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM transactions
-      WHERE transaction_type = 'prize' 
+      WHERE transaction_type IN ('prize', 'tournament_prize') 
         AND payout_status IN ('pending', 'details_collected', 'approved')
         AND created_at >= CURRENT_DATE - INTERVAL '1 day'
         AND created_at < CURRENT_DATE
@@ -804,7 +804,7 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
         COUNT(*) as count,
         COALESCE(SUM(amount), 0) as total_amount
       FROM transactions
-      WHERE transaction_type = 'prize'
+      WHERE transaction_type IN ('prize', 'tournament_prize')
       GROUP BY payout_status
       ORDER BY 
         CASE payout_status
@@ -940,7 +940,7 @@ router.get('/api/analytics/conversion-funnel', authenticateAdmin, async (req, re
         COUNT(CASE WHEN EXISTS (
           SELECT 1 FROM transactions t 
           WHERE t.user_id = users.id 
-          AND t.transaction_type = 'prize'
+          AND t.transaction_type IN ('prize', 'tournament_prize')
           AND t.payout_status IN ('paid', 'confirmed')
         ) THEN 1 END) as claimed_payout,
         ROUND(
@@ -1483,7 +1483,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type = 'prize'
+      WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
       ORDER BY t.paid_at DESC
@@ -1493,7 +1493,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
     const countQuery = `
       SELECT COUNT(*) as total
       FROM transactions t
-      WHERE t.transaction_type = 'prize'
+      WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
     `;
@@ -3721,10 +3721,10 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         // Get financial stats
         const financialResult = await pool.query(`
             SELECT 
-                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'prize'), 0) as total_winnings,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')), 0) as total_winnings,
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'purchase'), 0) as total_purchases,
-                COUNT(*) FILTER (WHERE transaction_type = 'prize') as prize_count,
-                MAX(amount) FILTER (WHERE transaction_type = 'prize') as highest_win
+                COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as prize_count,
+                MAX(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as highest_win
             FROM transactions
             WHERE user_id = $1
         `, [userId]);
@@ -3799,7 +3799,7 @@ router.get('/api/users/search', authenticateAdmin, async (req, res) => {
             FROM users u
             LEFT JOIN (
                 SELECT user_id, SUM(amount) as total_winnings 
-                FROM transactions WHERE transaction_type = 'prize' 
+                FROM transactions WHERE transaction_type IN ('prize', 'tournament_prize') 
                 GROUP BY user_id
             ) t ON u.id = t.user_id
             LEFT JOIN (
@@ -3936,7 +3936,7 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
         const offset = (pageNum - 1) * limitNum;
         
         // Build query conditions
-        let conditions = [`t.transaction_type = 'prize'`, `t.amount > 0`];
+        let conditions = [`t.transaction_type IN ('prize', 'tournament_prize')`, `t.amount > 0`];
         let params = [];
         let paramIndex = 1;
         
@@ -4067,7 +4067,7 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
                 LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
                     AND DATE(gs.completed_at) = DATE(t.created_at)
                     AND gs.current_score = t.amount
-                WHERE t.id = $1 AND t.transaction_type = 'prize'
+                WHERE t.id = $1 AND t.transaction_type IN ('prize', 'tournament_prize')
             `, [cardId]);
             
             if (transactionResult.rows.length > 0) {

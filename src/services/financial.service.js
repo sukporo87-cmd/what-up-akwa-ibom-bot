@@ -45,7 +45,7 @@ class FinancialService {
           COALESCE(SUM(t.amount), 0) as total,
           COUNT(*) as payout_count
         FROM transactions t
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND t.${dateFilter}` : ''}
       `);
@@ -56,7 +56,7 @@ class FinancialService {
           COALESCE(SUM(amount), 0) as total,
           COUNT(*) as pending_count
         FROM transactions
-        WHERE transaction_type = 'prize'
+        WHERE transaction_type IN ('prize', 'tournament_prize')
         AND payout_status IN ('pending', 'details_collected', 'approved')
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
@@ -162,7 +162,7 @@ class FinancialService {
           COALESCE(
             (SELECT SUM(tr.amount) FROM transactions tr 
              WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
-             AND tr.transaction_type = 'prize'
+             AND tr.transaction_type IN ('prize', 'tournament_prize')
              AND tr.payout_status IN ('paid', 'confirmed')), 0
           ) as prizes_paid,
           CASE 
@@ -234,7 +234,7 @@ class FinancialService {
           COALESCE(MIN(t.amount), 0) as lowest_winning
         FROM transactions t
         JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND gs.game_mode = 'classic'
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY DATE(t.created_at)
@@ -250,7 +250,7 @@ class FinancialService {
           COALESCE(AVG(t.amount), 0) as avg_amount
         FROM transactions t
         JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND gs.game_mode = 'classic'
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
@@ -284,7 +284,7 @@ class FinancialService {
           COUNT(*) as count,
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY t.payout_status
       `);
@@ -304,7 +304,7 @@ class FinancialService {
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at DESC
@@ -328,7 +328,7 @@ class FinancialService {
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('pending', 'details_collected', 'approved')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at ASC
@@ -342,7 +342,7 @@ class FinancialService {
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY gs.game_mode
@@ -382,7 +382,7 @@ class FinancialService {
           COALESCE(AVG(t.amount), 0) as avg_win
         FROM users u
         JOIN transactions t ON u.id = t.user_id
-        WHERE t.transaction_type = 'prize'
+        WHERE t.transaction_type IN ('prize', 'tournament_prize')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY u.id, u.username, u.phone_number, u.created_at
         ORDER BY total_winnings DESC
@@ -438,7 +438,7 @@ class FinancialService {
       const totalPayouts = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as total
         FROM transactions
-        WHERE transaction_type = 'prize'
+        WHERE transaction_type IN ('prize', 'tournament_prize')
         AND payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
@@ -527,7 +527,7 @@ class FinancialService {
           COALESCE(SUM(amount), 0) as amount,
           COUNT(*) as count
         FROM transactions
-        WHERE transaction_type = 'prize'
+        WHERE transaction_type IN ('prize', 'tournament_prize')
         AND payout_status IN ('paid', 'confirmed')
         AND created_at >= CURRENT_DATE - INTERVAL '${interval}'
         GROUP BY ${dateGroup}
@@ -619,7 +619,7 @@ class FinancialService {
           gs.game_mode
         FROM transactions t
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.user_id = $1 AND t.transaction_type = 'prize'
+        WHERE t.user_id = $1 AND t.transaction_type IN ('prize', 'tournament_prize')
         ORDER BY t.created_at DESC
       `, [userId]);
       
@@ -937,7 +937,7 @@ class FinancialService {
           JOIN users u ON t.user_id = u.id
           LEFT JOIN payout_details pd ON t.id = pd.transaction_id
           LEFT JOIN game_sessions gs ON t.session_id = gs.id
-          WHERE t.transaction_type = 'prize'
+          WHERE t.transaction_type IN ('prize', 'tournament_prize')
           ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ORDER BY t.created_at DESC
         `;
@@ -986,7 +986,7 @@ class FinancialService {
               t.created_at
             FROM transactions t
             JOIN users u ON t.user_id = u.id
-            WHERE t.transaction_type = 'prize'
+            WHERE t.transaction_type IN ('prize', 'tournament_prize')
             ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ) all_transactions
           ORDER BY created_at DESC

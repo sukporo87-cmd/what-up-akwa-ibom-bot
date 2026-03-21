@@ -318,12 +318,12 @@ class PayoutService {
   // Get all pending payouts (for admin)
   async getAllPendingPayouts(statusFilter = null) {
     try {
-      let whereClause = "t.transaction_type = 'prize' AND t.payout_status NOT IN ('confirmed', 'cancelled')";
+      let whereClause = "t.transaction_type IN ('prize', 'tournament_prize') AND t.payout_status NOT IN ('confirmed', 'cancelled')";
       const params = [];
 
       if (statusFilter && statusFilter !== '') {
         params.push(statusFilter);
-        whereClause = `t.transaction_type = 'prize' AND t.payout_status = $${params.length}`;
+        whereClause = `t.transaction_type IN ('prize', 'tournament_prize') AND t.payout_status = $${params.length}`;
       } else {
         whereClause += " AND t.payout_status IN ('pending', 'details_collected', 'approved', 'paid')";
       }
@@ -456,7 +456,7 @@ class PayoutService {
           COUNT(*) FILTER (WHERE payout_status = 'confirmed') as confirmed_count,
           COALESCE(SUM(amount) FILTER (WHERE payout_status = 'confirmed'), 0) as confirmed_amount
         FROM transactions
-        WHERE transaction_type = 'prize'
+        WHERE transaction_type IN ('prize', 'tournament_prize')
       `);
 
       return result.rows[0];
