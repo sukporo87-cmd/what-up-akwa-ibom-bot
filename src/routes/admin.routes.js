@@ -7104,4 +7104,72 @@ router.get('/api/love-quest/bookings/:id/export', authenticateAdmin, async (req,
 // END OF LOVE QUEST ROUTES
 // ============================================
 
+// ============================================
+// TEMPORARY: One-time tournament 5 winner notification
+// REMOVE THIS AFTER USE
+// ============================================
+router.post('/api/notify-tournament5-winners', authenticateAdmin, async (req, res) => {
+    try {
+        const MessagingService = require('../services/messaging.service');
+        const messagingService = new MessagingService();
+
+        const winnersResult = await pool.query(`
+            SELECT 
+                t.user_id, t.amount, t.description,
+                u.username, u.full_name, u.phone_number,
+                tp.rank
+            FROM transactions t
+            JOIN users u ON t.user_id = u.id
+            LEFT JOIN tournament_participants tp ON tp.user_id = t.user_id AND tp.tournament_id = 5
+            WHERE t.transaction_type = 'tournament_prize'
+            AND t.description LIKE '%Launch Day%'
+            ORDER BY tp.rank ASC
+        `);
+
+        const winners = winnersResult.rows;
+        
+        if (winners.length === 0) {
+            return res.json({ success: false, message: 'No winners found' });
+        }
+
+        const prizeMessage = `🏆 *LAUNCH DAY TOURNAMENT - PRIZE UPDATE* 🏆\n\n` +
+            `Dear winner,\n\n` +
+            `Due to an error in the earlier prize distribution model, a correction has been implemented. ` +
+            `Below is the corrected prize list for the Launch Day Tournament:\n\n` +
+            `🥇 1st Place: ₦150,000\n` +
+            `🥈 2nd Place: ₦100,000\n` +
+            `🥉 3rd Place: ₦75,000\n` +
+            `4️⃣ 4th Place: ₦50,000\n` +
+            `5️⃣ 5th Place: ₦35,000\n` +
+            `6️⃣ 6th Place: ₦25,000\n` +
+            `7️⃣ 7th Place: ₦20,000\n` +
+            `8️⃣ 8th Place: ₦15,000\n` +
+            `9️⃣ 9th Place: ₦15,000\n` +
+            `🔟 10th Place: ₦15,000\n\n` +
+            `💰 *Total Prize Pool: ₦500,000*\n\n` +
+            `To claim your prize, please type *CLAIM* now to begin the payout process.\n\n` +
+            `Thank you for participating and congratulations once again! 🎉`;
+
+        const results = [];
+
+        for (const winner of winners) {
+            try {
+                await messagingService.sendMessage(winner.phone_number, prizeMessage);
+                results.push({ username: winner.username, rank: winner.rank, amount: winner.amount, status: 'sent' });
+                await new Promise(r => setTimeout(r, 1000));
+            } catch (error) {
+                results.push({ username: winner.username, rank: winner.rank, status: 'failed', error: error.message });
+            }
+        }
+
+        const sent = results.filter(r => r.status === 'sent').length;
+        const failed = results.filter(r => r.status === 'failed').length;
+
+        res.json({ success: true, message: `Sent: ${sent}, Failed: ${failed}`, results });
+    } catch (error) {
+        console.error('Error notifying winners:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
