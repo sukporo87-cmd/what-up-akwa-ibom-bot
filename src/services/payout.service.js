@@ -40,7 +40,7 @@ class PayoutService {
       const result = await pool.query(
         `SELECT * FROM transactions
          WHERE user_id = $1
-         AND transaction_type = 'prize'
+         AND transaction_type IN ('prize', 'tournament_prize')
          AND (payout_status IN ('pending', 'details_collected', 'approved') OR payout_status IS NULL)
          AND amount > 0
          ORDER BY created_at DESC

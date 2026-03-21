@@ -359,10 +359,10 @@ class WebhookController {
       }
 
       // ===================================
-      // PRIORITY 8.6: CLAIM PRIZE COMMAND
-      // Allow "CLAIM" keyword to work anytime
+      // PRIORITY 8.6: CLAIM PRIZE / WITHDRAW COMMAND
+      // Allow "CLAIM" and "WITHDRAW" keywords to work anytime
       // ===================================
-      if (input === 'CLAIM' || input === 'CLAIM PRIZE' || input === 'CLAIMPRICE') {
+      if (input === 'CLAIM' || input === 'CLAIM PRIZE' || input === 'CLAIMPRICE' || input === 'WITHDRAW') {
         await this.handleClaimPrize(user);
         return;
       }
