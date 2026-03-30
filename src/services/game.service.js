@@ -1238,6 +1238,14 @@ class GameService {
                         tournamentName, tournamentId: session.tournament_id,
                         rank: currentRank, totalQuestions: 15
                     }));
+                    // Create victory card record for tournament games too (requires sharing before claiming)
+                    try {
+                        await victoryCardsService.createVictoryCardRecord(user.id, null, session.id, {
+                            amount: finalScore, questionsAnswered, totalQuestions: 15,
+                            isTournament: true, tournamentName,
+                            tournamentId: session.tournament_id, timeTaken
+                        });
+                    } catch (vcError) { logger.error('Error creating tournament victory card:', vcError); }
                 } else if (finalScore > 0) {
                     await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
                         isTournament: false, amount: finalScore,

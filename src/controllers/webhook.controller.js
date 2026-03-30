@@ -2563,6 +2563,20 @@ Type the code, or type SKIP to continue:`
     message += 'Having issues? Type RESET to start fresh.\n\nReply with your choice.';
 
     await messagingService.sendMessage(phone, message);
+
+    // Trigger email collection prompt (delayed, non-blocking)
+    if (user) {
+      setTimeout(async () => {
+        try {
+          const freshUser = await pool.query('SELECT * FROM users WHERE id = $1', [user.id]);
+          if (freshUser.rows[0]) {
+            await this.maybePromptForEmail(freshUser.rows[0]);
+          }
+        } catch (e) {
+          // Silent - email prompt is optional
+        }
+      }, 2000);
+    }
   }
 
   async sendHowToPlay(phone) {

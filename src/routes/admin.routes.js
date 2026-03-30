@@ -7172,4 +7172,266 @@ router.post('/api/notify-tournament5-winners', authenticateAdmin, async (req, re
     }
 });
 
+// ============================================
+// ADMIN MESSAGING SYSTEM
+// ============================================
+
+// Serve messaging dashboard page
+router.get('/messaging', (req, res) => {
+  res.sendFile('admin-messaging.html', { root: './src/views' });
+});
+
+// Search users for direct messaging
+router.get('/api/messaging/search-users', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.json({ users: [] });
+    const result = await pool.query(`
+      SELECT id, phone_number, username, full_name, email, total_games_played, total_winnings, last_active
+      FROM users
+      WHERE phone_number LIKE $1 OR username ILIKE $2 OR full_name ILIKE $2
+      ORDER BY last_active DESC NULLS LAST LIMIT 20
+    `, [`%${q}%`, `%${q}%`]);
+    res.json({ users: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send direct message to a user
+router.post('/api/messaging/send-direct', async (req, res) => {
+  try {
+    const { phone, message, sentBy } = req.body;
+    if (!phone || !message) return res.status(400).json({ error: 'Phone and message required' });
+
+    const MessagingService = require('../services/messaging.service');
+    const messagingService = new MessagingService();
+    await messagingService.sendMessage(phone, message);
+
+    await pool.query(`
+      INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status)
+      VALUES ('direct', $1, $2, $3, 'sent')
+    `, [phone, message, sentBy || 'admin']);
+
+    res.json({ success: true, message: 'Message sent' });
+  } catch (error) {
+    await pool.query(`
+      INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status, error_message)
+      VALUES ('direct', $1, $2, $3, 'failed', $4)
+    `, [req.body.phone, req.body.message, req.body.sentBy || 'admin', error.message]).catch(() => {});
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Broadcast message to all users or filtered set
+router.post('/api/messaging/broadcast', async (req, res) => {
+  try {
+    const { message, filter, sentBy } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message required' });
+
+    let query = 'SELECT phone_number FROM users WHERE phone_number IS NOT NULL';
+    const params = [];
+
+    if (filter) {
+      if (filter.minGames) { params.push(filter.minGames); query += ` AND total_games_played >= $${params.length}`; }
+      if (filter.maxGames) { params.push(filter.maxGames); query += ` AND total_games_played <= $${params.length}`; }
+      if (filter.inactiveDays) {
+        params.push(filter.inactiveDays);
+        query += ` AND last_active < NOW() - INTERVAL '1 day' * $${params.length}`;
+      }
+      if (filter.hasEmail === true) query += ' AND email IS NOT NULL';
+      if (filter.hasEmail === false) query += ' AND email IS NULL';
+      if (filter.platform === 'whatsapp') query += " AND phone_number NOT LIKE 'tg_%'";
+      if (filter.platform === 'telegram') query += " AND phone_number LIKE 'tg_%'";
+    }
+
+    const users = await pool.query(query, params);
+    const phones = users.rows.map(u => u.phone_number);
+
+    if (phones.length === 0) return res.json({ success: true, sent: 0, failed: 0, message: 'No matching users' });
+
+    const MessagingService = require('../services/messaging.service');
+    const messagingService = new MessagingService();
+
+    let sent = 0, failed = 0;
+    for (const phone of phones) {
+      try {
+        await messagingService.sendMessage(phone, message);
+        sent++;
+        if (sent % 20 === 0) await new Promise(r => setTimeout(r, 1000));
+      } catch (e) { failed++; }
+    }
+
+    await pool.query(`
+      INSERT INTO admin_message_log (message_type, recipient_count, content, sent_by, status, metadata)
+      VALUES ('broadcast', $1, $2, $3, $4, $5)
+    `, [phones.length, message, sentBy || 'admin', failed > 0 ? 'partial' : 'sent',
+        JSON.stringify({ sent, failed, filter: filter || {} })]);
+
+    res.json({ success: true, sent, failed, total: phones.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get message history
+router.get('/api/messaging/history', async (req, res) => {
+  try {
+    const { page = 1, limit = 50, type } = req.query;
+    const offset = (page - 1) * limit;
+    let query = 'SELECT * FROM admin_message_log';
+    const params = [];
+    if (type) { params.push(type); query += ` WHERE message_type = $${params.length}`; }
+    query += ' ORDER BY created_at DESC';
+    params.push(limit); query += ` LIMIT $${params.length}`;
+    params.push(offset); query += ` OFFSET $${params.length}`;
+
+    const result = await pool.query(query, params);
+    const countResult = await pool.query('SELECT COUNT(*) FROM admin_message_log');
+    res.json({ messages: result.rows, total: parseInt(countResult.rows[0].count) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Templates CRUD
+router.get('/api/messaging/templates', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM admin_message_templates ORDER BY category, name');
+    res.json({ templates: result.rows });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/api/messaging/templates', async (req, res) => {
+  try {
+    const { name, content, category, variables, createdBy } = req.body;
+    const result = await pool.query(`
+      INSERT INTO admin_message_templates (name, content, category, variables, created_by)
+      VALUES ($1, $2, $3, $4, $5) RETURNING *
+    `, [name, content, category || 'general', variables || [], createdBy || 'admin']);
+    res.json({ success: true, template: result.rows[0] });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.put('/api/messaging/templates/:id', async (req, res) => {
+  try {
+    const { name, content, category, variables } = req.body;
+    const result = await pool.query(`
+      UPDATE admin_message_templates SET name = $1, content = $2, category = $3, variables = $4, updated_at = NOW()
+      WHERE id = $5 RETURNING *
+    `, [name, content, category, variables || [], req.params.id]);
+    res.json({ success: true, template: result.rows[0] });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.delete('/api/messaging/templates/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM admin_message_templates WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Schedule a message
+router.post('/api/messaging/schedule', async (req, res) => {
+  try {
+    const { messageType, recipientPhone, content, scheduledFor, filterCriteria, createdBy } = req.body;
+    const result = await pool.query(`
+      INSERT INTO admin_scheduled_messages (message_type, recipient_phone, content, scheduled_for, filter_criteria, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+    `, [messageType, recipientPhone, content, scheduledFor, JSON.stringify(filterCriteria || {}), createdBy || 'admin']);
+    res.json({ success: true, scheduled: result.rows[0] });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get('/api/messaging/scheduled', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM admin_scheduled_messages ORDER BY scheduled_for ASC');
+    res.json({ scheduled: result.rows });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.delete('/api/messaging/scheduled/:id', async (req, res) => {
+  try {
+    await pool.query("UPDATE admin_scheduled_messages SET status = 'cancelled' WHERE id = $1 AND status = 'pending'", [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Messaging stats
+router.get('/api/messaging/stats', async (req, res) => {
+  try {
+    const [totalSent, todaySent, broadcasts, scheduled] = await Promise.all([
+      pool.query("SELECT COUNT(*) FROM admin_message_log"),
+      pool.query("SELECT COUNT(*) FROM admin_message_log WHERE created_at > NOW() - INTERVAL '24 hours'"),
+      pool.query("SELECT COUNT(*) FROM admin_message_log WHERE message_type = 'broadcast'"),
+      pool.query("SELECT COUNT(*) FROM admin_scheduled_messages WHERE status = 'pending'")
+    ]);
+    const totalUsers = await pool.query('SELECT COUNT(*) FROM users');
+    res.json({
+      totalSent: parseInt(totalSent.rows[0].count),
+      todaySent: parseInt(todaySent.rows[0].count),
+      broadcasts: parseInt(broadcasts.rows[0].count),
+      pendingScheduled: parseInt(scheduled.rows[0].count),
+      totalUsers: parseInt(totalUsers.rows[0].count)
+    });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ============================================
+// SCHEDULED MESSAGE EXECUTION (Background Job)
+// ============================================
+const executeScheduledMessages = async () => {
+  try {
+    const pending = await pool.query(`
+      SELECT * FROM admin_scheduled_messages
+      WHERE status = 'pending' AND scheduled_for <= NOW()
+      ORDER BY scheduled_for ASC LIMIT 10
+    `);
+    if (pending.rows.length === 0) return;
+
+    const MessagingService = require('../services/messaging.service');
+    const messagingService = new MessagingService();
+
+    for (const msg of pending.rows) {
+      try {
+        if (msg.message_type === 'direct' && msg.recipient_phone) {
+          await messagingService.sendMessage(msg.recipient_phone, msg.content);
+          await pool.query("UPDATE admin_scheduled_messages SET status = 'sent', sent_at = NOW() WHERE id = $1", [msg.id]);
+          await pool.query(`
+            INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status, metadata)
+            VALUES ('scheduled', $1, $2, $3, 'sent', $4)
+          `, [msg.recipient_phone, msg.content, msg.created_by, JSON.stringify({ scheduled_id: msg.id })]);
+        } else if (msg.message_type === 'broadcast') {
+          let q = 'SELECT phone_number FROM users WHERE phone_number IS NOT NULL';
+          const params = [];
+          const filter = msg.filter_criteria || {};
+          if (filter.minGames) { params.push(filter.minGames); q += ` AND total_games_played >= $${params.length}`; }
+          if (filter.inactiveDays) { params.push(filter.inactiveDays); q += ` AND last_active < NOW() - INTERVAL '1 day' * $${params.length}`; }
+          if (filter.platform === 'whatsapp') q += " AND phone_number NOT LIKE 'tg_%'";
+          if (filter.platform === 'telegram') q += " AND phone_number LIKE 'tg_%'";
+
+          const users = await pool.query(q, params);
+          let sent = 0, failed = 0;
+          for (const u of users.rows) {
+            try { await messagingService.sendMessage(u.phone_number, msg.content); sent++; if (sent % 20 === 0) await new Promise(r => setTimeout(r, 1000)); } catch (e) { failed++; }
+          }
+          await pool.query("UPDATE admin_scheduled_messages SET status = 'sent', sent_at = NOW() WHERE id = $1", [msg.id]);
+          await pool.query(`
+            INSERT INTO admin_message_log (message_type, recipient_count, content, sent_by, status, metadata)
+            VALUES ('scheduled', $1, $2, $3, $4, $5)
+          `, [users.rows.length, msg.content, msg.created_by, failed > 0 ? 'partial' : 'sent', JSON.stringify({ scheduled_id: msg.id, sent, failed, filter })]);
+        }
+      } catch (error) {
+        await pool.query("UPDATE admin_scheduled_messages SET status = 'failed', error_message = $1 WHERE id = $2", [error.message, msg.id]);
+        console.error(`Scheduled message ${msg.id} failed:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error('Scheduled message executor error:', error.message);
+  }
+};
+
+setInterval(executeScheduledMessages, 60 * 1000);
+console.log('📨 Scheduled message executor started (checks every 60s)');
+
 module.exports = router;

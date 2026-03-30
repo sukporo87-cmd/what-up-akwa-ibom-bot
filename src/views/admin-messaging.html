@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Messaging - What's Up Trivia</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a1d2e,#2d1f3d);padding:20px 30px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2d3348}
+.header h1{font-size:22px;color:#fff}
+.header-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.nav-btn{padding:8px 14px;background:rgba(255,255,255,0.1);color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:500;transition:all .2s;border:1px solid rgba(255,255,255,0.1)}
+.nav-btn:hover{background:rgba(255,255,255,0.2);transform:translateY(-1px)}
+.nav-btn.active{background:linear-gradient(135deg,#f59e0b,#d97706);border-color:transparent}
+.logout-btn{background:#ef4444;border:none;color:#fff;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500}
+.container{max-width:1400px;margin:0 auto;padding:20px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#1a1d2e;border:1px solid #2d3348;border-radius:12px;padding:20px;text-align:center}
+.stat-card .value{font-size:28px;font-weight:700;color:#22d3ee}
+.stat-card .label{font-size:13px;color:#94a3b8;margin-top:4px}
+.tabs{display:flex;gap:4px;margin-bottom:20px;background:#1a1d2e;padding:4px;border-radius:12px;border:1px solid #2d3348}
+.tab{padding:10px 20px;background:transparent;border:none;color:#94a3b8;font-size:14px;font-weight:500;cursor:pointer;border-radius:8px;transition:all .2s;font-family:inherit}
+.tab.active{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}
+.tab:hover:not(.active){background:rgba(255,255,255,0.05);color:#fff}
+.panel{display:none}
+.panel.active{display:block}
+.card{background:#1a1d2e;border:1px solid #2d3348;border-radius:12px;padding:24px;margin-bottom:16px}
+.card h3{font-size:16px;color:#fff;margin-bottom:16px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;color:#94a3b8;margin-bottom:6px;font-weight:500}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 14px;background:#0f1117;border:1px solid #2d3348;border-radius:8px;color:#fff;font-size:14px;font-family:inherit;transition:border-color .2s}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:#f59e0b;outline:none}
+.form-group textarea{min-height:120px;resize:vertical}
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit}
+.btn-primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(245,158,11,0.4)}
+.btn-danger{background:#ef4444;color:#fff}
+.btn-secondary{background:rgba(255,255,255,0.1);color:#fff}
+.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+.search-results{max-height:300px;overflow-y:auto;border:1px solid #2d3348;border-radius:8px;margin-top:8px}
+.search-item{padding:12px 16px;border-bottom:1px solid #1e293b;cursor:pointer;transition:background .2s;display:flex;justify-content:space-between;align-items:center}
+.search-item:hover{background:rgba(245,158,11,0.1)}
+.search-item:last-child{border-bottom:none}
+.search-item .name{font-weight:600;color:#fff}
+.search-item .phone{font-size:12px;color:#94a3b8}
+.search-item .meta{font-size:11px;color:#64748b}
+.selected-user{background:rgba(245,158,11,0.1);border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.selected-user .remove{color:#ef4444;cursor:pointer;font-size:18px}
+.filter-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.filter-row .form-group{flex:1;min-width:150px;margin-bottom:0}
+.history-table{width:100%;border-collapse:collapse}
+.history-table th{text-align:left;padding:12px 16px;background:#0f1117;color:#94a3b8;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600}
+.history-table td{padding:12px 16px;border-bottom:1px solid #1e293b;font-size:13px}
+.history-table tr:hover{background:rgba(255,255,255,0.02)}
+.badge{padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-sent{background:rgba(34,197,94,0.2);color:#22c55e}
+.badge-failed{background:rgba(239,68,68,0.2);color:#ef4444}
+.badge-partial{background:rgba(245,158,11,0.2);color:#f59e0b}
+.badge-pending{background:rgba(59,130,246,0.2);color:#3b82f6}
+.badge-cancelled{background:rgba(107,114,128,0.2);color:#6b7280}
+.badge-direct{background:rgba(139,92,246,0.15);color:#a78bfa}
+.badge-broadcast{background:rgba(34,211,238,0.15);color:#22d3ee}
+.badge-scheduled{background:rgba(245,158,11,0.15);color:#fbbf24}
+.template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.template-card{background:#0f1117;border:1px solid #2d3348;border-radius:10px;padding:16px;transition:border-color .2s}
+.template-card:hover{border-color:#475569}
+.template-card .t-name{font-weight:600;color:#fff;margin-bottom:4px}
+.template-card .t-category{font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:8px}
+.template-card .t-content{font-size:13px;color:#cbd5e1;white-space:pre-wrap;max-height:120px;overflow:hidden;margin-bottom:12px;line-height:1.5}
+.template-card .t-actions{display:flex;gap:8px}
+.template-card .t-actions button{padding:4px 10px;font-size:12px;border-radius:4px;border:none;cursor:pointer;font-family:inherit;font-weight:500}
+.scheduled-item{background:#0f1117;border:1px solid #2d3348;border-radius:10px;padding:16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:flex-start}
+.scheduled-item .s-content{flex:1;margin-right:16px}
+.scheduled-item .s-time{font-size:12px;color:#f59e0b;margin-bottom:4px}
+.scheduled-item .s-text{font-size:13px;color:#cbd5e1;white-space:pre-wrap;max-height:60px;overflow:hidden}
+.char-count{font-size:12px;color:#64748b;text-align:right;margin-top:4px}
+.empty-state{text-align:center;padding:40px;color:#64748b}
+.empty-state .icon{font-size:48px;margin-bottom:12px}
+.toast{position:fixed;top:20px;right:20px;padding:14px 24px;border-radius:10px;font-size:14px;font-weight:500;z-index:9999;transform:translateX(120%);transition:transform .3s ease;max-width:400px}
+.toast.show{transform:translateX(0)}
+.toast-success{background:#059669;color:#fff}
+.toast-error{background:#dc2626;color:#fff}
+.preview-box{background:#0f1117;border:1px solid #2d3348;border-radius:8px;padding:16px;margin-top:12px;white-space:pre-wrap;font-size:14px;line-height:1.6;color:#cbd5e1;max-height:200px;overflow-y:auto}
+@media(max-width:768px){
+  .header{flex-direction:column;gap:12px}
+  .stats-row{grid-template-columns:1fr 1fr}
+  .filter-row{flex-direction:column}
+  .tabs{overflow-x:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📨 Admin Messaging</h1>
+  <div class="header-nav">
+    <a href="/admin" class="nav-btn">🏠 Admin</a>
+    <a href="/admin/dashboard" class="nav-btn">📊 Analytics</a>
+    <a href="/admin/financials" class="nav-btn">💰 Financials</a>
+    <a href="/admin/audit" class="nav-btn">📝 Audit</a>
+    <a href="/admin/rotation" class="nav-btn">🔄 Rotation</a>
+    <a href="/admin/messaging" class="nav-btn active">📨 Messaging</a>
+    <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Stats -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card"><div class="value" id="statTotal">-</div><div class="label">Total Sent</div></div>
+    <div class="stat-card"><div class="value" id="statToday">-</div><div class="label">Today</div></div>
+    <div class="stat-card"><div class="value" id="statBroadcasts">-</div><div class="label">Broadcasts</div></div>
+    <div class="stat-card"><div class="value" id="statScheduled">-</div><div class="label">Scheduled</div></div>
+    <div class="stat-card"><div class="value" id="statUsers">-</div><div class="label">Total Users</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('direct')">📱 Direct Message</button>
+    <button class="tab" onclick="switchTab('broadcast')">📢 Broadcast</button>
+    <button class="tab" onclick="switchTab('templates')">📋 Templates</button>
+    <button class="tab" onclick="switchTab('scheduled')">⏰ Scheduled</button>
+    <button class="tab" onclick="switchTab('history')">📜 History</button>
+  </div>
+
+  <!-- Direct Message Panel -->
+  <div class="panel active" id="panel-direct">
+    <div class="card">
+      <h3>📱 Send Direct Message</h3>
+      <div class="form-group">
+        <label>Search User (phone, username, or name)</label>
+        <input type="text" id="userSearch" placeholder="Type to search..." oninput="searchUsers(this.value)">
+        <div class="search-results" id="searchResults" style="display:none"></div>
+      </div>
+      <div id="selectedUserBox" style="display:none"></div>
+      <div class="form-group">
+        <label>Template (optional)</label>
+        <select id="directTemplate" onchange="applyTemplate('direct')">
+          <option value="">-- Write custom message --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Message</label>
+        <textarea id="directMessage" placeholder="Type your message..." oninput="updateCharCount('direct')"></textarea>
+        <div class="char-count"><span id="directCharCount">0</span> characters</div>
+      </div>
+      <button class="btn btn-primary" id="sendDirectBtn" onclick="sendDirect()" disabled>Send Message</button>
+    </div>
+  </div>
+
+  <!-- Broadcast Panel -->
+  <div class="panel" id="panel-broadcast">
+    <div class="card">
+      <h3>📢 Broadcast Message</h3>
+      <p style="color:#94a3b8;font-size:13px;margin-bottom:16px">Send a message to multiple users at once. Use filters to target specific segments.</p>
+      <div class="filter-row">
+        <div class="form-group">
+          <label>Platform</label>
+          <select id="bcPlatform"><option value="">All</option><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option></select>
+        </div>
+        <div class="form-group">
+          <label>Min Games Played</label>
+          <input type="number" id="bcMinGames" placeholder="e.g. 5" min="0">
+        </div>
+        <div class="form-group">
+          <label>Inactive Days</label>
+          <input type="number" id="bcInactiveDays" placeholder="e.g. 7" min="0">
+        </div>
+        <div class="form-group">
+          <label>Has Email</label>
+          <select id="bcHasEmail"><option value="">Any</option><option value="true">Yes</option><option value="false">No</option></select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Template (optional)</label>
+        <select id="broadcastTemplate" onchange="applyTemplate('broadcast')">
+          <option value="">-- Write custom message --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Message</label>
+        <textarea id="broadcastMessage" placeholder="Type your broadcast message..." oninput="updateCharCount('broadcast')"></textarea>
+        <div class="char-count"><span id="broadcastCharCount">0</span> characters</div>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <button class="btn btn-primary" onclick="sendBroadcast()">📢 Send Broadcast Now</button>
+        <button class="btn btn-secondary" onclick="showScheduleModal('broadcast')">⏰ Schedule Instead</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Templates Panel -->
+  <div class="panel" id="panel-templates">
+    <div class="card">
+      <h3>📋 Message Templates</h3>
+      <div style="display:flex;gap:12px;margin-bottom:20px">
+        <button class="btn btn-primary" onclick="showNewTemplateForm()">+ New Template</button>
+      </div>
+      <div id="newTemplateForm" style="display:none;margin-bottom:20px;background:#0f1117;padding:20px;border-radius:10px;border:1px solid #2d3348">
+        <div class="form-group"><label>Name</label><input type="text" id="tplName" placeholder="e.g. Tournament Announcement"></div>
+        <div class="form-group"><label>Category</label>
+          <select id="tplCategory"><option value="general">General</option><option value="onboarding">Onboarding</option><option value="engagement">Engagement</option><option value="tournament">Tournament</option><option value="financial">Financial</option><option value="promo">Promo</option><option value="system">System</option></select>
+        </div>
+        <div class="form-group"><label>Content (use {variable} for placeholders)</label><textarea id="tplContent" placeholder="Hello {username}..."></textarea></div>
+        <div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="saveTemplate()">Save</button><button class="btn btn-secondary" onclick="hideNewTemplateForm()">Cancel</button></div>
+      </div>
+      <div class="template-grid" id="templateGrid"></div>
+    </div>
+  </div>
+
+  <!-- Scheduled Panel -->
+  <div class="panel" id="panel-scheduled">
+    <div class="card">
+      <h3>⏰ Scheduled Messages</h3>
+      <div id="scheduledList"></div>
+    </div>
+  </div>
+
+  <!-- History Panel -->
+  <div class="panel" id="panel-history">
+    <div class="card">
+      <h3>📜 Message History</h3>
+      <div style="margin-bottom:16px;display:flex;gap:12px">
+        <select id="historyFilter" onchange="loadHistory()" style="padding:8px;background:#0f1117;border:1px solid #2d3348;border-radius:6px;color:#fff;font-family:inherit">
+          <option value="">All Types</option><option value="direct">Direct</option><option value="broadcast">Broadcast</option><option value="scheduled">Scheduled</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="history-table">
+          <thead><tr><th>Type</th><th>Recipient</th><th>Message</th><th>Status</th><th>Sent By</th><th>Date</th></tr></thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <div id="historyPagination" style="margin-top:16px;display:flex;justify-content:center;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule Modal -->
+<div id="scheduleModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center">
+  <div style="background:#1a1d2e;border:1px solid #2d3348;border-radius:16px;padding:30px;max-width:500px;width:90%">
+    <h3 style="margin-bottom:20px;color:#fff">⏰ Schedule Message</h3>
+    <div class="form-group"><label>Send Date & Time</label><input type="datetime-local" id="scheduleDateTime"></div>
+    <div class="form-group"><label>Preview</label><div class="preview-box" id="schedulePreview"></div></div>
+    <div style="display:flex;gap:12px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmSchedule()">Schedule</button>
+      <button class="btn btn-secondary" onclick="closeScheduleModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = '/admin';
+let authToken = localStorage.getItem('adminToken');
+let selectedUser = null;
+let templates = [];
+let editingTemplateId = null;
+let scheduleContext = null;
+let historyPage = 1;
+
+function getHeaders() {
+  return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` };
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(`${API_BASE}${path}`, { headers: getHeaders(), ...opts });
+  if (res.status === 401 || res.status === 403) { logout(); return null; }
+  return res.json();
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast toast-${type} show`;
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById(`panel-${name}`).classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'scheduled') loadScheduled();
+  if (name === 'templates') loadTemplates();
+}
+
+function logout() {
+  localStorage.removeItem('adminToken');
+  window.location.href = '/admin';
+}
+
+// Stats
+async function loadStats() {
+  const data = await api('/api/messaging/stats');
+  if (!data) return;
+  document.getElementById('statTotal').textContent = data.totalSent.toLocaleString();
+  document.getElementById('statToday').textContent = data.todaySent.toLocaleString();
+  document.getElementById('statBroadcasts').textContent = data.broadcasts.toLocaleString();
+  document.getElementById('statScheduled').textContent = data.pendingScheduled.toLocaleString();
+  document.getElementById('statUsers').textContent = data.totalUsers.toLocaleString();
+}
+
+// User Search
+let searchTimeout;
+async function searchUsers(q) {
+  clearTimeout(searchTimeout);
+  const box = document.getElementById('searchResults');
+  if (q.length < 2) { box.style.display = 'none'; return; }
+  searchTimeout = setTimeout(async () => {
+    const data = await api(`/api/messaging/search-users?q=${encodeURIComponent(q)}`);
+    if (!data || !data.users.length) { box.innerHTML = '<div style="padding:12px;color:#64748b">No users found</div>'; box.style.display = 'block'; return; }
+    box.innerHTML = data.users.map(u => `
+      <div class="search-item" onclick='selectUser(${JSON.stringify(u)})'>
+        <div><div class="name">${u.username || u.full_name || 'Unknown'}</div><div class="phone">${u.phone_number}</div></div>
+        <div class="meta">${u.total_games_played} games | ₦${(u.total_winnings||0).toLocaleString()}</div>
+      </div>
+    `).join('');
+    box.style.display = 'block';
+  }, 300);
+}
+
+function selectUser(u) {
+  selectedUser = u;
+  document.getElementById('searchResults').style.display = 'none';
+  document.getElementById('userSearch').value = '';
+  document.getElementById('selectedUserBox').style.display = 'block';
+  document.getElementById('selectedUserBox').innerHTML = `
+    <div class="selected-user">
+      <div><strong>${u.username || u.full_name || 'User'}</strong> — ${u.phone_number}<br>
+      <span style="font-size:12px;color:#94a3b8">${u.total_games_played} games | ₦${(u.total_winnings||0).toLocaleString()} won</span></div>
+      <span class="remove" onclick="clearUser()">✕</span>
+    </div>
+  `;
+  updateSendBtn();
+}
+
+function clearUser() {
+  selectedUser = null;
+  document.getElementById('selectedUserBox').style.display = 'none';
+  updateSendBtn();
+}
+
+function updateSendBtn() {
+  const btn = document.getElementById('sendDirectBtn');
+  const msg = document.getElementById('directMessage').value.trim();
+  btn.disabled = !selectedUser || !msg;
+}
+
+function updateCharCount(prefix) {
+  const el = document.getElementById(`${prefix}Message`);
+  document.getElementById(`${prefix}CharCount`).textContent = el.value.length;
+  if (prefix === 'direct') updateSendBtn();
+}
+
+// Direct Send
+async function sendDirect() {
+  if (!selectedUser) return;
+  const msg = document.getElementById('directMessage').value.trim();
+  if (!msg) return;
+  const btn = document.getElementById('sendDirectBtn');
+  btn.disabled = true; btn.textContent = 'Sending...';
+  try {
+    const data = await api('/api/messaging/send-direct', {
+      method: 'POST', body: JSON.stringify({ phone: selectedUser.phone_number, message: msg, sentBy: 'admin' })
+    });
+    if (data?.success) {
+      showToast(`Message sent to ${selectedUser.username || selectedUser.phone_number}`);
+      document.getElementById('directMessage').value = '';
+      clearUser(); loadStats();
+    } else { showToast(data?.error || 'Failed to send', 'error'); }
+  } catch (e) { showToast('Network error', 'error'); }
+  btn.disabled = false; btn.textContent = 'Send Message';
+}
+
+// Broadcast
+async function sendBroadcast() {
+  const msg = document.getElementById('broadcastMessage').value.trim();
+  if (!msg) { showToast('Message is required', 'error'); return; }
+  if (!confirm('Send this message to all matching users?')) return;
+  const filter = getBroadcastFilter();
+  try {
+    const data = await api('/api/messaging/broadcast', {
+      method: 'POST', body: JSON.stringify({ message: msg, filter, sentBy: 'admin' })
+    });
+    if (data?.success) {
+      showToast(`Broadcast complete: ${data.sent} sent, ${data.failed} failed`);
+      document.getElementById('broadcastMessage').value = '';
+      loadStats();
+    } else { showToast(data?.error || 'Broadcast failed', 'error'); }
+  } catch (e) { showToast('Network error', 'error'); }
+}
+
+function getBroadcastFilter() {
+  const f = {};
+  const p = document.getElementById('bcPlatform').value;
+  const min = document.getElementById('bcMinGames').value;
+  const inactive = document.getElementById('bcInactiveDays').value;
+  const email = document.getElementById('bcHasEmail').value;
+  if (p) f.platform = p;
+  if (min) f.minGames = parseInt(min);
+  if (inactive) f.inactiveDays = parseInt(inactive);
+  if (email) f.hasEmail = email === 'true';
+  return Object.keys(f).length ? f : null;
+}
+
+// Templates
+async function loadTemplates() {
+  const data = await api('/api/messaging/templates');
+  if (!data) return;
+  templates = data.templates || [];
+  renderTemplates();
+  populateTemplateDropdowns();
+}
+
+function renderTemplates() {
+  const grid = document.getElementById('templateGrid');
+  if (!templates.length) { grid.innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>No templates yet</p></div>'; return; }
+  grid.innerHTML = templates.map(t => `
+    <div class="template-card">
+      <div class="t-name">${t.name}</div>
+      <div class="t-category">${t.category}</div>
+      <div class="t-content">${t.content}</div>
+      <div class="t-actions">
+        <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px" onclick="useTemplate(${t.id})">Use</button>
+        <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px" onclick="editTemplate(${t.id})">Edit</button>
+        <button class="btn btn-danger" style="font-size:12px;padding:4px 10px" onclick="deleteTemplate(${t.id})">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function populateTemplateDropdowns() {
+  ['directTemplate', 'broadcastTemplate'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">-- Write custom message --</option>' +
+      templates.map(t => `<option value="${t.id}">${t.name} (${t.category})</option>`).join('');
+  });
+}
+
+function applyTemplate(prefix) {
+  const selId = prefix === 'direct' ? 'directTemplate' : 'broadcastTemplate';
+  const tplId = parseInt(document.getElementById(selId).value);
+  const tpl = templates.find(t => t.id === tplId);
+  if (tpl) document.getElementById(`${prefix}Message`).value = tpl.content;
+  updateCharCount(prefix);
+}
+
+function useTemplate(id) {
+  const tpl = templates.find(t => t.id === id);
+  if (!tpl) return;
+  document.getElementById('directMessage').value = tpl.content;
+  updateCharCount('direct');
+  switchTabByName('direct');
+  showToast(`Template "${tpl.name}" loaded`);
+}
+
+function switchTabByName(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab:nth-child(${['direct','broadcast','templates','scheduled','history'].indexOf(name)+1})`).classList.add('active');
+  document.getElementById(`panel-${name}`).classList.add('active');
+}
+
+function showNewTemplateForm() { document.getElementById('newTemplateForm').style.display = 'block'; editingTemplateId = null; }
+function hideNewTemplateForm() { document.getElementById('newTemplateForm').style.display = 'none'; document.getElementById('tplName').value = ''; document.getElementById('tplContent').value = ''; editingTemplateId = null; }
+
+async function saveTemplate() {
+  const name = document.getElementById('tplName').value.trim();
+  const content = document.getElementById('tplContent').value.trim();
+  const category = document.getElementById('tplCategory').value;
+  if (!name || !content) { showToast('Name and content required', 'error'); return; }
+  const vars = (content.match(/\{(\w+)\}/g) || []).map(v => v.slice(1, -1));
+  const body = { name, content, category, variables: vars };
+
+  if (editingTemplateId) {
+    await api(`/api/messaging/templates/${editingTemplateId}`, { method: 'PUT', body: JSON.stringify(body) });
+    showToast('Template updated');
+  } else {
+    await api('/api/messaging/templates', { method: 'POST', body: JSON.stringify(body) });
+    showToast('Template created');
+  }
+  hideNewTemplateForm(); loadTemplates();
+}
+
+function editTemplate(id) {
+  const tpl = templates.find(t => t.id === id);
+  if (!tpl) return;
+  editingTemplateId = id;
+  document.getElementById('tplName').value = tpl.name;
+  document.getElementById('tplContent').value = tpl.content;
+  document.getElementById('tplCategory').value = tpl.category;
+  document.getElementById('newTemplateForm').style.display = 'block';
+  window.scrollTo({ top: document.getElementById('newTemplateForm').offsetTop - 100, behavior: 'smooth' });
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Delete this template?')) return;
+  await api(`/api/messaging/templates/${id}`, { method: 'DELETE' });
+  showToast('Template deleted');
+  loadTemplates();
+}
+
+// Scheduling
+function showScheduleModal(context) {
+  scheduleContext = context;
+  const msg = context === 'broadcast' ? document.getElementById('broadcastMessage').value : document.getElementById('directMessage').value;
+  document.getElementById('schedulePreview').textContent = msg || '(empty message)';
+  const now = new Date(); now.setMinutes(now.getMinutes() + 30);
+  document.getElementById('scheduleDateTime').value = now.toISOString().slice(0, 16);
+  document.getElementById('scheduleModal').style.display = 'flex';
+}
+
+function closeScheduleModal() { document.getElementById('scheduleModal').style.display = 'none'; }
+
+async function confirmSchedule() {
+  const dt = document.getElementById('scheduleDateTime').value;
+  if (!dt) { showToast('Select a date/time', 'error'); return; }
+  const content = scheduleContext === 'broadcast' ? document.getElementById('broadcastMessage').value.trim() : document.getElementById('directMessage').value.trim();
+  if (!content) { showToast('Message is empty', 'error'); return; }
+
+  const body = {
+    messageType: scheduleContext === 'broadcast' ? 'broadcast' : 'direct',
+    content,
+    scheduledFor: new Date(dt).toISOString(),
+    createdBy: 'admin'
+  };
+  if (scheduleContext === 'direct' && selectedUser) body.recipientPhone = selectedUser.phone_number;
+  if (scheduleContext === 'broadcast') body.filterCriteria = getBroadcastFilter();
+
+  const data = await api('/api/messaging/schedule', { method: 'POST', body: JSON.stringify(body) });
+  if (data?.success) {
+    showToast('Message scheduled');
+    closeScheduleModal();
+    loadStats();
+  } else { showToast(data?.error || 'Failed to schedule', 'error'); }
+}
+
+// Scheduled list
+async function loadScheduled() {
+  const data = await api('/api/messaging/scheduled');
+  if (!data) return;
+  const list = document.getElementById('scheduledList');
+  const pending = (data.scheduled || []).filter(s => s.status === 'pending');
+  if (!pending.length) { list.innerHTML = '<div class="empty-state"><div class="icon">⏰</div><p>No pending scheduled messages</p></div>'; return; }
+  list.innerHTML = pending.map(s => `
+    <div class="scheduled-item">
+      <div class="s-content">
+        <div class="s-time">📅 ${new Date(s.scheduled_for).toLocaleString()} — <span class="badge badge-${s.message_type}">${s.message_type}</span></div>
+        <div class="s-text">${s.content.substring(0, 200)}${s.content.length > 200 ? '...' : ''}</div>
+      </div>
+      <button class="btn btn-danger" style="font-size:12px;padding:6px 12px" onclick="cancelScheduled(${s.id})">Cancel</button>
+    </div>
+  `).join('');
+}
+
+async function cancelScheduled(id) {
+  if (!confirm('Cancel this scheduled message?')) return;
+  await api(`/api/messaging/scheduled/${id}`, { method: 'DELETE' });
+  showToast('Scheduled message cancelled');
+  loadScheduled(); loadStats();
+}
+
+// History
+async function loadHistory() {
+  const type = document.getElementById('historyFilter')?.value || '';
+  const data = await api(`/api/messaging/history?page=${historyPage}&limit=30&type=${type}`);
+  if (!data) return;
+  const body = document.getElementById('historyBody');
+  if (!data.messages?.length) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#64748b">No messages yet</td></tr>'; return; }
+  body.innerHTML = data.messages.map(m => `
+    <tr>
+      <td><span class="badge badge-${m.message_type}">${m.message_type}</span></td>
+      <td>${m.recipient_phone || `${m.recipient_count || 0} users`}</td>
+      <td title="${m.content.replace(/"/g, '&quot;')}">${m.content.substring(0, 60)}${m.content.length > 60 ? '...' : ''}</td>
+      <td><span class="badge badge-${m.status}">${m.status}</span></td>
+      <td>${m.sent_by || '-'}</td>
+      <td>${new Date(m.created_at).toLocaleString()}</td>
+    </tr>
+  `).join('');
+}
+
+// Init
+async function init() {
+  if (!authToken) { window.location.href = '/admin'; return; }
+  loadStats();
+  loadTemplates();
+}
+
+init();
+</script>
+</body>
+</html>
