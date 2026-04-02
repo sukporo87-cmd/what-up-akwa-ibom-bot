@@ -1541,7 +1541,37 @@ class GameService {
         try {
             const allowedDifficulties = this.getDifficultyLevelsForQuestion(questionNumber);
             const difficultyList = allowedDifficulties.join(',');
-            let bankCondition = gameMode === 'practice' ? `AND (q.question_bank_id = 2)` : `AND (q.question_bank_id = 1 OR q.question_bank_id IS NULL)`;
+            
+            // Determine question bank condition based on game mode
+            let bankCondition;
+            if (gameMode === 'practice') {
+                bankCondition = `AND (q.question_bank_id = 2)`;
+            } else if (tournamentId) {
+                // Tournament mode: look up the tournament's question category
+                try {
+                    const tournamentResult = await pool.query(
+                        'SELECT question_category FROM tournaments WHERE id = $1', [tournamentId]
+                    );
+                    const questionCategory = tournamentResult.rows[0]?.question_category;
+                    
+                    if (questionCategory) {
+                        // Use tournament-specific category from the tournament question bank (id=3)
+                        bankCondition = `AND q.question_bank_id = 3 AND q.category = '${questionCategory.replace(/'/g, "''")}'`;
+                        logger.info(`Tournament ${tournamentId}: Using bank 3, category '${questionCategory}'`);
+                    } else {
+                        // No category set — fall back to general tournament bank
+                        bankCondition = `AND (q.question_bank_id = 3)`;
+                        logger.info(`Tournament ${tournamentId}: No category set, using bank 3 (all)`);
+                    }
+                } catch (tErr) {
+                    logger.error(`Error looking up tournament ${tournamentId} category:`, tErr);
+                    bankCondition = `AND (q.question_bank_id = 3)`;
+                }
+            } else {
+                // Classic mode
+                bankCondition = `AND (q.question_bank_id = 1 OR q.question_bank_id IS NULL)`;
+            }
+            
             const excludeClause = excludeIds.length > 0 ? `AND q.id NOT IN (${excludeIds.join(',')})` : '';
 
             const smartQuery = `
