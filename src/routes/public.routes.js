@@ -104,18 +104,24 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         const tournament = tournamentResult.rows[0];
         
         // Calculate prize distribution based on prize_pool
-        // Default distribution: 40%, 20%, 15%, 10%, 5%, 3%, 3%, 2%, 1%, 1%
         const prizePool = tournament.prize_pool || 0;
         let prizeStructure = tournament.prize_structure;
         
+        // Handle case where prize_structure might be stored as string
+        if (typeof prizeStructure === 'string') {
+            try { prizeStructure = JSON.parse(prizeStructure); } catch (e) { prizeStructure = null; }
+        }
+        
         // If no custom prize structure, generate default
-        if (!prizeStructure && prizePool > 0) {
-            const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
-            prizeStructure = defaultDistribution.map((pct, index) => ({
-                position: index + 1,
-                percentage: (pct * 100).toFixed(0) + '%',
-                amount: Math.floor(prizePool * pct)
-            }));
+        if (!prizeStructure || !Array.isArray(prizeStructure) || prizeStructure.length === 0) {
+            if (prizePool > 0) {
+                const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+                prizeStructure = defaultDistribution.map((pct, index) => ({
+                    position: index + 1,
+                    percentage: (pct * 100).toFixed(0) + '%',
+                    amount: Math.floor(prizePool * pct)
+                }));
+            }
         }
         
         // Get leaderboard from tournament_participants

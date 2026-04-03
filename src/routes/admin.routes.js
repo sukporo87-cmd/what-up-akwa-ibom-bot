@@ -2332,7 +2332,6 @@ router.get('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req
     try {
         const tournamentId = req.params.id;
         
-        // Get tournament info + prize structure from tournament_instructions
         const tResult = await pool.query(
             'SELECT t.prize_pool, t.status, ti.prize_structure FROM tournaments t LEFT JOIN tournament_instructions ti ON t.id = ti.tournament_id WHERE t.id = $1',
             [tournamentId]
@@ -2343,11 +2342,21 @@ router.get('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req
         }
         
         const t = tResult.rows[0];
+        
+        // Debug: log what we got from DB
+        logger.info(`Prize structure GET for tournament ${tournamentId}: type=${typeof t.prize_structure}, isArray=${Array.isArray(t.prize_structure)}, value=${t.prize_structure ? JSON.stringify(t.prize_structure).substring(0, 200) : 'null'}`);
+        
+        // Handle case where prize_structure might be stored as a string instead of JSONB
+        let prizeStructure = t.prize_structure;
+        if (typeof prizeStructure === 'string') {
+            try { prizeStructure = JSON.parse(prizeStructure); } catch (e) { prizeStructure = null; }
+        }
+        
         res.json({
             success: true,
             prizePool: t.prize_pool,
             status: t.status,
-            prizeStructure: t.prize_structure || null
+            prizeStructure: prizeStructure || null
         });
     } catch (error) {
         logger.error('Error getting prize structure:', error);
@@ -2379,30 +2388,34 @@ router.put('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req
         
         // Upsert prize structure in tournament_instructions
         if (prizeStructure && Array.isArray(prizeStructure)) {
-            // Convert the array of percentages/amounts to the format tournament_instructions expects
-            // prize_structure is stored as JSONB array of objects: [{position: 1, percentage: 40, amount: 4000}, ...]
             const pool_amount = prizePool || tCheck.rows[0].prize_pool || 0;
             const structured = prizeStructure.map((pct, i) => ({
                 position: i + 1,
-                percentage: Math.round(pct * 10000) / 100, // Convert decimal to percentage (0.4 → 40)
+                percentage: Math.round(pct * 10000) / 100,
                 amount: Math.floor(pool_amount * pct)
             }));
             
             const existing = await pool.query(
-                'SELECT id FROM tournament_instructions WHERE tournament_id = $1', [tournamentId]
+                'SELECT tournament_id FROM tournament_instructions WHERE tournament_id = $1', [tournamentId]
             );
             
             if (existing.rows.length > 0) {
                 await pool.query(
-                    'UPDATE tournament_instructions SET prize_structure = $1 WHERE tournament_id = $2',
+                    'UPDATE tournament_instructions SET prize_structure = $1::jsonb WHERE tournament_id = $2',
                     [JSON.stringify(structured), tournamentId]
                 );
             } else {
                 await pool.query(
-                    'INSERT INTO tournament_instructions (tournament_id, prize_structure) VALUES ($1, $2)',
+                    'INSERT INTO tournament_instructions (tournament_id, prize_structure) VALUES ($1, $2::jsonb)',
                     [tournamentId, JSON.stringify(structured)]
                 );
             }
+            
+            // Verify the save actually persisted
+            const verify = await pool.query(
+                'SELECT prize_structure FROM tournament_instructions WHERE tournament_id = $1', [tournamentId]
+            );
+            logger.info(`Prize structure save verified for tournament ${tournamentId}: ${verify.rows.length > 0 ? 'Found ' + (Array.isArray(verify.rows[0].prize_structure) ? verify.rows[0].prize_structure.length + ' positions' : typeof verify.rows[0].prize_structure) : 'NOT FOUND'}`);
         }
         
         await adminAuthService.logActivity(
