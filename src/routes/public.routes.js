@@ -150,10 +150,27 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
         `, [tournamentId, limit]);
         
         // Add tier classification and prize amount
+        // Use saved prize structure if available, otherwise fall back to default
         const defaultDistribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+        
+        // Build distribution array from saved structure or default
+        let distributionArray = defaultDistribution;
+        if (prizeStructure && Array.isArray(prizeStructure) && prizeStructure.length > 0) {
+            distributionArray = prizeStructure.map(p => {
+                if (p.percentage !== undefined && p.percentage !== null) {
+                    const pct = typeof p.percentage === 'string' ? parseFloat(p.percentage) : p.percentage;
+                    return pct > 1 ? pct / 100 : pct; // Handle both "40" and "0.4" formats
+                }
+                if (p.amount !== undefined && prizePool > 0) {
+                    return p.amount / prizePool;
+                }
+                return 0;
+            });
+        }
+        
         const leaderboard = leaderboardResult.rows.map(row => {
             const rank = parseInt(row.rank);
-            const prize = rank <= 10 && prizePool > 0 ? Math.floor(prizePool * defaultDistribution[rank - 1]) : 0;
+            const prize = rank <= distributionArray.length && prizePool > 0 ? Math.floor(prizePool * (distributionArray[rank - 1] || 0)) : 0;
             return {
                 ...row,
                 rank: rank,

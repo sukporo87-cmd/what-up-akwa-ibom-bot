@@ -1650,6 +1650,97 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
   }
 });
 
+// Cancel/void a pending payout
+router.post('/api/payouts/:id/cancel', authenticateAdmin, async (req, res) => {
+    try {
+        const transactionId = req.params.id;
+        const { reason } = req.body;
+        
+        const result = await pool.query(
+            `UPDATE transactions 
+             SET payout_status = 'cancelled', 
+                 admin_notes = COALESCE(admin_notes, '') || $1
+             WHERE id = $2 
+               AND transaction_type IN ('prize', 'tournament_prize')
+               AND payout_status IN ('pending', 'details_collected', 'approved')
+             RETURNING id, user_id, amount, payout_status`,
+            ['\n[Cancelled: ' + (reason || 'Admin action') + ' at ' + new Date().toISOString() + ']', transactionId]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Payout not found or already processed' });
+        }
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'cancel_payout',
+            { transaction_id: transactionId, reason: reason || 'Admin action' },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        logger.info(`Payout ${transactionId} cancelled by admin`);
+        res.json({ success: true, message: 'Payout cancelled', transaction: result.rows[0] });
+    } catch (error) {
+        logger.error('Error cancelling payout:', error);
+        res.status(500).json({ error: 'Failed to cancel payout' });
+    }
+});
+
+// Bulk cancel all pending payouts
+router.post('/api/payouts/bulk-cancel', authenticateAdmin, async (req, res) => {
+    try {
+        const { reason, transactionIds } = req.body;
+        
+        let result;
+        if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
+            // Cancel specific IDs
+            result = await pool.query(
+                `UPDATE transactions 
+                 SET payout_status = 'cancelled',
+                     admin_notes = COALESCE(admin_notes, '') || $1
+                 WHERE id = ANY($2::int[])
+                   AND transaction_type IN ('prize', 'tournament_prize')
+                   AND payout_status IN ('pending', 'details_collected', 'approved')
+                 RETURNING id, amount`,
+                ['\n[Bulk cancelled: ' + (reason || 'Admin bulk action') + ' at ' + new Date().toISOString() + ']', transactionIds]
+            );
+        } else {
+            // Cancel ALL pending payouts
+            result = await pool.query(
+                `UPDATE transactions 
+                 SET payout_status = 'cancelled',
+                     admin_notes = COALESCE(admin_notes, '') || $1
+                 WHERE transaction_type IN ('prize', 'tournament_prize')
+                   AND payout_status IN ('pending', 'details_collected', 'approved')
+                 RETURNING id, amount`,
+                ['\n[Bulk cancelled: ' + (reason || 'Admin bulk action') + ' at ' + new Date().toISOString() + ']']
+            );
+        }
+        
+        const totalAmount = result.rows.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'bulk_cancel_payouts',
+            { count: result.rowCount, total_amount: totalAmount, reason: reason || 'Admin bulk action' },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        logger.info(`Bulk cancelled ${result.rowCount} payouts totalling ₦${totalAmount}`);
+        res.json({ 
+            success: true, 
+            message: `${result.rowCount} payout(s) cancelled`, 
+            cancelled_count: result.rowCount,
+            total_amount: totalAmount
+        });
+    } catch (error) {
+        logger.error('Error bulk cancelling payouts:', error);
+        res.status(500).json({ error: 'Failed to bulk cancel payouts' });
+    }
+});
+
 router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
