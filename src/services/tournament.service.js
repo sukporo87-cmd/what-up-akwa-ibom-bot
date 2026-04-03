@@ -626,7 +626,13 @@ class TournamentService {
                         'SELECT prize_structure FROM tournament_instructions WHERE tournament_id = $1',
                         [tournamentId]
                     );
-                    const prizeStructure = instrResult.rows[0]?.prize_structure;
+                    let prizeStructure = instrResult.rows[0]?.prize_structure;
+                    
+                    // Handle string (TEXT column) vs object (JSONB column)
+                    if (typeof prizeStructure === 'string') {
+                        try { prizeStructure = JSON.parse(prizeStructure); } catch (e) { prizeStructure = null; }
+                    }
+                    
                     if (prizeStructure && Array.isArray(prizeStructure) && prizeStructure.length > 0) {
                         prizeDistribution = prizeStructure
                             .sort((a, b) => a.position - b.position)
