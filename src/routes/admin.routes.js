@@ -2303,12 +2303,12 @@ router.put('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req
             
             if (existing.rows.length > 0) {
                 await pool.query(
-                    'UPDATE tournament_instructions SET prize_structure = $1, updated_at = NOW() WHERE tournament_id = $2',
+                    'UPDATE tournament_instructions SET prize_structure = $1 WHERE tournament_id = $2',
                     [JSON.stringify(structured), tournamentId]
                 );
             } else {
                 await pool.query(
-                    'INSERT INTO tournament_instructions (tournament_id, prize_structure, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())',
+                    'INSERT INTO tournament_instructions (tournament_id, prize_structure) VALUES ($1, $2)',
                     [tournamentId, JSON.stringify(structured)]
                 );
             }
