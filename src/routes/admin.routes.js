@@ -2233,6 +2233,104 @@ router.get('/api/tournaments/:id/prize-preview', authenticateAdmin, async (req, 
     }
 });
 // ============================================
+// PRIZE STRUCTURE MANAGEMENT (works on active tournaments)
+// ============================================
+
+// Get current prize structure for a tournament
+router.get('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        
+        // Get tournament info + prize structure from tournament_instructions
+        const tResult = await pool.query(
+            'SELECT t.prize_pool, t.status, ti.prize_structure FROM tournaments t LEFT JOIN tournament_instructions ti ON t.id = ti.tournament_id WHERE t.id = $1',
+            [tournamentId]
+        );
+        
+        if (tResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        const t = tResult.rows[0];
+        res.json({
+            success: true,
+            prizePool: t.prize_pool,
+            status: t.status,
+            prizeStructure: t.prize_structure || null
+        });
+    } catch (error) {
+        logger.error('Error getting prize structure:', error);
+        res.status(500).json({ error: 'Failed to get prize structure' });
+    }
+});
+
+// Save/update prize structure and optionally update prize pool
+router.put('/api/tournaments/:id/prize-structure', authenticateAdmin, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        const { prizeStructure, prizePool } = req.body;
+        
+        // Validate tournament exists
+        const tCheck = await pool.query('SELECT id, status, prize_pool FROM tournaments WHERE id = $1', [tournamentId]);
+        if (tCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        // Don't allow changes to completed tournaments
+        if (tCheck.rows[0].status === 'completed') {
+            return res.status(400).json({ error: 'Cannot modify prize structure of a completed tournament' });
+        }
+        
+        // Update prize pool if provided
+        if (prizePool !== undefined && prizePool !== null) {
+            await pool.query('UPDATE tournaments SET prize_pool = $1 WHERE id = $2', [prizePool, tournamentId]);
+        }
+        
+        // Upsert prize structure in tournament_instructions
+        if (prizeStructure && Array.isArray(prizeStructure)) {
+            // Convert the array of percentages/amounts to the format tournament_instructions expects
+            // prize_structure is stored as JSONB array of objects: [{position: 1, percentage: 40, amount: 4000}, ...]
+            const pool_amount = prizePool || tCheck.rows[0].prize_pool || 0;
+            const structured = prizeStructure.map((pct, i) => ({
+                position: i + 1,
+                percentage: Math.round(pct * 10000) / 100, // Convert decimal to percentage (0.4 → 40)
+                amount: Math.floor(pool_amount * pct)
+            }));
+            
+            const existing = await pool.query(
+                'SELECT id FROM tournament_instructions WHERE tournament_id = $1', [tournamentId]
+            );
+            
+            if (existing.rows.length > 0) {
+                await pool.query(
+                    'UPDATE tournament_instructions SET prize_structure = $1, updated_at = NOW() WHERE tournament_id = $2',
+                    [JSON.stringify(structured), tournamentId]
+                );
+            } else {
+                await pool.query(
+                    'INSERT INTO tournament_instructions (tournament_id, prize_structure, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())',
+                    [tournamentId, JSON.stringify(structured)]
+                );
+            }
+        }
+        
+        await adminAuthService.logActivity(
+            req.adminSession.admin_id,
+            'update_prize_structure',
+            { tournament_id: tournamentId, prize_pool: prizePool },
+            getIpAddress(req),
+            req.headers['user-agent']
+        );
+        
+        logger.info(`Prize structure updated for tournament ${tournamentId}`);
+        res.json({ success: true, message: 'Prize structure updated' });
+    } catch (error) {
+        logger.error('Error updating prize structure:', error);
+        res.status(500).json({ error: 'Failed to update prize structure' });
+    }
+});
+
+// ============================================
 // ANALYTICS ENDPOINTS - ADD BEFORE module.exports
 // ============================================
 
@@ -5419,9 +5517,10 @@ router.get('/tournaments/manage', async (req, res) => {
         let tournamentCardsHtml = '';
         tournaments.forEach(t => {
             const statusClass = t.status === 'active' ? 'success' : t.status === 'upcoming' ? 'primary' : t.status === 'cancelled' ? 'danger' : 'secondary';
-            const actionButtons = t.status === 'active' ? `
-                <button class="btn btn-sm btn-outline-warning" onclick="previewPrizes(${t.id})" title="Preview Prizes"><i class="bi bi-gift"></i></button>
-                <button class="btn btn-sm btn-outline-danger" onclick="endTournament(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}'" title="End Tournament"><i class="bi bi-stop-circle"></i></button>
+            const actionButtons = (t.status === 'active' || t.status === 'upcoming') ? `
+                <button class="btn btn-sm btn-outline-info" onclick="managePrizes(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}', ${t.prize_pool || 0})" title="Manage Prizes"><i class="bi bi-cash-coin"></i></button>
+                ${t.status === 'active' ? `<button class="btn btn-sm btn-outline-warning" onclick="previewPrizes(${t.id})" title="Preview Prizes"><i class="bi bi-gift"></i></button>
+                <button class="btn btn-sm btn-outline-danger" onclick="endTournament(${t.id}, '${t.tournament_name.replace(/'/g, "\\'")}'" title="End Tournament"><i class="bi bi-stop-circle"></i></button>` : ''}
             ` : '';
             
             tournamentCardsHtml += `
@@ -5739,6 +5838,78 @@ router.get('/tournaments/manage', async (req, res) => {
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     <button type="button" class="btn btn-danger" id="confirmEndBtn" style="display:none;">
                         <i class="bi bi-stop-circle me-2"></i>Confirm End & Distribute
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Prizes Modal -->
+    <div class="modal fade" id="managePrizesModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header" style="background: linear-gradient(135deg, #007bff, #6610f2); color: white;">
+                    <h5 class="modal-title"><i class="bi bi-cash-coin me-2"></i>Manage Prize Distribution</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong id="managePrizesTitle">Tournament</strong> — 
+                        Changes are saved immediately and apply when the tournament ends.
+                    </div>
+
+                    <!-- Prize Pool Amount -->
+                    <div class="form-section">
+                        <h6><i class="bi bi-cash-stack me-2"></i>Prize Pool</h6>
+                        <div class="row align-items-end">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Prize Pool Amount (N)</label>
+                                <input type="number" class="form-control form-control-lg" id="mgPrizePoolInput" min="0" step="1000" oninput="mgUpdatePrizeTotal()">
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <div class="alert alert-secondary mb-0 py-2">
+                                    <small>Current pool: <strong id="mgCurrentPool">N0</strong></small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Distribution Controls -->
+                    <div class="form-section">
+                        <h6><i class="bi bi-gift me-2"></i>Prize Distribution</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Distribution Mode</label>
+                                <div class="toggle-btn-group">
+                                    <button type="button" class="toggle-btn active" id="mgPctModeBtn" onclick="mgSetPrizeMode('percentage')">Percentage %</button>
+                                    <button type="button" class="toggle-btn" id="mgAmtModeBtn" onclick="mgSetPrizeMode('amount')">Custom Amounts N</button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Winners Count</label>
+                                <div class="toggle-btn-group">
+                                    <button type="button" class="toggle-btn active" id="mgTop10Btn" onclick="mgSetWinnersCount(10)">Top 10</button>
+                                    <button type="button" class="toggle-btn" id="mgTop20Btn" onclick="mgSetWinnersCount(20)">Top 20</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Prize Inputs -->
+                        <div class="row" id="mgPrizeInputsContainer">
+                            <div class="col-md-6" id="mgPrizeCol1"></div>
+                            <div class="col-md-6" id="mgPrizeCol2"></div>
+                        </div>
+                        
+                        <div class="alert alert-info mt-3" id="mgPrizeTotal">
+                            <strong>Total: 100%</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="savePrizeStructure()">
+                        <i class="bi bi-save me-2"></i>Save Prize Structure
                     </button>
                 </div>
             </div>
@@ -6081,6 +6252,190 @@ router.get('/tournaments/manage', async (req, res) => {
                 }
             } catch (e) {
                 alert('Error: ' + e.message);
+            }
+        }
+
+        // ============================================
+        // MANAGE PRIZES (edit prize structure on active/upcoming tournaments)
+        // ============================================
+        
+        let mgPrizeMode = 'percentage';
+        let mgWinnersCount = 10;
+        let mgTournamentId = null;
+        
+        async function managePrizes(id, name, currentPool) {
+            mgTournamentId = id;
+            document.getElementById('managePrizesTitle').textContent = name;
+            document.getElementById('mgPrizePoolInput').value = currentPool || 0;
+            document.getElementById('mgCurrentPool').textContent = 'N' + parseInt(currentPool || 0).toLocaleString();
+            
+            // Reset UI state
+            mgPrizeMode = 'percentage';
+            mgWinnersCount = 10;
+            document.getElementById('mgPctModeBtn').classList.add('active');
+            document.getElementById('mgAmtModeBtn').classList.remove('active');
+            document.getElementById('mgTop10Btn').classList.add('active');
+            document.getElementById('mgTop20Btn').classList.remove('active');
+            
+            const modal = new bootstrap.Modal(document.getElementById('managePrizesModal'));
+            modal.show();
+            
+            // Load existing prize structure from DB
+            try {
+                const r = await fetch('/admin/api/tournaments/' + id + '/prize-structure', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await r.json();
+                
+                if (data.success && data.prizeStructure && Array.isArray(data.prizeStructure) && data.prizeStructure.length > 0) {
+                    // Populate from saved structure
+                    const saved = data.prizeStructure;
+                    if (saved.length > 10) {
+                        mgWinnersCount = 20;
+                        document.getElementById('mgTop10Btn').classList.remove('active');
+                        document.getElementById('mgTop20Btn').classList.add('active');
+                    }
+                    mgRenderPrizeInputs(saved);
+                    if (data.prizePool) {
+                        document.getElementById('mgPrizePoolInput').value = data.prizePool;
+                        document.getElementById('mgCurrentPool').textContent = 'N' + parseInt(data.prizePool).toLocaleString();
+                    }
+                } else {
+                    mgRenderPrizeInputs();
+                }
+            } catch (e) {
+                console.error('Error loading prize structure:', e);
+                mgRenderPrizeInputs();
+            }
+        }
+        
+        function mgSetPrizeMode(mode) {
+            mgPrizeMode = mode;
+            document.getElementById('mgPctModeBtn').classList.toggle('active', mode === 'percentage');
+            document.getElementById('mgAmtModeBtn').classList.toggle('active', mode === 'amount');
+            mgRenderPrizeInputs();
+        }
+        
+        function mgSetWinnersCount(count) {
+            mgWinnersCount = count;
+            document.getElementById('mgTop10Btn').classList.toggle('active', count === 10);
+            document.getElementById('mgTop20Btn').classList.toggle('active', count === 20);
+            mgRenderPrizeInputs();
+        }
+        
+        function mgRenderPrizeInputs(savedStructure) {
+            const col1 = document.getElementById('mgPrizeCol1');
+            const col2 = document.getElementById('mgPrizeCol2');
+            const defaults = mgWinnersCount === 10 ? defaultPcts10 : defaultPcts20;
+            const pool = parseInt(document.getElementById('mgPrizePoolInput')?.value) || 0;
+            
+            const medals = ['\\u{1F947}', '\\u{1F948}', '\\u{1F949}'];
+            let html1 = '', html2 = '';
+            
+            for (let i = 1; i <= mgWinnersCount; i++) {
+                const medal = i <= 3 ? medals[i-1] : i;
+                let defaultVal;
+                
+                if (savedStructure && savedStructure[i-1]) {
+                    // Use saved value
+                    const s = savedStructure[i-1];
+                    if (mgPrizeMode === 'percentage') {
+                        defaultVal = s.percentage || defaults[i-1] || 0;
+                    } else {
+                        defaultVal = s.amount || Math.floor(pool * (defaults[i-1] || 0) / 100);
+                    }
+                } else {
+                    defaultVal = mgPrizeMode === 'percentage' ? (defaults[i-1] || 0) : Math.floor(pool * (defaults[i-1] || 0) / 100);
+                }
+                
+                const suffix = mgPrizeMode === 'percentage' ? '%' : 'N';
+                const inputHtml = '<div class="input-group mb-2">'
+                    + '<span class="input-group-text" style="min-width:50px;">' + medal + '</span>'
+                    + '<input type="number" class="form-control mg-prize-input" name="mgPrize' + i + '" value="' + defaultVal + '" min="0" step="' + (mgPrizeMode === 'percentage' ? '0.1' : '1000') + '" oninput="mgUpdatePrizeTotal()">'
+                    + '<span class="input-group-text">' + suffix + '</span>'
+                    + (mgPrizeMode === 'percentage' ? '<span class="input-group-text mg-preview" id="mgPreview' + i + '" style="min-width:90px;">N0</span>' : '')
+                    + '</div>';
+                
+                if (i <= Math.ceil(mgWinnersCount / 2)) html1 += inputHtml;
+                else html2 += inputHtml;
+            }
+            
+            col1.innerHTML = html1;
+            col2.innerHTML = html2;
+            mgUpdatePrizeTotal();
+        }
+        
+        function mgUpdatePrizeTotal() {
+            const pool = parseInt(document.getElementById('mgPrizePoolInput')?.value) || 0;
+            const inputs = document.querySelectorAll('.mg-prize-input');
+            let total = 0;
+            
+            inputs.forEach((input, i) => {
+                const val = parseFloat(input.value) || 0;
+                total += val;
+                
+                if (mgPrizeMode === 'percentage') {
+                    const preview = document.getElementById('mgPreview' + (i + 1));
+                    if (preview) preview.textContent = 'N' + Math.floor(pool * val / 100).toLocaleString();
+                }
+            });
+            
+            const alertDiv = document.getElementById('mgPrizeTotal');
+            if (mgPrizeMode === 'percentage') {
+                if (Math.abs(total - 100) < 0.5) {
+                    alertDiv.className = 'alert alert-success mt-3';
+                    alertDiv.innerHTML = '<strong>Total: ' + total.toFixed(1) + '%</strong> = N' + pool.toLocaleString() + ' \\u2705';
+                } else {
+                    alertDiv.className = 'alert alert-danger mt-3';
+                    alertDiv.innerHTML = '<strong>Total: ' + total.toFixed(1) + '%</strong> \\u274C Must equal 100%';
+                }
+            } else {
+                alertDiv.className = total <= pool ? 'alert alert-success mt-3' : 'alert alert-danger mt-3';
+                alertDiv.innerHTML = '<strong>Total: N' + total.toLocaleString() + '</strong> / N' + pool.toLocaleString() + (total <= pool ? ' \\u2705' : ' \\u274C Exceeds pool!');
+            }
+        }
+        
+        async function savePrizeStructure() {
+            if (!mgTournamentId) return alert('No tournament selected');
+            
+            const pool = parseInt(document.getElementById('mgPrizePoolInput')?.value) || 0;
+            const inputs = document.querySelectorAll('.mg-prize-input');
+            const pd = [];
+            
+            inputs.forEach(input => {
+                const val = parseFloat(input.value) || 0;
+                if (mgPrizeMode === 'percentage') {
+                    pd.push(val / 100); // Convert percentage to decimal
+                } else {
+                    pd.push(pool > 0 ? val / pool : 0); // Convert amount to decimal fraction
+                }
+            });
+            
+            // Validate
+            if (mgPrizeMode === 'percentage') {
+                const total = pd.reduce((a, b) => a + b, 0);
+                if (Math.abs(total - 1) > 0.01) {
+                    alert('Prize percentages must total 100%');
+                    return;
+                }
+            }
+            
+            try {
+                const r = await fetch('/admin/api/tournaments/' + mgTournamentId + '/prize-structure', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ prizeStructure: pd, prizePool: pool })
+                });
+                const res = await r.json();
+                if (res.success) {
+                    alert('Prize structure saved successfully!');
+                    bootstrap.Modal.getInstance(document.getElementById('managePrizesModal')).hide();
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.error);
+                }
+            } catch (e) {
+                alert('Error saving: ' + e.message);
             }
         }
     </script>
