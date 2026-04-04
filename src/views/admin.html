@@ -3958,7 +3958,7 @@ function renderFraudReport(report) {
           <tbody>
             ${history.map(h => `<tr>
               <td>${h.action_type}</td>
-              <td>${h.details?.reason || JSON.stringify(h.details)}</td>
+              <td>${(() => { const d = typeof h.action_details === 'string' ? JSON.parse(h.action_details) : h.action_details; return d?.reason || JSON.stringify(d); })()}</td>
               <td>${new Date(h.created_at).toLocaleString()}</td>
             </tr>`).join('')}
           </tbody>

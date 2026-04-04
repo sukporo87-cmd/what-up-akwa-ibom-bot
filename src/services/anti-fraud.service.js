@@ -88,9 +88,9 @@ class AntiFraudService {
             
             // Log the flag
             await pool.query(`
-                INSERT INTO admin_activity_log (admin_id, action_type, target_type, target_id, details)
-                VALUES (NULL, 'fraud_flag', 'user', $1, $2)
-            `, [userId, JSON.stringify({ reason, automated: true })]);
+                INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+                VALUES (NULL, 'fraud_flag', $1)
+            `, [JSON.stringify({ target_type: 'user', target_id: userId, reason, automated: true })]);
             
             logger.warn(`User ${userId} flagged for fraud review: ${reason}`);
         } catch (error) {
@@ -324,9 +324,9 @@ class AntiFraudService {
             `, [userId]);
             
             await pool.query(`
-                INSERT INTO admin_activity_log (admin_id, action_type, target_type, target_id, details)
-                VALUES ($1, 'clear_fraud_flags', 'user', $2, $3)
-            `, [adminId, userId, JSON.stringify({ cleared_at: new Date() })]);
+                INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+                VALUES ($1, 'clear_fraud_flags', $2)
+            `, [adminId, JSON.stringify({ target_type: 'user', target_id: userId, cleared_at: new Date() })]);
             
             logger.info(`Fraud flags cleared for user ${userId} by admin ${adminId}`);
             return true;
@@ -367,13 +367,13 @@ class AntiFraudService {
             
             // Get fraud log entries
             const logResult = await pool.query(`
-                SELECT action_type, details, created_at
+                SELECT action_type, action_details, created_at
                 FROM admin_activity_log
-                WHERE target_type = 'user' AND target_id = $1
+                WHERE action_details->>'target_type' = 'user' AND action_details->>'target_id' = $1
                 AND action_type IN ('fraud_flag', 'clear_fraud_flags', 'suspend_user')
                 ORDER BY created_at DESC
                 LIMIT 20
-            `, [userId]);
+            `, [String(userId)]);
             
             return {
                 user,
