@@ -312,6 +312,37 @@ class WhatsAppService {
     }
   }
 
+  /**
+   * Download media from WhatsApp Cloud API by media ID.
+   * Two-step process: 1) Get media URL  2) Download binary content
+   * Returns { buffer, mimeType } or null on failure
+   */
+  async downloadMedia(mediaId) {
+    try {
+      // Step 1: Get the media URL
+      const metaUrl = `${this.apiUrl}/${mediaId}`;
+      const metaResponse = await axios.get(metaUrl, {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      });
+
+      const mediaUrl = metaResponse.data.url;
+      const mimeType = metaResponse.data.mime_type || 'image/jpeg';
+
+      // Step 2: Download the actual file
+      const fileResponse = await axios.get(mediaUrl, {
+        headers: { 'Authorization': `Bearer ${this.accessToken}` },
+        responseType: 'arraybuffer'
+      });
+
+      logger.info(`Media downloaded: ${mediaId} (${mimeType})`);
+      return { buffer: Buffer.from(fileResponse.data), mimeType };
+
+    } catch (error) {
+      logger.error('Error downloading media:', this._sanitizeError(error));
+      return null;
+    }
+  }
+
   async uploadMediaBuffer(buffer, mimeType, filename) {
     try {
       const url = `${this.apiUrl}/${this.phoneNumberId}/media`;

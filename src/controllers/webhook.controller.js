@@ -2454,7 +2454,7 @@ Type the code, or type SKIP to continue:`
       // Check if waiting for photo verification
       const hasPendingPhoto = await gameService.hasPendingPhotoVerification(activeSession.session_key);
       if (hasPendingPhoto) {
-        await gameService.processPhotoVerification(activeSession, user);
+        await gameService.processPhotoVerification(activeSession, user, message);
       } else {
         // Not expecting a photo - ignore or send hint
         await messagingService.sendMessage(

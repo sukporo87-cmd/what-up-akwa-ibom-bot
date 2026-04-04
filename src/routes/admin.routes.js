@@ -5,6 +5,8 @@
 
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const pool = require('../config/database');
 const PayoutService = require('../services/payout.service');
 const WhatsAppService = require('../services/whatsapp.service');
@@ -4444,6 +4446,79 @@ router.post('/api/fraud/user/:id/clear', authenticateAdmin, async (req, res) => 
     } catch (error) {
         logger.error('Error clearing fraud flags:', error);
         res.status(500).json({ error: 'Failed to clear fraud flags' });
+    }
+});
+
+// ============================================
+// PHOTO VERIFICATION ENDPOINTS
+// ============================================
+
+// Get photo verifications for a user
+router.get('/api/fraud/user/:id/photos', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const result = await pool.query(`
+            SELECT pv.*, gs.session_key, gs.current_question, gs.status as session_status,
+                   u.username, u.full_name
+            FROM photo_verifications pv
+            JOIN game_sessions gs ON pv.session_id = gs.id
+            JOIN users u ON pv.user_id = u.id
+            WHERE pv.user_id = $1
+            ORDER BY pv.created_at DESC
+            LIMIT 50
+        `, [userId]);
+        
+        res.json({ success: true, photos: result.rows });
+    } catch (error) {
+        logger.error('Error getting user photo verifications:', error);
+        res.status(500).json({ error: 'Failed to get photo verifications' });
+    }
+});
+
+// Serve a stored verification photo (admin-only)
+router.get('/api/fraud/photo/:filename', authenticateAdmin, async (req, res) => {
+    try {
+        const filename = req.params.filename;
+        
+        // Sanitize: only allow expected filename pattern (pv_USERID_SESSIONID_TIMESTAMP.ext)
+        if (!/^pv_\d+_\d+_\d+\.(jpeg|png)$/.test(filename)) {
+            return res.status(400).json({ error: 'Invalid filename' });
+        }
+        
+        const filepath = path.join(__dirname, '../photo-verifications', filename);
+        
+        if (!fs.existsSync(filepath)) {
+            return res.status(404).json({ error: 'Photo not found' });
+        }
+        
+        const ext = path.extname(filename).slice(1);
+        res.setHeader('Content-Type', `image/${ext}`);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.sendFile(filepath);
+    } catch (error) {
+        logger.error('Error serving verification photo:', error);
+        res.status(500).json({ error: 'Failed to serve photo' });
+    }
+});
+
+// Get all recent photo verifications (global view)
+router.get('/api/fraud/photos/recent', authenticateAdmin, async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        const result = await pool.query(`
+            SELECT pv.*, u.username, u.full_name, u.phone_number,
+                   gs.session_key, gs.status as session_status
+            FROM photo_verifications pv
+            JOIN users u ON pv.user_id = u.id
+            JOIN game_sessions gs ON pv.session_id = gs.id
+            ORDER BY pv.created_at DESC
+            LIMIT $1
+        `, [limit]);
+        
+        res.json({ success: true, photos: result.rows });
+    } catch (error) {
+        logger.error('Error getting recent photo verifications:', error);
+        res.status(500).json({ error: 'Failed to get photo verifications' });
     }
 });
 
