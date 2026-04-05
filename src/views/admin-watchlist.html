@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎯 Fraud Watchlist | What's Up Trivia</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a23;
+    --surface2: #22222f;
+    --border: #2d2d3d;
+    --text: #e4e4ef;
+    --text-dim: #8888a0;
+    --accent: #ff3b5c;
+    --accent2: #ff6b3d;
+    --green: #00d68f;
+    --yellow: #ffc233;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* PASSWORD GATE */
+  #passwordGate {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f0f13 0%, #1a0a1e 50%, #0f0f13 100%);
+  }
+  
+  .gate-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 48px;
+    max-width: 420px;
+    width: 90%;
+    text-align: center;
+  }
+  
+  .gate-card h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  
+  .gate-card p { color: var(--text-dim); margin-bottom: 32px; font-size: 14px; }
+  
+  .gate-card input {
+    width: 100%; padding: 14px 16px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 16px; font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 4px; text-align: center;
+    margin-bottom: 16px;
+  }
+  
+  .gate-card input:focus { outline: none; border-color: var(--accent); }
+  
+  .gate-card button {
+    width: 100%; padding: 14px;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 10px; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s;
+  }
+  
+  .gate-card button:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255,59,92,0.4); }
+  
+  .gate-error { color: var(--accent); font-size: 13px; margin-top: 12px; display: none; }
+
+  /* MAIN DASHBOARD */
+  #dashboard { display: none; }
+  
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  
+  .topbar h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    color: var(--accent);
+  }
+  
+  .topbar .back-link {
+    color: var(--text-dim); text-decoration: none; font-size: 14px;
+    transition: color 0.2s;
+  }
+  
+  .topbar .back-link:hover { color: var(--text); }
+  
+  .container { max-width: 1200px; margin: 0 auto; padding: 32px; }
+
+  /* ADD USER SECTION */
+  .add-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 28px;
+  }
+  
+  .add-section h2 {
+    font-size: 16px; font-weight: 600; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .search-row { display: flex; gap: 12px; margin-bottom: 16px; }
+  
+  .search-input {
+    flex: 1; padding: 12px 16px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 14px;
+  }
+  
+  .search-input:focus { outline: none; border-color: var(--blue); }
+  
+  .search-results {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; max-height: 200px; overflow-y: auto;
+    display: none;
+  }
+  
+  .search-result-item {
+    padding: 10px 16px; cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+    font-size: 13px;
+  }
+  
+  .search-result-item:hover { background: var(--surface2); }
+  .search-result-item:last-child { border-bottom: none; }
+
+  /* MEASURES GRID */
+  .measures-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  
+  .measure-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    transition: border-color 0.2s;
+  }
+  
+  .measure-card.active { border-color: var(--accent); background: rgba(255,59,92,0.05); }
+  
+  .measure-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  
+  .measure-title { font-size: 13px; font-weight: 600; }
+  .measure-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  
+  /* Toggle switch */
+  .toggle { position: relative; width: 42px; height: 24px; cursor: pointer; }
+  .toggle input { display: none; }
+  .toggle-slider {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border); border-radius: 24px; transition: 0.3s;
+  }
+  .toggle-slider:before {
+    content: ''; position: absolute; width: 18px; height: 18px;
+    left: 3px; bottom: 3px;
+    background: var(--text-dim); border-radius: 50%; transition: 0.3s;
+  }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
+
+  .measure-config { margin-top: 10px; display: none; }
+  .measure-card.active .measure-config { display: block; }
+  
+  .config-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .config-label { font-size: 12px; color: var(--text-dim); min-width: 60px; }
+  .config-input {
+    width: 60px; padding: 6px 8px;
+    background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px; font-family: 'JetBrains Mono', monospace;
+    text-align: center;
+  }
+  
+  .config-input:focus { outline: none; border-color: var(--accent); }
+
+  .reason-input {
+    width: 100%; padding: 10px 14px; margin-top: 16px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .btn {
+    padding: 10px 20px; border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .btn-danger { background: var(--accent); color: #fff; }
+  .btn-danger:hover { box-shadow: 0 4px 16px rgba(255,59,92,0.4); }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-green { background: var(--green); color: #000; }
+
+  /* WATCHLIST TABLE */
+  .watchlist-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+  }
+  
+  .watchlist-section h2 { font-size: 16px; font-weight: 600; margin-bottom: 20px; }
+  
+  .wl-table { width: 100%; border-collapse: collapse; }
+  .wl-table th {
+    text-align: left; padding: 10px 14px;
+    font-size: 11px; text-transform: uppercase;
+    color: var(--text-dim); font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px; border-bottom: 1px solid var(--border);
+  }
+  
+  .wl-table td {
+    padding: 14px; border-bottom: 1px solid var(--border);
+    font-size: 13px; vertical-align: top;
+  }
+  
+  .wl-table tr:hover { background: var(--surface2); }
+  
+  .measure-badge {
+    display: inline-block; padding: 3px 8px;
+    background: rgba(255,59,92,0.15); color: var(--accent);
+    border-radius: 6px; font-size: 11px; font-weight: 600;
+    margin: 2px 4px 2px 0;
+  }
+  
+  .measure-badge.timer { background: rgba(255,107,61,0.15); color: var(--accent2); }
+  .measure-badge.photo { background: rgba(139,92,246,0.15); color: var(--purple); }
+  .measure-badge.captcha { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .measure-badge.turbo { background: rgba(255,194,51,0.15); color: var(--yellow); }
+  
+  .user-info strong { display: block; }
+  .user-info small { color: var(--text-dim); }
+  
+  .empty-state {
+    text-align: center; padding: 48px; color: var(--text-dim);
+  }
+  
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  
+  .loading { text-align: center; padding: 32px; color: var(--text-dim); }
+
+  .alert {
+    position: fixed; top: 20px; right: 20px; z-index: 10000;
+    padding: 14px 20px; border-radius: 10px; font-size: 14px;
+    animation: slideIn 0.3s ease;
+  }
+  
+  .alert-success { background: var(--green); color: #000; }
+  .alert-error { background: var(--accent); color: #fff; }
+  
+  @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body>
+
+<!-- PASSWORD GATE -->
+<div id="passwordGate">
+  <div class="gate-card">
+    <h1>🎯 FRAUD WATCHLIST</h1>
+    <p>This area requires additional authorization.<br>Enter the watchlist password to continue.</p>
+    <input type="password" id="watchlistPasswordInput" placeholder="••••••••" onkeydown="if(event.key==='Enter') verifyWatchlistPassword()">
+    <button onclick="verifyWatchlistPassword()">Unlock Dashboard</button>
+    <div class="gate-error" id="gateError">Incorrect password. Try again.</div>
+  </div>
+</div>
+
+<!-- MAIN DASHBOARD -->
+<div id="dashboard">
+  <div class="topbar">
+    <h1>🎯 FRAUD WATCHLIST</h1>
+    <a href="/admin" class="back-link">← Back to Admin</a>
+  </div>
+  
+  <div class="container">
+    <!-- ADD USER -->
+    <div class="add-section">
+      <h2>➕ Add User to Watchlist</h2>
+      
+      <div class="search-row">
+        <input type="text" class="search-input" id="userSearch" placeholder="Search by username, name, or phone..." oninput="searchUsers()">
+      </div>
+      <div class="search-results" id="searchResults"></div>
+      
+      <div id="selectedUser" style="display:none; background:var(--bg); border:1px solid var(--accent); border-radius:10px; padding:14px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong id="selectedUserName"></strong>
+            <small id="selectedUserDetails" style="color:var(--text-dim);display:block;margin-top:4px;"></small>
+          </div>
+          <button class="btn btn-secondary" onclick="clearSelection()" style="padding:6px 12px;font-size:12px;">✕ Clear</button>
+        </div>
+      </div>
+
+      <h3 style="font-size:14px;margin-bottom:12px;">Select Measures:</h3>
+      <div class="measures-grid">
+        
+        <div class="measure-card" id="mc_shortened_timers">
+          <div class="measure-header">
+            <span class="measure-title">⏱️ Shortened Timers</span>
+            <label class="toggle"><input type="checkbox" data-measure="shortened_timers" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Reduce answer time: 8s/7s/6s instead of 12s/11s/10s</div>
+          <div class="measure-config">
+            <div class="config-row"><span class="config-label">Q1-5:</span><input class="config-input" id="timer_early" type="number" value="8" min="3" max="12">s</div>
+            <div class="config-row"><span class="config-label">Q6-10:</span><input class="config-input" id="timer_mid" type="number" value="7" min="3" max="11">s</div>
+            <div class="config-row"><span class="config-label">Q11-15:</span><input class="config-input" id="timer_late" type="number" value="6" min="3" max="10">s</div>
+          </div>
+        </div>
+
+        <div class="measure-card" id="mc_forced_photo">
+          <div class="measure-header">
+            <span class="measure-title">📸 Forced Photo Verification</span>
+            <label class="toggle"><input type="checkbox" data-measure="forced_photo" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Require photo verification at early questions every game</div>
+          <div class="measure-config">
+            <div class="config-row"><span class="config-label">At Q:</span><input class="config-input" id="photo_q1" type="number" value="3" min="1" max="15">,<input class="config-input" id="photo_q2" type="number" value="10" min="1" max="15"></div>
+          </div>
+        </div>
+
+        <div class="measure-card" id="mc_forced_captcha">
+          <div class="measure-header">
+            <span class="measure-title">🧩 Mandatory CAPTCHA</span>
+            <label class="toggle"><input type="checkbox" data-measure="forced_captcha_every_question" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Force a CAPTCHA before every single question</div>
+        </div>
+
+        <div class="measure-card" id="mc_double_verification">
+          <div class="measure-header">
+            <span class="measure-title">📸📸 Double Verification</span>
+            <label class="toggle"><input type="checkbox" data-measure="double_verification" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Require photo at two checkpoints in the same game</div>
+          <div class="measure-config">
+            <div class="config-row"><span class="config-label">At Q:</span><input class="config-input" id="dv_q1" type="number" value="3" min="1" max="15">,<input class="config-input" id="dv_q2" type="number" value="10" min="1" max="15"></div>
+          </div>
+        </div>
+
+        <div class="measure-card" id="mc_early_turbo">
+          <div class="measure-header">
+            <span class="measure-title">⚡ Early Turbo Mode</span>
+            <label class="toggle"><input type="checkbox" data-measure="early_turbo" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Force turbo mode from early question (permanent for session)</div>
+          <div class="measure-config">
+            <div class="config-row"><span class="config-label">From Q:</span><input class="config-input" id="turbo_from" type="number" value="3" min="1" max="10"></div>
+            <div class="config-row"><span class="config-label">Timer:</span><input class="config-input" id="turbo_timer" type="number" value="7" min="3" max="10">s</div>
+          </div>
+        </div>
+
+        <div class="measure-card" id="mc_no_lifelines">
+          <div class="measure-header">
+            <span class="measure-title">🚫 No Lifelines</span>
+            <label class="toggle"><input type="checkbox" data-measure="no_lifelines" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Disable 50:50 and Skip lifelines entirely</div>
+        </div>
+
+        <div class="measure-card" id="mc_payout_hold">
+          <div class="measure-header">
+            <span class="measure-title">💰 Auto-Hold Payouts</span>
+            <label class="toggle"><input type="checkbox" data-measure="payout_hold" onchange="toggleMeasure(this)"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="measure-desc">Automatically hold all payouts for manual review</div>
+        </div>
+
+      </div>
+      
+      <input type="text" class="reason-input" id="watchlistReason" placeholder="Reason for adding to watchlist (e.g. Suspected bot usage, unusual win pattern...)">
+      
+      <div style="margin-top:20px;display:flex;gap:12px;">
+        <button class="btn btn-danger" onclick="addToWatchlist()">🎯 Add to Watchlist</button>
+      </div>
+    </div>
+
+    <!-- CURRENT WATCHLIST -->
+    <div class="watchlist-section">
+      <h2>📋 Active Watchlist <span id="watchlistCount" style="color:var(--accent);"></span></h2>
+      <div id="watchlistTable">
+        <div class="loading">Loading watchlist...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="alertContainer" style="position:fixed;top:20px;right:20px;z-index:10000;"></div>
+
+<script>
+let sessionToken = localStorage.getItem('adminToken');
+let watchlistPassword = '';
+let selectedUserId = null;
+
+// ============================================
+// PASSWORD GATE
+// ============================================
+async function verifyWatchlistPassword() {
+  const password = document.getElementById('watchlistPasswordInput').value;
+  if (!password) return;
+  
+  try {
+    const response = await fetch('/admin/api/watchlist/verify-password', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    
+    if (response.ok) {
+      watchlistPassword = password;
+      document.getElementById('passwordGate').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      loadWatchlist();
+    } else {
+      document.getElementById('gateError').style.display = 'block';
+      document.getElementById('watchlistPasswordInput').value = '';
+    }
+  } catch (error) {
+    document.getElementById('gateError').style.display = 'block';
+  }
+}
+
+function wlHeaders() {
+  return {
+    'Authorization': `Bearer ${sessionToken}`,
+    'Content-Type': 'application/json',
+    'X-Watchlist-Password': watchlistPassword
+  };
+}
+
+// ============================================
+// USER SEARCH
+// ============================================
+let searchTimeout;
+function searchUsers() {
+  clearTimeout(searchTimeout);
+  const q = document.getElementById('userSearch').value.trim();
+  if (q.length < 2) { document.getElementById('searchResults').style.display = 'none'; return; }
+  
+  searchTimeout = setTimeout(async () => {
+    try {
+      const response = await fetch(`/admin/api/watchlist/search-users?q=${encodeURIComponent(q)}`, { headers: wlHeaders() });
+      const data = await response.json();
+      
+      if (data.success && data.users.length > 0) {
+        const results = document.getElementById('searchResults');
+        results.innerHTML = data.users.map(u => `
+          <div class="search-result-item" onclick="selectUser(${u.id}, '${u.username}', '${u.full_name || ''}', '${u.phone_number}', ${u.fraud_flags || 0}, ${u.total_games || 0}, ${u.games_won || 0})">
+            <strong>@${u.username}</strong> — ${u.full_name || 'N/A'} · ${u.phone_number}
+            <span style="float:right;color:var(--text-dim);">🎮 ${u.total_games || 0} games · 🏆 ${u.games_won || 0} wins · 🚩 ${u.fraud_flags || 0} flags</span>
+          </div>
+        `).join('');
+        results.style.display = 'block';
+      } else {
+        document.getElementById('searchResults').innerHTML = '<div class="search-result-item" style="color:var(--text-dim)">No users found</div>';
+        document.getElementById('searchResults').style.display = 'block';
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+    }
+  }, 300);
+}
+
+function selectUser(id, username, fullName, phone, flags, games, wins) {
+  selectedUserId = id;
+  document.getElementById('selectedUserName').textContent = `@${username} — ${fullName}`;
+  document.getElementById('selectedUserDetails').textContent = `Phone: ${phone} · Games: ${games} · Wins: ${wins} · Fraud Flags: ${flags}`;
+  document.getElementById('selectedUser').style.display = 'block';
+  document.getElementById('searchResults').style.display = 'none';
+  document.getElementById('userSearch').value = '';
+}
+
+function clearSelection() {
+  selectedUserId = null;
+  document.getElementById('selectedUser').style.display = 'none';
+}
+
+// ============================================
+// MEASURES
+// ============================================
+function toggleMeasure(el) {
+  const card = el.closest('.measure-card');
+  card.classList.toggle('active', el.checked);
+}
+
+function collectMeasures() {
+  const measures = {};
+  
+  document.querySelectorAll('[data-measure]').forEach(toggle => {
+    if (toggle.checked) {
+      const name = toggle.dataset.measure;
+      measures[name] = true;
+    }
+  });
+  
+  if (measures.shortened_timers) {
+    measures.timer_values = {
+      early: parseInt(document.getElementById('timer_early').value) || 8,
+      mid: parseInt(document.getElementById('timer_mid').value) || 7,
+      late: parseInt(document.getElementById('timer_late').value) || 6
+    };
+  }
+  
+  if (measures.forced_photo) {
+    const q1 = parseInt(document.getElementById('photo_q1').value) || 3;
+    const q2 = parseInt(document.getElementById('photo_q2').value) || 10;
+    measures.forced_photo_questions = [q1, q2];
+  }
+  
+  if (measures.double_verification) {
+    const q1 = parseInt(document.getElementById('dv_q1').value) || 3;
+    const q2 = parseInt(document.getElementById('dv_q2').value) || 10;
+    measures.double_verification_questions = [q1, q2];
+  }
+  
+  if (measures.early_turbo) {
+    measures.early_turbo_from_question = parseInt(document.getElementById('turbo_from').value) || 3;
+    measures.early_turbo_timer = parseInt(document.getElementById('turbo_timer').value) || 7;
+  }
+  
+  return measures;
+}
+
+// ============================================
+// ADD TO WATCHLIST
+// ============================================
+async function addToWatchlist() {
+  if (!selectedUserId) { showAlert('Please select a user first', 'error'); return; }
+  
+  const measures = collectMeasures();
+  if (Object.keys(measures).length === 0) { showAlert('Please enable at least one measure', 'error'); return; }
+  
+  const reason = document.getElementById('watchlistReason').value.trim();
+  
+  try {
+    const response = await fetch('/admin/api/watchlist/add', {
+      method: 'POST',
+      headers: wlHeaders(),
+      body: JSON.stringify({ user_id: selectedUserId, measures, reason })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showAlert('User added to watchlist successfully', 'success');
+      clearSelection();
+      document.getElementById('watchlistReason').value = '';
+      document.querySelectorAll('[data-measure]').forEach(t => { t.checked = false; t.closest('.measure-card').classList.remove('active'); });
+      loadWatchlist();
+    } else {
+      showAlert(data.error || 'Failed to add', 'error');
+    }
+  } catch (error) {
+    showAlert('Error: ' + error.message, 'error');
+  }
+}
+
+// ============================================
+// LOAD WATCHLIST
+// ============================================
+async function loadWatchlist() {
+  try {
+    const response = await fetch('/admin/api/watchlist', { headers: wlHeaders() });
+    const data = await response.json();
+    
+    if (!data.success || !data.watchlist || data.watchlist.length === 0) {
+      document.getElementById('watchlistTable').innerHTML = '<div class="empty-state"><div class="icon">🎯</div><p>No users on the watchlist</p></div>';
+      document.getElementById('watchlistCount').textContent = '(0)';
+      return;
+    }
+    
+    document.getElementById('watchlistCount').textContent = `(${data.watchlist.length})`;
+    
+    let html = `<table class="wl-table"><thead><tr>
+      <th>User</th><th>Active Measures</th><th>Reason</th><th>Added</th><th>Actions</th>
+    </tr></thead><tbody>`;
+    
+    for (const entry of data.watchlist) {
+      const measures = typeof entry.measures === 'string' ? JSON.parse(entry.measures) : entry.measures;
+      
+      let badges = '';
+      if (measures.shortened_timers) {
+        const tv = measures.timer_values || {early:8,mid:7,late:6};
+        badges += `<span class="measure-badge timer">⏱️ ${tv.early}s/${tv.mid}s/${tv.late}s</span>`;
+      }
+      if (measures.forced_photo || measures.forced_photo_questions) {
+        const qs = measures.forced_photo_questions || [3];
+        badges += `<span class="measure-badge photo">📸 Q${qs.join(',Q')}</span>`;
+      }
+      if (measures.forced_captcha_every_question) badges += `<span class="measure-badge captcha">🧩 Every Q</span>`;
+      if (measures.double_verification) {
+        const qs = measures.double_verification_questions || [3,10];
+        badges += `<span class="measure-badge photo">📸📸 Q${qs.join(',Q')}</span>`;
+      }
+      if (measures.early_turbo) {
+        badges += `<span class="measure-badge turbo">⚡ From Q${measures.early_turbo_from_question || 3} (${measures.early_turbo_timer || 7}s)</span>`;
+      }
+      if (measures.no_lifelines) badges += `<span class="measure-badge">🚫 No Lifelines</span>`;
+      if (measures.payout_hold) badges += `<span class="measure-badge">💰 Hold Payouts</span>`;
+      
+      html += `<tr>
+        <td class="user-info">
+          <strong>@${entry.username}</strong>
+          <small>${entry.full_name || ''}<br>${entry.phone_number}</small>
+          ${entry.fraud_flags > 0 ? `<br><span style="color:var(--accent);font-size:11px;">🚩 ${entry.fraud_flags} flags</span>` : ''}
+          ${entry.is_suspended ? `<br><span style="color:var(--accent);font-size:11px;">⛔ SUSPENDED</span>` : ''}
+        </td>
+        <td>${badges || '<span style="color:var(--text-dim)">None</span>'}</td>
+        <td style="max-width:200px;font-size:12px;color:var(--text-dim);">${entry.reason || '—'}</td>
+        <td style="font-size:12px;color:var(--text-dim);">${new Date(entry.created_at).toLocaleDateString()}<br><small>by ${entry.admin_username || 'system'}</small></td>
+        <td>
+          <button class="btn btn-secondary" onclick="removeFromWatchlist(${entry.user_id}, '${entry.username}')" style="padding:6px 14px;font-size:12px;">✕ Remove</button>
+        </td>
+      </tr>`;
+    }
+    
+    html += '</tbody></table>';
+    document.getElementById('watchlistTable').innerHTML = html;
+    
+  } catch (error) {
+    console.error('Error loading watchlist:', error);
+    document.getElementById('watchlistTable').innerHTML = '<div class="empty-state"><p style="color:var(--accent)">Error loading watchlist</p></div>';
+  }
+}
+
+// ============================================
+// REMOVE FROM WATCHLIST
+// ============================================
+async function removeFromWatchlist(userId, username) {
+  if (!confirm(`Remove @${username} from the watchlist? All measures will be deactivated.`)) return;
+  
+  try {
+    const response = await fetch(`/admin/api/watchlist/${userId}`, {
+      method: 'DELETE',
+      headers: wlHeaders()
+    });
+    
+    const data = await response.json();
+    if (data.success) {
+      showAlert(`@${username} removed from watchlist`, 'success');
+      loadWatchlist();
+    } else {
+      showAlert(data.error || 'Failed to remove', 'error');
+    }
+  } catch (error) {
+    showAlert('Error: ' + error.message, 'error');
+  }
+}
+
+// ============================================
+// UTILS
+// ============================================
+function showAlert(message, type) {
+  const container = document.getElementById('alertContainer');
+  const alert = document.createElement('div');
+  alert.className = `alert alert-${type}`;
+  alert.textContent = message;
+  container.appendChild(alert);
+  setTimeout(() => { alert.style.opacity = '0'; setTimeout(() => alert.remove(), 300); }, 4000);
+}
+
+// Check admin auth on load
+if (!sessionToken) {
+  window.location.href = '/admin';
+}
+</script>
+</body>
+</html>

@@ -96,6 +96,11 @@ router.get('/rotation', (req, res) => {
   res.sendFile('admin-rotation.html', { root: './src/views' });
 });
 
+// Fraud Watchlist dashboard (separate password required)
+router.get('/watchlist', (req, res) => {
+  res.sendFile('admin-watchlist.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -7941,5 +7946,149 @@ const executeScheduledMessages = async () => {
 
 setInterval(executeScheduledMessages, 60 * 1000);
 console.log('📨 Scheduled message executor started (checks every 60s)');
+
+// ============================================
+// FRAUD WATCHLIST ENDPOINTS
+// Protected by secondary password
+// ============================================
+
+const watchlistService = require('../services/watchlist.service');
+
+// Middleware: secondary password verification for watchlist access
+const authenticateWatchlist = async (req, res, next) => {
+    const watchlistPassword = req.headers['x-watchlist-password'] || req.body?.watchlist_password;
+    const expectedPassword = process.env.WATCHLIST_PASSWORD;
+    
+    if (!expectedPassword) {
+        return res.status(503).json({ error: 'Watchlist password not configured on server' });
+    }
+    
+    if (!watchlistPassword || watchlistPassword !== expectedPassword) {
+        return res.status(403).json({ error: 'Invalid watchlist password' });
+    }
+    
+    next();
+};
+
+// Verify watchlist password
+router.post('/api/watchlist/verify-password', authenticateAdmin, async (req, res) => {
+    const { password } = req.body;
+    const expected = process.env.WATCHLIST_PASSWORD;
+    
+    if (!expected) return res.status(503).json({ error: 'Watchlist password not configured' });
+    
+    if (password === expected) {
+        res.json({ success: true });
+    } else {
+        res.status(403).json({ error: 'Invalid password' });
+    }
+});
+
+// Get full watchlist
+router.get('/api/watchlist', authenticateAdmin, authenticateWatchlist, async (req, res) => {
+    try {
+        const watchlist = await watchlistService.getFullWatchlist();
+        res.json({ success: true, watchlist });
+    } catch (error) {
+        logger.error('Error getting watchlist:', error);
+        res.status(500).json({ error: 'Failed to get watchlist' });
+    }
+});
+
+// Add user to watchlist
+router.post('/api/watchlist/add', authenticateAdmin, authenticateWatchlist, async (req, res) => {
+    try {
+        const { user_id, measures, reason } = req.body;
+        const adminId = req.adminId || null;
+        
+        if (!user_id || !measures) {
+            return res.status(400).json({ error: 'user_id and measures are required' });
+        }
+        
+        const result = await watchlistService.addToWatchlist(user_id, measures, adminId, reason || '');
+        
+        // Log activity
+        try {
+            await pool.query(`
+                INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+                VALUES ($1, 'watchlist_add', $2)
+            `, [adminId, JSON.stringify({ user_id, measures, reason })]);
+        } catch (logErr) {
+            logger.error('Error logging watchlist add:', logErr);
+        }
+        
+        res.json({ success: true, entry: result });
+    } catch (error) {
+        logger.error('Error adding to watchlist:', error);
+        res.status(500).json({ error: 'Failed to add to watchlist' });
+    }
+});
+
+// Update watchlist measures
+router.put('/api/watchlist/:userId', authenticateAdmin, authenticateWatchlist, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const { measures } = req.body;
+        const adminId = req.adminId || null;
+        
+        const result = await watchlistService.updateMeasures(userId, measures, adminId);
+        
+        if (!result) {
+            return res.status(404).json({ error: 'User not found on watchlist' });
+        }
+        
+        res.json({ success: true, entry: result });
+    } catch (error) {
+        logger.error('Error updating watchlist:', error);
+        res.status(500).json({ error: 'Failed to update watchlist' });
+    }
+});
+
+// Remove user from watchlist
+router.delete('/api/watchlist/:userId', authenticateAdmin, authenticateWatchlist, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const adminId = req.adminId || null;
+        
+        await watchlistService.removeFromWatchlist(userId, adminId);
+        
+        // Log activity
+        try {
+            await pool.query(`
+                INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+                VALUES ($1, 'watchlist_remove', $2)
+            `, [adminId, JSON.stringify({ user_id: userId })]);
+        } catch (logErr) {
+            logger.error('Error logging watchlist remove:', logErr);
+        }
+        
+        res.json({ success: true, message: 'User removed from watchlist' });
+    } catch (error) {
+        logger.error('Error removing from watchlist:', error);
+        res.status(500).json({ error: 'Failed to remove from watchlist' });
+    }
+});
+
+// Search users to add to watchlist
+router.get('/api/watchlist/search-users', authenticateAdmin, authenticateWatchlist, async (req, res) => {
+    try {
+        const q = req.query.q || '';
+        if (q.length < 2) return res.json({ success: true, users: [] });
+        
+        const result = await pool.query(`
+            SELECT id, username, full_name, phone_number, fraud_flags, is_suspended,
+                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id) as total_games,
+                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'won') as games_won
+            FROM users u
+            WHERE username ILIKE $1 OR full_name ILIKE $1 OR phone_number ILIKE $1
+            LIMIT 20
+        `, [`%${q}%`]);
+        
+        res.json({ success: true, users: result.rows });
+    } catch (error) {
+        logger.error('Error searching users for watchlist:', error);
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
 
 module.exports = router;

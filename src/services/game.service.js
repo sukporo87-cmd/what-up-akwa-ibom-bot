@@ -31,6 +31,7 @@ const behavioralAnalysisService = require('./behavioral-analysis.service');
 const { logger } = require('../utils/logger');
 const WhatsAppService = require('./whatsapp.service');
 const cloudinaryService = require('./cloudinary.service');
+const watchlistService = require('./watchlist.service');
 
 // ============================================
 // BASE CONFIGURATION
@@ -468,23 +469,63 @@ class GameService {
     async getSessionTimeout(sessionKey, questionNumber = null, userId = null) {
         const trackingKey = `turbo_track:${sessionKey}`;
         
+        // Priority 0: Watchlist shortened timers (stacks with turbo)
+        let watchlistTimerOverride = null;
+        if (userId) {
+            try {
+                const wlConfig = await watchlistService.getUserWatchlistConfig(userId);
+                if (wlConfig && watchlistService.isEnabled(wlConfig, 'shortened_timers')) {
+                    const measures = typeof wlConfig.measures === 'string' ? JSON.parse(wlConfig.measures) : wlConfig.measures;
+                    const customTimers = measures.timer_values || { early: 8, mid: 7, late: 6 };
+                    if (questionNumber) {
+                        let timerSeconds;
+                        if (questionNumber <= 5) timerSeconds = customTimers.early;
+                        else if (questionNumber <= 10) timerSeconds = customTimers.mid;
+                        else timerSeconds = customTimers.late;
+                        watchlistTimerOverride = { ms: timerSeconds * 1000, seconds: timerSeconds };
+                    }
+                }
+            } catch (e) {
+                logger.error('Error checking watchlist timers:', e);
+            }
+        }
+
         try {
-            // Priority 1: Active turbo mode
+            // Priority 1: Active turbo mode (use watchlist timer if shorter)
             const tracking = await redis.get(trackingKey);
             if (tracking) {
                 const data = JSON.parse(tracking);
                 if (data.turboModeActive && data.turboQuestionsRemaining > 0) {
+                    let tMs = data.turboTimeoutMs || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_MS;
+                    let tSec = data.turboTimeoutSeconds || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_SECONDS;
+                    // Watchlist can make turbo even tighter
+                    if (watchlistTimerOverride && watchlistTimerOverride.ms < tMs) {
+                        tMs = watchlistTimerOverride.ms;
+                        tSec = watchlistTimerOverride.seconds;
+                    }
                     return {
-                        timeoutMs: data.turboTimeoutMs || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_MS,
-                        timeoutSeconds: data.turboTimeoutSeconds || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_SECONDS,
+                        timeoutMs: tMs,
+                        timeoutSeconds: tSec,
                         isTurboMode: true,
                         turboType: data.turboType || 'last_second',
                         questionsRemaining: data.turboQuestionsRemaining,
+                        isWatchlist: !!watchlistTimerOverride,
                     };
                 }
             }
         } catch (error) {
             logger.error('Error getting session timeout:', error);
+        }
+
+        // Priority 1.5: Watchlist timers (before penalty/progressive)
+        if (watchlistTimerOverride) {
+            return {
+                timeoutMs: watchlistTimerOverride.ms,
+                timeoutSeconds: watchlistTimerOverride.seconds,
+                isTurboMode: false,
+                isWatchlist: true,
+                questionsRemaining: 0,
+            };
         }
 
         // Priority 2: Penalty mode (10s timers)
@@ -1393,7 +1434,96 @@ class GameService {
             return;
         }
 
-        // Check for photo verification first (Q13-15, suspicious sessions)
+        // ============================================
+        // WATCHLIST OVERRIDES
+        // ============================================
+        let wlConfig = null;
+        try {
+            wlConfig = await watchlistService.getUserWatchlistConfig(user.id);
+        } catch (e) {
+            logger.error('Error loading watchlist config:', e);
+        }
+
+        if (wlConfig) {
+            const measures = typeof wlConfig.measures === 'string' ? JSON.parse(wlConfig.measures) : wlConfig.measures;
+
+            // Watchlist: Force photo verification at specific questions (e.g. Q3, Q10)
+            if (measures.forced_photo_questions && measures.forced_photo_questions.includes(questionNumber)) {
+                if (!session.photo_verification_requested) {
+                    await this.sendPhotoVerification(session, user, questionNumber);
+                    return;
+                }
+            }
+            // Watchlist: Double verification — second photo check
+            if (measures.double_verification && measures.double_verification_questions) {
+                const dvKey = `wl_dv:${session.session_key}`;
+                const dvDone = await redis.get(dvKey);
+                const dvQuestions = dvDone ? JSON.parse(dvDone) : [];
+                if (measures.double_verification_questions.includes(questionNumber) && !dvQuestions.includes(questionNumber)) {
+                    dvQuestions.push(questionNumber);
+                    await redis.setex(dvKey, 3600, JSON.stringify(dvQuestions));
+                    await this.sendPhotoVerification(session, user, questionNumber);
+                    return;
+                }
+            }
+
+            // Watchlist: Force CAPTCHA before every question (slow them down)
+            if (measures.forced_captcha_every_question) {
+                let shownCaptchas = [];
+                try {
+                    const cd = session.captcha_shown_at;
+                    if (Array.isArray(cd)) shownCaptchas = cd;
+                    else if (typeof cd === 'string' && cd.length > 0) shownCaptchas = JSON.parse(cd);
+                    if (!Array.isArray(shownCaptchas)) shownCaptchas = [];
+                } catch (e) { shownCaptchas = []; }
+                
+                if (!shownCaptchas.includes(questionNumber)) {
+                    await this.sendCaptcha(session, user, questionNumber);
+                    return;
+                }
+            }
+
+            // Watchlist: Force early turbo mode from a specific question
+            if (measures.early_turbo_from_question && questionNumber >= measures.early_turbo_from_question) {
+                const trackingKey = `turbo_track:${session.session_key}`;
+                let tracking = await redis.get(trackingKey);
+                tracking = tracking ? JSON.parse(tracking) : {};
+                
+                if (!tracking.turboModeActive) {
+                    const turboMs = (measures.early_turbo_timer || 7) * 1000;
+                    const turboSec = measures.early_turbo_timer || 7;
+                    tracking.turboModeActive = true;
+                    tracking.turboQuestionsRemaining = 15; // rest of game
+                    tracking.turboType = 'watchlist_forced';
+                    tracking.turboTimeoutMs = turboMs;
+                    tracking.turboTimeoutSeconds = turboSec;
+                    tracking.activatedAt = Date.now();
+                    tracking.activatedAtQuestion = questionNumber;
+                    tracking.allResponseTimes = tracking.allResponseTimes || [];
+                    tracking.consecutiveLastSecond = tracking.consecutiveLastSecond || 0;
+                    await redis.setex(trackingKey, 3600, JSON.stringify(tracking));
+                    
+                    // Flag session as suspicious
+                    await pool.query('UPDATE game_sessions SET suspicious_flag = true WHERE id = $1', [session.id]);
+                    
+                    logger.info(`🎯 Watchlist turbo activated for user ${user.id} at Q${questionNumber}`);
+                }
+            }
+
+            // Watchlist: Disable lifelines
+            if (measures.no_lifelines) {
+                if (!session.lifeline_5050_used || !session.lifeline_skip_used) {
+                    await pool.query(
+                        'UPDATE game_sessions SET lifeline_5050_used = true, lifeline_skip_used = true WHERE id = $1',
+                        [session.id]
+                    );
+                    session.lifeline_5050_used = true;
+                    session.lifeline_skip_used = true;
+                }
+            }
+        }
+
+        // Standard photo verification check (Q13-15, suspicious sessions)
         if (await this.shouldRequestPhotoVerification(session, user, questionNumber)) {
             await this.sendPhotoVerification(session, user, questionNumber);
             return;
