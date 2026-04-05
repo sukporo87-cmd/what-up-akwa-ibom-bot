@@ -29,13 +29,8 @@ const deviceTrackingService = require('./device-tracking.service');
 const kycService = require('./kyc.service');
 const behavioralAnalysisService = require('./behavioral-analysis.service');
 const { logger } = require('../utils/logger');
-const fs = require('fs');
-const path = require('path');
 const WhatsAppService = require('./whatsapp.service');
-
-// Photo verification storage directory
-const PHOTO_STORAGE_DIR = path.join(__dirname, '../photo-verifications');
-if (!fs.existsSync(PHOTO_STORAGE_DIR)) fs.mkdirSync(PHOTO_STORAGE_DIR, { recursive: true });
+const cloudinaryService = require('./cloudinary.service');
 
 // ============================================
 // BASE CONFIGURATION
@@ -735,23 +730,20 @@ class GameService {
             await redis.del(photoKey);
             this.clearQuestionTimeout(timeoutKey);
 
-            // Download and save the photo from WhatsApp
-            let savedImagePath = null;
+            // Download and upload the photo to Cloudinary
+            let imageUrl = null;
             const mediaId = message?.image?.id;
             if (mediaId) {
                 try {
                     const whatsappService = new WhatsAppService();
                     const media = await whatsappService.downloadMedia(mediaId);
                     if (media) {
-                        const ext = media.mimeType.includes('png') ? 'png' : 'jpeg';
-                        const filename = `pv_${user.id}_${session.id}_${Date.now()}.${ext}`;
-                        const filepath = path.join(PHOTO_STORAGE_DIR, filename);
-                        fs.writeFileSync(filepath, media.buffer);
-                        savedImagePath = filename;
-                        logger.info(`📸 Photo verification image saved: ${filename}`);
+                        imageUrl = await cloudinaryService.uploadVerificationPhoto(
+                            media.buffer, user.id, session.id
+                        );
                     }
                 } catch (dlErr) {
-                    logger.error('Error downloading verification photo (non-fatal):', dlErr.message);
+                    logger.error('Error uploading verification photo (non-fatal):', dlErr.message);
                 }
             }
 
@@ -763,13 +755,13 @@ class GameService {
             // Log success
             await auditService.logPhotoVerificationResult(session.id, user.id, true, 'image', responseTimeMs);
 
-            // Update photo_verifications record (with image path)
+            // Update photo_verifications record (with Cloudinary URL)
             await pool.query(`
                 UPDATE photo_verifications 
                 SET responded_at = NOW(), response_type = 'image', passed = true, 
-                    response_time_ms = $1, image_filename = $2
+                    response_time_ms = $1, image_url = $2
                 WHERE session_id = $3 AND user_id = $4 AND passed IS NULL
-            `, [responseTimeMs, savedImagePath, session.id, user.id]);
+            `, [responseTimeMs, imageUrl, session.id, user.id]);
 
             await messagingService.sendMessage(user.phone_number, `✅ *Verified!* Thank you.\n\nLet's continue your game... 🎮`);
 

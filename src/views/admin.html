@@ -3695,12 +3695,42 @@ function renderAntiCheatEvents(events) {
       <td>${new Date(event.created_at).toLocaleString()}</td>
       <td>
         <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${event.user_id})">👤 Profile</button>
+        ${event.event_type === 'PHOTO_VERIFICATION_PASSED' ? `<button class="btn btn-sm" style="background:#7c3aed;color:#fff;margin-top:4px;" onclick="viewVerificationPhoto(${event.user_id}, ${event.session_id || 0})">📷 View Photo</button>` : ''}
       </td>
     </tr>`;
   });
   
   html += '</tbody></table>';
   document.getElementById('anticheatEventsTable').innerHTML = html;
+}
+
+// View a photo verification image from the anti-cheat events table
+async function viewVerificationPhoto(userId, sessionId) {
+  try {
+    const response = await fetch(`/admin/api/fraud/user/${userId}/photos`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success || !data.photos) {
+      showAlert('No photo verifications found for this user', 'error');
+      return;
+    }
+    
+    // Find the photo matching this session
+    const photo = data.photos.find(p => p.session_id === sessionId && p.image_url);
+    
+    if (!photo || !photo.image_url) {
+      showAlert('Photo image not available — may not have been stored', 'warning');
+      return;
+    }
+    
+    // Open the Cloudinary image in a new tab
+    window.open(photo.image_url, '_blank');
+  } catch (error) {
+    console.error('Error viewing verification photo:', error);
+    showAlert('Error loading photo', 'error');
+  }
 }
 
 // ============================================
@@ -4003,13 +4033,13 @@ async function loadPhotoVerifications(userId) {
     for (const photo of data.photos) {
       const statusColor = photo.passed === true ? '#059669' : photo.passed === false ? '#dc2626' : '#d97706';
       const statusText = photo.passed === true ? '✅ PASSED' : photo.passed === false ? '❌ FAILED' : '⏳ PENDING';
-      const hasImage = !!photo.image_filename;
+      const hasImage = !!photo.image_url;
       
       html += `
         <div style="background: #f8fafc; border-radius: 12px; overflow: hidden; border: 2px solid ${statusColor}20;">
           ${hasImage ? `
-            <div style="cursor: pointer;" onclick="window.open('/admin/api/fraud/photo/${photo.image_filename}', '_blank')">
-              <img src="/admin/api/fraud/photo/${photo.image_filename}" 
+            <div style="cursor: pointer;" onclick="window.open('${photo.image_url}', '_blank')">
+              <img src="${photo.image_url}" 
                    style="width: 100%; height: 180px; object-fit: cover; display: block;"
                    onerror="this.parentElement.innerHTML='<div style=\\'padding:30px;text-align:center;color:#999;\\'>Image unavailable</div>'" />
             </div>

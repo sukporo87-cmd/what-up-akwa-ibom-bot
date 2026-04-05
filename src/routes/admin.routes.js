@@ -4475,32 +4475,6 @@ router.get('/api/fraud/user/:id/photos', authenticateAdmin, async (req, res) => 
     }
 });
 
-// Serve a stored verification photo (admin-only)
-router.get('/api/fraud/photo/:filename', authenticateAdmin, async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        
-        // Sanitize: only allow expected filename pattern (pv_USERID_SESSIONID_TIMESTAMP.ext)
-        if (!/^pv_\d+_\d+_\d+\.(jpeg|png)$/.test(filename)) {
-            return res.status(400).json({ error: 'Invalid filename' });
-        }
-        
-        const filepath = path.join(__dirname, '../photo-verifications', filename);
-        
-        if (!fs.existsSync(filepath)) {
-            return res.status(404).json({ error: 'Photo not found' });
-        }
-        
-        const ext = path.extname(filename).slice(1);
-        res.setHeader('Content-Type', `image/${ext}`);
-        res.setHeader('Cache-Control', 'private, max-age=3600');
-        res.sendFile(filepath);
-    } catch (error) {
-        logger.error('Error serving verification photo:', error);
-        res.status(500).json({ error: 'Failed to serve photo' });
-    }
-});
-
 // Get all recent photo verifications (global view)
 router.get('/api/fraud/photos/recent', authenticateAdmin, async (req, res) => {
     try {
