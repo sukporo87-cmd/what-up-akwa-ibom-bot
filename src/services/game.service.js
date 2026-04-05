@@ -804,7 +804,16 @@ class GameService {
                 WHERE session_id = $3 AND user_id = $4 AND passed IS NULL
             `, [responseTimeMs, imageUrl, session.id, user.id]);
 
-            await messagingService.sendMessage(user.phone_number, `✅ *Verified!* Thank you.\n\nLet's continue your game... 🎮`);
+            // If this was a baseline selfie, mark it complete and store the URL for comparison
+            if (data.isBaseline) {
+                const baselineKey = `wl_baseline:${session.session_key}`;
+                await redis.setex(baselineKey, 3600, imageUrl || 'done');
+                logger.info(`📸 Baseline selfie captured for user ${user.id}, session ${session.id}`);
+                
+                await messagingService.sendMessage(user.phone_number, `✅ *Selfie captured!* You're all set for SuperCool Mode! 🧊\n\nLet's go... 🎮`);
+            } else {
+                await messagingService.sendMessage(user.phone_number, `✅ *Verified!* Thank you.\n\nLet's continue your game... 🎮`);
+            }
 
             // Continue the game
             setTimeout(async () => {
@@ -1133,9 +1142,26 @@ class GameService {
                 instructions = await this.getDefaultGameInstructions();
             }
 
+            // Check if user is on watchlist — send fun "SuperCool Mode" notification
+            let superCoolMsg = '';
+            try {
+                const wlCheck = await watchlistService.getUserWatchlistConfig(user.id);
+                if (wlCheck && !isPracticeMode) {
+                    superCoolMsg = `\n\n` +
+                        `🧊❄️ *SUPERCOOL MODE ACTIVATED!* ❄️🧊\n\n` +
+                        `Congratulations! You've been selected for our exclusive *SuperCool Challenge* — ` +
+                        `reserved for only the sharpest minds on the platform! 🧠✨\n\n` +
+                        `🔥 Expect faster rounds, surprise verification checks, and tighter gameplay.\n` +
+                        `Only the coolest players can handle the heat! 💎\n\n` +
+                        `_Show us what you've got!_ 🏆`;
+                }
+            } catch (scErr) {
+                logger.error('Error checking watchlist for supercool msg:', scErr);
+            }
+
             await messagingService.sendMessage(
                 user.phone_number,
-                `${gameModeText}\n\n${instructions}\n\n${branding}\n\nWhen you're ready, reply START to begin! 🚀`
+                `${gameModeText}\n\n${instructions}\n\n${branding}${superCoolMsg}\n\nWhen you're ready, reply START to begin! 🚀`
             );
 
             await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
@@ -1447,21 +1473,60 @@ class GameService {
         if (wlConfig) {
             const measures = typeof wlConfig.measures === 'string' ? JSON.parse(wlConfig.measures) : wlConfig.measures;
 
-            // Watchlist: Force photo verification at specific questions (e.g. Q3, Q10)
-            if (measures.forced_photo_questions && measures.forced_photo_questions.includes(questionNumber)) {
-                if (!session.photo_verification_requested) {
-                    await this.sendPhotoVerification(session, user, questionNumber);
+            // Watchlist: Baseline selfie before Q1
+            if (measures.baseline_selfie && questionNumber === 1) {
+                const baselineKey = `wl_baseline:${session.session_key}`;
+                const baselineDone = await redis.get(baselineKey);
+                if (!baselineDone) {
+                    await redis.setex(baselineKey, 3600, 'pending');
+                    // Store that this is a baseline capture (not a regular photo verification)
+                    const photoKey = `photo_verify:${session.session_key}`;
+                    await redis.setex(photoKey, 25, JSON.stringify({
+                        challengeType: 'baseline_selfie',
+                        questionNumber: 0,
+                        startTime: Date.now(),
+                        sessionId: session.id,
+                        userId: user.id,
+                        isBaseline: true
+                    }));
+                    
+                    // Log to photo_verifications
+                    await pool.query(`
+                        INSERT INTO photo_verifications 
+                        (user_id, session_id, question_number, challenge_type, challenge_text)
+                        VALUES ($1, $2, 0, 'baseline_selfie', 'Pre-game baseline selfie')
+                    `, [user.id, session.id]);
+                    
+                    const message = `📸 *QUICK SELFIE CHECK* 📸\n\n` +
+                        `Take a quick selfie to kick off your SuperCool session! 🧊\n\n` +
+                        `⏱️ You have *20 seconds* to send a photo.\n\n` +
+                        `_This helps us keep the game fair and fun for everyone!_`;
+                    await messagingService.sendMessage(user.phone_number, message);
+                    
+                    // Set timeout
+                    const timeoutKey = `photo_timeout:${session.session_key}`;
+                    const timeoutId = setTimeout(async () => {
+                        try {
+                            const pd = await redis.get(photoKey);
+                            if (pd) {
+                                await redis.del(photoKey);
+                                await this.handlePhotoVerificationFailure(session, user, 'timeout');
+                            }
+                        } catch (error) {
+                            logger.error('Error in baseline selfie timeout:', error);
+                        }
+                    }, PHOTO_VERIFICATION_CONFIG.TIMEOUT_MS);
+                    activeTimeouts.set(timeoutKey, timeoutId);
                     return;
                 }
             }
-            // Watchlist: Double verification — second photo check
-            if (measures.double_verification && measures.double_verification_questions) {
-                const dvKey = `wl_dv:${session.session_key}`;
-                const dvDone = await redis.get(dvKey);
-                const dvQuestions = dvDone ? JSON.parse(dvDone) : [];
-                if (measures.double_verification_questions.includes(questionNumber) && !dvQuestions.includes(questionNumber)) {
-                    dvQuestions.push(questionNumber);
-                    await redis.setex(dvKey, 3600, JSON.stringify(dvQuestions));
+
+            // Watchlist: Photo checkpoint at configurable question (compare with baseline)
+            if (measures.photo_checkpoint && questionNumber === (measures.photo_checkpoint_question || 8)) {
+                const checkpointKey = `wl_checkpoint:${session.session_key}`;
+                const checkpointDone = await redis.get(checkpointKey);
+                if (!checkpointDone) {
+                    await redis.setex(checkpointKey, 3600, 'done');
                     await this.sendPhotoVerification(session, user, questionNumber);
                     return;
                 }

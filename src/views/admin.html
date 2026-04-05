@@ -4047,15 +4047,44 @@ async function loadPhotoVerifications(userId) {
       return;
     }
     
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px;">';
+    let html = '';
+    
+    // Check for baseline + checkpoint pair for side-by-side comparison
+    const baseline = data.photos.find(p => p.challenge_type === 'baseline_selfie' && p.image_url);
+    const checkpoints = data.photos.filter(p => p.challenge_type !== 'baseline_selfie' && p.image_url);
+    
+    if (baseline && checkpoints.length > 0) {
+      html += `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:16px;margin-bottom:16px;">
+        <h5 style="margin-bottom:12px;color:#92400e;">🔍 Side-by-Side Comparison</h5>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:180px;text-align:center;">
+            <div style="font-size:11px;font-weight:bold;color:#92400e;margin-bottom:6px;">📸 BASELINE (Pre-game)</div>
+            <img src="${baseline.image_url}" style="width:100%;max-width:250px;border-radius:10px;border:2px solid #f59e0b;cursor:pointer;" onclick="window.open('${baseline.image_url}','_blank')" />
+            <div style="font-size:11px;color:#666;margin-top:4px;">${new Date(baseline.created_at).toLocaleString()}</div>
+          </div>
+          ${checkpoints.slice(0, 2).map(cp => `
+            <div style="flex:1;min-width:180px;text-align:center;">
+              <div style="font-size:11px;font-weight:bold;color:#1e40af;margin-bottom:6px;">📸 CHECKPOINT (Q${cp.question_number || 'N/A'})</div>
+              <img src="${cp.image_url}" style="width:100%;max-width:250px;border-radius:10px;border:2px solid #3b82f6;cursor:pointer;" onclick="window.open('${cp.image_url}','_blank')" />
+              <div style="font-size:11px;color:#666;margin-top:4px;">${new Date(cp.created_at).toLocaleString()}</div>
+            </div>
+          `).join('')}
+        </div>
+        <p style="font-size:12px;color:#92400e;margin-top:12px;">⚠️ Compare faces manually — is this the same person?</p>
+      </div>`;
+    }
+    
+    html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px;">';
     
     for (const photo of data.photos) {
       const statusColor = photo.passed === true ? '#059669' : photo.passed === false ? '#dc2626' : '#d97706';
       const statusText = photo.passed === true ? '✅ PASSED' : photo.passed === false ? '❌ FAILED' : '⏳ PENDING';
+      const isBaseline = photo.challenge_type === 'baseline_selfie';
       const hasImage = !!photo.image_url;
       
       html += `
-        <div style="background: #f8fafc; border-radius: 12px; overflow: hidden; border: 2px solid ${statusColor}20;">
+        <div style="background: #f8fafc; border-radius: 12px; overflow: hidden; border: 2px solid ${isBaseline ? '#f59e0b' : statusColor}20;">
+          ${isBaseline ? '<div style="background:#f59e0b;color:#fff;text-align:center;font-size:11px;font-weight:bold;padding:4px;">📸 BASELINE SELFIE</div>' : ''}
           ${hasImage ? `
             <div style="cursor: pointer;" onclick="window.open('${photo.image_url}', '_blank')">
               <img src="${photo.image_url}" 

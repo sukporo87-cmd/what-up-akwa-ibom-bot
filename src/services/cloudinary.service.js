@@ -3,11 +3,30 @@
 // Handles photo verification image uploads to Cloudinary
 // ============================================
 
-const { v2: cloudinary } = require('cloudinary');
 const { logger } = require('../utils/logger');
 
-// Cloudinary auto-configures from CLOUDINARY_URL environment variable
+// The Cloudinary SDK auto-reads CLOUDINARY_URL on require() and crashes
+// if the format is even slightly off. We unset it before requiring,
+// then configure manually.
+const cloudinaryUrl = process.env.CLOUDINARY_URL || '';
+delete process.env.CLOUDINARY_URL;
+
+const { v2: cloudinary } = require('cloudinary');
+
+// Parse and configure manually
 // Format: cloudinary://<api_key>:<api_secret>@<cloud_name>
+const match = cloudinaryUrl.match(/cloudinary:\/\/(\d+):([^@]+)@(.+)/);
+if (match) {
+    cloudinary.config({
+        cloud_name: match[3],
+        api_key: match[1],
+        api_secret: match[2]
+    });
+    // Restore env var for any other code that might need it
+    process.env.CLOUDINARY_URL = cloudinaryUrl;
+} else {
+    logger.warn('⚠️ CLOUDINARY_URL not set or invalid — photo uploads will be skipped');
+}
 
 class CloudinaryService {
 
