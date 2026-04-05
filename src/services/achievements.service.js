@@ -15,7 +15,7 @@ const ACHIEVEMENTS = {
         emoji: '🎯',
         check: async (userId) => {
             const result = await pool.query(
-                `SELECT COUNT(*) FROM game_sessions WHERE user_id = $1 AND status = 'won'`,
+                `SELECT COUNT(*) FROM game_sessions WHERE user_id = $1 AND status = 'completed' AND final_score > 0`,
                 [userId]
             );
             return parseInt(result.rows[0].count) >= 1;
@@ -40,7 +40,7 @@ const ACHIEVEMENTS = {
         check: async (userId) => {
             const result = await pool.query(`
                 SELECT COUNT(*) FROM game_sessions 
-                WHERE user_id = $1 AND current_question > 15 AND status = 'won'
+                WHERE user_id = $1 AND current_question > 15 AND status = 'completed' AND final_score > 0
             `, [userId]);
             return parseInt(result.rows[0].count) >= 1;
         }
@@ -219,7 +219,7 @@ const ACHIEVEMENTS = {
             const result = await pool.query(`
                 SELECT COUNT(*) FROM game_sessions 
                 WHERE user_id = $1 
-                AND status = 'won' 
+                AND status = 'completed' AND final_score > 0 
                 AND current_question > 5
             `, [userId]);
             return parseInt(result.rows[0].count) >= 1;

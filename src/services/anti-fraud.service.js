@@ -239,7 +239,7 @@ class AntiFraudService {
                 WHERE user_id = $1
                 AND DATE(completed_at) = CURRENT_DATE
                 AND current_question > 15
-                AND status = 'won'
+                AND status = 'completed' AND final_score > 0
             `, [userId]);
             
             const count = parseInt(result.rows[0].count);
@@ -359,8 +359,8 @@ class AntiFraudService {
                     AVG(avg_response_time_ms) as avg_response_time,
                     MIN(fastest_response_ms) as fastest_response,
                     COUNT(*) FILTER (WHERE suspicious_flag = true) as suspicious_sessions,
-                    COUNT(*) FILTER (WHERE status = 'won') as wins,
-                    COUNT(*) FILTER (WHERE current_question > 15 AND status = 'won') as perfect_games
+                    COUNT(*) FILTER (WHERE status = 'completed' AND final_score > 0) as wins,
+                    COUNT(*) FILTER (WHERE current_question > 15 AND status = 'completed' AND final_score > 0) as perfect_games
                 FROM game_sessions
                 WHERE user_id = $1
             `, [userId]);

@@ -3918,8 +3918,8 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         const statsResult = await pool.query(`
             SELECT 
                 COUNT(*) as total_games,
-                COUNT(*) FILTER (WHERE status = 'won') as games_won,
-                COUNT(*) FILTER (WHERE status = 'lost') as games_lost,
+                COUNT(*) FILTER (WHERE status = 'completed' AND final_score > 0) as games_won,
+                COUNT(*) FILTER (WHERE status = 'completed' AND (final_score = 0 OR final_score IS NULL)) as games_lost,
                 MAX(current_question) as highest_question,
                 AVG(avg_response_time_ms) FILTER (WHERE avg_response_time_ms IS NOT NULL) as avg_response_time,
                 COUNT(*) FILTER (WHERE suspicious_flag = true) as suspicious_games
@@ -4455,6 +4455,75 @@ router.post('/api/fraud/user/:id/clear', authenticateAdmin, async (req, res) => 
 });
 
 // ============================================
+// ============================================
+// ANSWER PATTERN & DEVICE TRACKING ENDPOINTS
+// ============================================
+
+// Get answer pattern analysis for a user
+router.get('/api/fraud/user/:id/answer-pattern', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const redis = require('../config/redis');
+        
+        const patternKey = `answer_pattern:${userId}`;
+        const raw = await redis.get(patternKey);
+        
+        if (!raw) {
+            return res.json({ success: true, pattern: null, message: 'No answer data tracked yet' });
+        }
+        
+        const pattern = JSON.parse(raw);
+        
+        // Calculate percentages and anomaly score
+        const total = pattern.totalAnswers || 1;
+        const distribution = {};
+        let maxPct = 0;
+        let dominantLetter = 'A';
+        
+        for (const [letter, count] of Object.entries(pattern.answers || {})) {
+            const pct = count / total;
+            distribution[letter] = { count, percentage: Math.round(pct * 100) };
+            if (pct > maxPct) { maxPct = pct; dominantLetter = letter; }
+        }
+        
+        const isAnomalous = total >= 20 && maxPct > 0.50;
+        
+        res.json({ 
+            success: true, 
+            pattern: {
+                ...pattern,
+                distribution,
+                dominantLetter,
+                dominantPercentage: Math.round(maxPct * 100),
+                isAnomalous,
+                anomalyReason: isAnomalous ? `${dominantLetter} selected ${Math.round(maxPct * 100)}% of the time` : null
+            }
+        });
+    } catch (error) {
+        logger.error('Error getting answer pattern:', error);
+        res.status(500).json({ error: 'Failed to get answer pattern' });
+    }
+});
+
+// Get IP and device tracking data for a user
+router.get('/api/fraud/user/:id/devices', authenticateAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const deviceTrackingService = require('../services/device-tracking.service');
+        
+        const [devices, ips, linkedAccounts] = await Promise.all([
+            deviceTrackingService.getUserDevices(userId),
+            deviceTrackingService.getUserIPs(userId, 90),
+            deviceTrackingService.getLinkedAccounts(userId)
+        ]);
+        
+        res.json({ success: true, devices, ips, linkedAccounts });
+    } catch (error) {
+        logger.error('Error getting device data:', error);
+        res.status(500).json({ error: 'Failed to get device data' });
+    }
+});
+
 // PHOTO VERIFICATION ENDPOINTS
 // ============================================
 
@@ -8078,7 +8147,7 @@ router.get('/api/watchlist/search-users', authenticateAdmin, authenticateWatchli
         const result = await pool.query(`
             SELECT id, username, full_name, phone_number, fraud_flags, is_suspended,
                    (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id) as total_games,
-                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'won') as games_won
+                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed' AND final_score > 0) as games_won
             FROM users u
             WHERE username ILIKE $1 OR full_name ILIKE $1 OR phone_number ILIKE $1
             LIMIT 20

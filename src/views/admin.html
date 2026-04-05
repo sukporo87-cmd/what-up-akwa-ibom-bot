@@ -4000,6 +4000,20 @@ function renderFraudReport(report) {
     </div>
     
     <div style="margin-top: 20px;">
+      <h4>🎲 Answer Pattern Analysis</h4>
+      <div id="answerPatternSection" style="margin-top: 10px;">
+        <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
+      </div>
+    </div>
+    
+    <div style="margin-top: 20px;">
+      <h4>🌐 IP & Device Tracking</h4>
+      <div id="deviceTrackingSection" style="margin-top: 10px;">
+        <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
+      </div>
+    </div>
+    
+    <div style="margin-top: 20px;">
       <h4>📸 Photo Verifications</h4>
       <div id="photoVerificationsGallery" style="margin-top: 10px;">
         <div class="loading"><div class="spinner"></div><p>Loading photos...</p></div>
@@ -4032,6 +4046,8 @@ function renderFraudReport(report) {
   
   // Load photo verifications gallery
   loadPhotoVerifications(user.id);
+  loadAnswerPattern(user.id);
+  loadDeviceTracking(user.id);
 }
 
 async function loadPhotoVerifications(userId) {
@@ -4118,6 +4134,135 @@ async function loadPhotoVerifications(userId) {
   } catch (error) {
     console.error('Error loading photo verifications:', error);
     gallery.innerHTML = '<p style="color: #dc2626;">Error loading photo verifications</p>';
+  }
+}
+
+async function loadAnswerPattern(userId) {
+  const section = document.getElementById('answerPatternSection');
+  try {
+    const response = await fetch(`/admin/api/fraud/user/${userId}/answer-pattern`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success || !data.pattern) {
+      section.innerHTML = '<p style="color: var(--text-gray);">No answer pattern data tracked yet</p>';
+      return;
+    }
+    
+    const p = data.pattern;
+    const dist = p.distribution || {};
+    const barColors = { A: '#3b82f6', B: '#10b981', C: '#f59e0b', D: '#8b5cf6' };
+    
+    let html = `<div style="background: ${p.isAnomalous ? '#fef2f2' : '#f0fdf4'}; border: 2px solid ${p.isAnomalous ? '#fca5a5' : '#86efac'}; border-radius: 12px; padding: 16px;">`;
+    
+    if (p.isAnomalous) {
+      html += `<div style="color: #dc2626; font-weight: bold; margin-bottom: 10px;">⚠️ ANOMALY DETECTED: ${p.anomalyReason}</div>`;
+    } else {
+      html += `<div style="color: #059669; font-weight: bold; margin-bottom: 10px;">✅ Distribution looks normal</div>`;
+    }
+    
+    html += `<div style="font-size: 13px; color: #666; margin-bottom: 12px;">Total answers tracked: ${p.totalAnswers} · Max same-answer streak: ${p.streaks?.maxSame || 0}</div>`;
+    
+    // Bar chart
+    html += '<div style="display: flex; gap: 16px; align-items: flex-end; height: 100px;">';
+    for (const letter of ['A', 'B', 'C', 'D']) {
+      const d = dist[letter] || { count: 0, percentage: 0 };
+      const height = Math.max(d.percentage * 0.9, 4);
+      const isDominant = letter === p.dominantLetter && p.isAnomalous;
+      html += `<div style="flex:1; text-align:center;">
+        <div style="font-size:12px; font-weight:bold; margin-bottom:4px; color:${isDominant ? '#dc2626' : '#666'};">${d.percentage}%</div>
+        <div style="background:${isDominant ? '#dc2626' : barColors[letter]}; height:${height}px; border-radius:6px 6px 0 0; transition:height 0.3s;"></div>
+        <div style="font-size:14px; font-weight:bold; margin-top:4px; color:${isDominant ? '#dc2626' : '#333'};">${letter}</div>
+        <div style="font-size:11px; color:#999;">${d.count}</div>
+      </div>`;
+    }
+    html += '</div></div>';
+    
+    section.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading answer pattern:', error);
+    section.innerHTML = '<p style="color: #dc2626;">Error loading answer pattern</p>';
+  }
+}
+
+async function loadDeviceTracking(userId) {
+  const section = document.getElementById('deviceTrackingSection');
+  try {
+    const response = await fetch(`/admin/api/fraud/user/${userId}/devices`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success) {
+      section.innerHTML = '<p style="color: #dc2626;">Failed to load device data</p>';
+      return;
+    }
+    
+    let html = '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">';
+    
+    // IP addresses
+    html += '<div style="background: #f0f9ff; padding: 16px; border-radius: 12px;">';
+    html += '<h5 style="margin-bottom: 10px;">🌐 IP Addresses</h5>';
+    if (data.ips && data.ips.length > 0) {
+      html += '<table style="width:100%;font-size:12px;"><thead><tr><th style="text-align:left;padding:4px;">IP</th><th>Uses</th><th>Last</th><th>Flags</th></tr></thead><tbody>';
+      for (const ip of data.ips) {
+        const flags = [];
+        if (ip.has_vpn) flags.push('🔒 VPN');
+        if (ip.has_proxy) flags.push('🔀 Proxy');
+        html += `<tr>
+          <td style="padding:4px;font-family:monospace;">${ip.ip_address}</td>
+          <td style="text-align:center;">${ip.usage_count}</td>
+          <td style="font-size:11px;">${new Date(ip.last_used).toLocaleDateString()}</td>
+          <td>${flags.length > 0 ? flags.join(' ') : '<span style="color:#999;">—</span>'}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    } else {
+      html += '<p style="color:#999;font-size:13px;">No IP data recorded yet</p>';
+    }
+    html += '</div>';
+    
+    // Linked accounts
+    html += '<div style="background: #fef3c7; padding: 16px; border-radius: 12px;">';
+    html += '<h5 style="margin-bottom: 10px;">🔗 Linked Accounts</h5>';
+    if (data.linkedAccounts && data.linkedAccounts.length > 0) {
+      for (const link of data.linkedAccounts) {
+        const confColor = link.confidence_score >= 0.7 ? '#dc2626' : link.confidence_score >= 0.4 ? '#d97706' : '#059669';
+        html += `<div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;border-left:3px solid ${confColor};">
+          <div><strong>@${link.username}</strong> — ${link.full_name || ''}</div>
+          <div style="font-size:12px;color:#666;">
+            Link: ${link.link_type === 'same_ip' ? '🌐 Same IP' : '📱 Same Device'} · 
+            Confidence: <span style="color:${confColor};font-weight:bold;">${Math.round(link.confidence_score * 100)}%</span>
+            ${link.is_confirmed === true ? ' · <span style="color:#dc2626;">✅ Confirmed</span>' : ''}
+            ${link.is_confirmed === false ? ' · <span style="color:#059669;">❌ Dismissed</span>' : ''}
+          </div>
+        </div>`;
+      }
+    } else {
+      html += '<p style="color:#999;font-size:13px;">No linked accounts detected</p>';
+    }
+    html += '</div>';
+    
+    html += '</div>';
+    
+    // Devices
+    if (data.devices && data.devices.length > 0) {
+      html += '<div style="background: #f8fafc; padding: 16px; border-radius: 12px; margin-top: 12px;">';
+      html += '<h5 style="margin-bottom: 10px;">📱 Registered Devices</h5>';
+      for (const dev of data.devices) {
+        html += `<div style="display:inline-block;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;margin:4px;font-size:12px;">
+          ${dev.is_flagged ? '🚩' : '📱'} ${dev.platform} · <span style="font-family:monospace;font-size:11px;">${dev.device_id.substring(0, 12)}...</span>
+          <span style="color:#999;"> · Last: ${new Date(dev.last_seen_at).toLocaleDateString()}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    
+    section.innerHTML = html;
+  } catch (error) {
+    console.error('Error loading device tracking:', error);
+    section.innerHTML = '<p style="color: #dc2626;">Error loading device data</p>';
   }
 }
 

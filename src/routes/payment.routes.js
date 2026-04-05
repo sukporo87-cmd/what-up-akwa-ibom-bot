@@ -179,6 +179,17 @@ router.get('/callback', async (req, res) => {
         // Extract user_id from reference (format: WUAIB-{user_id}-{timestamp}-{random})
         const userId = reference.split('-')[1];
         
+        // Capture user's real IP for device tracking
+        try {
+            const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
+            if (clientIp && userId) {
+                const deviceTrackingService = require('../services/device-tracking.service');
+                await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'payment_callback');
+            }
+        } catch (ipErr) {
+            logger.error('Error recording payment IP (non-fatal):', ipErr.message);
+        }
+        
         // Get user to determine platform
         const userResult = await pool.query(
             'SELECT phone_number FROM users WHERE id = $1',
@@ -343,6 +354,17 @@ const tournament = await tournamentService.getTournamentById(verification.paymen
 // Extract user_id from reference (format: TRN-{tournamentId}-{userId}-{timestamp} or TRNR-{tournamentId}-{userId}-{timestamp})
 const refParts = reference.split('-');
 const userId = refParts[2]; // userId is always the 3rd part
+
+// Capture user's real IP for device tracking
+try {
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
+    if (clientIp && userId) {
+        const deviceTrackingService = require('../services/device-tracking.service');
+        await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'tournament_payment_callback');
+    }
+} catch (ipErr) {
+    logger.error('Error recording tournament payment IP (non-fatal):', ipErr.message);
+}
 
 // Get user to determine platform
 const userResult = await pool.query(

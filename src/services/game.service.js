@@ -2002,6 +2002,45 @@ class GameService {
                 const prizeAmount = PRIZE_LADDER[questionNumber];
             
                 await auditService.logAnswer(session.id, user.id, questionNumber, answer, question.correct_answer, isCorrect, isCorrect ? prizeAmount : session.current_score, responseTimeMs);
+
+                // Track answer pattern for fraud analysis
+                try {
+                    const patternKey = `answer_pattern:${user.id}`;
+                    let pattern = await redis.get(patternKey);
+                    pattern = pattern ? JSON.parse(pattern) : { 
+                        answers: { A: 0, B: 0, C: 0, D: 0 }, 
+                        sessions: 0, 
+                        totalAnswers: 0,
+                        streaks: { current: '', maxSame: 0, currentCount: 0 }
+                    };
+                    
+                    // Track per-letter distribution
+                    pattern.answers[answer] = (pattern.answers[answer] || 0) + 1;
+                    pattern.totalAnswers++;
+                    
+                    // Track same-answer streaks
+                    if (pattern.streaks.current === answer) {
+                        pattern.streaks.currentCount++;
+                        pattern.streaks.maxSame = Math.max(pattern.streaks.maxSame, pattern.streaks.currentCount);
+                    } else {
+                        pattern.streaks.current = answer;
+                        pattern.streaks.currentCount = 1;
+                    }
+                    
+                    // Persist for 30 days
+                    await redis.setex(patternKey, 86400 * 30, JSON.stringify(pattern));
+                    
+                    // Flag if pattern is anomalous (>60% same letter after 20+ answers)
+                    if (pattern.totalAnswers >= 20) {
+                        const maxPct = Math.max(...Object.values(pattern.answers)) / pattern.totalAnswers;
+                        if (maxPct > 0.60) {
+                            const dominantLetter = Object.entries(pattern.answers).sort((a, b) => b[1] - a[1])[0][0];
+                            logger.warn(`🎯 Answer pattern anomaly: User ${user.id} picked ${dominantLetter} ${Math.round(maxPct * 100)}% of the time (${pattern.totalAnswers} answers)`);
+                        }
+                    }
+                } catch (ptErr) {
+                    // Non-fatal
+                }
             
                 if (isCorrect) {
                     session.current_score = prizeAmount;
