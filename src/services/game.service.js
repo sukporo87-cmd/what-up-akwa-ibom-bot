@@ -469,20 +469,26 @@ class GameService {
     async getSessionTimeout(sessionKey, questionNumber = null, userId = null) {
         const trackingKey = `turbo_track:${sessionKey}`;
         
-        // Priority 0: Watchlist shortened timers (stacks with turbo)
+        // Priority 0: Watchlist shortened timers (skip for practice mode)
         let watchlistTimerOverride = null;
         if (userId) {
             try {
-                const wlConfig = await watchlistService.getUserWatchlistConfig(userId);
-                if (wlConfig && watchlistService.isEnabled(wlConfig, 'shortened_timers')) {
-                    const measures = typeof wlConfig.measures === 'string' ? JSON.parse(wlConfig.measures) : wlConfig.measures;
-                    const customTimers = measures.timer_values || { early: 8, mid: 7, late: 6 };
-                    if (questionNumber) {
-                        let timerSeconds;
-                        if (questionNumber <= 5) timerSeconds = customTimers.early;
-                        else if (questionNumber <= 10) timerSeconds = customTimers.mid;
-                        else timerSeconds = customTimers.late;
-                        watchlistTimerOverride = { ms: timerSeconds * 1000, seconds: timerSeconds };
+                // Check if this is a practice session — don't apply watchlist timers
+                const sessionData = await redis.get(`session:${sessionKey}`);
+                const isPractice = sessionData && JSON.parse(sessionData).game_type === 'practice';
+                
+                if (!isPractice) {
+                    const wlConfig = await watchlistService.getUserWatchlistConfig(userId);
+                    if (wlConfig && watchlistService.isEnabled(wlConfig, 'shortened_timers')) {
+                        const measures = typeof wlConfig.measures === 'string' ? JSON.parse(wlConfig.measures) : wlConfig.measures;
+                        const customTimers = measures.timer_values || { early: 8, mid: 7, late: 6 };
+                        if (questionNumber) {
+                            let timerSeconds;
+                            if (questionNumber <= 5) timerSeconds = customTimers.early;
+                            else if (questionNumber <= 10) timerSeconds = customTimers.mid;
+                            else timerSeconds = customTimers.late;
+                            watchlistTimerOverride = { ms: timerSeconds * 1000, seconds: timerSeconds };
+                        }
                     }
                 }
             } catch (e) {
