@@ -689,13 +689,7 @@ class GameService {
     }
 
     async sendPhotoVerification(session, user, questionNumber) {
-        const challenges = [
-            { type: 'selfie', text: '📸 Take a quick selfie to verify you\'re playing!' },
-            { type: 'fingers', text: '✌️ Send a photo showing 3 fingers to continue!' },
-            { type: 'camera_snap', text: '📷 Take a photo of anything around you right now!' },
-        ];
-
-        const challenge = challenges[Math.floor(Math.random() * challenges.length)];
+        const challenge = { type: 'selfie', text: '📸 Take a quick selfie to verify you\'re the one playing!' };
 
         // Store verification state
         const photoKey = `photo_verify:${session.session_key}`;
@@ -726,7 +720,8 @@ class GameService {
 
         const message = `📸 *PHOTO VERIFICATION* 📸\n\n` +
             `${challenge.text}\n\n` +
-            `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send a photo.\n\n` +
+            `👤 Your face must be clearly visible in the photo to pass admin review. Failure could warrant win forfeitures and suspensions.\n\n` +
+            `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send your selfie.\n\n` +
             `_This helps us maintain fair play for all players._`;
 
         await messagingService.sendMessage(user.phone_number, message);
@@ -773,18 +768,31 @@ class GameService {
 
             // Download and upload the photo to Cloudinary
             let imageUrl = null;
-            const mediaId = message?.image?.id;
-            if (mediaId) {
+            
+            // WhatsApp: download via media ID
+            const waMediaId = message?.image?.id;
+            // Telegram: photo already downloaded as buffer
+            const tgPhoto = message?.telegramPhoto;
+            
+            if (waMediaId) {
                 try {
                     const whatsappService = new WhatsAppService();
-                    const media = await whatsappService.downloadMedia(mediaId);
+                    const media = await whatsappService.downloadMedia(waMediaId);
                     if (media) {
                         imageUrl = await cloudinaryService.uploadVerificationPhoto(
                             media.buffer, user.id, session.id
                         );
                     }
                 } catch (dlErr) {
-                    logger.error('Error uploading verification photo (non-fatal):', dlErr.message);
+                    logger.error('Error uploading WhatsApp verification photo (non-fatal):', dlErr.message);
+                }
+            } else if (tgPhoto && tgPhoto.buffer) {
+                try {
+                    imageUrl = await cloudinaryService.uploadVerificationPhoto(
+                        tgPhoto.buffer, user.id, session.id
+                    );
+                } catch (dlErr) {
+                    logger.error('Error uploading Telegram verification photo (non-fatal):', dlErr.message);
                 }
             }
 
@@ -1499,7 +1507,8 @@ class GameService {
                     
                     const message = `📸 *QUICK SELFIE CHECK* 📸\n\n` +
                         `Take a quick selfie to kick off your SuperCool session! 🧊\n\n` +
-                        `⏱️ You have *20 seconds* to send a photo.\n\n` +
+                        `👤 Your face must be clearly visible in the photo to pass admin review. Failure could warrant win forfeitures and suspensions.\n\n` +
+                        `⏱️ You have *20 seconds* to send your selfie.\n\n` +
                         `_This helps us keep the game fair and fun for everyone!_`;
                     await messagingService.sendMessage(user.phone_number, message);
                     

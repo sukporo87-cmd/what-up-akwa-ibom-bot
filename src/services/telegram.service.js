@@ -115,6 +115,44 @@ class TelegramService {
         const text = update.message.text || '';
         const identifier = `tg_${chatId}`;
         
+        // Check for photo messages (photo verification)
+        if (update.message.photo && update.message.photo.length > 0) {
+          logger.info(`📷 Telegram photo received from ${chatId}`);
+          
+          // Get the largest photo (last in array)
+          const photo = update.message.photo[update.message.photo.length - 1];
+          const fileId = photo.file_id;
+          
+          // Download the photo — if this fails, verification fails (no free passes)
+          try {
+            const fileLink = await this.bot.getFileLink(fileId);
+            const axios = require('axios');
+            const response = await axios.get(fileLink, { responseType: 'arraybuffer', timeout: 15000 });
+            const buffer = Buffer.from(response.data);
+            
+            // Route through webhook controller with Telegram-specific message format
+            const webhookController = require('../controllers/webhook.controller');
+            await webhookController.handleImageMessage(identifier, {
+              type: 'image',
+              platform: 'telegram',
+              telegramPhoto: {
+                fileId,
+                buffer,
+                mimeType: 'image/jpeg'
+              }
+            });
+          } catch (photoErr) {
+            logger.error('Error downloading Telegram photo:', photoErr.message);
+            // Tell the user to try again — don't let them pass without a stored photo
+            const MessagingService = require('./messaging.service');
+            const msgService = new MessagingService();
+            await msgService.sendMessage(identifier, 
+              '⚠️ *Photo failed to process.* Please send your selfie again.\n\n⏱️ Clock is still ticking...'
+            );
+          }
+          return;
+        }
+        
         logger.info(`💬 Telegram message from ${chatId}: ${text}`);
         
         // Route through webhook controller
