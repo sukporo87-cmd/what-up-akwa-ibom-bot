@@ -14,15 +14,16 @@ class TournamentService {
                 SELECT 
                     t.*,
                     COUNT(DISTINCT tp.user_id) as participant_count,
-                    COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_entries
+                    COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_entries,
+                    CASE WHEN t.start_date > NOW() THEN true ELSE false END as is_upcoming
                 FROM tournaments t
                 LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
                 LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
                 WHERE t.status = 'active'
-                    AND t.start_date <= NOW()
                     AND t.end_date > NOW()
                 GROUP BY t.id
                 ORDER BY 
+                    CASE WHEN t.start_date <= NOW() THEN 0 ELSE 1 END,
                     CASE t.payment_type WHEN 'free' THEN 0 ELSE 1 END,
                     t.prize_pool DESC
             `);

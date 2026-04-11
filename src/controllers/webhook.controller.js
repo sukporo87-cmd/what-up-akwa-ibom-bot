@@ -962,8 +962,13 @@ Type the code, or type SKIP to continue:`
         freeTournaments.forEach((t, index) => {
           const endDate = new Date(t.end_date).toLocaleDateString();
           const sponsorTag = t.sponsor_name ? `\n_Sponsored by ${t.sponsor_name}_` : '';
+          const startDate = new Date(t.start_date);
+          const isUpcoming = t.is_upcoming || startDate > new Date();
           
           message += `${index + 1}️⃣ *${t.tournament_name}*${sponsorTag}\n`;
+          if (isUpcoming) {
+            message += `🔜 Starts: ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n`;
+          }
           message += `💰 Prize Pool: ₦${t.prize_pool.toLocaleString()}\n`;
           message += `📅 Ends: ${endDate}\n`;
           message += `👥 Participants: ${t.participant_count || 0}\n\n`;
@@ -979,8 +984,13 @@ Type the code, or type SKIP to continue:`
         paidTournaments.forEach((t, index) => {
           const endDate = new Date(t.end_date).toLocaleDateString();
           const sponsorTag = t.sponsor_name ? `\n_Sponsored by ${t.sponsor_name}_` : '';
+          const startDate = new Date(t.start_date);
+          const isUpcoming = t.is_upcoming || startDate > new Date();
           
           message += `${startIndex + index + 1}️⃣ *${t.tournament_name}*${sponsorTag}\n`;
+          if (isUpcoming) {
+            message += `🔜 Starts: ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n`;
+          }
           message += `💰 Prize Pool: ₦${t.prize_pool.toLocaleString()}\n`;
           message += `🎟️ Entry: ₦${t.entry_fee.toLocaleString()}\n`;
           message += `📅 Ends: ${endDate}\n`;
@@ -1032,11 +1042,25 @@ Type the code, or type SKIP to continue:`
     }
     
     const tournament = tournaments[tournamentIndex];
+    const isUpcoming = tournament.is_upcoming || new Date(tournament.start_date) > new Date();
     
     // Check if already joined
     const status = await tournamentService.getUserTournamentStatus(user.id, tournament.id);
     
     if (status && status.entry_paid) {
+      // Already joined and paid — but check if tournament has started
+      if (isUpcoming) {
+        const startDate = new Date(tournament.start_date);
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(
+          user.phone_number,
+          `🏆 *${tournament.tournament_name}*\n\n` +
+          `✅ You're already registered!\n\n` +
+          `🔜 This tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n` +
+          `Come back then to play! 🎮\n\nType MENU to return.`
+        );
+        return;
+      }
       // Already joined and paid
       
       // Check if out of tokens — offer rebuy instead of starting game
@@ -1092,6 +1116,8 @@ Type the code, or type SKIP to continue:`
       await userService.clearUserState(user.phone_number);
       
       if (result.success) {
+        const isUpcoming = tournament.is_upcoming || new Date(tournament.start_date) > new Date();
+        
         let message = `🎉 *TOURNAMENT JOINED!* 🎉\n\n`;
         message += `${tournament.tournament_name}\n`;
         message += `Prize Pool: ₦${tournament.prize_pool.toLocaleString()}\n\n`;
@@ -1102,10 +1128,16 @@ Type the code, or type SKIP to continue:`
           message += `♾️ Unlimited plays during tournament!\n\n`;
         }
         
-        message += `Starting game...`;
-        
-        await messagingService.sendMessage(user.phone_number, message);
-        await gameService.startNewGame(user, 'tournament', tournament.id);
+        if (isUpcoming) {
+          const startDate = new Date(tournament.start_date);
+          message += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
+          message += `Come back then to play! 🎮`;
+          await messagingService.sendMessage(user.phone_number, message);
+        } else {
+          message += `Starting game...`;
+          await messagingService.sendMessage(user.phone_number, message);
+          await gameService.startNewGame(user, 'tournament', tournament.id);
+        }
       } else {
         await messagingService.sendMessage(
           user.phone_number,
