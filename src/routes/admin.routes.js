@@ -2105,22 +2105,23 @@ router.post('/api/tournaments', authenticateAdmin, async (req, res) => {
         }
         
         // Create tournament
+        const enableTurboMode = req.body.enableTurboMode !== false; // default true
         const result = await pool.query(`
             INSERT INTO tournaments (
                 tournament_name, tournament_type, sponsor_name, sponsor_logo_url,
                 description, payment_type, uses_tokens, tokens_per_entry, 
                 unlimited_plays, entry_fee, prize_pool, max_participants,
                 start_date, end_date, question_category, custom_instructions,
-                custom_branding, status
+                custom_branding, status, enable_turbo_mode
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING *
         `, [
             tournamentName, tournamentType || 'sponsored', sponsorName, sponsorLogoUrl,
             description, paymentType || 'free', usesTokens || false, tokensPerEntry,
             unlimitedPlays !== false, entryFee || 0, prizePool, maxParticipants,
             startDate, endDate, questionCategory, customInstructions,
-            customBranding, status || 'upcoming'
+            customBranding, status || 'upcoming', enableTurboMode
         ]);
         
         await adminAuthService.logActivity(
@@ -2163,6 +2164,7 @@ router.put('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
             customBranding,
             status
         } = req.body;
+        const enableTurboMode = req.body.enableTurboMode !== false; // default true
         
         const result = await pool.query(`
             UPDATE tournaments
@@ -2183,19 +2185,28 @@ router.put('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
                 question_category = $15,
                 custom_instructions = $16,
                 custom_branding = $17,
-                status = $18
-            WHERE id = $19
+                status = $18,
+                enable_turbo_mode = $19
+            WHERE id = $20
             RETURNING *
         `, [
             tournamentName, tournamentType, sponsorName, sponsorLogoUrl,
             description, paymentType, usesTokens, tokensPerEntry,
             unlimitedPlays, entryFee, prizePool, maxParticipants,
             startDate, endDate, questionCategory, customInstructions,
-            customBranding, status, tournamentId
+            customBranding, status, enableTurboMode, tournamentId
         ]);
         
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        // Bust per-tournament turbo cache so the new flag value takes effect immediately
+        try {
+            const redis = require('../config/redis');
+            await redis.del(`tournament_turbo:${tournamentId}`);
+        } catch (cacheErr) {
+            logger.warn(`Could not bust turbo cache for tournament ${tournamentId}:`, cacheErr.message);
         }
         
         await adminAuthService.logActivity(

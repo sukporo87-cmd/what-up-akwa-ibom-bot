@@ -182,6 +182,43 @@ class GameService {
     // MULTI-TRIGGER TURBO MODE METHODS
     // ============================================
 
+    /**
+     * Check whether turbo mode is enabled for a given session.
+     *
+     * Implementation notes:
+     * - Non-tournament sessions: always returns true (regular/practice gating
+     *   happens elsewhere).
+     * - Tournament sessions: consults a short-lived per-tournament cache in
+     *   redis (`tournament_turbo:{id}`, TTL 30s) so per-question reads don't
+     *   hit the DB. The short TTL means an admin toggling the flag in the UI
+     *   propagates to in-flight sessions within ~30s without any manual cache
+     *   busting.
+     * - Fails OPEN (turbo enabled) on any error so we never accidentally
+     *   weaken anti-cheat.
+     */
+    async isTurboEnabledForSession(sessionKey) {
+        try {
+            const raw = await redis.get(`session:${sessionKey}`);
+            if (!raw) return true; // no cache — fail open
+            const sess = JSON.parse(raw);
+            if (!sess.is_tournament_game || !sess.tournament_id) return true;
+
+            const cacheKey = `tournament_turbo:${sess.tournament_id}`;
+            const cached = await redis.get(cacheKey);
+            if (cached !== null) {
+                return cached === '1';
+            }
+
+            const tRes = await pool.query('SELECT enable_turbo_mode FROM tournaments WHERE id = $1', [sess.tournament_id]);
+            const enabled = tRes.rows.length === 0 ? true : tRes.rows[0].enable_turbo_mode !== false;
+            await redis.setex(cacheKey, 30, enabled ? '1' : '0');
+            return enabled;
+        } catch (err) {
+            logger.warn(`isTurboEnabledForSession failed for ${sessionKey}, defaulting to enabled:`, err.message);
+            return true;
+        }
+    }
+
     /** Check if answer is last-second (>= 10.5s) */
     isSuspiciousLastSecond(responseTimeMs) {
         return responseTimeMs >= TURBO_MODE_CONFIG.LAST_SECOND.THRESHOLD_MS;
@@ -497,26 +534,38 @@ class GameService {
         }
 
         try {
-            // Priority 1: Active turbo mode (use watchlist timer if shorter)
+            // Priority 1: Active turbo mode (use watchlist timer if shorter).
+            // Hard kill-switch: if the tournament's enable_turbo_mode has been
+            // turned OFF (possibly mid-tournament), ignore any active turbo
+            // tracking and fall through to normal timing.
             const tracking = await redis.get(trackingKey);
             if (tracking) {
                 const data = JSON.parse(tracking);
                 if (data.turboModeActive && data.turboQuestionsRemaining > 0) {
-                    let tMs = data.turboTimeoutMs || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_MS;
-                    let tSec = data.turboTimeoutSeconds || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_SECONDS;
-                    // Watchlist can make turbo even tighter
-                    if (watchlistTimerOverride && watchlistTimerOverride.ms < tMs) {
-                        tMs = watchlistTimerOverride.ms;
-                        tSec = watchlistTimerOverride.seconds;
+                    const turboStillAllowed = await this.isTurboEnabledForSession(sessionKey);
+                    if (!turboStillAllowed) {
+                        // Tournament turbo was disabled mid-flight — clear the flag and fall through
+                        data.turboModeActive = false;
+                        data.turboQuestionsRemaining = 0;
+                        await redis.setex(trackingKey, 3600, JSON.stringify(data));
+                        logger.info(`⚡ Turbo cleared for session ${sessionKey}: tournament turbo disabled`);
+                    } else {
+                        let tMs = data.turboTimeoutMs || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_MS;
+                        let tSec = data.turboTimeoutSeconds || TURBO_MODE_CONFIG.LAST_SECOND.REDUCED_TIMEOUT_SECONDS;
+                        // Watchlist can make turbo even tighter
+                        if (watchlistTimerOverride && watchlistTimerOverride.ms < tMs) {
+                            tMs = watchlistTimerOverride.ms;
+                            tSec = watchlistTimerOverride.seconds;
+                        }
+                        return {
+                            timeoutMs: tMs,
+                            timeoutSeconds: tSec,
+                            isTurboMode: true,
+                            turboType: data.turboType || 'last_second',
+                            questionsRemaining: data.turboQuestionsRemaining,
+                            isWatchlist: !!watchlistTimerOverride,
+                        };
                     }
-                    return {
-                        timeoutMs: tMs,
-                        timeoutSeconds: tSec,
-                        isTurboMode: true,
-                        turboType: data.turboType || 'last_second',
-                        questionsRemaining: data.turboQuestionsRemaining,
-                        isWatchlist: !!watchlistTimerOverride,
-                    };
                 }
             }
         } catch (error) {
@@ -1563,8 +1612,9 @@ class GameService {
                 }
             }
 
-            // Watchlist: Force early turbo mode from a specific question
-            if (measures.early_turbo_from_question && questionNumber >= measures.early_turbo_from_question) {
+            // Watchlist: Force early turbo mode from a specific question (skip if tournament has turbo disabled)
+            const turboAllowedForWatchlist = await this.isTurboEnabledForSession(session.session_key);
+            if (turboAllowedForWatchlist && measures.early_turbo_from_question && questionNumber >= measures.early_turbo_from_question) {
                 const trackingKey = `turbo_track:${session.session_key}`;
                 let tracking = await redis.get(trackingKey);
                 tracking = tracking ? JSON.parse(tracking) : {};
@@ -2079,10 +2129,11 @@ class GameService {
                     } else {
                         await this.updateSession(session);
                         
-                        // Check turbo triggers (not for practice mode)
+                        // Check turbo triggers (not for practice mode, and not for tournaments where turbo is disabled)
                         let turboActivated = false;
                         const isPracticeMode = session.game_mode === 'practice' || session.game_type === 'practice';
-                        if (responseTimeMs && !isPracticeMode) {
+                        const turboAllowed = await this.isTurboEnabledForSession(session.session_key);
+                        if (responseTimeMs && !isPracticeMode && turboAllowed) {
                             const turboResult = await this.trackAndCheckTurboTriggers(session, user, responseTimeMs);
                             turboActivated = turboResult.activated;
                         }
