@@ -4,30 +4,71 @@
 // ============================================
 
 const express = require('express');
-const crypto = require('crypto');
 const router = express.Router();
 const PaymentService = require('../services/payment.service');
 const TournamentService = require('../services/tournament.service');
-const MessagingService = require('../services/messaging.service'); // CHANGED
+const MessagingService = require('../services/messaging.service');
+const gatewayManager = require('../services/payment-gateway-manager');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
 const paymentService = new PaymentService();
 const tournamentService = new TournamentService();
-const messagingService = new MessagingService(); // CHANGED
+const messagingService = new MessagingService();
 
 // ============================================
-// EXISTING REGULAR PAYMENT WEBHOOK
+// SHARED WEBHOOK HANDLER
+// Processes verified webhook payload regardless of gateway
+// ============================================
+
+async function processWebhookEvent(reference, metadata, gatewayName) {
+    try {
+        // Check if this is a tournament payment
+        if (reference.startsWith('TRN-') || reference.startsWith('TRNR-')) {
+            await handleTournamentPaymentWebhook(reference, metadata);
+        } else {
+            // Handle regular game payment
+            const verification = await paymentService.verifyPayment(reference);
+            
+            const userResult = await pool.query(
+                'SELECT * FROM users WHERE id = $1',
+                [verification.userId]
+            );
+            
+            if (userResult.rows.length === 0) {
+                throw new Error('User not found');
+            }
+            
+            const user = userResult.rows[0];
+            logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
+            
+            await messagingService.sendMessage(
+                user.phone_number,
+                `✅ PAYMENT SUCCESSFUL! ✅\n\n` +
+                `${verification.games} games have been credited to your account!\n\n` +
+                `Amount: ₦${verification.amount.toLocaleString()}\n` +
+                `Games Remaining: ${user.games_remaining}\n\n` +
+                `Type PLAY to start a game! 🎮`
+            );
+        }
+        
+        logger.info(`Payment webhook (${gatewayName}) processed: ${reference}`);
+    } catch (error) {
+        logger.error(`Error processing ${gatewayName} webhook event:`, error);
+    }
+}
+
+// ============================================
+// PAYSTACK WEBHOOK
 // ============================================
 
 router.post('/webhook', async (req, res) => {
     try {
-        const hash = crypto
-            .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-            .update(JSON.stringify(req.body))
-            .digest('hex');
+        const gateway = gatewayManager.getGateway('paystack');
+        const signature = req.headers['x-paystack-signature'];
+        const rawBody = JSON.stringify(req.body);
         
-        if (hash !== req.headers['x-paystack-signature']) {
+        if (!gateway.verifyWebhookSignature(rawBody, signature)) {
             logger.warn('Invalid Paystack signature');
             return res.status(400).send('Invalid signature');
         }
@@ -36,51 +77,43 @@ router.post('/webhook', async (req, res) => {
         
         if (event.event === 'charge.success') {
             const { reference, metadata } = event.data;
-            
-            try {
-                // Check if this is a tournament payment
-                if (reference.startsWith('TRN-') || reference.startsWith('TRNR-')) {
-                    // Handle tournament payment
-                    await handleTournamentPaymentWebhook(reference, metadata);
-                } else {
-                    // Handle regular game payment
-                    const verification = await paymentService.verifyPayment(reference);
-                    
-                    const userResult = await pool.query(
-                        'SELECT * FROM users WHERE id = $1',
-                        [metadata.user_id]
-                    );
-                    
-                    if (userResult.rows.length === 0) {
-                        throw new Error('User not found');
-                    }
-                    
-                    const user = userResult.rows[0];
-                    
-                    logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
-                    
-                    // CHANGED: Use messagingService instead of whatsappService
-                    await messagingService.sendMessage(
-                        user.phone_number,
-                        `✅ PAYMENT SUCCESSFUL! ✅\n\n` +
-                        `${verification.games} games have been credited to your account!\n\n` +
-                        `Amount: ₦${verification.amount.toLocaleString()}\n` +
-                        `Games Remaining: ${user.games_remaining}\n\n` +
-                        `Type PLAY to start a game! 🎮`
-                    );
-                }
-                
-                logger.info(`Payment webhook processed: ${reference}`);
-                
-            } catch (error) {
-                logger.error('Error processing webhook:', error);
-            }
+            await processWebhookEvent(reference, metadata, 'paystack');
         }
         
         res.status(200).send('Webhook received');
         
     } catch (error) {
         logger.error('Webhook error:', error);
+        res.status(500).send('Webhook error');
+    }
+});
+
+// ============================================
+// KORAPAY WEBHOOK
+// ============================================
+
+router.post('/korapay-webhook', async (req, res) => {
+    try {
+        const gateway = gatewayManager.getGateway('korapay');
+        const signature = req.headers['x-korapay-signature'];
+        const rawBody = JSON.stringify(req.body);
+        
+        if (!gateway.verifyWebhookSignature(rawBody, signature)) {
+            logger.warn('Invalid Korapay signature');
+            return res.status(400).send('Invalid signature');
+        }
+        
+        const event = req.body;
+        
+        if (event.event === 'charge.success' && event.data?.status === 'success') {
+            const { reference, metadata } = event.data;
+            await processWebhookEvent(reference, metadata || {}, 'korapay');
+        }
+        
+        res.status(200).send('Webhook received');
+        
+    } catch (error) {
+        logger.error('Korapay webhook error:', error);
         res.status(500).send('Webhook error');
     }
 });

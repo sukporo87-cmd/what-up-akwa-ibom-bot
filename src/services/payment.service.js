@@ -7,9 +7,11 @@
 const Paystack = require('paystack-api');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const gatewayManager = require('./payment-gateway-manager');
 
 class PaymentService {
   constructor() {
+    // Legacy direct paystack instance kept for any code still referencing it
     this.paystack = Paystack(process.env.PAYSTACK_SECRET_KEY);
     this.isPaymentEnabled = process.env.PAYMENT_MODE === 'paid';
   }
@@ -30,15 +32,21 @@ class PaymentService {
     }
   }
 
-  generateReference(userId) {
+  generateReference(userId, gatewayName = 'paystack') {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-    return `WUAIB-${userId}-${timestamp}-${random}`;
+    // Prefix indicates gateway: WUAIB-* (paystack legacy), KOR-* (korapay), etc.
+    const prefix = gatewayName === 'korapay' ? 'KOR' : 'WUAIB';
+    return `${prefix}-${userId}-${timestamp}-${random}`;
   }
 
-  async initializePayment(user, packageId) {
+  async initializePayment(user, packageId, gatewayName = null) {
     try {
-      // 🔧 NEW: Get platform from user
+      // Resolve which gateway to use
+      const gateway = gatewayName 
+        ? await gatewayManager.getEnabledGatewayByName(gatewayName)
+        : await gatewayManager.getDefaultGateway();
+      
       const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
 
       const packageResult = await pool.query(
@@ -51,13 +59,14 @@ class PaymentService {
       }
 
       const pkg = packageResult.rows[0];
-      const reference = this.generateReference(user.id);
+      const reference = this.generateReference(user.id, gateway.getName());
 
-      const response = await this.paystack.transaction.initialize({
+      const initResult = await gateway.initialize({
+        reference,
+        amount: pkg.price_naira,
         email: `${user.phone_number}@wuaib.com`,
-        amount: pkg.price_kobo,
-        reference: reference,
-        callback_url: `${process.env.APP_URL}/payment/callback`,
+        callbackUrl: `${process.env.APP_URL}/payment/callback`,
+        customerName: user.full_name,
         metadata: {
           user_id: user.id,
           user_name: user.full_name,
@@ -65,45 +74,28 @@ class PaymentService {
           package_id: packageId,
           package_name: pkg.name,
           games_count: pkg.games_count,
-          platform: platform,  // 🔧 ADDED platform
-          custom_fields: [
-            {
-              display_name: "User Name",
-              variable_name: "user_name",
-              value: user.full_name
-            },
-            {
-              display_name: "Phone Number",
-              variable_name: "phone_number",
-              value: user.phone_number
-            },
-            {
-              display_name: "Platform",
-              variable_name: "platform",
-              value: platform
-            }
-          ]
-        },
-        channels: ['card', 'bank', 'ussd', 'mobile_money']
+          platform: platform,
+          description: `${pkg.games_count} game tokens`
+        }
       });
 
-      // 🔧 UPDATED: Insert with platform column
       await pool.query(
         `INSERT INTO payment_transactions 
-         (user_id, package_id, reference, amount, games_purchased, status, platform)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
-        [user.id, packageId, reference, pkg.price_naira, pkg.games_count, platform]
+         (user_id, package_id, reference, amount, games_purchased, status, platform, gateway_used)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)`,
+        [user.id, packageId, reference, pkg.price_naira, pkg.games_count, platform, gateway.getName()]
       );
 
-      logger.info(`💳 Payment initialized for user ${user.id} (${platform}): ${reference}`);
+      logger.info(`💳 Payment initialized via ${gateway.getName()} for user ${user.id} (${platform}): ${reference}`);
 
       return {
-        authorization_url: response.data.authorization_url,
-        access_code: response.data.access_code,
+        authorization_url: initResult.authorization_url,
+        access_code: initResult.access_code,
         reference: reference,
         amount: pkg.price_naira,
         games: pkg.games_count,
-        platform: platform
+        platform: platform,
+        gateway: gateway.getName()
       };
 
     } catch (error) {
@@ -114,8 +106,6 @@ class PaymentService {
 
   async verifyPayment(reference) {
     try {
-      const axios = require('axios');
-      
       // Check if already verified in our database
       const existingTransaction = await pool.query(
         `SELECT * FROM payment_transactions WHERE reference = $1`,
@@ -136,31 +126,26 @@ class PaymentService {
           amount: parseFloat(transaction.amount),
           games: transaction.games_purchased,
           userId: transaction.user_id,
-          platform: transaction.platform  // 🔧 ADDED: Return platform
+          platform: transaction.platform,
+          gateway: transaction.gateway_used
         };
       }
 
-      // Only verify with Paystack if status is still 'pending'
+      // Only verify with gateway if status is still 'pending'
       if (transaction.status !== 'pending') {
         throw new Error(`Transaction status is ${transaction.status}`);
       }
 
-      // Verify with Paystack
-      const response = await axios.get(
-        `https://api.paystack.co/transaction/verify/${reference}`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-          }
-        }
-      );
-      
-      if (response.data.status !== true || response.data.data.status !== 'success') {
+      // Look up the gateway used for this reference
+      const gateway = await gatewayManager.getGatewayForReference(reference);
+      const verifyResult = await gateway.verify(reference);
+
+      if (!verifyResult.success) {
         throw new Error('Payment verification failed');
       }
 
-      const paymentData = response.data.data;
-      const { metadata, amount, paid_at, channel } = paymentData;
+      const channel = verifyResult.raw?.channel || verifyResult.raw?.payment_method || 'unknown';
+      const paid_at = verifyResult.raw?.paid_at || verifyResult.raw?.transaction_date || new Date();
 
       // Update transaction status FIRST (prevents race conditions)
       await pool.query(
@@ -170,7 +155,7 @@ class PaymentService {
              payment_channel = $2,
              paid_at = $3
          WHERE reference = $4 AND status = 'pending'`,
-        [paymentData.reference, channel, paid_at, reference]
+        [verifyResult.raw?.reference || reference, channel, paid_at, reference]
       );
 
       // Then credit games to user
@@ -180,17 +165,18 @@ class PaymentService {
              total_games_purchased = total_games_purchased + $1,
              last_purchase_date = NOW()
          WHERE id = $2`,
-        [metadata.games_count, metadata.user_id]
+        [transaction.games_purchased, transaction.user_id]
       );
 
-      logger.info(`✅ Payment verified (${transaction.platform}): ${reference} - ${metadata.games_count} games credited to user ${metadata.user_id}`);
+      logger.info(`✅ Payment verified via ${gateway.getName()} (${transaction.platform}): ${reference} - ${transaction.games_purchased} games credited to user ${transaction.user_id}`);
 
       return {
         success: true,
-        amount: amount / 100,
-        games: metadata.games_count,
-        userId: metadata.user_id,
-        platform: transaction.platform  // 🔧 ADDED: Return platform
+        amount: verifyResult.amount,
+        games: transaction.games_purchased,
+        userId: transaction.user_id,
+        platform: transaction.platform,
+        gateway: gateway.getName()
       };
 
     } catch (error) {

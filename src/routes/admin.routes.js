@@ -8171,4 +8171,59 @@ router.get('/api/watchlist/search-users', authenticateAdmin, authenticateWatchli
     }
 });
 
+// ============================================
+// PAYMENT GATEWAY MANAGEMENT
+// ============================================
+
+const gatewayManager = require('../services/payment-gateway-manager');
+
+router.get('/api/gateways', authenticateAdmin, async (req, res) => {
+    try {
+        const statuses = await gatewayManager.getGatewayStatuses();
+        res.json({ success: true, gateways: statuses });
+    } catch (error) {
+        logger.error('Error getting gateway statuses:', error);
+        res.status(500).json({ error: 'Failed to get gateway statuses' });
+    }
+});
+
+router.post('/api/gateways/:name/toggle', authenticateAdmin, async (req, res) => {
+    try {
+        const { name } = req.params;
+        const { enabled } = req.body;
+        const adminId = req.adminId || null;
+        
+        await gatewayManager.setEnabled(name, !!enabled, adminId);
+        
+        await pool.query(`
+            INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+            VALUES ($1, 'gateway_toggle', $2)
+        `, [adminId, JSON.stringify({ gateway: name, enabled: !!enabled })]);
+        
+        res.json({ success: true, message: `${name} ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (error) {
+        logger.error('Error toggling gateway:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/api/gateways/:name/set-default', authenticateAdmin, async (req, res) => {
+    try {
+        const { name } = req.params;
+        const adminId = req.adminId || null;
+        
+        await gatewayManager.setDefault(name, adminId);
+        
+        await pool.query(`
+            INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+            VALUES ($1, 'gateway_set_default', $2)
+        `, [adminId, JSON.stringify({ gateway: name })]);
+        
+        res.json({ success: true, message: `${name} set as default` });
+    } catch (error) {
+        logger.error('Error setting default gateway:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;

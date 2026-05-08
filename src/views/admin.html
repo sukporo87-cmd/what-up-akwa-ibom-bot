@@ -772,6 +772,7 @@
       <button class="tab" onclick="switchTab('questions')">❓ Questions</button>
       <button class="tab" onclick="switchTab('tournaments')">🏅 Tournaments</button>
       <button class="tab" onclick="switchTab('lovequest')">💘 Love Quest</button>
+      <button class="tab" onclick="switchTab('gateways')">💳 Gateways</button>
       <button class="tab" onclick="switchTab('activity')">📋 Activity Log</button>
     </div>
 
@@ -1341,6 +1342,25 @@
             <div class="spinner"></div>
             <p>Loading tournaments...</p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment Gateways Tab -->
+    <div id="gatewaysTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>💳 Payment Gateways</h2>
+          <div class="filter-group">
+            <button class="btn btn-primary" onclick="loadGateways()">🔄 Refresh</button>
+          </div>
+        </div>
+        <p style="color: var(--text-gray); margin-bottom: 20px; font-size: 14px;">
+          Toggle payment processors on/off. When multiple are enabled, the default handles new payments. 
+          Existing in-flight payments continue with their original processor.
+        </p>
+        <div id="gatewaysContainer">
+          <div class="loading"><div class="spinner"></div><p>Loading gateways...</p></div>
         </div>
       </div>
     </div>
@@ -2261,6 +2281,7 @@ function switchTab(tab) {
   if (tab === 'tournaments' && !document.getElementById('tournamentsTableContainer').innerHTML.includes('table')) loadTournaments();
   if (tab === 'activity' && !document.getElementById('activityTableContainer').innerHTML.includes('table')) loadActivityLog();
   if (tab === 'lovequest') loadLoveQuestData();
+  if (tab === 'gateways') loadGateways();
 }
 
 function openModal(modalId) {
@@ -2813,6 +2834,99 @@ async function submitAddQuestion(event) {
 }
 
 // ACTIVITY LOG
+async function loadGateways() {
+  const container = document.getElementById('gatewaysContainer');
+  try {
+    const r = await fetch('/admin/api/gateways', { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    
+    if (!d.success || !d.gateways) {
+      container.innerHTML = '<p style="color:#dc2626;">Failed to load gateways</p>';
+      return;
+    }
+    
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;">';
+    
+    for (const gw of d.gateways) {
+      const credBadge = gw.credentials_configured 
+        ? '<span style="background:#d1fae5;color:#065f46;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">✓ CREDS OK</span>'
+        : '<span style="background:#fee2e2;color:#991b1b;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">⚠ MISSING ENV VARS</span>';
+      
+      const defaultBadge = gw.is_default 
+        ? '<span style="background:#fbbf24;color:#78350f;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-left:6px;">⭐ DEFAULT</span>' 
+        : '';
+      
+      const enabledColor = gw.is_enabled ? '#059669' : '#9ca3af';
+      const enabledLabel = gw.is_enabled ? 'ENABLED' : 'DISABLED';
+      
+      html += `
+        <div style="background:#fff;border:2px solid ${gw.is_enabled ? '#059669' : '#e5e7eb'};border-radius:12px;padding:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div>
+              <h3 style="margin:0;font-size:16px;">${gw.display_name}</h3>
+              <small style="color:#6b7280;font-family:monospace;">${gw.name}</small>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              ${credBadge}
+              <span style="color:${enabledColor};font-weight:bold;font-size:13px;">${enabledLabel}${defaultBadge}</span>
+            </div>
+          </div>
+          
+          <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+            <button class="btn btn-sm ${gw.is_enabled ? 'btn-secondary' : 'btn-primary'}" 
+              ${!gw.credentials_configured ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}
+              onclick="toggleGateway('${gw.name}', ${!gw.is_enabled})">
+              ${gw.is_enabled ? '⏸️ Disable' : '▶️ Enable'}
+            </button>
+            ${!gw.is_default && gw.is_enabled ? `
+              <button class="btn btn-sm btn-primary" onclick="setDefaultGateway('${gw.name}')">⭐ Make Default</button>
+            ` : ''}
+          </div>
+          
+          ${!gw.credentials_configured ? `
+            <div style="margin-top:12px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">
+              Set <code>${gw.name.toUpperCase()}_SECRET_KEY</code> in your environment variables to enable this gateway.
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = `<p style="color:#dc2626;">Error: ${e.message}</p>`;
+  }
+}
+
+async function toggleGateway(name, enabled) {
+  if (!confirm(`${enabled ? 'Enable' : 'Disable'} ${name}?`)) return;
+  try {
+    const r = await fetch(`/admin/api/gateways/${name}/toggle`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
+    const d = await r.json();
+    if (d.success) { showAlert(d.message, 'success'); loadGateways(); }
+    else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function setDefaultGateway(name) {
+  if (!confirm(`Set ${name} as the default gateway? New payments will use ${name}.`)) return;
+  try {
+    const r = await fetch(`/admin/api/gateways/${name}/set-default`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const d = await r.json();
+    if (d.success) { showAlert(d.message, 'success'); loadGateways(); }
+    else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
 async function loadActivityLog() {
   const container = document.getElementById('activityTableContainer');
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading activity log...</p></div>';

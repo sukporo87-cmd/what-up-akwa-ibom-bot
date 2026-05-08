@@ -164,9 +164,8 @@ class TournamentService {
         }
     }
 
-    async initializeTournamentPayment(userId, tournamentId) {
-        const PaymentService = require('./payment.service');
-        const paymentService = new PaymentService();
+    async initializeTournamentPayment(userId, tournamentId, gatewayName = null) {
+        const gatewayManager = require('./payment-gateway-manager');
         
         try {
             const tournament = await this.getTournamentById(tournamentId);
@@ -185,13 +184,20 @@ class TournamentService {
             const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
             const user = userResult.rows[0];
             const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            
+            // Resolve gateway
+            const gateway = gatewayName 
+                ? await gatewayManager.getEnabledGatewayByName(gatewayName)
+                : await gatewayManager.getDefaultGateway();
+            
             const reference = `TRN-${tournamentId}-${userId}-${Date.now()}`;
             
-            const payment = await paymentService.paystack.transaction.initialize({
+            const initResult = await gateway.initialize({
+                reference,
+                amount: tournament.entry_fee,
                 email: `${user.phone_number}@whatsuptrivia.com`,
-                amount: tournament.entry_fee * 100,
-                reference: reference,
-                callback_url: `${process.env.APP_URL}/payment/tournament-callback`,
+                callbackUrl: `${process.env.APP_URL}/payment/tournament-callback`,
+                customerName: user.full_name,
                 metadata: {
                     user_id: userId,
                     tournament_id: tournamentId,
@@ -200,30 +206,27 @@ class TournamentService {
                     user_name: user.full_name,
                     user_phone: user.phone_number,
                     platform: platform,
-                    custom_fields: [
-                        { display_name: "Tournament", variable_name: "tournament", value: tournament.tournament_name },
-                        { display_name: "User", variable_name: "user", value: user.full_name },
-                        { display_name: "Platform", variable_name: "platform", value: platform }
-                    ]
+                    description: `Entry: ${tournament.tournament_name}`
                 }
             });
             
             await pool.query(`
                 INSERT INTO tournament_entry_payments 
-                    (tournament_id, user_id, amount, payment_reference, payment_status, platform)
-                VALUES ($1, $2, $3, $4, 'pending', $5)
+                    (tournament_id, user_id, amount, payment_reference, payment_status, platform, gateway_used)
+                VALUES ($1, $2, $3, $4, 'pending', $5, $6)
                 ON CONFLICT (payment_reference) DO NOTHING
-            `, [tournamentId, userId, tournament.entry_fee, reference, platform]);
+            `, [tournamentId, userId, tournament.entry_fee, reference, platform, gateway.getName()]);
             
-            logger.info(`Tournament payment initialized (${platform}): ${reference}`);
+            logger.info(`Tournament payment initialized via ${gateway.getName()} (${platform}): ${reference}`);
             
             return {
                 success: true,
-                authorization_url: payment.data.authorization_url,
-                access_code: payment.data.access_code,
+                authorization_url: initResult.authorization_url,
+                access_code: initResult.access_code,
                 reference: reference,
                 amount: tournament.entry_fee,
-                platform: platform
+                platform: platform,
+                gateway: gateway.getName()
             };
         } catch (error) {
             logger.error('Error initializing tournament payment:', error);
@@ -232,12 +235,9 @@ class TournamentService {
     }
 
     async verifyTournamentPayment(reference) {
-        const PaymentService = require('./payment.service');
-        const paymentService = new PaymentService();
+        const gatewayManager = require('./payment-gateway-manager');
         
         try {
-            const axios = require('axios');
-            
             const existing = await pool.query(
                 'SELECT * FROM tournament_entry_payments WHERE payment_reference = $1',
                 [reference]
@@ -252,16 +252,17 @@ class TournamentService {
                 return { success: true, payment };
             }
             
-            const response = await axios.get(
-                `https://api.paystack.co/transaction/verify/${reference}`,
-                { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-            );
+            // Use the gateway that originally handled this payment
+            const gateway = await gatewayManager.getGatewayForReference(reference);
+            const verifyResult = await gateway.verify(reference);
             
-            if (response.data.status !== true || response.data.data.status !== 'success') {
+            if (!verifyResult.success) {
                 throw new Error('Payment verification failed');
             }
             
-            const paymentData = response.data.data;
+            const channel = verifyResult.raw?.channel || verifyResult.raw?.payment_method || 'unknown';
+            const platform = verifyResult.raw?.metadata?.platform || payment.platform || 'whatsapp';
+            const isRebuy = reference.startsWith('TRNR-');
             
             await pool.query(`
                 UPDATE tournament_entry_payments
@@ -270,24 +271,22 @@ class TournamentService {
                     payment_method = $2,
                     paid_at = NOW()
                 WHERE payment_reference = $3
-            `, [paymentData.reference, paymentData.channel, reference]);
+            `, [verifyResult.raw?.reference || reference, channel, reference]);
             
-            const platform = paymentData.metadata.platform || payment.platform || 'whatsapp';
-            const isRebuy = reference.startsWith('TRNR-');
+            const tournament = await this.getTournamentById(payment.tournament_id);
             
             if (isRebuy) {
-                const tokensToAdd = paymentData.metadata.tokens_to_add || tournament.tokens_per_entry;
+                const tokensToAdd = verifyResult.raw?.metadata?.tokens_to_add || tournament.tokens_per_entry;
                 const rebuyResult = await this.processRebuyTokens(payment.tournament_id, payment.user_id, tokensToAdd);
                 
-                logger.info(`Tournament rebuy verified (${platform}): ${reference} - User ${payment.user_id} got ${tokensToAdd} tokens`);
+                logger.info(`Tournament rebuy verified via ${gateway.getName()} (${platform}): ${reference} - User ${payment.user_id} got ${tokensToAdd} tokens`);
                 
                 return {
                     success: true, payment, tokensRemaining: rebuyResult.tokensRemaining,
-                    platform, isRebuy: true, tokensAdded: tokensToAdd
+                    platform, isRebuy: true, tokensAdded: tokensToAdd, gateway: gateway.getName()
                 };
             }
             
-            const tournament = await this.getTournamentById(payment.tournament_id);
             const tokensRemaining = tournament.uses_tokens ? tournament.tokens_per_entry : null;
             
             await pool.query(`
@@ -301,8 +300,8 @@ class TournamentService {
                     platform = EXCLUDED.platform
             `, [payment.tournament_id, payment.user_id, payment.amount, tokensRemaining, platform]);
             
-            logger.info(`Tournament payment verified (${platform}): ${reference} - User ${payment.user_id} can now play`);
-            return { success: true, payment, tokensRemaining, platform };
+            logger.info(`Tournament payment verified via ${gateway.getName()} (${platform}): ${reference} - User ${payment.user_id} can now play`);
+            return { success: true, payment, tokensRemaining, platform, gateway: gateway.getName() };
         } catch (error) {
             logger.error('Error verifying tournament payment:', error);
             await pool.query(
@@ -313,9 +312,8 @@ class TournamentService {
         }
     }
 
-    async initializeRebuyPayment(userId, tournamentId) {
-        const PaymentService = require('./payment.service');
-        const paymentService = new PaymentService();
+    async initializeRebuyPayment(userId, tournamentId, gatewayName = null) {
+        const gatewayManager = require('./payment-gateway-manager');
         
         try {
             const tournament = await this.getTournamentById(tournamentId);
@@ -330,14 +328,20 @@ class TournamentService {
             const userData = user.rows[0];
             const platform = userData.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
             
+            // Resolve gateway
+            const gateway = gatewayName 
+                ? await gatewayManager.getEnabledGatewayByName(gatewayName)
+                : await gatewayManager.getDefaultGateway();
+            
             const rebuyPrice = tournament.entry_fee;
             const reference = `TRNR-${tournamentId}-${userId}-${Date.now()}`;
             
-            const payment = await paymentService.paystack.transaction.initialize({
+            const initResult = await gateway.initialize({
+                reference,
+                amount: rebuyPrice,
                 email: `${userData.phone_number}@whatsuptrivia.com`,
-                amount: rebuyPrice * 100,
-                reference: reference,
-                callback_url: `${process.env.APP_URL}/payment/tournament-callback`,
+                callbackUrl: `${process.env.APP_URL}/payment/tournament-callback`,
+                customerName: userData.full_name,
                 metadata: {
                     user_id: userId, tournament_id: tournamentId,
                     tournament_name: tournament.tournament_name,
@@ -345,26 +349,23 @@ class TournamentService {
                     tokens_to_add: tournament.tokens_per_entry,
                     user_name: userData.full_name, user_phone: userData.phone_number,
                     platform: platform,
-                    custom_fields: [
-                        { display_name: "Tournament", variable_name: "tournament", value: tournament.tournament_name },
-                        { display_name: "Type", variable_name: "type", value: "Token Rebuy" },
-                        { display_name: "Platform", variable_name: "platform", value: platform }
-                    ]
+                    description: `Rebuy: ${tournament.tournament_name}`
                 }
             });
             
             await pool.query(`
                 INSERT INTO tournament_entry_payments 
-                    (tournament_id, user_id, amount, payment_reference, payment_status, platform)
-                VALUES ($1, $2, $3, $4, 'pending', $5)
-            `, [tournamentId, userId, rebuyPrice, reference, platform]);
+                    (tournament_id, user_id, amount, payment_reference, payment_status, platform, gateway_used)
+                VALUES ($1, $2, $3, $4, 'pending', $5, $6)
+            `, [tournamentId, userId, rebuyPrice, reference, platform, gateway.getName()]);
             
-            logger.info(`Tournament rebuy payment initialized (${platform}): ${reference}`);
+            logger.info(`Tournament rebuy payment initialized via ${gateway.getName()} (${platform}): ${reference}`);
             
             return {
-                success: true, authorization_url: payment.data.authorization_url,
+                success: true, authorization_url: initResult.authorization_url,
                 reference: reference, amount: rebuyPrice,
-                tokensToAdd: tournament.tokens_per_entry, platform: platform
+                tokensToAdd: tournament.tokens_per_entry, platform: platform,
+                gateway: gateway.getName()
             };
         } catch (error) {
             logger.error('Error initializing rebuy payment:', error);
