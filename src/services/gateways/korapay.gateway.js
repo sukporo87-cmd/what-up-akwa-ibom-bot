@@ -36,6 +36,20 @@ class KorapayGateway extends PaymentGateway {
 
     async initialize({ reference, amount, email, callbackUrl, metadata = {}, customerName }) {
         try {
+            // Korapay limits metadata to max 5 keys — keep only what's needed for verification flow
+            const trimmedMetadata = {
+                user_id: metadata.user_id,
+                tournament_id: metadata.tournament_id,
+                package_id: metadata.package_id,
+                is_rebuy: metadata.is_rebuy,
+                platform: metadata.platform
+            };
+            // Strip undefined values
+            const finalMetadata = {};
+            for (const [k, v] of Object.entries(trimmedMetadata)) {
+                if (v !== undefined && v !== null) finalMetadata[k] = v;
+            }
+
             const payload = {
                 amount: Number(amount), // Korapay uses naira (no kobo conversion)
                 redirect_url: callbackUrl,
@@ -48,7 +62,7 @@ class KorapayGateway extends PaymentGateway {
                     name: customerName || metadata.user_name || 'Player',
                     email
                 },
-                metadata
+                metadata: finalMetadata
             };
 
             const response = await axios.post(`${this.baseUrl}/charges/initialize`, payload, {
