@@ -119,6 +119,41 @@ router.post('/korapay-webhook', async (req, res) => {
 });
 
 // ============================================
+// MONNIFY WEBHOOK
+// ============================================
+
+router.post('/monnify-webhook', express.json({
+    verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+}), async (req, res) => {
+    try {
+        const gateway = gatewayManager.getGateway('monnify');
+        const signature = req.headers['monnify-signature'];
+        // Monnify hashes the RAW body — use the captured rawBody, falling back to stringified body
+        const rawBody = req.rawBody || JSON.stringify(req.body);
+        
+        if (!gateway.verifyWebhookSignature(rawBody, signature)) {
+            logger.warn('Invalid Monnify signature');
+            return res.status(400).send('Invalid signature');
+        }
+        
+        const event = req.body;
+        const status = event?.eventData?.paymentStatus;
+        
+        if (event.eventType === 'SUCCESSFUL_TRANSACTION' && (status === 'PAID' || status === 'OVERPAID')) {
+            const reference = event.eventData.paymentReference;
+            const metadata = event.eventData.metadata || {};
+            await processWebhookEvent(reference, metadata, 'monnify');
+        }
+        
+        res.status(200).send('Webhook received');
+        
+    } catch (error) {
+        logger.error('Monnify webhook error:', error);
+        res.status(500).send('Webhook error');
+    }
+});
+
+// ============================================
 // TOURNAMENT PAYMENT WEBHOOK HANDLER
 // ============================================
 
@@ -507,6 +542,34 @@ const userResult = await pool.query(
         
     } catch (error) {
         logger.error('Tournament payment callback error:', error);
+        
+        // Friendly UI for "still processing" — user can retry
+        if (error.transient) {
+            return res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Payment Processing</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .container { background: white; max-width: 500px; margin: 0 auto; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #f59e0b; }
+        a { display: inline-block; margin-top: 20px; padding: 15px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⏳ Payment Still Processing</h1>
+        <p>Your payment is being confirmed by your bank. This usually takes a minute or two.</p>
+        <p>You'll be auto-registered once it completes. You can also tap below to retry checking.</p>
+        <a href="javascript:location.reload()">Retry Check</a>
+    </div>
+</body>
+</html>
+            `);
+        }
+        
         res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -514,30 +577,10 @@ const userResult = await pool.query(
     <meta charset="UTF-8">
     <title>Payment Failed</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding: 50px;
-            background: #f5f5f5;
-        }
-        .container {
-            background: white;
-            max-width: 500px;
-            margin: 0 auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .container { background: white; max-width: 500px; margin: 0 auto; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { color: #f44336; }
-        a {
-            display: inline-block;
-            margin-top: 20px;
-            padding: 15px 30px;
-            background: #667eea;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-        }
+        a { display: inline-block; margin-top: 20px; padding: 15px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; }
     </style>
 </head>
 <body>

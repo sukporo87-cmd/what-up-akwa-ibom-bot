@@ -5,6 +5,7 @@
 
 const PaystackGateway = require('./gateways/paystack.gateway');
 const KorapayGateway = require('./gateways/korapay.gateway');
+const MonnifyGateway = require('./gateways/monnify.gateway');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
@@ -14,6 +15,7 @@ class PaymentGatewayManager {
         this.gateways = {
             paystack: new PaystackGateway(),
             korapay: new KorapayGateway(),
+            monnify: new MonnifyGateway(),
         };
     }
 
