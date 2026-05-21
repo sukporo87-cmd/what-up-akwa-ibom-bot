@@ -1241,7 +1241,7 @@ Type the code, or type SKIP to continue:`
         pickerMsg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
         pickerMsg += `Reply with the number to choose how to pay:\n\n`;
         gateways.forEach((gw, idx) => {
-          pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+          pickerMsg += `${idx + 1}. Pay with ${gw.getDisplayName()}\n`;
         });
         pickerMsg += `\nOr reply MENU to cancel.`;
 
@@ -1366,7 +1366,7 @@ Type the code, or type SKIP to continue:`
         pickerMsg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
         pickerMsg += `Reply with the number to choose how to pay:\n\n`;
         gateways.forEach((gw, idx) => {
-          pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+          pickerMsg += `${idx + 1}. Pay with ${gw.getDisplayName()}\n`;
         });
         pickerMsg += `\nOr reply MENU to cancel.`;
 
@@ -2114,7 +2114,7 @@ Type the code, or type SKIP to continue:`
       pickerMsg += `Amount: ₦${Number(selectedPackage.price_naira).toLocaleString()}\n\n`;
       pickerMsg += `Reply with the number to choose how to pay:\n\n`;
       gateways.forEach((gw, idx) => {
-        pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+        pickerMsg += `${idx + 1}. Pay with ${gw.getDisplayName()}\n`;
       });
       pickerMsg += `\nOr reply MENU to cancel.`;
 
