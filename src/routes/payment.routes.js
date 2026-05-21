@@ -235,7 +235,8 @@ function getPlatformName(phoneNumber) {
 // ============================================
 
 router.get('/callback', async (req, res) => {
-    const { reference } = req.query;
+    // Paystack sends 'reference', Korapay sends 'reference', Monnify sends 'paymentReference'
+    const reference = req.query.reference || req.query.paymentReference;
     
     if (!reference) {
         return res.status(400).send('No reference provided');
@@ -409,7 +410,8 @@ router.get('/callback', async (req, res) => {
 // ============================================
 
 router.get('/tournament-callback', async (req, res) => {
-    const { reference } = req.query;
+    // Paystack/Korapay send 'reference', Monnify sends 'paymentReference'
+    const reference = req.query.reference || req.query.paymentReference;
     
     if (!reference) {
         return res.status(400).send('No reference provided');

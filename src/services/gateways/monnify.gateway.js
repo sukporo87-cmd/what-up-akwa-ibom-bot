@@ -118,19 +118,20 @@ class MonnifyGateway extends PaymentGateway {
         try {
             const token = await this._getAuthToken();
             
-            // Monnify verify uses paymentReference (our ref). URL-encoded.
-            const response = await axios.get(
-                `${this.baseUrl}/api/v2/transactions/${encodeURIComponent(reference)}`,
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            // Correct endpoint: GET /api/v2/merchant/transactions/query?paymentReference={ref}
+            const url = `${this.baseUrl}/api/v2/merchant/transactions/query?paymentReference=${encodeURIComponent(reference)}`;
+            const response = await axios.get(url, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
 
             if (!response.data?.requestSuccessful) {
-                logger.warn(`Monnify verify failed for ${reference}: ${response.data?.responseMessage}`);
-                return { success: false, status: 'error', amount: 0, reference, gateway: this.getName(), error: response.data?.responseMessage };
+                const msg = response.data?.responseMessage || 'unknown';
+                logger.warn(`Monnify verify failed for ${reference}: ${msg}`);
+                return { success: false, status: 'error', amount: 0, reference, gateway: this.getName(), error: msg };
             }
 
             const data = response.data.responseBody;
-            // Monnify paymentStatus: PAID, OVERPAID, PARTIALLY_PAID, PENDING, FAILED, EXPIRED
+            // Monnify paymentStatus: PAID, OVERPAID, PARTIALLY_PAID, PENDING, ABANDONED, CANCELLED, FAILED, REVERSED, EXPIRED
             const status = data?.paymentStatus;
             const success = status === 'PAID' || status === 'OVERPAID';
             
@@ -147,8 +148,12 @@ class MonnifyGateway extends PaymentGateway {
                 raw: data
             };
         } catch (error) {
-            logger.error('Monnify verify error:', JSON.stringify(error.response?.data) || error.message);
-            return { success: false, status: 'error', amount: 0, reference, gateway: this.getName(), error: error.response?.data?.responseMessage || error.message };
+            // Better error visibility — include status code and body
+            const httpStatus = error.response?.status;
+            const body = error.response?.data ? JSON.stringify(error.response.data) : '(no body)';
+            const errMsg = error.response?.data?.responseMessage || error.message || 'unknown';
+            logger.error(`Monnify verify error for ${reference}: HTTP ${httpStatus || '?'} — ${errMsg} — body: ${body}`);
+            return { success: false, status: 'error', amount: 0, reference, gateway: this.getName(), error: errMsg };
         }
     }
 

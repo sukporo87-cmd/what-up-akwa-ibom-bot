@@ -141,7 +141,14 @@ class PaymentService {
       const verifyResult = await gateway.verify(reference);
 
       if (!verifyResult.success) {
-        throw new Error('Payment verification failed');
+        // Transient states — webhook will eventually complete this
+        if (verifyResult.status === 'processing' || verifyResult.status === 'pending') {
+          const err = new Error('Payment is still processing — please wait');
+          err.transient = true;
+          err.status = verifyResult.status;
+          throw err;
+        }
+        throw new Error(`Payment verification failed (gateway=${gateway.getName()}, status=${verifyResult.status || 'unknown'}, error=${verifyResult.error || 'none'})`);
       }
 
       const channel = verifyResult.raw?.channel || verifyResult.raw?.payment_method || 'unknown';
@@ -182,13 +189,15 @@ class PaymentService {
     } catch (error) {
       logger.error('Error verifying payment:', error);
       
-      // Only mark as failed if it was pending
-      await pool.query(
-        `UPDATE payment_transactions 
-         SET status = 'failed' 
-         WHERE reference = $1 AND status = 'pending'`,
-        [reference]
-      );
+      // Don't mark transient errors as failed — leave pending so webhook can retry
+      if (!error.transient) {
+        await pool.query(
+          `UPDATE payment_transactions 
+           SET status = 'failed' 
+           WHERE reference = $1 AND status = 'pending'`,
+          [reference]
+        );
+      }
 
       throw error;
     }
