@@ -775,9 +775,12 @@ class GameService {
 
         const message = `📸 *PHOTO VERIFICATION* 📸\n\n` +
             `${challenge.text}\n\n` +
-            `👤 Your face must be clearly visible in the photo to pass admin review. Failure could warrant win forfeitures and suspensions.\n\n` +
-            `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send your selfie.\n\n` +
-            `_This helps us maintain fair play for all players._`;
+            `✅ Required to pass:\n` +
+            `• Your face clearly visible\n` +
+            `• Good lighting (no dark photos)\n` +
+            `• Live capture (no gallery uploads)\n\n` +
+            `⚠️ Failed verification ends the game and may forfeit winnings.\n\n` +
+            `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send your selfie.`;
 
         await messagingService.sendMessage(user.phone_number, message);
 
@@ -823,6 +826,7 @@ class GameService {
 
             // Download and upload the photo to Cloudinary
             let imageUrl = null;
+            let analysis = null;
             
             // WhatsApp: download via media ID
             const waMediaId = message?.image?.id;
@@ -834,22 +838,64 @@ class GameService {
                     const whatsappService = new WhatsAppService();
                     const media = await whatsappService.downloadMedia(waMediaId);
                     if (media) {
-                        imageUrl = await cloudinaryService.uploadVerificationPhoto(
+                        const uploadResult = await cloudinaryService.uploadVerificationPhoto(
                             media.buffer, user.id, session.id
                         );
+                        if (uploadResult) {
+                            imageUrl = uploadResult.url;
+                            analysis = uploadResult.analysis;
+                        }
                     }
                 } catch (dlErr) {
-                    logger.error('Error uploading WhatsApp verification photo (non-fatal):', dlErr.message);
+                    logger.error('Error uploading WhatsApp verification photo:', dlErr.message);
                 }
             } else if (tgPhoto && tgPhoto.buffer) {
                 try {
-                    imageUrl = await cloudinaryService.uploadVerificationPhoto(
+                    const uploadResult = await cloudinaryService.uploadVerificationPhoto(
                         tgPhoto.buffer, user.id, session.id
                     );
+                    if (uploadResult) {
+                        imageUrl = uploadResult.url;
+                        analysis = uploadResult.analysis;
+                    }
                 } catch (dlErr) {
-                    logger.error('Error uploading Telegram verification photo (non-fatal):', dlErr.message);
+                    logger.error('Error uploading Telegram verification photo:', dlErr.message);
                 }
             }
+
+            // ============================================
+            // VALIDATE THE PHOTO
+            // Hard fail if no face detected or fails other rules
+            // ============================================
+            const validation = cloudinaryService.validateVerificationPhoto(analysis);
+            
+            if (!validation.passed) {
+                logger.warn(`📸❌ Photo verification FAILED for user ${user.id}: ${validation.reasons.join('; ')}`);
+                
+                // Store the failure with the image URL so admin can review
+                await pool.query(`
+                    UPDATE photo_verifications 
+                    SET responded_at = NOW(), response_type = 'image', passed = false,
+                        response_time_ms = $1, image_url = $2, failure_reason = $3
+                    WHERE session_id = $4 AND user_id = $5 AND passed IS NULL
+                `, [responseTimeMs, imageUrl, validation.reasons.join('; '), session.id, user.id]);
+
+                await auditService.logPhotoVerificationResult(session.id, user.id, false, 'image_invalid', responseTimeMs);
+
+                // Tell the user why it failed in a clear, polite way
+                const failMsg = `❌ *VERIFICATION FAILED*\n\n` +
+                    `${validation.reasons.map(r => `• ${r}`).join('\n')}\n\n` +
+                    `🎮 GAME OVER`;
+                await messagingService.sendMessage(user.phone_number, failMsg);
+                
+                // End the game with guaranteed amount
+                await this.handlePhotoVerificationFailure(session, user, 'image_invalid');
+                return true;
+            }
+
+            // ============================================
+            // VALIDATION PASSED
+            // ============================================
 
             // Update session
             await pool.query(`
@@ -1562,9 +1608,12 @@ class GameService {
                     
                     const message = `📸 *QUICK SELFIE CHECK* 📸\n\n` +
                         `Take a quick selfie to kick off your SuperCool session! 🧊\n\n` +
-                        `👤 Your face must be clearly visible in the photo to pass admin review. Failure could warrant win forfeitures and suspensions.\n\n` +
-                        `⏱️ You have *20 seconds* to send your selfie.\n\n` +
-                        `_This helps us keep the game fair and fun for everyone!_`;
+                        `✅ Required to pass:\n` +
+                        `• Your face clearly visible\n` +
+                        `• Good lighting (no dark photos)\n` +
+                        `• Live capture (no gallery uploads)\n\n` +
+                        `⚠️ Failed verification ends the game.\n\n` +
+                        `⏱️ You have *20 seconds* to send your selfie.`;
                     await messagingService.sendMessage(user.phone_number, message);
                     
                     // Set timeout
