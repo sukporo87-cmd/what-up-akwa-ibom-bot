@@ -99,6 +99,29 @@ class PaymentGatewayManager {
     }
 
     /**
+     * Get enabled gateways formatted for a user picker.
+     * Returns array sorted with default first.
+     */
+    async getEnabledGatewaysForPicker() {
+        const enabled = await this.getEnabledGateways();
+        if (enabled.length === 0) return [];
+        
+        // Get default gateway name from DB
+        let defaultName = null;
+        try {
+            const r = await pool.query(`SELECT gateway_name FROM payment_gateway_config WHERE is_default = true LIMIT 1`);
+            defaultName = r.rows[0]?.gateway_name;
+        } catch (e) {}
+        
+        // Sort: default first, then alphabetical
+        return enabled.sort((a, b) => {
+            if (a.getName() === defaultName) return -1;
+            if (b.getName() === defaultName) return 1;
+            return a.getName().localeCompare(b.getName());
+        });
+    }
+
+    /**
      * Get full gateway status for admin dashboard
      */
     async getGatewayStatuses() {

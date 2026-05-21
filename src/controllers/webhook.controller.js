@@ -282,6 +282,20 @@ class WebhookController {
         return;
       }
 
+      // Gateway picker states
+      if (userState && userState.state === 'SELECT_PACKAGE_GATEWAY') {
+        await this.handlePackageGatewaySelection(user, message, userState.data);
+        return;
+      }
+      if (userState && userState.state === 'SELECT_TOURNAMENT_GATEWAY') {
+        await this.handleTournamentGatewaySelection(user, message, userState.data);
+        return;
+      }
+      if (userState && userState.state === 'SELECT_REBUY_GATEWAY') {
+        await this.handleRebuyGatewaySelection(user, message, userState.data);
+        return;
+      }
+
       // ===================================
       // PRIORITY 4: PAYMENT STATES
       // ===================================
@@ -1206,24 +1220,37 @@ Type the code, or type SKIP to continue:`
     
     if (input === 'YES' || input === 'Y') {
       try {
-        // Initialize payment
-        const payment = await tournamentService.initializeTournamentPayment(
-          user.id,
-          stateData.tournamentId
-        );
-        
-        await userService.clearUserState(phone);
-        
-        let message = `💳 TOURNAMENT PAYMENT 💳\n\n`;
-        message += `Tournament: ${stateData.tournamentName}\n`;
-        message += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
-        message += `Click link to pay:\n${payment.authorization_url}\n\n`;
-        message += `Payment Reference: ${payment.reference}\n\n`;
-        message += `⚠️ Link expires in 30 minutes\n\n`;
-        message += `After payment, you'll be automatically added to the tournament!`;
-        
-        await messagingService.sendMessage(phone, message);
-        
+        const gatewayManager = require('../services/payment-gateway-manager');
+        const gateways = await gatewayManager.getEnabledGatewaysForPicker();
+
+        if (gateways.length === 0) {
+          await userService.clearUserState(phone);
+          await messagingService.sendMessage(phone, '❌ No payment processors available right now. Please try again later.');
+          return;
+        }
+
+        // Single gateway — proceed directly
+        if (gateways.length === 1) {
+          await this.initTournamentPayment(user, stateData, gateways[0].getName());
+          return;
+        }
+
+        // Multiple gateways — show picker
+        let pickerMsg = `💳 *SELECT PAYMENT PROCESSOR* 💳\n\n`;
+        pickerMsg += `Tournament: ${stateData.tournamentName}\n`;
+        pickerMsg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
+        pickerMsg += `Reply with the number to choose how to pay:\n\n`;
+        gateways.forEach((gw, idx) => {
+          pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+        });
+        pickerMsg += `\nOr reply MENU to cancel.`;
+
+        await userService.setUserState(phone, 'SELECT_TOURNAMENT_GATEWAY', {
+          ...stateData,
+          gatewayNames: gateways.map(g => g.getName())
+        });
+        await messagingService.sendMessage(phone, pickerMsg);
+
       } catch (error) {
         logger.error('Error initializing tournament payment:', error);
         await messagingService.sendMessage(
@@ -1245,6 +1272,69 @@ Type the code, or type SKIP to continue:`
     }
   }
 
+  /**
+   * Shared method to actually init a tournament payment with chosen gateway
+   */
+  async initTournamentPayment(user, stateData, gatewayName) {
+    const payment = await tournamentService.initializeTournamentPayment(
+      user.id,
+      stateData.tournamentId,
+      gatewayName
+    );
+    
+    await userService.clearUserState(user.phone_number);
+    
+    let msg = `💳 TOURNAMENT PAYMENT 💳\n\n`;
+    msg += `Tournament: ${stateData.tournamentName}\n`;
+    msg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n`;
+    msg += `Pay with: ${payment.gateway.charAt(0).toUpperCase() + payment.gateway.slice(1)}\n\n`;
+    msg += `Click link to pay:\n${payment.authorization_url}\n\n`;
+    msg += `Payment Reference: ${payment.reference}\n\n`;
+    msg += `⚠️ Link expires in 30 minutes\n\n`;
+    msg += `After payment, you'll be automatically added to the tournament!`;
+    
+    await messagingService.sendMessage(user.phone_number, msg);
+  }
+
+  /**
+   * Handle gateway pick after tournament confirmation
+   */
+  async handleTournamentGatewaySelection(user, message, stateData) {
+    try {
+      const input = message.trim().toUpperCase();
+      if (input === 'MENU' || input === 'CANCEL') {
+        await userService.clearUserState(user.phone_number);
+        await this.sendMainMenu(user.phone_number);
+        return;
+      }
+
+      if (!stateData || !stateData.gatewayNames) {
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(user.phone_number, '❌ Session expired. Type TOURNAMENTS to start over.');
+        return;
+      }
+
+      const idx = parseInt(message.trim()) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= stateData.gatewayNames.length) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `⚠️ Reply with a number between 1 and ${stateData.gatewayNames.length}, or MENU to cancel.`
+        );
+        return;
+      }
+
+      await this.initTournamentPayment(user, stateData, stateData.gatewayNames[idx]);
+
+    } catch (error) {
+      logger.error('Error handling tournament gateway selection:', error);
+      await userService.clearUserState(user.phone_number);
+      await messagingService.sendMessage(
+        user.phone_number,
+        '❌ Error processing payment. Please try again.\n\nType TOURNAMENTS to start over.'
+      );
+    }
+  }
+
   // ============================================
   // TOURNAMENT TOKEN REBUY CONFIRMATION
   // ============================================
@@ -1255,23 +1345,36 @@ Type the code, or type SKIP to continue:`
     
     if (input === 'REBUY' || input === 'YES' || input === 'Y') {
       try {
-        const payment = await tournamentService.initializeRebuyPayment(
-          user.id,
-          stateData.tournamentId
-        );
-        
-        await userService.clearUserState(phone);
-        
-        let msg = `🎟️ *TOKEN REBUY* 🎟️\n\n`;
-        msg += `Tournament: ${stateData.tournamentName}\n`;
-        msg += `Tokens: ${stateData.tokensPerEntry} additional attempts\n`;
-        msg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
-        msg += `Click link to pay:\n${payment.authorization_url}\n\n`;
-        msg += `Reference: ${payment.reference}\n\n`;
-        msg += `⚠️ Link expires in 30 minutes\n\n`;
-        msg += `After payment, your tokens will be added automatically!`;
-        
-        await messagingService.sendMessage(phone, msg);
+        const gatewayManager = require('../services/payment-gateway-manager');
+        const gateways = await gatewayManager.getEnabledGatewaysForPicker();
+
+        if (gateways.length === 0) {
+          await userService.clearUserState(phone);
+          await messagingService.sendMessage(phone, '❌ No payment processors available right now. Please try again later.');
+          return;
+        }
+
+        if (gateways.length === 1) {
+          await this.initRebuyPayment(user, stateData, gateways[0].getName());
+          return;
+        }
+
+        // Multiple gateways — show picker
+        let pickerMsg = `💳 *SELECT PAYMENT PROCESSOR* 💳\n\n`;
+        pickerMsg += `Rebuy: ${stateData.tournamentName}\n`;
+        pickerMsg += `Tokens: ${stateData.tokensPerEntry}\n`;
+        pickerMsg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n\n`;
+        pickerMsg += `Reply with the number to choose how to pay:\n\n`;
+        gateways.forEach((gw, idx) => {
+          pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+        });
+        pickerMsg += `\nOr reply MENU to cancel.`;
+
+        await userService.setUserState(phone, 'SELECT_REBUY_GATEWAY', {
+          ...stateData,
+          gatewayNames: gateways.map(g => g.getName())
+        });
+        await messagingService.sendMessage(phone, pickerMsg);
         
       } catch (error) {
         logger.error('Error initializing rebuy payment:', error);
@@ -1288,6 +1391,70 @@ Type the code, or type SKIP to continue:`
       await messagingService.sendMessage(
         phone,
         '⚠️ Reply *REBUY* to purchase more tokens or *MENU* to go back'
+      );
+    }
+  }
+
+  /**
+   * Shared method to actually init a rebuy payment with chosen gateway
+   */
+  async initRebuyPayment(user, stateData, gatewayName) {
+    const payment = await tournamentService.initializeRebuyPayment(
+      user.id,
+      stateData.tournamentId,
+      gatewayName
+    );
+    
+    await userService.clearUserState(user.phone_number);
+    
+    let msg = `🎟️ *TOKEN REBUY* 🎟️\n\n`;
+    msg += `Tournament: ${stateData.tournamentName}\n`;
+    msg += `Tokens: ${stateData.tokensPerEntry} additional attempts\n`;
+    msg += `Amount: ₦${stateData.entryFee.toLocaleString()}\n`;
+    msg += `Pay with: ${payment.gateway.charAt(0).toUpperCase() + payment.gateway.slice(1)}\n\n`;
+    msg += `Click link to pay:\n${payment.authorization_url}\n\n`;
+    msg += `Reference: ${payment.reference}\n\n`;
+    msg += `⚠️ Link expires in 30 minutes\n\n`;
+    msg += `After payment, your tokens will be added automatically!`;
+    
+    await messagingService.sendMessage(user.phone_number, msg);
+  }
+
+  /**
+   * Handle gateway pick after rebuy confirmation
+   */
+  async handleRebuyGatewaySelection(user, message, stateData) {
+    try {
+      const input = message.trim().toUpperCase();
+      if (input === 'MENU' || input === 'CANCEL') {
+        await userService.clearUserState(user.phone_number);
+        await this.sendMainMenu(user.phone_number);
+        return;
+      }
+
+      if (!stateData || !stateData.gatewayNames) {
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(user.phone_number, '❌ Session expired. Type TOURNAMENTS to start over.');
+        return;
+      }
+
+      const idx = parseInt(message.trim()) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= stateData.gatewayNames.length) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `⚠️ Reply with a number between 1 and ${stateData.gatewayNames.length}, or MENU to cancel.`
+        );
+        return;
+      }
+
+      await this.initRebuyPayment(user, stateData, stateData.gatewayNames[idx]);
+
+    } catch (error) {
+      logger.error('Error handling rebuy gateway selection:', error);
+      await userService.clearUserState(user.phone_number);
+      await messagingService.sendMessage(
+        user.phone_number,
+        '❌ Error processing payment. Please try again.\n\nType TOURNAMENTS to view tournaments.'
       );
     }
   }
@@ -1469,7 +1636,7 @@ Type the code, or type SKIP to continue:`
       
       // Clear any stale user state
       const userState = await userService.getUserState(user.phone_number);
-      if (userState && !['SELECT_GAME_MODE', 'SELECT_TOURNAMENT', 'SELECT_PACKAGE', 'SELECT_LEADERBOARD'].includes(userState.state)) {
+      if (userState && !['SELECT_GAME_MODE', 'SELECT_TOURNAMENT', 'SELECT_PACKAGE', 'SELECT_LEADERBOARD', 'SELECT_PACKAGE_GATEWAY', 'SELECT_TOURNAMENT_GATEWAY', 'SELECT_REBUY_GATEWAY', 'CONFIRM_TOURNAMENT_PAYMENT', 'CONFIRM_TOURNAMENT_REBUY'].includes(userState.state)) {
         logger.warn(`Clearing unexpected state: ${userState.state} for user ${user.id}`);
         await userService.clearUserState(user.phone_number);
       }
@@ -1923,23 +2090,112 @@ Type the code, or type SKIP to continue:`
       }
 
       const selectedPackage = packages[packageIndex];
-      const payment = await paymentService.initializePayment(user, selectedPackage.id);
+      const gatewayManager = require('../services/payment-gateway-manager');
+      const gateways = await gatewayManager.getEnabledGatewaysForPicker();
 
-      await userService.clearUserState(user.phone_number);
+      if (gateways.length === 0) {
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(
+          user.phone_number,
+          '❌ No payment processors are available right now. Please try again later or contact support.'
+        );
+        return;
+      }
 
-      await messagingService.sendMessage(
-        user.phone_number,
-        `💳 PAYMENT LINK 💳\n\n` +
-        `Package: ${selectedPackage.name}\n` +
-        `Amount: ₦${payment.amount.toLocaleString()}\n` +
-        `Games: ${payment.games}\n\n` +
-        `Click link to pay:\n${payment.authorization_url}\n\n` +
-        `Payment Reference: ${payment.reference}\n\n` +
-        `⚠️ Link expires in 30 minutes`
-      );
+      // Only one gateway enabled — skip picker, init directly
+      if (gateways.length === 1) {
+        await this.initPackagePayment(user, selectedPackage, gateways[0].getName());
+        return;
+      }
+
+      // Multiple gateways — show picker
+      let pickerMsg = `💳 *SELECT PAYMENT PROCESSOR* 💳\n\n`;
+      pickerMsg += `Package: ${selectedPackage.name}\n`;
+      pickerMsg += `Amount: ₦${Number(selectedPackage.price_naira).toLocaleString()}\n\n`;
+      pickerMsg += `Reply with the number to choose how to pay:\n\n`;
+      gateways.forEach((gw, idx) => {
+        pickerMsg += `${idx + 1}. ${gw.getDisplayName()}\n`;
+      });
+      pickerMsg += `\nOr reply MENU to cancel.`;
+
+      await userService.setUserState(user.phone_number, 'SELECT_PACKAGE_GATEWAY', {
+        packageId: selectedPackage.id,
+        packageName: selectedPackage.name,
+        gatewayNames: gateways.map(g => g.getName())
+      });
+      await messagingService.sendMessage(user.phone_number, pickerMsg);
 
     } catch (error) {
       logger.error('Error handling package selection:', error);
+      await messagingService.sendMessage(
+        user.phone_number,
+        '❌ Error processing payment. Please try again.'
+      );
+    }
+  }
+
+  /**
+   * Shared method to actually initialize a package payment with a specific gateway
+   */
+  async initPackagePayment(user, selectedPackage, gatewayName) {
+    const payment = await paymentService.initializePayment(user, selectedPackage.id, gatewayName);
+    await userService.clearUserState(user.phone_number);
+
+    await messagingService.sendMessage(
+      user.phone_number,
+      `💳 PAYMENT LINK 💳\n\n` +
+      `Package: ${selectedPackage.name}\n` +
+      `Amount: ₦${payment.amount.toLocaleString()}\n` +
+      `Games: ${payment.games}\n` +
+      `Pay with: ${payment.gateway.charAt(0).toUpperCase() + payment.gateway.slice(1)}\n\n` +
+      `Click link to pay:\n${payment.authorization_url}\n\n` +
+      `Payment Reference: ${payment.reference}\n\n` +
+      `⚠️ Link expires in 30 minutes`
+    );
+  }
+
+  /**
+   * Handle the user's gateway pick after they chose a package
+   */
+  async handlePackageGatewaySelection(user, message, stateData) {
+    try {
+      const input = message.trim().toUpperCase();
+      if (input === 'MENU' || input === 'CANCEL') {
+        await userService.clearUserState(user.phone_number);
+        await this.sendMainMenu(user.phone_number);
+        return;
+      }
+
+      if (!stateData || !stateData.gatewayNames) {
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(user.phone_number, '❌ Session expired. Type BUY to start over.');
+        return;
+      }
+
+      const idx = parseInt(message.trim()) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= stateData.gatewayNames.length) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `⚠️ Reply with a number between 1 and ${stateData.gatewayNames.length}, or MENU to cancel.`
+        );
+        return;
+      }
+
+      const chosenGateway = stateData.gatewayNames[idx];
+      const pool = require('../config/database');
+      const pkgResult = await pool.query('SELECT * FROM game_packages WHERE id = $1', [stateData.packageId]);
+      
+      if (pkgResult.rows.length === 0) {
+        await userService.clearUserState(user.phone_number);
+        await messagingService.sendMessage(user.phone_number, '❌ Package no longer available. Type BUY to start over.');
+        return;
+      }
+
+      await this.initPackagePayment(user, pkgResult.rows[0], chosenGateway);
+
+    } catch (error) {
+      logger.error('Error handling package gateway selection:', error);
+      await userService.clearUserState(user.phone_number);
       await messagingService.sendMessage(
         user.phone_number,
         '❌ Error processing payment. Please try again.'
