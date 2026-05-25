@@ -146,6 +146,8 @@ class FinancialService {
     try {
       const dateFilter = this.buildDateFilter(startDate, endDate, 't.created_at');
       
+      // Use scalar subqueries to avoid the cross-product double-counting
+      // that happens when joining participants AND payments together.
       const result = await pool.query(`
         SELECT 
           t.id,
@@ -156,30 +158,52 @@ class FinancialService {
           t.status,
           t.start_date,
           t.end_date,
-          COUNT(DISTINCT tp.user_id) as total_participants,
-          COUNT(DISTINCT tep.user_id) FILTER (WHERE tep.payment_status = 'success') as paid_participants,
-          COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) as total_entry_fees,
-          COALESCE(
-            (SELECT SUM(tr.amount) FROM transactions tr 
-             WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
+          -- Distinct participant count
+          (SELECT COUNT(DISTINCT user_id) 
+           FROM tournament_participants 
+           WHERE tournament_id = t.id) as total_participants,
+          -- Distinct paying users
+          (SELECT COUNT(DISTINCT user_id) 
+           FROM tournament_entry_payments 
+           WHERE tournament_id = t.id AND payment_status = 'success' AND gateway_used != 'promo') as paid_participants,
+          -- True entry-fee revenue (excludes promo redemptions which are ₦0)
+          (SELECT COALESCE(SUM(amount), 0) 
+           FROM tournament_entry_payments 
+           WHERE tournament_id = t.id AND payment_status = 'success') as total_entry_fees,
+          -- Prizes paid out for this tournament
+          (SELECT COALESCE(SUM(tr.amount), 0) 
+           FROM transactions tr 
+           WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
              AND tr.transaction_type IN ('prize', 'tournament_prize')
-             AND tr.payout_status IN ('paid', 'confirmed')), 0
-          ) as prizes_paid,
-          CASE 
-            WHEN t.payment_type = 'paid' THEN 
-              COALESCE(SUM(tep.amount) FILTER (WHERE tep.payment_status = 'success'), 0) - t.prize_pool
-            ELSE 0 - t.prize_pool
-          END as net_profit
+             AND tr.payout_status IN ('paid', 'confirmed')) as prizes_paid
         FROM tournaments t
-        LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
-        LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
         ${dateFilter ? `WHERE ${dateFilter}` : ''}
-        GROUP BY t.id, t.tournament_name, t.payment_type, t.entry_fee, t.prize_pool, t.status, t.start_date, t.end_date
         ORDER BY t.start_date DESC
       `);
       
-      // Calculate summary
-      const summary = result.rows.reduce((acc, row) => {
+      // Add computed columns (net, ROI) row-by-row to ensure correctness
+      const tournaments = result.rows.map(row => {
+        const revenue = parseFloat(row.total_entry_fees);
+        const paidOut = parseFloat(row.prizes_paid);
+        const net_profit = revenue - paidOut;
+        let roi;
+        if (row.payment_type === 'free') {
+          roi = 'N/A';
+        } else if (revenue > 0) {
+          // ROI = (net profit / revenue) * 100
+          roi = ((net_profit / revenue) * 100).toFixed(2);
+        } else {
+          roi = '0';
+        }
+        return {
+          ...row,
+          net_profit,
+          roi
+        };
+      });
+      
+      // Summary
+      const summary = tournaments.reduce((acc, row) => {
         acc.total_entry_fees += parseFloat(row.total_entry_fees);
         acc.total_prize_pools += parseFloat(row.prize_pool);
         acc.total_prizes_paid += parseFloat(row.prizes_paid);
@@ -201,15 +225,7 @@ class FinancialService {
         ? (((summary.total_entry_fees - summary.total_prizes_paid) / summary.total_entry_fees) * 100).toFixed(2)
         : 0;
       
-      return {
-        tournaments: result.rows.map(row => ({
-          ...row,
-          roi: row.total_entry_fees > 0 
-            ? (((parseFloat(row.total_entry_fees) - parseFloat(row.prizes_paid)) / parseFloat(row.total_entry_fees)) * 100).toFixed(2)
-            : row.payment_type === 'free' ? 'N/A' : '0'
-        })),
-        summary
-      };
+      return { tournaments, summary };
     } catch (error) {
       logger.error('Error getting tournament revenue:', error);
       throw error;
@@ -289,6 +305,12 @@ class FinancialService {
         GROUP BY t.payout_status
       `);
       
+      // Mode classification:
+      //   - tournament_id IS NOT NULL → 'tournament'
+      //   - game_mode = 'practice' → 'practice' (shouldn't have prizes, but defensive)
+      //   - else → 'classic'
+      // We also use transaction_type as a backup signal: 'tournament_prize' = tournament.
+      
       // Completed payouts with details
       const completedPayouts = await pool.query(`
         SELECT 
@@ -298,7 +320,11 @@ class FinancialService {
           u.phone_number,
           pd.bank_name,
           pd.account_number,
-          gs.game_mode,
+          CASE 
+            WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
+            WHEN gs.game_mode = 'practice' THEN 'practice'
+            ELSE 'classic'
+          END as game_mode,
           t.created_at as completed_at
         FROM transactions t
         JOIN users u ON t.user_id = u.id
@@ -323,7 +349,11 @@ class FinancialService {
           u.phone_number,
           pd.bank_name,
           pd.account_number,
-          gs.game_mode
+          CASE 
+            WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
+            WHEN gs.game_mode = 'practice' THEN 'practice'
+            ELSE 'classic'
+          END as game_mode
         FROM transactions t
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
@@ -334,10 +364,14 @@ class FinancialService {
         ORDER BY t.created_at ASC
       `);
       
-      // By game mode
+      // By game mode — same classification logic
       const byGameMode = await pool.query(`
         SELECT 
-          gs.game_mode,
+          CASE 
+            WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
+            WHEN gs.game_mode = 'practice' THEN 'practice'
+            ELSE 'classic'
+          END as game_mode,
           COUNT(*) as payout_count,
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
@@ -345,7 +379,7 @@ class FinancialService {
         WHERE t.transaction_type IN ('prize', 'tournament_prize')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
-        GROUP BY gs.game_mode
+        GROUP BY 1
       `);
       
       return {
@@ -370,6 +404,7 @@ class FinancialService {
     try {
       const dateFilter = this.buildDateFilter(startDate, endDate, 't.created_at');
       
+      // Only count wins from classic and tournament modes — practice never counts
       const result = await pool.query(`
         SELECT 
           u.id as user_id,
@@ -382,7 +417,11 @@ class FinancialService {
           COALESCE(AVG(t.amount), 0) as avg_win
         FROM users u
         JOIN transactions t ON u.id = t.user_id
+        JOIN game_sessions gs ON t.session_id = gs.id
         WHERE t.transaction_type IN ('prize', 'tournament_prize')
+          AND t.amount > 0
+          AND gs.game_mode != 'practice'
+          AND (gs.game_type IS NULL OR gs.game_type != 'practice')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY u.id, u.username, u.phone_number, u.created_at
         ORDER BY total_winnings DESC
