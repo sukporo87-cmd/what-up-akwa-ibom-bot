@@ -773,6 +773,7 @@
       <button class="tab" onclick="switchTab('tournaments')">🏅 Tournaments</button>
       <button class="tab" onclick="switchTab('lovequest')">💘 Love Quest</button>
       <button class="tab" onclick="switchTab('gateways')">💳 Gateways</button>
+      <button class="tab" onclick="switchTab('promocodes')">🎟️ Promo Codes</button>
       <button class="tab" onclick="switchTab('activity')">📋 Activity Log</button>
     </div>
 
@@ -1361,6 +1362,64 @@
         </p>
         <div id="gatewaysContainer">
           <div class="loading"><div class="spinner"></div><p>Loading gateways...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Promo Codes Tab -->
+    <div id="promocodesTab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>🎟️ Promo Codes</h2>
+          <div class="filter-group">
+            <button class="btn btn-primary" onclick="loadPromoCodes()">🔄 Refresh</button>
+            <button class="btn btn-primary" onclick="showCreatePromoCodeModal()">➕ Create Code</button>
+          </div>
+        </div>
+        <p style="color: var(--text-gray); margin-bottom: 20px; font-size: 14px;">
+          Codes grant tournament entry without payment. Recipients get the same entry as a paid player (same tokens / unlimited plays).
+        </p>
+        <div id="promoCodesContainer">
+          <div class="loading"><div class="spinner"></div><p>Loading promo codes...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Promo Code Modal -->
+    <div id="createPromoCodeModal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 540px;">
+        <span class="close" onclick="closeModal('createPromoCodeModal')">&times;</span>
+        <h2>➕ Create Promo Code</h2>
+        <div style="margin-top: 20px;">
+          <label style="display:block;margin-bottom:6px;font-weight:600;">Code (uppercase, 3-50 chars)</label>
+          <input type="text" id="pcCode" class="form-input" placeholder="WUAIB-FREE" style="width:100%;text-transform:uppercase;">
+          
+          <label style="display:block;margin:14px 0 6px;font-weight:600;">Description (internal)</label>
+          <input type="text" id="pcDescription" class="form-input" placeholder="What this code is for" style="width:100%;">
+          
+          <label style="display:block;margin:14px 0 6px;font-weight:600;">Tournament (optional — leave blank for any)</label>
+          <select id="pcTournament" class="form-input" style="width:100%;">
+            <option value="">— Any paid tournament —</option>
+          </select>
+          
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;">
+            <div>
+              <label style="display:block;margin-bottom:6px;font-weight:600;">Max total uses</label>
+              <input type="number" id="pcMaxRedemptions" class="form-input" placeholder="Unlimited" min="1" style="width:100%;">
+            </div>
+            <div>
+              <label style="display:block;margin-bottom:6px;font-weight:600;">Max uses per user</label>
+              <input type="number" id="pcMaxPerUser" class="form-input" value="1" min="1" style="width:100%;">
+            </div>
+          </div>
+          
+          <label style="display:block;margin:14px 0 6px;font-weight:600;">Expires (optional)</label>
+          <input type="datetime-local" id="pcExpiresAt" class="form-input" style="width:100%;">
+          
+          <div style="margin-top:24px;display:flex;gap:10px;">
+            <button class="btn btn-primary" onclick="submitCreatePromoCode()">🎟️ Create</button>
+            <button class="btn btn-secondary" onclick="closeModal('createPromoCodeModal')">Cancel</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2282,6 +2341,7 @@ function switchTab(tab) {
   if (tab === 'activity' && !document.getElementById('activityTableContainer').innerHTML.includes('table')) loadActivityLog();
   if (tab === 'lovequest') loadLoveQuestData();
   if (tab === 'gateways') loadGateways();
+  if (tab === 'promocodes') loadPromoCodes();
 }
 
 function openModal(modalId) {
@@ -2924,6 +2984,140 @@ async function setDefaultGateway(name) {
     const d = await r.json();
     if (d.success) { showAlert(d.message, 'success'); loadGateways(); }
     else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function loadPromoCodes() {
+  const container = document.getElementById('promoCodesContainer');
+  try {
+    const r = await fetch('/admin/api/promo-codes', { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    if (!d.success || !d.codes || d.codes.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-gray);text-align:center;padding:40px;">No promo codes yet. Click "Create Code" to add one.</p>';
+      return;
+    }
+    let html = `<table class="data-table"><thead><tr>
+      <th>Code</th><th>Scope</th><th>Description</th><th>Uses</th><th>Per User</th><th>Expires</th><th>Status</th><th>Actions</th>
+    </tr></thead><tbody>`;
+    for (const c of d.codes) {
+      const scope = c.tournament_name ? `🏆 ${c.tournament_name}` : '<span style="color:#6b7280;">Any tournament</span>';
+      const usesMax = c.max_redemptions === null ? '∞' : c.max_redemptions;
+      const expires = c.expires_at ? new Date(c.expires_at).toLocaleString() : '—';
+      const status = c.is_active 
+        ? '<span style="background:#d1fae5;color:#065f46;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">ACTIVE</span>'
+        : '<span style="background:#fee2e2;color:#991b1b;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">INACTIVE</span>';
+      html += `<tr>
+        <td><strong style="font-family:monospace;">${c.code}</strong></td>
+        <td style="font-size:13px;">${scope}</td>
+        <td style="font-size:13px;max-width:200px;color:#6b7280;">${c.description || '—'}</td>
+        <td>${c.redemption_count} / ${usesMax}</td>
+        <td>${c.max_per_user}</td>
+        <td style="font-size:12px;">${expires}</td>
+        <td>${status}</td>
+        <td>
+          <button class="btn btn-sm" onclick="togglePromoCode(${c.id}, ${!c.is_active})">${c.is_active ? '⏸️' : '▶️'}</button>
+          <button class="btn btn-sm" onclick="viewPromoRedemptions(${c.id}, '${c.code}')">👁️</button>
+          ${c.redemption_count === 0 ? `<button class="btn btn-sm btn-danger" onclick="deletePromoCode(${c.id})">🗑️</button>` : ''}
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<p style="color:#dc2626;">Error: ${e.message}</p>`;
+  }
+}
+
+async function showCreatePromoCodeModal() {
+  // Load tournament list for the dropdown
+  try {
+    const r = await fetch('/admin/api/tournaments', { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    const select = document.getElementById('pcTournament');
+    select.innerHTML = '<option value="">— Any paid tournament —</option>';
+    if (d.tournaments) {
+      for (const t of d.tournaments) {
+        if (t.payment_type === 'paid') {
+          select.innerHTML += `<option value="${t.id}">${t.tournament_name}</option>`;
+        }
+      }
+    }
+  } catch (e) { console.error('Tournament list fetch failed:', e); }
+  // Reset other fields
+  document.getElementById('pcCode').value = '';
+  document.getElementById('pcDescription').value = '';
+  document.getElementById('pcMaxRedemptions').value = '';
+  document.getElementById('pcMaxPerUser').value = '1';
+  document.getElementById('pcExpiresAt').value = '';
+  document.getElementById('createPromoCodeModal').style.display = 'block';
+}
+
+async function submitCreatePromoCode() {
+  const payload = {
+    code: document.getElementById('pcCode').value.trim().toUpperCase(),
+    description: document.getElementById('pcDescription').value.trim(),
+    tournament_id: document.getElementById('pcTournament').value || null,
+    max_redemptions: document.getElementById('pcMaxRedemptions').value || null,
+    max_per_user: document.getElementById('pcMaxPerUser').value || 1,
+    expires_at: document.getElementById('pcExpiresAt').value || null
+  };
+  if (!payload.code) { showAlert('Code is required', 'error'); return; }
+  try {
+    const r = await fetch('/admin/api/promo-codes', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.success) {
+      showAlert(`Code ${d.code.code} created`, 'success');
+      closeModal('createPromoCodeModal');
+      loadPromoCodes();
+    } else {
+      showAlert(d.error || 'Failed', 'error');
+    }
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function togglePromoCode(id, isActive) {
+  try {
+    const r = await fetch(`/admin/api/promo-codes/${id}/toggle`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: isActive })
+    });
+    const d = await r.json();
+    if (d.success) { showAlert(`Code ${isActive ? 'activated' : 'deactivated'}`, 'success'); loadPromoCodes(); }
+    else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function deletePromoCode(id) {
+  if (!confirm('Delete this promo code? This cannot be undone.')) return;
+  try {
+    const r = await fetch(`/admin/api/promo-codes/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const d = await r.json();
+    if (d.success) { showAlert('Code deleted', 'success'); loadPromoCodes(); }
+    else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function viewPromoRedemptions(id, code) {
+  try {
+    const r = await fetch(`/admin/api/promo-codes/${id}/redemptions`, { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    if (!d.success) { showAlert('Failed to load redemptions', 'error'); return; }
+    let msg = `📋 Redemptions for ${code}:\n\n`;
+    if (d.redemptions.length === 0) msg += 'No redemptions yet.';
+    else {
+      d.redemptions.forEach(red => {
+        msg += `• @${red.username || red.full_name || red.user_id} → ${red.tournament_name}\n  ${new Date(red.redeemed_at).toLocaleString()}\n\n`;
+      });
+    }
+    alert(msg);
   } catch (e) { showAlert('Error: ' + e.message, 'error'); }
 }
 

@@ -277,6 +277,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'ENTER_PROMO_CODE') {
+        await this.handlePromoCodeEntry(phone, message, userState.data);
+        return;
+      }
+
       if (userState && userState.state === 'CONFIRM_TOURNAMENT_REBUY') {
         await this.handleTournamentRebuyConfirmation(phone, message, userState.data);
         return;
@@ -1194,8 +1199,9 @@ Type the code, or type SKIP to continue:`
       
       message += `━━━━━━━━━━━━━━━━\n\n`;
       message += `Ready to join?\n\n`;
-      message += `Reply YES to proceed with payment\n`;
-      message += `Reply NO to go back`;
+      message += `Reply *YES* to proceed with payment\n`;
+      message += `Reply *CODE* if you have a promo code\n`;
+      message += `Reply *NO* to go back`;
       
       await userService.setUserState(user.phone_number, 'CONFIRM_TOURNAMENT_PAYMENT', {
         tournamentId: tournament.id,
@@ -1258,6 +1264,16 @@ Type the code, or type SKIP to continue:`
           '❌ Error processing payment. Please try again.\n\nType TOURNAMENTS to start over.'
         );
       }
+    } else if (input === 'CODE' || input === 'PROMO') {
+      // User wants to redeem a promo code
+      await userService.setUserState(phone, 'ENTER_PROMO_CODE', stateData);
+      await messagingService.sendMessage(
+        phone,
+        `🎟️ *ENTER PROMO CODE* 🎟️\n\n` +
+        `Reply with your promo code to enter *${stateData.tournamentName}* for free.\n\n` +
+        `Codes are case-insensitive.\n\n` +
+        `Reply *CANCEL* to go back to payment options.`
+      );
     } else if (input === 'NO' || input === 'N') {
       await userService.clearUserState(phone);
       await messagingService.sendMessage(
@@ -1267,7 +1283,79 @@ Type the code, or type SKIP to continue:`
     } else {
       await messagingService.sendMessage(
         phone,
-        '⚠️ Please reply YES or NO'
+        '⚠️ Please reply *YES* (pay), *CODE* (promo code), or *NO* (cancel)'
+      );
+    }
+  }
+
+  /**
+   * Handle a promo code submission for a tournament
+   */
+  async handlePromoCodeEntry(phone, message, stateData) {
+    const input = message.trim();
+    const upperInput = input.toUpperCase();
+    const user = await userService.getUserByPhone(phone);
+
+    if (upperInput === 'CANCEL' || upperInput === 'BACK') {
+      // Re-show tournament info & payment options
+      const tournament = await tournamentService.getTournamentById(stateData.tournamentId);
+      if (tournament) {
+        await this.showPaidTournamentInfo(user, tournament);
+      } else {
+        await userService.clearUserState(phone);
+        await this.sendMainMenu(phone);
+      }
+      return;
+    }
+
+    if (!input) {
+      await messagingService.sendMessage(phone, '⚠️ Please enter your promo code, or reply CANCEL to go back.');
+      return;
+    }
+
+    try {
+      const promoCodeService = require('../services/promo-code.service');
+      const result = await promoCodeService.redeemCode(input, user.id, stateData.tournamentId);
+
+      if (!result.success) {
+        await messagingService.sendMessage(
+          phone,
+          `❌ *${result.reason || 'Code could not be redeemed'}*\n\n` +
+          `Reply with another code, or reply *CANCEL* to go back to payment options.`
+        );
+        return;
+      }
+
+      // Code redeemed — clear state and confirm
+      await userService.clearUserState(phone);
+      const tournament = result.tournament;
+      let confirmMsg = `🎉 *TOURNAMENT JOINED!* 🎉\n\n`;
+      confirmMsg += `${tournament.tournament_name}\n`;
+      confirmMsg += `Prize Pool: ₦${tournament.prize_pool.toLocaleString()}\n\n`;
+      confirmMsg += `🎟️ Code redeemed successfully!\n\n`;
+
+      if (tournament.uses_tokens && result.tokensRemaining) {
+        confirmMsg += `🎮 You have ${result.tokensRemaining} game attempts\n\n`;
+      } else {
+        confirmMsg += `♾️ Unlimited plays during tournament!\n\n`;
+      }
+
+      const isUpcoming = new Date(tournament.start_date) > new Date();
+      if (isUpcoming) {
+        const startDate = new Date(tournament.start_date);
+        confirmMsg += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
+        confirmMsg += `Come back then to play! 🎮`;
+        await messagingService.sendMessage(phone, confirmMsg);
+      } else {
+        confirmMsg += `Starting your first game...`;
+        await messagingService.sendMessage(phone, confirmMsg);
+        await gameService.startNewGame(user, 'tournament', tournament.id);
+      }
+    } catch (error) {
+      logger.error('Error handling promo code entry:', error);
+      await messagingService.sendMessage(
+        phone,
+        '❌ Error processing code. Please try again or reply CANCEL to go back.'
       );
     }
   }
@@ -1636,7 +1724,7 @@ Type the code, or type SKIP to continue:`
       
       // Clear any stale user state
       const userState = await userService.getUserState(user.phone_number);
-      if (userState && !['SELECT_GAME_MODE', 'SELECT_TOURNAMENT', 'SELECT_PACKAGE', 'SELECT_LEADERBOARD', 'SELECT_PACKAGE_GATEWAY', 'SELECT_TOURNAMENT_GATEWAY', 'SELECT_REBUY_GATEWAY', 'CONFIRM_TOURNAMENT_PAYMENT', 'CONFIRM_TOURNAMENT_REBUY'].includes(userState.state)) {
+      if (userState && !['SELECT_GAME_MODE', 'SELECT_TOURNAMENT', 'SELECT_PACKAGE', 'SELECT_LEADERBOARD', 'SELECT_PACKAGE_GATEWAY', 'SELECT_TOURNAMENT_GATEWAY', 'SELECT_REBUY_GATEWAY', 'CONFIRM_TOURNAMENT_PAYMENT', 'CONFIRM_TOURNAMENT_REBUY', 'ENTER_PROMO_CODE'].includes(userState.state)) {
         logger.warn(`Clearing unexpected state: ${userState.state} for user ${user.id}`);
         await userService.clearUserState(user.phone_number);
       }

@@ -8226,4 +8226,83 @@ router.post('/api/gateways/:name/set-default', authenticateAdmin, async (req, re
     }
 });
 
+// ============================================
+// PROMO CODE MANAGEMENT
+// ============================================
+
+const promoCodeService = require('../services/promo-code.service');
+
+router.get('/api/promo-codes', authenticateAdmin, async (req, res) => {
+    try {
+        const codes = await promoCodeService.listCodes();
+        res.json({ success: true, codes });
+    } catch (error) {
+        logger.error('Error listing promo codes:', error);
+        res.status(500).json({ error: 'Failed to list promo codes' });
+    }
+});
+
+router.post('/api/promo-codes', authenticateAdmin, async (req, res) => {
+    try {
+        const { code, description, tournament_id, max_redemptions, max_per_user, expires_at } = req.body;
+        const adminId = req.adminId || null;
+        
+        if (!code) return res.status(400).json({ error: 'Code is required' });
+        
+        const created = await promoCodeService.createCode({
+            code,
+            description,
+            tournament_id: tournament_id || null,
+            max_redemptions: max_redemptions ? parseInt(max_redemptions) : null,
+            max_per_user: max_per_user ? parseInt(max_per_user) : 1,
+            expires_at: expires_at || null,
+            admin_id: adminId
+        });
+        
+        await pool.query(`
+            INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+            VALUES ($1, 'promo_code_create', $2)
+        `, [adminId, JSON.stringify({ code: created.code, id: created.id })]);
+        
+        res.json({ success: true, code: created });
+    } catch (error) {
+        logger.error('Error creating promo code:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/api/promo-codes/:id/toggle', authenticateAdmin, async (req, res) => {
+    try {
+        const codeId = parseInt(req.params.id);
+        const { is_active } = req.body;
+        await promoCodeService.toggleCode(codeId, !!is_active);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error toggling promo code:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.delete('/api/promo-codes/:id', authenticateAdmin, async (req, res) => {
+    try {
+        const codeId = parseInt(req.params.id);
+        await promoCodeService.deleteCode(codeId);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error deleting promo code:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.get('/api/promo-codes/:id/redemptions', authenticateAdmin, async (req, res) => {
+    try {
+        const codeId = parseInt(req.params.id);
+        const redemptions = await promoCodeService.getRedemptions(codeId);
+        res.json({ success: true, redemptions });
+    } catch (error) {
+        logger.error('Error getting redemptions:', error);
+        res.status(500).json({ error: 'Failed to get redemptions' });
+    }
+});
+
 module.exports = router;
