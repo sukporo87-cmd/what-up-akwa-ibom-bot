@@ -696,11 +696,12 @@ class TournamentService {
                     );
 
                     const txResult = await pool.query(`
-                        INSERT INTO transactions (user_id, amount, transaction_type, payment_status, description, created_at)
-                        VALUES ($1, $2, 'tournament_prize', 'pending', $3, NOW())
+                        INSERT INTO transactions (user_id, amount, transaction_type, payment_status, description, tournament_id, created_at)
+                        VALUES ($1, $2, 'tournament_prize', 'pending', $3, $4, NOW())
                         RETURNING id
                     `, [winner.userId, winner.prize,
-                        `Tournament Prize: ${tournament.tournament_name} - Rank #${winner.rank}`]);
+                        `Tournament Prize: ${tournament.tournament_name} - Rank #${winner.rank}`,
+                        tournamentId]);
 
                     distributionResults.push({
                         userId: winner.userId, rank: winner.rank,

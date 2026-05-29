@@ -170,12 +170,27 @@ class FinancialService {
           (SELECT COALESCE(SUM(amount), 0) 
            FROM tournament_entry_payments 
            WHERE tournament_id = t.id AND payment_status = 'success') as total_entry_fees,
-          -- Prizes paid out for this tournament
-          (SELECT COALESCE(SUM(tr.amount), 0) 
-           FROM transactions tr 
-           WHERE tr.session_id IN (SELECT gs.id FROM game_sessions gs WHERE gs.tournament_id = t.id)
-             AND tr.transaction_type IN ('prize', 'tournament_prize')
-             AND tr.payout_status IN ('paid', 'confirmed')) as prizes_paid
+          -- Prizes paid out for this tournament.
+          -- Uses transactions.tournament_id (added in the schema migration) for a direct relational link.
+          -- We count both 'paid' and 'confirmed' payout states. Pending/cancelled don't count as paid out.
+          -- Falls back to tournament_participants.prize_won for any legacy rows that weren't backfilled.
+          GREATEST(
+            (SELECT COALESCE(SUM(amount), 0) 
+             FROM transactions 
+             WHERE tournament_id = t.id 
+               AND transaction_type IN ('prize', 'tournament_prize')
+               AND payout_status IN ('paid', 'confirmed')),
+            (SELECT COALESCE(SUM(prize_won), 0) 
+             FROM tournament_participants 
+             WHERE tournament_id = t.id 
+               AND prize_won > 0
+               -- Only fall back if no linked transactions exist for this tournament
+               AND NOT EXISTS (
+                 SELECT 1 FROM transactions 
+                 WHERE tournament_id = t.id 
+                   AND transaction_type IN ('prize', 'tournament_prize')
+               ))
+          ) as prizes_paid
         FROM tournaments t
         ${dateFilter ? `WHERE ${dateFilter}` : ''}
         ORDER BY t.start_date DESC
