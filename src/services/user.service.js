@@ -22,7 +22,7 @@ class UserService {
     }
   }
 
-  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, consentDataOrPlatform = 'whatsapp') {
+  async createUser(phoneNumber, fullName, city, username, age, referrerId = null, consentDataOrPlatform = 'whatsapp', acquisitionSource = null) {
     const client = await pool.connect();
     
     try {
@@ -53,17 +53,18 @@ class UserService {
       // Store platform info in phone_number field with prefix for Telegram
       const identifier = platform === 'telegram' ? `tg_${phoneNumber}` : phoneNumber;
 
-      // 🔧 UPDATED: Create user WITH consent fields
+      // Create user WITH consent fields AND acquisition source
       const userResult = await client.query(
         `INSERT INTO users (
             phone_number, full_name, city, username, age, 
             referral_code, referred_by, platform,
-            terms_accepted, privacy_accepted, consent_timestamp, consent_platform
+            terms_accepted, privacy_accepted, consent_timestamp, consent_platform,
+            acquisition_source
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *`,
         [identifier, fullName, city, username, age, referralCode, referrerId, platform,
-         termsAccepted, privacyAccepted, consentTimestamp, consentPlatform]
+         termsAccepted, privacyAccepted, consentTimestamp, consentPlatform, acquisitionSource]
       );
 
       const user = userResult.rows[0];

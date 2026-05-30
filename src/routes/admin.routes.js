@@ -8305,4 +8305,53 @@ router.get('/api/promo-codes/:id/redemptions', authenticateAdmin, async (req, re
     }
 });
 
+// ============================================
+// ACQUISITION SOURCES ANALYTICS
+// ============================================
+
+router.get('/api/acquisition-sources', authenticateAdmin, async (req, res) => {
+    try {
+        const { range = 'all' } = req.query;
+        // range: 'all', '7', '30', '90' (days)
+        let dateClause = '';
+        const params = [];
+        if (range && range !== 'all') {
+            const days = parseInt(range);
+            if (!isNaN(days) && days > 0 && days <= 3650) {
+                dateClause = `AND created_at >= NOW() - INTERVAL '${days} days'`;
+            }
+        }
+
+        // Grouped breakdown — only count users with an acquisition_source set
+        const groupedResult = await pool.query(`
+            SELECT acquisition_source as source, COUNT(*) as count
+            FROM users
+            WHERE acquisition_source IS NOT NULL
+            ${dateClause}
+            GROUP BY acquisition_source
+            ORDER BY count DESC
+        `);
+
+        // Count of users without a source (e.g. existing users from before this feature)
+        const unassignedResult = await pool.query(`
+            SELECT COUNT(*) as count FROM users
+            WHERE acquisition_source IS NULL
+            ${dateClause}
+        `);
+
+        const total = groupedResult.rows.reduce((s, r) => s + parseInt(r.count), 0);
+
+        res.json({
+            success: true,
+            sources: groupedResult.rows,
+            total,
+            unassigned: parseInt(unassignedResult.rows[0]?.count || 0),
+            range
+        });
+    } catch (error) {
+        logger.error('Error getting acquisition sources:', error);
+        res.status(500).json({ error: 'Failed to load acquisition sources' });
+    }
+});
+
 module.exports = router;

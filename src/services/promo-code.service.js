@@ -194,6 +194,139 @@ class PromoCodeService {
         }
     }
 
+    /**
+     * Redeem a code for a token rebuy in a tournament the user already paid into.
+     * Reuses the same validation rules as redeemCode, including per-user usage limits
+     * (so a code with max_per_user > 1 can be used for both initial entry AND a rebuy,
+     * or for multiple rebuys, as long as the cap allows).
+     * 
+     * Returns { success: bool, tokensRemaining: number, reason?: string }
+     */
+    async redeemCodeForRebuy(rawCode, userId, tournamentId) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const codeUpper = (rawCode || '').trim().toUpperCase();
+            const lockResult = await client.query(`
+                SELECT * FROM promo_codes WHERE code = $1 FOR UPDATE
+            `, [codeUpper]);
+
+            if (lockResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Code not found' };
+            }
+
+            const promo = lockResult.rows[0];
+
+            // Standard validation
+            if (!promo.is_active) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Code is deactivated' };
+            }
+            if (promo.expires_at && new Date(promo.expires_at) < new Date()) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Code has expired' };
+            }
+            if (promo.tournament_id && promo.tournament_id !== tournamentId) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Code is not valid for this tournament' };
+            }
+            if (promo.max_redemptions !== null && promo.redemption_count >= promo.max_redemptions) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Code redemption limit reached' };
+            }
+            const userUses = await client.query(`
+                SELECT COUNT(*) as count FROM promo_code_redemptions
+                WHERE promo_code_id = $1 AND user_id = $2
+            `, [promo.id, userId]);
+            if (parseInt(userUses.rows[0].count) >= promo.max_per_user) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'You have used this code the maximum number of times' };
+            }
+
+            // Tournament context
+            const tournamentResult = await client.query('SELECT * FROM tournaments WHERE id = $1', [tournamentId]);
+            if (tournamentResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Tournament not found' };
+            }
+            const tournament = tournamentResult.rows[0];
+
+            if (!tournament.uses_tokens) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'This tournament does not use tokens — no rebuy available' };
+            }
+            if (tournament.status !== 'active') {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'Tournament is no longer active' };
+            }
+
+            // Must already be a participant (paid or via initial code) to rebuy
+            const participantResult = await client.query(
+                'SELECT * FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2',
+                [tournamentId, userId]
+            );
+            if (participantResult.rows.length === 0 || !participantResult.rows[0].entry_paid) {
+                await client.query('ROLLBACK');
+                return { success: false, reason: 'You must join the tournament first before rebuying' };
+            }
+
+            // User platform for synthetic payment record
+            const userResult = await client.query('SELECT phone_number FROM users WHERE id = $1', [userId]);
+            const platform = userResult.rows[0]?.phone_number?.startsWith('tg_') ? 'telegram' : 'whatsapp';
+
+            const tokensToAdd = tournament.tokens_per_entry;
+            const reference = `PROMOR-${promo.id}-${tournamentId}-${userId}-${Date.now()}`;
+
+            // Create synthetic rebuy payment record (₦0, gateway = promo)
+            // Uses TRNR-style reference semantics — prefix PROMOR identifies a promo rebuy
+            await client.query(`
+                INSERT INTO tournament_entry_payments
+                    (tournament_id, user_id, amount, payment_reference, payment_status, platform, gateway_used, paid_at)
+                VALUES ($1, $2, 0, $3, 'success', $4, 'promo', NOW())
+            `, [tournamentId, userId, reference, platform]);
+
+            // Add tokens to the existing participant record
+            const tokenUpdate = await client.query(`
+                UPDATE tournament_participants
+                SET tokens_remaining = tokens_remaining + $1, can_play = true
+                WHERE tournament_id = $2 AND user_id = $3
+                RETURNING tokens_remaining
+            `, [tokensToAdd, tournamentId, userId]);
+
+            // Record the redemption
+            await client.query(`
+                INSERT INTO promo_code_redemptions (promo_code_id, user_id, tournament_id)
+                VALUES ($1, $2, $3)
+            `, [promo.id, userId, tournamentId]);
+
+            // Increment code's usage counter
+            await client.query(`
+                UPDATE promo_codes SET redemption_count = redemption_count + 1, updated_at = NOW()
+                WHERE id = $1
+            `, [promo.id]);
+
+            await client.query('COMMIT');
+
+            logger.info(`🎟️ Promo code ${codeUpper} used for REBUY by user ${userId} in tournament ${tournamentId} (+${tokensToAdd} tokens)`);
+
+            return {
+                success: true,
+                tokensAdded: tokensToAdd,
+                tokensRemaining: tokenUpdate.rows[0]?.tokens_remaining,
+                tournament,
+                code: promo
+            };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            logger.error('Error redeeming promo code for rebuy:', error);
+            return { success: false, reason: 'Error redeeming code' };
+        } finally {
+            client.release();
+        }
+    }
+
     // ============================================
     // ADMIN OPERATIONS
     // ============================================

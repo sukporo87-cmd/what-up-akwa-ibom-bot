@@ -199,6 +199,11 @@ class WebhookController {
         return;
       }
 
+      if (userState && userState.state === 'REGISTRATION_SOURCE') {
+        await this.handleRegistrationSource(phone, message, userState.data);
+        return;
+      }
+
       // Email collection state
       if (userState && userState.state === 'EMAIL_COLLECT') {
         await this.handleEmailCollection(phone, message, user);
@@ -652,7 +657,6 @@ Type the code, or type SKIP to continue:`
   }
 
   async handleRegistrationReferral(phone, referralCodeInput, stateData) {
-    const { name, city, username, age, termsAccepted, privacyAccepted, consentTimestamp, consentPlatform } = stateData;
     const input = referralCodeInput.trim().toUpperCase();
 
     let referrerId = null;
@@ -675,6 +679,63 @@ Type the code, or type SKIP to continue:`
       logger.info(`User registering with referral code: ${input} from user ${referrerId}`);
     }
 
+    // Move to acquisition source step (last registration step)
+    await userService.setUserState(phone, 'REGISTRATION_SOURCE', {
+      ...stateData,
+      referrerId: referrerId
+    });
+
+    await messagingService.sendMessage(
+      phone,
+      `One last thing! 🙏\n\n` +
+      `*How did you hear about us?* 📣\n\n` +
+      `Reply with a number:\n\n` +
+      `1. Instagram\n` +
+      `2. Facebook\n` +
+      `3. X (Twitter)\n` +
+      `4. YouTube\n` +
+      `5. Google\n` +
+      `6. Friends\n` +
+      `7. Word of mouth\n` +
+      `8. Live event\n` +
+      `9. Other`
+    );
+  }
+
+  async handleRegistrationSource(phone, sourceInput, stateData) {
+    const input = sourceInput.trim();
+    const sourceMap = {
+      '1': 'instagram',
+      '2': 'facebook',
+      '3': 'twitter',
+      '4': 'youtube',
+      '5': 'google',
+      '6': 'friends',
+      '7': 'word_of_mouth',
+      '8': 'live_event',
+      '9': 'other'
+    };
+
+    const acquisitionSource = sourceMap[input];
+    if (!acquisitionSource) {
+      await messagingService.sendMessage(
+        phone,
+        '⚠️ Please reply with a number from 1 to 9.\n\n' +
+        '1. Instagram\n' +
+        '2. Facebook\n' +
+        '3. X (Twitter)\n' +
+        '4. YouTube\n' +
+        '5. Google\n' +
+        '6. Friends\n' +
+        '7. Word of mouth\n' +
+        '8. Live event\n' +
+        '9. Other'
+      );
+      return;
+    }
+
+    const { name, city, username, age, referrerId, termsAccepted, privacyAccepted, consentTimestamp, consentPlatform } = stateData;
+
     // Pass consent data to createUser
     const consentData = {
       termsAccepted: termsAccepted || false,
@@ -683,7 +744,7 @@ Type the code, or type SKIP to continue:`
       consentPlatform: consentPlatform || 'whatsapp'
     };
 
-    const user = await userService.createUser(phone, name, city, username, age, referrerId, consentData);
+    const user = await userService.createUser(phone, name, city, username, age, referrerId, consentData, acquisitionSource);
     await userService.clearUserState(phone);
 
     const isPaymentEnabled = paymentService.isEnabled();
@@ -1090,7 +1151,8 @@ Type the code, or type SKIP to continue:`
         rebuyMsg += `You've used all ${tournament.tokens_per_entry} tokens!\n\n`;
         rebuyMsg += `🎟️ *Want more attempts?*\n`;
         rebuyMsg += `Buy ${tournament.tokens_per_entry} more tokens for ₦${Number(tournament.entry_fee).toLocaleString()}\n\n`;
-        rebuyMsg += `Reply *REBUY* to purchase more tokens\n`;
+        rebuyMsg += `Reply *REBUY* to pay for more tokens\n`;
+        rebuyMsg += `Reply *CODE* if you have a promo code\n`;
         rebuyMsg += `Reply *MENU* to go back`;
         
         await userService.setUserState(user.phone_number, 'CONFIRM_TOURNAMENT_REBUY', {
@@ -1295,15 +1357,38 @@ Type the code, or type SKIP to continue:`
     const input = message.trim();
     const upperInput = input.toUpperCase();
     const user = await userService.getUserByPhone(phone);
+    const isRebuy = !!stateData?.isRebuy;
 
     if (upperInput === 'CANCEL' || upperInput === 'BACK') {
-      // Re-show tournament info & payment options
-      const tournament = await tournamentService.getTournamentById(stateData.tournamentId);
-      if (tournament) {
-        await this.showPaidTournamentInfo(user, tournament);
+      if (isRebuy) {
+        // Return user to rebuy prompt
+        const tournament = await tournamentService.getTournamentById(stateData.tournamentId);
+        if (tournament) {
+          await userService.setUserState(phone, 'CONFIRM_TOURNAMENT_REBUY', {
+            tournamentId: stateData.tournamentId,
+            tournamentName: stateData.tournamentName,
+            entryFee: stateData.entryFee,
+            tokensPerEntry: stateData.tokensPerEntry
+          });
+          let rebuyMsg = `🏆 *${stateData.tournamentName}*\n\n`;
+          rebuyMsg += `🎟️ *Want more attempts?*\n`;
+          rebuyMsg += `Buy ${stateData.tokensPerEntry} more tokens for ₦${Number(stateData.entryFee).toLocaleString()}\n\n`;
+          rebuyMsg += `Reply *REBUY* to pay for more tokens\n`;
+          rebuyMsg += `Reply *CODE* if you have a promo code\n`;
+          rebuyMsg += `Reply *MENU* to go back`;
+          await messagingService.sendMessage(phone, rebuyMsg);
+        } else {
+          await userService.clearUserState(phone);
+          await this.sendMainMenu(phone);
+        }
       } else {
-        await userService.clearUserState(phone);
-        await this.sendMainMenu(phone);
+        const tournament = await tournamentService.getTournamentById(stateData.tournamentId);
+        if (tournament) {
+          await this.showPaidTournamentInfo(user, tournament);
+        } else {
+          await userService.clearUserState(phone);
+          await this.sendMainMenu(phone);
+        }
       }
       return;
     }
@@ -1315,41 +1400,58 @@ Type the code, or type SKIP to continue:`
 
     try {
       const promoCodeService = require('../services/promo-code.service');
-      const result = await promoCodeService.redeemCode(input, user.id, stateData.tournamentId);
+      
+      // Route to the correct redemption method based on flow
+      const result = isRebuy
+        ? await promoCodeService.redeemCodeForRebuy(input, user.id, stateData.tournamentId)
+        : await promoCodeService.redeemCode(input, user.id, stateData.tournamentId);
 
       if (!result.success) {
         await messagingService.sendMessage(
           phone,
           `❌ *${result.reason || 'Code could not be redeemed'}*\n\n` +
-          `Reply with another code, or reply *CANCEL* to go back to payment options.`
+          `Reply with another code, or reply *CANCEL* to go back.`
         );
         return;
       }
 
-      // Code redeemed — clear state and confirm
       await userService.clearUserState(phone);
       const tournament = result.tournament;
-      let confirmMsg = `🎉 *TOURNAMENT JOINED!* 🎉\n\n`;
-      confirmMsg += `${tournament.tournament_name}\n`;
-      confirmMsg += `Prize Pool: ₦${tournament.prize_pool.toLocaleString()}\n\n`;
-      confirmMsg += `🎟️ Code redeemed successfully!\n\n`;
 
-      if (tournament.uses_tokens && result.tokensRemaining) {
-        confirmMsg += `🎮 You have ${result.tokensRemaining} game attempts\n\n`;
-      } else {
-        confirmMsg += `♾️ Unlimited plays during tournament!\n\n`;
-      }
-
-      const isUpcoming = new Date(tournament.start_date) > new Date();
-      if (isUpcoming) {
-        const startDate = new Date(tournament.start_date);
-        confirmMsg += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
-        confirmMsg += `Come back then to play! 🎮`;
-        await messagingService.sendMessage(phone, confirmMsg);
-      } else {
-        confirmMsg += `Starting your first game...`;
+      if (isRebuy) {
+        // Rebuy success message
+        let confirmMsg = `🎉 *TOKENS ADDED!* 🎉\n\n`;
+        confirmMsg += `${tournament.tournament_name}\n\n`;
+        confirmMsg += `🎟️ Code redeemed successfully!\n`;
+        confirmMsg += `+${result.tokensAdded} tokens added\n`;
+        confirmMsg += `🎮 You now have ${result.tokensRemaining} game attempts\n\n`;
+        confirmMsg += `Starting next game...`;
         await messagingService.sendMessage(phone, confirmMsg);
         await gameService.startNewGame(user, 'tournament', tournament.id);
+      } else {
+        // Initial entry success message
+        let confirmMsg = `🎉 *TOURNAMENT JOINED!* 🎉\n\n`;
+        confirmMsg += `${tournament.tournament_name}\n`;
+        confirmMsg += `Prize Pool: ₦${tournament.prize_pool.toLocaleString()}\n\n`;
+        confirmMsg += `🎟️ Code redeemed successfully!\n\n`;
+
+        if (tournament.uses_tokens && result.tokensRemaining) {
+          confirmMsg += `🎮 You have ${result.tokensRemaining} game attempts\n\n`;
+        } else {
+          confirmMsg += `♾️ Unlimited plays during tournament!\n\n`;
+        }
+
+        const isUpcoming = new Date(tournament.start_date) > new Date();
+        if (isUpcoming) {
+          const startDate = new Date(tournament.start_date);
+          confirmMsg += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
+          confirmMsg += `Come back then to play! 🎮`;
+          await messagingService.sendMessage(phone, confirmMsg);
+        } else {
+          confirmMsg += `Starting your first game...`;
+          await messagingService.sendMessage(phone, confirmMsg);
+          await gameService.startNewGame(user, 'tournament', tournament.id);
+        }
       }
     } catch (error) {
       logger.error('Error handling promo code entry:', error);
@@ -1472,13 +1574,26 @@ Type the code, or type SKIP to continue:`
           '❌ Error processing rebuy. Please try again.\n\nType TOURNAMENTS to view tournaments.'
         );
       }
+    } else if (input === 'CODE' || input === 'PROMO') {
+      // Reuse the ENTER_PROMO_CODE state with isRebuy flag
+      await userService.setUserState(phone, 'ENTER_PROMO_CODE', {
+        ...stateData,
+        isRebuy: true
+      });
+      await messagingService.sendMessage(
+        phone,
+        `🎟️ *ENTER PROMO CODE FOR REBUY* 🎟️\n\n` +
+        `Reply with your promo code to get *${stateData.tokensPerEntry} more tokens* in *${stateData.tournamentName}*.\n\n` +
+        `Codes are case-insensitive.\n\n` +
+        `Reply *CANCEL* to go back.`
+      );
     } else if (input === 'MENU' || input === 'NO' || input === 'N' || input === 'BACK') {
       await userService.clearUserState(phone);
       await this.sendMainMenu(phone);
     } else {
       await messagingService.sendMessage(
         phone,
-        '⚠️ Reply *REBUY* to purchase more tokens or *MENU* to go back'
+        '⚠️ Reply *REBUY* to pay, *CODE* for promo code, or *MENU* to go back'
       );
     }
   }

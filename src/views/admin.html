@@ -794,6 +794,28 @@
           </div>
         </div>
       </div>
+
+      <!-- Acquisition Sources -->
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h2>📣 Where Players Came From</h2>
+          <div class="filter-group">
+            <select id="acqRangeFilter" onchange="loadAcquisitionSources()" style="padding:8px;border-radius:4px;border:1px solid #ddd;">
+              <option value="all">All Time</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+            <button class="btn btn-primary" onclick="loadAcquisitionSources()">🔄 Refresh</button>
+          </div>
+        </div>
+        <p style="color: var(--text-gray); font-size: 13px; margin-bottom: 16px;">
+          Aggregated from the "How did you hear about us?" question new players answer during registration.
+        </p>
+        <div id="acquisitionSourcesContainer">
+          <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
+        </div>
+      </div>
     </div>
 
     <!-- Payouts Tab -->
@@ -2133,6 +2155,7 @@ function showDashboard() {
   document.getElementById('dashboardPage').classList.add('active');
   loadEnhancedStats();
   loadAnalytics();
+  loadAcquisitionSources();
   updateAdminDisplay();
 }
 
@@ -2355,7 +2378,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`${tab}Tab`).classList.add('active');
   
-  if (tab === 'analytics' && !charts.dailyGames) loadAnalytics();
+  if (tab === 'analytics' && !charts.dailyGames) { loadAnalytics(); loadAcquisitionSources(); }
   if (tab === 'payouts') loadPayouts();
   if (tab === 'users' && allUsers.length === 0) loadUsers();
   if (tab === 'questions' && !document.getElementById('questionsTableContainer').innerHTML.includes('table')) loadQuestions();
@@ -3183,6 +3206,77 @@ async function viewPromoRedemptions(id, code) {
     }
     alert(msg);
   } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+async function loadAcquisitionSources() {
+  const container = document.getElementById('acquisitionSourcesContainer');
+  const range = document.getElementById('acqRangeFilter')?.value || 'all';
+  try {
+    const r = await fetch(`/admin/api/acquisition-sources?range=${range}`, { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    if (!d.success) {
+      container.innerHTML = `<p style="color:#dc2626;">${d.error || 'Failed to load'}</p>`;
+      return;
+    }
+    if (!d.sources || d.sources.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center;padding:40px 20px;color:var(--text-gray);">
+          <div style="font-size:36px;margin-bottom:12px;">📣</div>
+          <p>No acquisition source data yet for this range.</p>
+          <small>Data will appear once new players complete registration.</small>
+        </div>`;
+      return;
+    }
+    
+    const total = d.total || d.sources.reduce((s, x) => s + parseInt(x.count), 0);
+    const sourceLabels = {
+      instagram: '📸 Instagram',
+      facebook: '👥 Facebook',
+      twitter: '🐦 X (Twitter)',
+      youtube: '▶️ YouTube',
+      google: '🔍 Google',
+      friends: '👫 Friends',
+      word_of_mouth: '🗣️ Word of mouth',
+      live_event: '🎤 Live event',
+      other: '❓ Other',
+      referral: '👫 Referral (legacy)',
+      null: '— Not specified'
+    };
+    const colors = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#6b7280','#a855f7'];
+
+    let html = `
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:14px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:12px;color:#0369a1;font-weight:600;text-transform:uppercase;">Total players with source data</div>
+          <div style="font-size:28px;font-weight:bold;color:#0c4a6e;">${total.toLocaleString()}</div>
+        </div>
+        ${d.unassigned > 0 ? `<div style="text-align:right;font-size:12px;color:#6b7280;"><div>+${d.unassigned} from before this feature</div><div>(no source recorded)</div></div>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;">
+    `;
+    
+    d.sources.forEach((s, i) => {
+      const label = sourceLabels[s.source] || s.source;
+      const count = parseInt(s.count);
+      const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+      const color = colors[i % colors.length];
+      html += `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-weight:600;font-size:14px;">${label}</span>
+            <span style="color:${color};font-weight:bold;font-size:18px;">${count}</span>
+          </div>
+          <div style="background:#f3f4f6;height:8px;border-radius:4px;overflow:hidden;">
+            <div style="background:${color};height:100%;width:${pct}%;transition:width 0.4s;"></div>
+          </div>
+          <div style="font-size:12px;color:#6b7280;margin-top:4px;text-align:right;">${pct}%</div>
+        </div>`;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<p style="color:#dc2626;">Error: ${e.message}</p>`;
+  }
 }
 
 async function loadActivityLog() {

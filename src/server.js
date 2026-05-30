@@ -171,6 +171,28 @@ app.listen(PORT, async () => {
 
   // Start Love Quest scheduled send processor
   startScheduledSendProcessor();
+  
+  // Start Welcome Message processor — sends one-time welcome to new users
+  // who've been inactive for 20+ hours
+  startWelcomeMessageProcessor();
 });
+
+function startWelcomeMessageProcessor() {
+  const welcomeService = require('./services/welcome-message.service');
+  const MessagingService = require('./services/messaging.service');
+  const messagingService = new MessagingService();
+  
+  // Check every 5 minutes
+  setInterval(async () => {
+    try {
+      const sent = await welcomeService.processBatch(messagingService);
+      if (sent > 0) console.log(`👋 Welcome processor: sent ${sent} message(s)`);
+    } catch (error) {
+      console.error('❌ Error in welcome message processor:', error.message);
+    }
+  }, 5 * 60 * 1000);
+  
+  console.log('✅ Welcome message processor started (5min interval, 20hr threshold)');
+}
 
 module.exports = app;
