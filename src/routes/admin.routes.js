@@ -8354,4 +8354,52 @@ router.get('/api/acquisition-sources', authenticateAdmin, async (req, res) => {
     }
 });
 
+// Users from a specific acquisition source
+router.get('/api/acquisition-sources/:source/users', authenticateAdmin, async (req, res) => {
+    try {
+        const { source } = req.params;
+        const { range = 'all', limit = 100 } = req.query;
+        
+        let dateClause = '';
+        if (range && range !== 'all') {
+            const days = parseInt(range);
+            if (!isNaN(days) && days > 0 && days <= 3650) {
+                dateClause = `AND created_at >= NOW() - INTERVAL '${days} days'`;
+            }
+        }
+        
+        // Special handling for 'unassigned' bucket
+        const sourceFilter = source === 'unassigned' 
+            ? 'acquisition_source IS NULL'
+            : 'acquisition_source = $1';
+        
+        const params = source === 'unassigned' ? [] : [source];
+        params.push(Math.min(parseInt(limit) || 100, 500));
+        const limitPlaceholder = `$${params.length}`;
+        
+        const result = await pool.query(`
+            SELECT 
+                id, username, full_name, phone_number, city, age,
+                platform, created_at, last_active,
+                games_remaining, total_games_purchased,
+                referral_code, referred_by
+            FROM users
+            WHERE ${sourceFilter}
+            ${dateClause}
+            ORDER BY created_at DESC
+            LIMIT ${limitPlaceholder}
+        `, params);
+        
+        res.json({
+            success: true,
+            source,
+            users: result.rows,
+            count: result.rows.length
+        });
+    } catch (error) {
+        logger.error('Error getting users by acquisition source:', error);
+        res.status(500).json({ error: 'Failed to load users' });
+    }
+});
+
 module.exports = router;

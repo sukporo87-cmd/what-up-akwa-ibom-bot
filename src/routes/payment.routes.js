@@ -154,6 +154,38 @@ router.post('/monnify-webhook', express.json({
 });
 
 // ============================================
+// FLUTTERWAVE WEBHOOK
+// ============================================
+
+router.post('/flutterwave-webhook', async (req, res) => {
+    try {
+        const gateway = gatewayManager.getGateway('flutterwave');
+        // Flutterwave sends the hash in `verif-hash` header
+        const signature = req.headers['verif-hash'];
+        
+        if (!gateway.verifyWebhookSignature(null, signature)) {
+            logger.warn('Invalid Flutterwave signature');
+            return res.status(400).send('Invalid signature');
+        }
+        
+        const event = req.body;
+        const status = event?.data?.status;
+        
+        if (event.event === 'charge.completed' && status === 'successful') {
+            const reference = event.data.tx_ref;
+            const metadata = event.data.meta || {};
+            await processWebhookEvent(reference, metadata, 'flutterwave');
+        }
+        
+        res.status(200).send('Webhook received');
+        
+    } catch (error) {
+        logger.error('Flutterwave webhook error:', error);
+        res.status(500).send('Webhook error');
+    }
+});
+
+// ============================================
 // TOURNAMENT PAYMENT WEBHOOK HANDLER
 // ============================================
 
@@ -235,8 +267,8 @@ function getPlatformName(phoneNumber) {
 // ============================================
 
 router.get('/callback', async (req, res) => {
-    // Paystack sends 'reference', Korapay sends 'reference', Monnify sends 'paymentReference'
-    const reference = req.query.reference || req.query.paymentReference;
+    // Paystack sends 'reference', Korapay sends 'reference', Monnify sends 'paymentReference', Flutterwave sends 'tx_ref'
+    const reference = req.query.reference || req.query.paymentReference || req.query.tx_ref;
     
     if (!reference) {
         return res.status(400).send('No reference provided');
@@ -410,8 +442,8 @@ router.get('/callback', async (req, res) => {
 // ============================================
 
 router.get('/tournament-callback', async (req, res) => {
-    // Paystack/Korapay send 'reference', Monnify sends 'paymentReference'
-    const reference = req.query.reference || req.query.paymentReference;
+    // Paystack/Korapay send 'reference', Monnify sends 'paymentReference', Flutterwave sends 'tx_ref'
+    const reference = req.query.reference || req.query.paymentReference || req.query.tx_ref;
     
     if (!reference) {
         return res.status(400).send('No reference provided');

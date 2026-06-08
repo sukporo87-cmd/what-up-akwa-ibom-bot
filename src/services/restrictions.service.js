@@ -323,14 +323,12 @@ class RestrictionsService {
      */
     getQ1TimeoutWarningMessage() {
         return `⚠️ *FAIR PLAY REMINDER* ⚠️\n\n` +
-               `We noticed you've timed out on the first question in your recent games.\n\n` +
-               `At What's Up Trivia, we are committed to providing a level playing field for everyone. ` +
-               `Using external help — search engines, voice assistants, or AI tools — goes against the spirit of the game.\n\n` +
-               `🎯 *Fair play is non-negotiable.*\n\n` +
-               `If you're not ready to experience the trivia challenge on your own knowledge, ` +
-               `we recommend practicing first.\n\n` +
-               `⚠️ *Continued violations will result in a temporary suspension.*\n\n` +
-               `💡 _Tip: Try Practice mode to sharpen your skills!_`;
+               `We've noticed a pattern of first-question timeouts in some of your recent games.\n\n` +
+               `To help keep What's Up Trivia fun and fair for everyone, our system monitors gameplay patterns that may indicate unusual activity or attempts to use external resources during a game.\n\n` +
+               `🎯 *Fair play matters.*\n\n` +
+               `What's Up Trivia is designed to test your knowledge, speed, and decision-making in real time. For the best experience, we encourage all players to rely on their own knowledge while playing.\n\n` +
+               `If these gameplay patterns continue, your account may be temporarily restricted while our system conducts additional reviews.\n\n` +
+               `💡 _Tip: Practice Mode is always available if you'd like to sharpen your skills or explore different question categories._`;
     }
 
     /**
@@ -338,16 +336,16 @@ class RestrictionsService {
      */
     getQ1SuspensionMessage() {
         const hours = Q1_TIMEOUT_CONFIG.SUSPENSION_HOURS;
-        return `🚫 *ACCOUNT TEMPORARILY SUSPENDED* 🚫\n\n` +
-               `Your account has been suspended for *${hours} hours* due to repeated fair play violations.\n\n` +
-               `Our system detected a pattern of timing out on the first question across consecutive games, ` +
-               `which is consistent with the use of external assistance.\n\n` +
+        return `🚫 *ACCOUNT TEMPORARILY RESTRICTED* 🚫\n\n` +
+               `Your account has been temporarily restricted for *${hours} hours* following repeated gameplay patterns that triggered our fair play monitoring system.\n\n` +
+               `Our automated review detected a recurring pattern of first-question timeouts across multiple games. While this pattern can occur for different reasons, it is commonly associated with activity that may affect fair competition.\n\n` +
                `📋 *What happens next:*\n` +
-               `• Suspension lasts ${hours} hours\n` +
-               `• After suspension: 5 games with reduced timers (10s per question)\n` +
-               `• Practice mode remains available during suspension\n\n` +
-               `We want every player to have a fair shot at winning. 🤝\n\n` +
-               `_Play fair. Play smart. Play What's Up Trivia. 🎯_`;
+               `• Restriction lasts ${hours} hours\n` +
+               `• After the restriction, your next 5 games will have reduced timers (10 seconds per question)\n` +
+               `• Practice Mode remains available during this period\n\n` +
+               `These measures help us maintain a fair and enjoyable experience for all players.\n\n` +
+               `Thank you for your understanding and for helping keep the competition fair for everyone. 🤝\n\n` +
+               `🎯 _Play fair. Play smart. Play What's Up Trivia._`;
     }
 
     // ============================================

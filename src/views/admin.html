@@ -1408,6 +1408,17 @@
     </div>
 
     <!-- Create Promo Code Modal -->
+    <!-- Acquisition Users Modal -->
+    <div id="acquisitionUsersModal" class="modal">
+      <div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+        <span class="close" onclick="closeModal('acquisitionUsersModal')">&times;</span>
+        <h2 id="acquisitionUsersTitle" style="margin-bottom: 16px;">Users</h2>
+        <div id="acquisitionUsersBody">
+          <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
+        </div>
+      </div>
+    </div>
+
     <div id="createPromoCodeModal" class="modal">
       <div class="modal-content" style="max-width: 560px;">
         <span class="close" onclick="closeModal('createPromoCodeModal')">&times;</span>
@@ -3260,8 +3271,12 @@ async function loadAcquisitionSources() {
       const count = parseInt(s.count);
       const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
       const color = colors[i % colors.length];
+      const safeSource = String(s.source).replace(/'/g, "\\'");
       html += `
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;">
+        <div class="acq-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;cursor:pointer;transition:transform 0.15s,box-shadow 0.15s;" 
+             onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.08)'" 
+             onmouseout="this.style.transform='';this.style.boxShadow=''"
+             onclick="showAcquisitionUsers('${safeSource}', '${label.replace(/'/g, "\\'")}')">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-weight:600;font-size:14px;">${label}</span>
             <span style="color:${color};font-weight:bold;font-size:18px;">${count}</span>
@@ -3269,13 +3284,66 @@ async function loadAcquisitionSources() {
           <div style="background:#f3f4f6;height:8px;border-radius:4px;overflow:hidden;">
             <div style="background:${color};height:100%;width:${pct}%;transition:width 0.4s;"></div>
           </div>
-          <div style="font-size:12px;color:#6b7280;margin-top:4px;text-align:right;">${pct}%</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#6b7280;margin-top:4px;">
+            <span style="color:#9ca3af;">Click to view users →</span>
+            <span>${pct}%</span>
+          </div>
         </div>`;
     });
     html += `</div>`;
     container.innerHTML = html;
   } catch (e) {
     container.innerHTML = `<p style="color:#dc2626;">Error: ${e.message}</p>`;
+  }
+}
+
+async function showAcquisitionUsers(source, label) {
+  const modal = document.getElementById('acquisitionUsersModal');
+  document.getElementById('acquisitionUsersTitle').innerHTML = `${label} <span style="color:#6b7280;font-weight:normal;font-size:14px;">— users</span>`;
+  const body = document.getElementById('acquisitionUsersBody');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading users...</p></div>';
+  modal.classList.add('show');
+  
+  const range = document.getElementById('acqRangeFilter')?.value || 'all';
+  try {
+    const r = await fetch(`/admin/api/acquisition-sources/${encodeURIComponent(source)}/users?range=${range}&limit=200`, {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const d = await r.json();
+    if (!d.success) {
+      body.innerHTML = `<p style="color:#dc2626;">${d.error || 'Failed to load'}</p>`;
+      return;
+    }
+    if (!d.users || d.users.length === 0) {
+      body.innerHTML = '<p style="text-align:center;color:var(--text-gray);padding:30px;">No users found.</p>';
+      return;
+    }
+    
+    let html = `<p style="font-size:13px;color:var(--text-gray);margin-bottom:14px;">Showing ${d.users.length} user(s)${d.users.length === 200 ? ' (limit reached — refine date range to see more)' : ''}</p>`;
+    html += `<div style="overflow-x:auto;"><table class="data-table" style="font-size:13px;"><thead><tr>
+      <th>Username</th><th>Name</th><th>Phone</th><th>Platform</th><th>City</th><th>Joined</th>
+    </tr></thead><tbody>`;
+    
+    for (const u of d.users) {
+      const joined = new Date(u.created_at).toLocaleDateString();
+      const platformBadge = u.platform === 'telegram' 
+        ? '<span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:11px;">TG</span>'
+        : '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:4px;font-size:11px;">WA</span>';
+      // Strip tg_ prefix for cleaner display
+      const phone = u.phone_number?.startsWith('tg_') ? u.phone_number.substring(3) : u.phone_number;
+      html += `<tr>
+        <td><strong>@${u.username || '—'}</strong></td>
+        <td>${u.full_name || '—'}</td>
+        <td style="font-family:monospace;font-size:12px;">${phone || '—'}</td>
+        <td>${platformBadge}</td>
+        <td style="color:#6b7280;">${u.city || '—'}</td>
+        <td style="font-size:12px;color:#6b7280;">${joined}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<p style="color:#dc2626;">Error: ${e.message}</p>`;
   }
 }
 
