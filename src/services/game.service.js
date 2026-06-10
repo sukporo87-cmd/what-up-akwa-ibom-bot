@@ -2156,14 +2156,16 @@ class GameService {
                     // Non-fatal
                 }
             
+                // Reset Q1 timeout streak whenever the user ANSWERS Q1 (correct or wrong).
+                // Only Q1 timeouts (no answer at all) should increment the streak.
+                // This must run BEFORE the isCorrect branch so a wrong Q1 answer still resets.
+                if (questionNumber === 1) {
+                    await restrictionsService.resetQ1TimeoutStreak(user.id);
+                }
+
                 if (isCorrect) {
                     session.current_score = prizeAmount;
                     session.current_question = questionNumber + 1;
-
-                    // Reset Q1 timeout streak on any correct Q1 answer
-                    if (questionNumber === 1) {
-                        await restrictionsService.resetQ1TimeoutStreak(user.id);
-                    }
                     
                     let message = `✅ CORRECT! 🎉\n\n`;
                     if (question.fun_fact) message += `${question.fun_fact}\n\n`;
