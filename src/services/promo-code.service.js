@@ -187,7 +187,7 @@ class PromoCodeService {
             };
         } catch (error) {
             await client.query('ROLLBACK');
-            logger.error('Error redeeming promo code:', error);
+            logger.error(`Error redeeming promo code for entry (code=${rawCode}, user=${userId}, tournament=${tournamentId}): ${error.message} [code=${error.code}]`);
             return { success: false, reason: 'Error redeeming code' };
         } finally {
             client.release();
@@ -320,7 +320,7 @@ class PromoCodeService {
             };
         } catch (error) {
             await client.query('ROLLBACK');
-            logger.error('Error redeeming promo code for rebuy:', error);
+            logger.error(`Error redeeming promo code for rebuy (code=${rawCode}, user=${userId}, tournament=${tournamentId}): ${error.message} [code=${error.code}]`);
             return { success: false, reason: 'Error redeeming code' };
         } finally {
             client.release();
