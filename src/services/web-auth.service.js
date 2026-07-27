@@ -125,7 +125,9 @@ class WebAuthService {
     async _issueOtp({ email, purpose, signupPayload = null, ip }) {
         const code = this._generateOtp();
         const codeHash = this._hashOtp(code);
-        const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+        // ISO-8601 with explicit Z. Avoids relying on the Node process timezone
+        // when the driver serialises a Date into a timestamp column.
+        const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000).toISOString();
 
         // Invalidate any outstanding codes for this email+purpose
         await pool.query(`
@@ -219,23 +221,38 @@ class WebAuthService {
             throw err;
         }
 
+        // Fetch the latest code for this email+purpose regardless of state, so we
+        // can tell the user WHY it failed. Expiry is evaluated by Postgres, not JS,
+        // so it can't be thrown off by a timezone mismatch between app and database.
         const r = await pool.query(`
-            SELECT * FROM email_otps
-            WHERE LOWER(email) = LOWER($1) AND purpose = $2 AND consumed_at IS NULL
+            SELECT *, (expires_at <= NOW()) AS is_expired
+            FROM email_otps
+            WHERE LOWER(email) = LOWER($1) AND purpose = $2
             ORDER BY created_at DESC LIMIT 1
         `, [email.trim(), purpose]);
 
+        const masked = email.replace(/(.{2}).*(@.*)/, '$1***$2');
+
         if (r.rows.length === 0) {
-            const err = new Error('That code has expired. Please request a new one.');
+            logger.warn(`OTP verify failed [no_code_issued] ${masked} purpose=${purpose}`);
+            const err = new Error('No code was sent to that email address. Check the address is correct and request a new code.');
             err.userFacing = true;
             throw err;
         }
 
         const otp = r.rows[0];
 
-        if (new Date(otp.expires_at) < new Date()) {
+        if (otp.consumed_at) {
+            logger.warn(`OTP verify failed [already_used] ${masked} purpose=${purpose} otp_id=${otp.id}`);
+            const err = new Error('That code has already been used, or a newer code was sent. Please use the most recent code, or request a new one.');
+            err.userFacing = true;
+            throw err;
+        }
+
+        if (otp.is_expired) {
+            logger.warn(`OTP verify failed [expired] ${masked} purpose=${purpose} otp_id=${otp.id} expires_at=${otp.expires_at}`);
             await pool.query('UPDATE email_otps SET consumed_at = NOW() WHERE id = $1', [otp.id]);
-            const err = new Error('That code has expired. Please request a new one.');
+            const err = new Error(`That code has expired — codes last ${OTP_TTL_MINUTES} minutes. Please request a new one.`);
             err.userFacing = true;
             throw err;
         }
