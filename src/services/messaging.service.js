@@ -54,6 +54,9 @@ class MessagingService {
     if (id.startsWith('tg_')) {
       return 'telegram';
     }
+    if (id.startsWith('web_')) {
+      return 'web';
+    }
     return 'whatsapp';
   }
 
@@ -64,6 +67,9 @@ class MessagingService {
     const platform = this.getPlatform(identifier);
     if (platform === 'telegram') {
       return identifier.toString().replace('tg_', '');
+    }
+    if (platform === 'web') {
+      return identifier.toString().replace('web_', '');
     }
     return identifier.toString();
   }
@@ -76,6 +82,13 @@ class MessagingService {
     const id = this.extractId(identifier);
     
     console.log(`📨 Sending message via ${platform} to ${id.substring(0, 10)}...`);
+
+    // Web users are served by the web game API (SSE), not a messaging provider.
+    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    if (platform === 'web') {
+      console.log('   ↪︎ web user — skipping messaging provider');
+      return null;
+    }
 
     try {
       if (platform === 'telegram') {
@@ -109,6 +122,13 @@ class MessagingService {
     
     console.log(`📸 Sending image via ${platform} to ${id.substring(0, 10)}...`);
 
+    // Web users are served by the web game API (SSE), not a messaging provider.
+    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    if (platform === 'web') {
+      console.log('   ↪︎ web user — skipping messaging provider');
+      return null;
+    }
+
     try {
       if (platform === 'telegram') {
         if (!this.telegram) {
@@ -133,6 +153,13 @@ class MessagingService {
     const id = this.extractId(identifier);
     
     console.log(`📸 Sending image (URL) via ${platform} to ${id.substring(0, 10)}...`);
+
+    // Web users are served by the web game API (SSE), not a messaging provider.
+    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    if (platform === 'web') {
+      console.log('   ↪︎ web user — skipping messaging provider');
+      return null;
+    }
 
     try {
       if (platform === 'telegram') {
@@ -278,6 +305,13 @@ class MessagingService {
     
     console.log(`🎬 Sending video via ${platform} to ${id.substring(0, 10)}...`);
 
+    // Web users are served by the web game API (SSE), not a messaging provider.
+    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    if (platform === 'web') {
+      console.log('   ↪︎ web user — skipping messaging provider');
+      return null;
+    }
+
     try {
       if (platform === 'telegram') {
         // Telegram video sending (if implemented)
@@ -305,6 +339,13 @@ class MessagingService {
     const id = this.extractId(identifier);
     
     console.log(`🎤 Sending audio via ${platform} to ${id.substring(0, 10)}...`);
+
+    // Web users are served by the web game API (SSE), not a messaging provider.
+    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    if (platform === 'web') {
+      console.log('   ↪︎ web user — skipping messaging provider');
+      return null;
+    }
 
     try {
       if (platform === 'telegram') {

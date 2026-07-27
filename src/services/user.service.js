@@ -118,11 +118,14 @@ class UserService {
   }
 
   getPlatformFromIdentifier(identifier) {
-    return identifier.startsWith('tg_') ? 'telegram' : 'whatsapp';
+    if (!identifier) return 'whatsapp';
+    if (identifier.startsWith('tg_')) return 'telegram';
+    if (identifier.startsWith('web_')) return 'web';
+    return 'whatsapp';
   }
 
   stripPlatformPrefix(identifier) {
-    return identifier.replace(/^tg_/, '');
+    return identifier.replace(/^(tg_|web_)/, '');
   }
 
   getUserPlatformFromObject(user) {

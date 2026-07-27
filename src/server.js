@@ -12,6 +12,8 @@ const webhookRoutes = require('./routes/webhook.routes');
 const paymentRoutes = require('./routes/payment.routes');
 const adminRoutes = require('./routes/admin.routes');
 const publicRoutes = require('./routes/public.routes');
+const webAuthRoutes = require('./routes/web-auth.routes');
+const newsletterRoutes = require('./routes/newsletter.routes');
 
 // Load environment variables
 dotenv.config();
@@ -46,6 +48,8 @@ app.use('/api/public', publicRoutes);  // Public leaderboard API (no auth)
 app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
+app.use('/web/auth', webAuthRoutes);
+app.use('/newsletter', newsletterRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {

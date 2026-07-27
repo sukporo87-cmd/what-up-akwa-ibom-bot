@@ -3371,6 +3371,12 @@ router.get('/api/newsletter/stats', authenticateAdmin, async (req, res) => {
         const result = await pool.query(`
             SELECT 
                 COUNT(*) FILTER (WHERE email IS NOT NULL) as emails_collected,
+                COUNT(DISTINCT LOWER(email)) FILTER (
+                    WHERE email IS NOT NULL AND newsletter_opted_in = true
+                      AND newsletter_unsubscribed_at IS NULL
+                ) as sendable_addresses,
+                COUNT(*) FILTER (WHERE newsletter_unsubscribed_at IS NOT NULL) as unsubscribed,
+                COUNT(*) FILTER (WHERE email IS NOT NULL AND platform = 'web') as from_web,
                 COUNT(*) as total_users,
                 COUNT(*) FILTER (WHERE email_prompted_at IS NOT NULL) as times_prompted,
                 COUNT(*) FILTER (WHERE email IS NOT NULL AND email_prompted_at IS NOT NULL) as converted_from_prompt
@@ -3387,14 +3393,17 @@ router.get('/api/newsletter/stats', authenticateAdmin, async (req, res) => {
 router.get('/api/newsletter/export', authenticateAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT 
+            SELECT DISTINCT ON (LOWER(email))
                 email, full_name, username, city, age, 
                 phone_number, platform, created_at,
+                newsletter_token, newsletter_source, newsletter_opted_in_at,
                 current_streak, longest_streak,
                 (SELECT COUNT(*) FROM game_sessions WHERE user_id = users.id AND status = 'completed') as total_games
             FROM users 
             WHERE email IS NOT NULL 
-            ORDER BY created_at DESC
+              AND newsletter_opted_in = true
+              AND newsletter_unsubscribed_at IS NULL
+            ORDER BY LOWER(email), created_at DESC
         `);
         
         res.json({ 
@@ -3412,13 +3421,18 @@ router.get('/api/newsletter/export', authenticateAdmin, async (req, res) => {
 router.get('/api/newsletter/export-csv', authenticateAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT email, full_name, username, city, age, platform, created_at
-            FROM users WHERE email IS NOT NULL ORDER BY created_at DESC
+            SELECT DISTINCT ON (LOWER(email))
+                   email, full_name, username, city, age, platform, created_at, newsletter_token
+            FROM users
+            WHERE email IS NOT NULL
+              AND newsletter_opted_in = true
+              AND newsletter_unsubscribed_at IS NULL
+            ORDER BY LOWER(email), created_at DESC
         `);
         
-        const header = 'email,full_name,username,city,age,platform,registered\n';
+        const header = 'email,full_name,username,city,age,platform,registered,unsubscribe_token\n';
         const rows = result.rows.map(r => 
-            `${r.email},${(r.full_name || '').replace(/,/g, '')},${r.username},${(r.city || '').replace(/,/g, '')},${r.age},${r.platform},${new Date(r.created_at).toISOString().split('T')[0]}`
+            `${r.email},${(r.full_name || '').replace(/,/g, '')},${r.username},${(r.city || '').replace(/,/g, '')},${r.age},${r.platform},${new Date(r.created_at).toISOString().split('T')[0]},${r.newsletter_token || ''}`
         ).join('\n');
         
         res.setHeader('Content-Type', 'text/csv');
