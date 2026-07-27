@@ -346,7 +346,10 @@ class WebAuthService {
             await client.query('BEGIN');
 
             const referralCode = this._generateReferralCode();
-            const identifier = `web_${crypto.randomBytes(9).toString('hex')}`;
+            // users.phone_number is varchar(20). 'web_' + 12 hex = 16 chars, which
+            // fits with room to spare. 48 bits of entropy, and the column's unique
+            // constraint is the real backstop.
+            const identifier = `web_${crypto.randomBytes(6).toString('hex')}`;
 
             const userResult = await client.query(`
                 INSERT INTO users (
