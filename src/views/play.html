@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16121f">
+<title>What's Up Trivia — Play</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --night:#16121f; --slate:#241d33; --raise:#2e2540; --line:#3b3150;
+  --brass:#e8b64c; --mint:#35d39a; --ember:#ff6b5b;
+  --paper:#f2eee9; --mute:#9b8fb0;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --body:'Inter',system-ui,-apple-system,sans-serif;
+  --pad:clamp(16px,4vw,28px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);
+     font-size:16px;line-height:1.5;overscroll-behavior:none}
+.app{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;
+     padding:env(safe-area-inset-top) var(--pad) calc(env(safe-area-inset-bottom) + 20px)}
+.view{display:none;flex:1;flex-direction:column}
+.view.on{display:flex}
+button{font-family:inherit;font-size:inherit;cursor:pointer;border:0;background:none;color:inherit}
+h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
+
+/* ---------- chrome ---------- */
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0}
+.brand{font-family:var(--display);font-weight:800;font-size:15px;letter-spacing:-.01em}
+.brand i{color:var(--brass);font-style:normal}
+.icons{display:flex;gap:6px}
+.icon{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
+      display:grid;place-items:center;font-size:14px;color:var(--mute)}
+.icon:hover{border-color:var(--brass);color:var(--brass)}
+.icon.off{opacity:.4}
+
+/* ---------- ladder (signature) ---------- */
+.ladder{display:flex;align-items:flex-end;gap:3px;height:44px;margin-bottom:6px}
+.rung{flex:1;background:var(--slate);border-radius:2px;height:8px;position:relative;
+      transition:height .3s cubic-bezier(.2,.8,.3,1),background .3s}
+.rung.done{background:var(--brass);height:14px}
+.rung.now{background:var(--paper);height:30px}
+.rung.cp::after{content:'';position:absolute;left:50%;top:-11px;transform:translateX(-50%);
+   width:7px;height:7px;border-radius:2px;border:1.5px solid var(--mute);border-bottom-width:3px}
+.rung.cp.locked::after{border-color:var(--brass);background:var(--brass);
+   animation:snap .45s cubic-bezier(.3,1.4,.5,1)}
+@keyframes snap{0%{transform:translateX(-50%) scale(1.9) translateY(-4px)}100%{transform:translateX(-50%) scale(1)}}
+.ladderMeta{display:flex;justify-content:space-between;align-items:baseline;
+   font-size:12px;color:var(--mute);margin-bottom:22px}
+.ladderMeta .fig{font-size:15px;color:var(--brass)}
+
+/* ---------- question ---------- */
+.qwrap{flex:1;display:flex;flex-direction:column}
+.qtext{font-size:clamp(20px,5.4vw,25px);line-height:1.3;font-weight:500;
+       margin:0 0 22px;letter-spacing:-.015em}
+.opts{display:flex;flex-direction:column;gap:9px}
+.opt{display:flex;align-items:center;gap:13px;width:100%;text-align:left;padding:15px 16px;
+     background:var(--slate);border:1.5px solid transparent;border-radius:13px;
+     font-size:15.5px;line-height:1.35;transition:transform .12s,border-color .18s,background .18s;
+     opacity:0;animation:rise .32s cubic-bezier(.2,.8,.3,1) forwards}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.opt .k{font-family:var(--display);font-weight:600;font-size:13px;width:25px;height:25px;flex:none;
+        border-radius:8px;background:var(--raise);color:var(--brass);display:grid;place-items:center}
+.opt:not(:disabled):active{transform:scale(.985)}
+.opt:not(:disabled):hover{border-color:var(--line)}
+.opt:disabled{cursor:default}
+.opt.pick{border-color:var(--paper);background:var(--raise)}
+.opt.right{border-color:var(--mint);background:rgba(53,211,154,.13)}
+.opt.right .k{background:var(--mint);color:#08150f}
+.opt.wrong{border-color:var(--ember);background:rgba(255,107,91,.11)}
+.opt.wrong .k{background:var(--ember);color:#2a0d09}
+.opt.gone{opacity:.16;pointer-events:none}
+
+/* ---------- verdict ---------- */
+.verdict{margin-top:18px;padding:16px;border-radius:13px;border:1.5px solid var(--line);
+         background:var(--slate);display:none}
+.verdict.on{display:block;animation:rise .3s ease forwards}
+.verdict h3{margin:0 0 4px;font-family:var(--display);font-size:17px}
+.verdict.good h3{color:var(--mint)} .verdict.bad h3{color:var(--ember)}
+.verdict p{margin:0;font-size:14.5px;color:var(--paper)}
+.verdict .fact{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);
+               font-size:13.5px;color:var(--mute);line-height:1.55}
+
+/* ---------- footer ---------- */
+.foot{padding-top:20px;margin-top:auto}
+.clock{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.track{flex:1;height:5px;background:var(--slate);border-radius:3px;overflow:hidden}
+.track i{display:block;height:100%;width:100%;background:var(--brass);
+         transition:width .25s linear,background .3s}
+.track i.hot{background:var(--ember)}
+.secs{font-family:var(--display);font-size:15px;min-width:34px;text-align:right;color:var(--mute)}
+.secs.hot{color:var(--ember)}
+.chips{display:flex;gap:8px}
+.chip{flex:1;padding:11px;border-radius:11px;border:1px solid var(--line);
+      font-size:13px;font-weight:500;color:var(--mute);text-align:center}
+.chip:not(:disabled):hover{border-color:var(--brass);color:var(--brass)}
+.chip:disabled{opacity:.3;cursor:default}
+
+/* ---------- lobby ---------- */
+.hero{padding:34px 0 26px}
+.hero .fig{font-size:clamp(38px,11vw,52px);line-height:1;color:var(--brass);display:block}
+.hero p{margin:9px 0 0;color:var(--mute);font-size:14.5px}
+.tile{width:100%;text-align:left;padding:18px;border-radius:15px;background:var(--slate);
+      border:1.5px solid transparent;margin-bottom:10px;transition:border-color .18s}
+.tile:hover{border-color:var(--line)}
+.tile strong{display:block;font-family:var(--display);font-size:17px;margin-bottom:3px}
+.tile span{font-size:13.5px;color:var(--mute)}
+.tile.primary{background:linear-gradient(150deg,#3a2c1a,#241d33);border-color:var(--brass)}
+.tile.primary strong{color:var(--brass)}
+.stats{display:flex;gap:9px;margin-top:6px}
+.stat{flex:1;padding:13px;border-radius:12px;background:var(--slate);text-align:center}
+.stat .fig{display:block;font-size:19px;color:var(--paper)}
+.stat span{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+
+/* ---------- auth ---------- */
+.auth{max-width:380px;margin:auto;width:100%;padding:30px 0}
+.auth h1{font-size:26px;margin:0 0 6px}
+.auth .sub{color:var(--mute);font-size:14.5px;margin:0 0 26px}
+label{display:block;font-size:12px;color:var(--mute);margin-bottom:6px;font-weight:500}
+input,select{width:100%;background:var(--slate);border:1.5px solid transparent;border-radius:11px;
+     color:var(--paper);padding:13px 14px;font-family:inherit;font-size:15.5px;margin-bottom:13px}
+input:focus,select:focus{outline:none;border-color:var(--brass)}
+.cta{width:100%;padding:15px;border-radius:12px;background:var(--brass);color:#1a1206;
+     font-family:var(--display);font-weight:800;font-size:15.5px;letter-spacing:-.01em}
+.cta:hover{filter:brightness(1.07)}
+.cta:disabled{opacity:.5}
+.link{color:var(--brass);font-size:14px;text-align:center;width:100%;padding:14px 0}
+.msg{font-size:13.5px;min-height:19px;margin-bottom:6px;color:var(--ember)}
+.otp{letter-spacing:.5em;font-family:var(--display);font-size:22px;text-align:center}
+
+/* ---------- overlay ---------- */
+.over{position:fixed;inset:0;background:rgba(22,18,31,.93);backdrop-filter:blur(7px);
+      display:none;place-items:center;padding:var(--pad);z-index:20}
+.over.on{display:grid}
+.sheet{background:var(--slate);border:1.5px solid var(--line);border-radius:19px;
+       padding:28px;max-width:400px;width:100%;text-align:center;animation:rise .35s ease forwards}
+.sheet .fig{font-size:42px;color:var(--brass);display:block;line-height:1.1}
+.sheet h2{font-size:19px;margin:14px 0 7px}
+.sheet p{color:var(--mute);font-size:14.5px;margin:0 0 22px;white-space:pre-wrap;text-align:left}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ AUTH ============ -->
+  <section class="view on" id="vAuth">
+    <div class="auth">
+      <h1>What's Up <i style="color:var(--brass);font-style:normal">Trivia</i></h1>
+      <p class="sub" id="authSub">15 questions. Real cash. Sign in to play.</p>
+
+      <div id="fEmail">
+        <label>Email</label>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+        <div id="fSignup" style="display:none">
+          <label>Full name</label><input id="fullName" autocomplete="name">
+          <label>Username</label><input id="username" autocomplete="nickname">
+          <label>City</label><input id="city">
+          <label>Age</label><input id="age" type="number" inputmode="numeric" placeholder="18+">
+          <label>How did you hear about us?</label><select id="src"></select>
+          <label>Referral code <span style="opacity:.6">— optional</span></label><input id="ref">
+        </div>
+        <div class="msg" id="mAuth"></div>
+        <button class="cta" id="bAuth" onclick="askCode()">Send my code</button>
+        <button class="link" onclick="toggleMode()" id="bMode">New here? Create an account</button>
+      </div>
+
+      <div id="fCode" style="display:none">
+        <label>Enter the 6-digit code sent to <span id="codeTo"></span></label>
+        <input id="code" class="otp" inputmode="numeric" maxlength="6" placeholder="000000">
+        <div class="msg" id="mCode"></div>
+        <button class="cta" onclick="checkCode()">Verify</button>
+        <button class="link" onclick="show('fEmail','fCode')">Use a different email</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LOBBY ============ -->
+  <section class="view" id="vLobby">
+    <div class="bar">
+      <div class="brand">What's Up <i>Trivia</i></div>
+      <div class="icons">
+        <button class="icon" id="bSound" onclick="toggleSound()" title="Sound">♪</button>
+        <button class="icon" onclick="signOut()" title="Sign out">⏻</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <span class="fig" id="lobbyCredits">0</span>
+      <p><span id="lobbyName">player</span> — game credits available</p>
+    </div>
+
+    <button class="tile primary" onclick="go('PLAY')">
+      <strong>Play Classic</strong>
+      <span>15 questions, prizes up to ₦50,000</span>
+    </button>
+    <button class="tile" onclick="go('PLAY')">
+      <strong>Practice</strong>
+      <span>Free. No prizes. Learn the format.</span>
+    </button>
+    <button class="tile" onclick="go('TOURNAMENTS')">
+      <strong>Tournaments</strong>
+      <span>Compete for the weekly prize pool</span>
+    </button>
+    <button class="tile" onclick="go('BUY')">
+      <strong>Buy credits</strong>
+      <span>Top up to play Classic</span>
+    </button>
+
+    <div class="stats">
+      <div class="stat"><span class="fig" id="stStreak">0</span><span>streak</span></div>
+      <div class="stat"><span class="fig" id="stBest">0</span><span>best</span></div>
+    </div>
+  </section>
+
+  <!-- ============ GAME ============ -->
+  <section class="view" id="vGame">
+    <div class="bar">
+      <div class="brand" id="qCount">Question 1 of 15</div>
+      <div class="icons">
+        <button class="icon" id="bSound2" onclick="toggleSound()">♪</button>
+        <button class="icon" onclick="quit()" title="Quit">✕</button>
+      </div>
+    </div>
+
+    <div class="ladder" id="ladder"></div>
+    <div class="ladderMeta">
+      <span>Playing for <b class="fig" id="qPrize">₦0</b></span>
+      <span id="qBanked">Nothing banked yet</span>
+    </div>
+
+    <div class="qwrap">
+      <p class="qtext" id="qText">Waiting for your question…</p>
+      <div class="opts" id="qOpts"></div>
+      <div class="verdict" id="verdict"></div>
+    </div>
+
+    <div class="foot">
+      <div class="clock">
+        <div class="track"><i id="bar"></i></div>
+        <span class="secs" id="secs">–</span>
+      </div>
+      <div class="chips">
+        <button class="chip" id="c5050" onclick="go('50:50')">50 : 50</button>
+        <button class="chip" id="cSkip" onclick="go('SKIP')">Skip question</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ OVERLAY ============ -->
+<div class="over" id="over">
+  <div class="sheet">
+    <span class="fig" id="ovFig"></span>
+    <h2 id="ovTitle"></h2>
+    <p id="ovBody"></p>
+    <button class="cta" onclick="closeOver()">Back to menu</button>
+  </div>
+</div>
+
+<script>
+const CHECKPOINTS = [5,10];
+let token = localStorage.getItem('wut_token'), es=null, tick=null,
+    mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
+    banked=0, seen={};
+
+const $=id=>document.getElementById(id);
+const H=()=>{const h={'Content-Type':'application/json'};if(token)h.Authorization='Bearer '+token;return h;};
+const naira=n=>'₦'+Number(n||0).toLocaleString();
+function view(v){document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));$(v).classList.add('on');}
+function show(on,off){$(on).style.display='block';$(off).style.display='none';}
+
+/* ---------- sound: generated, nothing to download ---------- */
+let actx=null;
+function beep(freq,dur=.09,type='sine',vol=.16){
+  if(!sound)return;
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(),g=actx.createGain();
+    o.type=type;o.frequency.value=freq;o.connect(g);g.connect(actx.destination);
+    g.gain.setValueAtTime(vol,actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+dur);
+    o.start();o.stop(actx.currentTime+dur);
+  }catch(e){}
+}
+const sfx={
+  tap:()=>beep(520,.05,'square',.08),
+  right:()=>{beep(660,.1);setTimeout(()=>beep(880,.16),90);},
+  wrong:()=>beep(150,.3,'sawtooth',.13),
+  lock:()=>{beep(440,.07);setTimeout(()=>beep(1046,.2),70);},
+  urgent:()=>beep(880,.05,'triangle',.09)
+};
+function toggleSound(){
+  sound=!sound; localStorage.setItem('wut_sound',sound?'on':'off');
+  [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
+  if(sound)sfx.tap();
+}
+
+/* ---------- auth ---------- */
+function toggleMode(){
+  mode = mode==='login'?'signup':'login';
+  $('fSignup').style.display = mode==='signup'?'block':'none';
+  $('bMode').textContent = mode==='signup'?'Already have an account? Sign in':'New here? Create an account';
+  $('bAuth').textContent = mode==='signup'?'Create account':'Send my code';
+  $('authSub').textContent = mode==='signup'?'15 questions. Real cash. Takes a minute.':'15 questions. Real cash. Sign in to play.';
+}
+async function askCode(){
+  $('mAuth').textContent='';
+  const email=$('email').value.trim();
+  if(!email){$('mAuth').textContent='Enter your email';return;}
+  const body = mode==='signup'
+    ? {email,fullName:$('fullName').value.trim(),username:$('username').value.trim(),
+       city:$('city').value.trim(),age:$('age').value,acquisitionSource:$('src').value,
+       referralCode:$('ref').value.trim()||undefined}
+    : {email};
+  $('bAuth').disabled=true;
+  try{
+    const d=await(await fetch(`/web/auth/${mode}/request`,{method:'POST',headers:H(),body:JSON.stringify(body)})).json();
+    if(!d.success){$('mAuth').textContent=d.error;return;}
+    $('codeTo').textContent=email; show('fCode','fEmail'); $('code').focus();
+  }catch(e){$('mAuth').textContent='Could not reach the server';}
+  finally{$('bAuth').disabled=false;}
+}
+async function checkCode(){
+  $('mCode').textContent='';
+  try{
+    const d=await(await fetch(`/web/auth/${mode}/verify`,{method:'POST',headers:H(),
+      body:JSON.stringify({email:$('email').value.trim(),code:$('code').value.trim()})})).json();
+    if(!d.success){$('mCode').textContent=d.error;return;}
+    token=d.token; localStorage.setItem('wut_token',token); enter(d.user);
+  }catch(e){$('mCode').textContent='Could not reach the server';}
+}
+async function signOut(){
+  try{await fetch('/web/auth/logout',{method:'POST',headers:H()});}catch(e){}
+  localStorage.removeItem('wut_token'); location.reload();
+}
+
+/* ---------- session ---------- */
+function enter(user){
+  $('lobbyName').textContent='@'+user.username;
+  $('lobbyCredits').textContent=user.gamesRemaining??0;
+  view('vLobby'); stream(); refresh();
+}
+async function refresh(){
+  try{
+    const d=await(await fetch('/web/game/state',{headers:H()})).json();
+    if(!d.success)return;
+    $('lobbyCredits').textContent=d.user.gamesRemaining??0;
+    if(d.game){ banked=d.game.currentScore||0; view('vGame'); }
+    if(d.question&&!d.question.stale) paint(d.question);
+  }catch(e){}
+}
+
+/* ---------- stream ---------- */
+function stream(){
+  if(es)es.close();
+  es=new EventSource('/web/game/stream?token='+encodeURIComponent(token));
+  es.addEventListener('question.asked',e=>paint(JSON.parse(e.data)));
+  es.addEventListener('answer.result',e=>reveal(JSON.parse(e.data)));
+  es.addEventListener('message',e=>relay(JSON.parse(e.data).text||''));
+}
+
+/* Text the engine sends that has no structured event yet. */
+function relay(text){
+  const t=text.toUpperCase();
+  if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')){
+    clearInterval(tick);
+    const won=/₦[\d,]+/.exec(text);
+    setTimeout(()=>overlay(won?won[0]:'—',
+      t.includes('CONGRAT')?'Well played':'Game over', text.replace(/\*/g,'')),900);
+  } else if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
+    overlay('0','Out of credits',text.replace(/\*/g,''));
+  } else if(t.includes('TOURNAMENT')||t.includes('PACKAGE')||t.includes('SELECT')){
+    overlay('','Choose',text.replace(/\*/g,''));
+  }
+}
+
+/* ---------- board ---------- */
+function ladder(n){
+  const l=$('ladder'); l.innerHTML='';
+  for(let i=1;i<=15;i++){
+    const d=document.createElement('div');
+    d.className='rung'+(i<n?' done':'')+(i===n?' now':'')+(CHECKPOINTS.includes(i)?' cp':'')
+      +(CHECKPOINTS.includes(i)&&i<n?' locked':'');
+    l.appendChild(d);
+  }
+}
+function paint(q){
+  view('vGame'); answered=false; clearInterval(tick);
+  seen[q.questionNumber]=q.prizeAmount;
+  $('qCount').textContent=`Question ${q.questionNumber} of ${q.totalQuestions||15}`;
+  $('qPrize').textContent=naira(q.prizeAmount);
+  $('qBanked').textContent=banked?`${naira(banked)} banked`:'Nothing banked yet';
+  $('qText').textContent=q.text;
+  $('verdict').className='verdict';
+
+  const box=$('qOpts'); box.innerHTML='';
+  Object.entries(q.options).forEach(([k,v],i)=>{
+    const b=document.createElement('button');
+    b.className='opt'; b.dataset.k=k; b.style.animationDelay=(i*55)+'ms';
+    b.innerHTML='<span class="k"></span><span class="v"></span>';
+    b.querySelector('.k').textContent=k; b.querySelector('.v').textContent=v;
+    b.onclick=()=>pick(k,b);
+    box.appendChild(b);
+  });
+
+  $('c5050').disabled=!q.lifelines?.fiftyFifty;
+  $('cSkip').disabled=!q.lifelines?.skip;
+  ladder(q.questionNumber);
+  clock(q.expiresAt,q.timerSeconds);
+}
+function pick(k,btn){
+  if(answered)return; answered=true; sfx.tap();
+  document.querySelectorAll('.opt').forEach(b=>{b.disabled=true;if(b===btn)b.classList.add('pick');});
+  clearInterval(tick);
+  go(k);
+}
+function reveal(r){
+  clearInterval(tick); answered=true;
+  let correctText='';
+  document.querySelectorAll('.opt').forEach(b=>{
+    b.disabled=true;
+    if(b.dataset.k===r.correctAnswer){b.classList.add('right');correctText=b.querySelector('.v').textContent;}
+    else if(b.dataset.k===r.chosen)b.classList.add('wrong');
+  });
+  r.correct?sfx.right():sfx.wrong();
+  if(r.correct){
+    banked=r.prizeAmount||banked;
+    $('qBanked').textContent=naira(banked)+' banked';
+    if(r.isSafeCheckpoint){
+      const rungs=$('ladder').children;
+      if(rungs[r.questionNumber-1]){rungs[r.questionNumber-1].classList.add('locked');setTimeout(sfx.lock,180);}
+    }
+  }
+  const v=$('verdict');
+  v.className='verdict on '+(r.correct?'good':'bad');
+  v.innerHTML='<h3></h3><p></p>';
+  v.querySelector('h3').textContent=r.correct
+    ? (r.isSafeCheckpoint?`${naira(r.prizeAmount)} — locked in`:`Correct · ${naira(r.prizeAmount)}`)
+    : 'Not this time';
+  v.querySelector('p').textContent=`${r.correctAnswer}) ${correctText}`;
+  if(r.funFact){
+    const f=document.createElement('div'); f.className='fact'; f.textContent=r.funFact; v.appendChild(f);
+  }
+}
+function clock(expiresAt,total){
+  clearInterval(tick);
+  let warned=false;
+  const run=()=>{
+    const left=Math.max(0,(expiresAt-Date.now())/1000);
+    $('bar').style.width=Math.min(100,(left/total)*100)+'%';
+    $('secs').textContent=Math.ceil(left);
+    const hot=left<=5;
+    $('bar').classList.toggle('hot',hot); $('secs').classList.toggle('hot',hot);
+    if(hot&&!answered&&Math.ceil(left)!==warned){warned=Math.ceil(left);sfx.urgent();}
+    if(left<=0){clearInterval(tick);$('secs').textContent='0';}
+  };
+  run(); tick=setInterval(run,250);
+}
+
+/* ---------- actions ---------- */
+async function go(text){
+  try{await fetch('/web/game/input',{method:'POST',headers:H(),body:JSON.stringify({text})});}
+  catch(e){}
+}
+async function quit(){
+  if(!confirm('End this game? Your current winnings will be settled.'))return;
+  try{await fetch('/web/game/abandon',{method:'POST',headers:H()});}catch(e){}
+  clearInterval(tick); banked=0; view('vLobby'); refresh();
+}
+function overlay(fig,title,body){
+  $('ovFig').textContent=fig; $('ovTitle').textContent=title; $('ovBody').textContent=body.trim();
+  $('over').classList.add('on');
+}
+function closeOver(){
+  $('over').classList.remove('on'); banked=0; view('vLobby'); refresh();
+}
+
+/* ---------- boot ---------- */
+(async()=>{
+  [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
+  try{
+    const cfg=await(await fetch('/web/auth/config')).json();
+    if(cfg.acquisitionSources)
+      $('src').innerHTML='<option value="">Select one…</option>'+
+        cfg.acquisitionSources.map(s=>`<option value="${s.value}">${s.label}</option>`).join('');
+  }catch(e){}
+  try{
+    const d=await(await fetch('/web/auth/me',{headers:H()})).json();
+    if(d.authenticated)enter(d.user); else {localStorage.removeItem('wut_token');token=null;}
+  }catch(e){}
+})();
+</script>
+</body>
+</html>
