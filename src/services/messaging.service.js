@@ -83,11 +83,12 @@ class MessagingService {
     
     console.log(`📨 Sending message via ${platform} to ${id.substring(0, 10)}...`);
 
-    // Web users are served by the web game API (SSE), not a messaging provider.
-    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    // Web users receive game output over SSE rather than a messaging provider.
     if (platform === 'web') {
-      console.log('   ↪︎ web user — skipping messaging provider');
-      return null;
+      const gameEvents = require('./game-events.service');
+      const userId = await this._webUserId(identifier);
+      if (userId) gameEvents.emitMessage(userId, text);
+      return { platform: 'web', delivered: !!userId };
     }
 
     try {
@@ -122,11 +123,12 @@ class MessagingService {
     
     console.log(`📸 Sending image via ${platform} to ${id.substring(0, 10)}...`);
 
-    // Web users are served by the web game API (SSE), not a messaging provider.
-    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    // Web users receive game output over SSE rather than a messaging provider.
     if (platform === 'web') {
-      console.log('   ↪︎ web user — skipping messaging provider');
-      return null;
+      const gameEvents = require('./game-events.service');
+      const userId = await this._webUserId(identifier);
+      if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      return { platform: 'web', delivered: !!userId };
     }
 
     try {
@@ -154,11 +156,12 @@ class MessagingService {
     
     console.log(`📸 Sending image (URL) via ${platform} to ${id.substring(0, 10)}...`);
 
-    // Web users are served by the web game API (SSE), not a messaging provider.
-    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    // Web users receive game output over SSE rather than a messaging provider.
     if (platform === 'web') {
-      console.log('   ↪︎ web user — skipping messaging provider');
-      return null;
+      const gameEvents = require('./game-events.service');
+      const userId = await this._webUserId(identifier);
+      if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      return { platform: 'web', delivered: !!userId };
     }
 
     try {
@@ -305,11 +308,12 @@ class MessagingService {
     
     console.log(`🎬 Sending video via ${platform} to ${id.substring(0, 10)}...`);
 
-    // Web users are served by the web game API (SSE), not a messaging provider.
-    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    // Web users receive game output over SSE rather than a messaging provider.
     if (platform === 'web') {
-      console.log('   ↪︎ web user — skipping messaging provider');
-      return null;
+      const gameEvents = require('./game-events.service');
+      const userId = await this._webUserId(identifier);
+      if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      return { platform: 'web', delivered: !!userId };
     }
 
     try {
@@ -340,11 +344,12 @@ class MessagingService {
     
     console.log(`🎤 Sending audio via ${platform} to ${id.substring(0, 10)}...`);
 
-    // Web users are served by the web game API (SSE), not a messaging provider.
-    // Guard here so a web_ identifier can never be sent to the WhatsApp API.
+    // Web users receive game output over SSE rather than a messaging provider.
     if (platform === 'web') {
-      console.log('   ↪︎ web user — skipping messaging provider');
-      return null;
+      const gameEvents = require('./game-events.service');
+      const userId = await this._webUserId(identifier);
+      if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      return { platform: 'web', delivered: !!userId };
     }
 
     try {
@@ -363,6 +368,18 @@ class MessagingService {
       console.error(`❌ Failed to send audio via ${platform}:`, error.message);
       logger.error(`Error sending audio via ${platform}:`, error);
       throw error;
+    }
+  }
+
+  /** Resolves a web_ identifier to a numeric user id for the SSE bus. */
+  async _webUserId(identifier) {
+    try {
+      const pool = require('../config/database');
+      const r = await pool.query('SELECT id FROM users WHERE phone_number = $1 LIMIT 1', [identifier]);
+      return r.rows[0]?.id || null;
+    } catch (e) {
+      console.error('Could not resolve web user id:', e.message);
+      return null;
     }
   }
 }

@@ -14,6 +14,7 @@ const adminRoutes = require('./routes/admin.routes');
 const publicRoutes = require('./routes/public.routes');
 const webAuthRoutes = require('./routes/web-auth.routes');
 const newsletterRoutes = require('./routes/newsletter.routes');
+const webGameRoutes = require('./routes/web-game.routes');
 
 // Load environment variables
 dotenv.config();
@@ -50,6 +51,7 @@ app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
+app.use('/web/game', webGameRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {

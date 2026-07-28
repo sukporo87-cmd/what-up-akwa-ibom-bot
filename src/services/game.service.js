@@ -2005,6 +2005,45 @@ class GameService {
             if (!session.lifeline_5050_used) lifelines.push('50:50');
             if (!session.lifeline_skip_used) lifelines.push('Skip');
             if (lifelines.length > 0) message += `💎 Lifelines: ${lifelines.join(' | ')}`;
+
+            // Structured event for web play. Additive — chat platforms are unaffected,
+            // and a failure here must never stop the question being sent.
+            if (user.phone_number && user.phone_number.startsWith('web_')) {
+                try {
+                    const gameEvents = require('./game-events.service');
+                    let imageUrl = null;
+                    if (question.image_type === 'flag' && question.image_data && process.env.FLAG_BASE_URL) {
+                        imageUrl = `${process.env.FLAG_BASE_URL}${question.image_data}.png`;
+                    }
+                    await gameEvents.emitQuestion(user.id, {
+                        sessionId: session.id,
+                        questionNumber,
+                        totalQuestions: Object.keys(PRIZE_LADDER).length,
+                        text: question.question_text,
+                        options: {
+                            A: question.option_a,
+                            B: question.option_b,
+                            C: question.option_c,
+                            D: question.option_d
+                        },
+                        prizeAmount,
+                        isSafeCheckpoint: isSafe,
+                        timerSeconds: currentTimeoutSeconds,
+                        expiresAt: Date.now() + currentTimeoutMs,
+                        turbo: !!timeoutConfig.isTurboMode,
+                        penalty: !!timeoutConfig.isPenaltyMode,
+                        lifelines: {
+                            fiftyFifty: !session.lifeline_5050_used,
+                            skip: !session.lifeline_skip_used
+                        },
+                        imageUrl,
+                        gameMode: session.game_mode,
+                        tournamentId: session.tournament_id
+                    });
+                } catch (evtErr) {
+                    logger.error('Could not emit web question event:', evtErr.message);
+                }
+            }
             
             // Send as image+caption for flag questions, text for regular
             if (question.image_type === 'flag' && question.image_data) {
