@@ -44,7 +44,14 @@
   .opt{display:flex;gap:9px;align-items:flex-start;text-align:left;background:var(--bg);
        border:1px solid var(--line);color:var(--ink);padding:11px;border-radius:6px;
        font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:400}
-  .opt:hover{border-color:var(--accent)}
+  .opt:hover:not(:disabled){border-color:var(--accent)}
+  .opt:disabled{cursor:default;opacity:.75}
+  .opt.chosen{border-color:var(--accent);background:rgba(163,113,247,.14);opacity:1}
+  .opt.chosen b{color:var(--accent)}
+  .opt.right{border-color:var(--ok);background:rgba(63,185,80,.14);opacity:1}
+  .opt.right b{color:var(--ok)}
+  .opt.wrong{border-color:var(--bad);background:rgba(248,81,73,.14);opacity:1}
+  .opt.wrong b{color:var(--bad)}
   .opt b{color:var(--accent);flex:none}
   .timer{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:14px 0 0}
   .timer i{display:block;height:100%;background:var(--ok);transition:width 1s linear}
@@ -250,6 +257,12 @@ function connect(){
   es.addEventListener('connected', e => log('connected', JSON.parse(e.data)));
   es.addEventListener('message',   e => log('message', JSON.parse(e.data).text));
   es.addEventListener('error',     e => { try{ log('error', JSON.parse(e.data)); }catch(_){} });
+  es.addEventListener('answer.result', e => {
+    const r = JSON.parse(e.data);
+    log(r.correct ? 'connected' : 'error',
+        `${r.correct ? 'CORRECT' : 'WRONG'} — picked ${r.chosen}, answer was ${r.correctAnswer}`);
+    markResult(r);
+  });
   es.addEventListener('question.asked', e => {
     const q = JSON.parse(e.data);
     log('question', `Q${q.questionNumber} · ₦${q.prizeAmount.toLocaleString()} · ${q.timerSeconds}s${q.restored ? ' (restored)' : ''}`);
@@ -270,9 +283,11 @@ function renderQuestion(q){
     b.className = 'opt';
     b.innerHTML = `<b>${k}</b><span></span>`;
     b.querySelector('span').textContent = v;
-    b.onclick = () => send(k);
+    b.dataset.opt = k;
+    b.onclick = () => selectOption(k);
     $('qopts').appendChild(b);
   }
+  answered = false;
 
   const tags = [];
   if(q.isSafeCheckpoint) tags.push('safe checkpoint');
@@ -298,6 +313,29 @@ function startTimer(expiresAt, total){
   };
   tick();
   timerInt = setInterval(tick, 250);
+}
+
+let answered = false;
+
+// Immediate visual acknowledgement — the server round-trip takes a moment and
+// the player needs to know the tap registered.
+function selectOption(k){
+  if(answered) return;
+  answered = true;
+  document.querySelectorAll('.opt').forEach(b => {
+    if(b.dataset.opt === k) b.classList.add('chosen');
+    b.disabled = true;
+  });
+  send(k);
+}
+
+function markResult(r){
+  clearInterval(timerInt);
+  document.querySelectorAll('.opt').forEach(b => {
+    b.disabled = true;
+    if(b.dataset.opt === r.correctAnswer) b.classList.add('right');
+    else if(b.dataset.opt === r.chosen) b.classList.add('wrong');
+  });
 }
 
 // ---------- input ----------

@@ -2202,6 +2202,26 @@ class GameService {
                     await restrictionsService.resetQ1TimeoutStreak(user.id);
                 }
 
+                // Web: structured result so the board can mark the chosen option and
+                // reveal the correct one. Emitted before the text for both outcomes.
+                if (user.phone_number && user.phone_number.startsWith('web_')) {
+                    try {
+                        const gameEvents = require('./game-events.service');
+                        await gameEvents.clearSnapshot(user.id);
+                        gameEvents.emit(user.id, 'answer.result', {
+                            questionNumber,
+                            chosen: answer,
+                            correctAnswer: question.correct_answer,
+                            correct: isCorrect,
+                            prizeAmount: isCorrect ? prizeAmount : 0,
+                            funFact: question.fun_fact || null,
+                            isSafeCheckpoint: SAFE_CHECKPOINTS.includes(questionNumber)
+                        });
+                    } catch (evtErr) {
+                        logger.error('Could not emit answer result event:', evtErr.message);
+                    }
+                }
+
                 if (isCorrect) {
                     session.current_score = prizeAmount;
                     session.current_question = questionNumber + 1;
@@ -2413,7 +2433,38 @@ class GameService {
                 if (lifelines.length > 0) message += `💎 Lifelines: ${lifelines.join(' | ')}`;
                 
                 await messagingService.sendMessage(user.phone_number, message);
-                
+
+                // Web: re-emit the question with only the surviving options and the
+                // extended timer, so the board updates in place rather than the player
+                // having to read the change out of a text log.
+                if (user.phone_number && user.phone_number.startsWith('web_')) {
+                    try {
+                        const gameEvents = require('./game-events.service');
+                        const opts = {};
+                        remainingOptions.forEach(o => { opts[o] = question['option_' + o.toLowerCase()]; });
+                        await gameEvents.emitQuestion(user.id, {
+                            sessionId: currentSession.id,
+                            questionNumber,
+                            totalQuestions: Object.keys(PRIZE_LADDER).length,
+                            text: question.question_text,
+                            options: opts,
+                            prizeAmount,
+                            isSafeCheckpoint: isSafe,
+                            timerSeconds: newTime,
+                            expiresAt: Date.now() + newTime * 1000,
+                            turbo: false,
+                            penalty: false,
+                            lifelines: { fiftyFifty: false, skip: !currentSession.lifeline_skip_used },
+                            imageUrl: null,
+                            gameMode: currentSession.game_mode,
+                            tournamentId: currentSession.tournament_id,
+                            afterLifeline: '50:50'
+                        });
+                    } catch (evtErr) {
+                        logger.error('Could not emit 50:50 question event:', evtErr.message);
+                    }
+                }
+
                 await redis.setex(timeoutKey, newTime + 5, (Date.now() + newTime * 1000).toString());
                 const timeoutId = setTimeout(async () => {
                     try {
