@@ -1825,7 +1825,7 @@ router.get('/api/users', authenticateAdmin, async (req, res) => {
 
     const result = await pool.query(
       `SELECT
-        id, full_name, username, phone_number, city, age,
+        id, full_name, username, phone_number, email, platform, city, age,
         total_games_played, total_winnings,
         games_remaining, created_at, last_active
        FROM users

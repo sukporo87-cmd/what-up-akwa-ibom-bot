@@ -158,8 +158,12 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
       <div class="filter-row">
         <div class="form-group">
           <label>Platform</label>
-          <select id="bcPlatform"><option value="">All</option><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option>
-                        <option value="web">Web App</option></select>
+          <select id="bcPlatform" onchange="onBroadcastPlatformChange()">
+            <option value="">All platforms</option>
+            <option value="whatsapp">📱 WhatsApp</option>
+            <option value="telegram">💬 Telegram</option>
+            <option value="web">🌐 Web App</option>
+          </select>
         </div>
         <div class="form-group">
           <label>Min Games Played</label>
@@ -173,6 +177,15 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
           <label>Has Email</label>
           <select id="bcHasEmail"><option value="">Any</option><option value="true">Yes</option><option value="false">No</option></select>
         </div>
+      </div>
+      <div class="form-group" id="bcSubjectWrap" style="display:none">
+        <label>Email Subject <span style="color:#94a3b8;font-weight:400">— web users receive this as an email</span></label>
+        <input type="text" id="bcSubject" placeholder="e.g. This Friday's tournament is live" maxlength="120">
+      </div>
+      <div id="bcWebNotice" style="display:none;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.4);
+           border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#c4b5fd;line-height:1.55">
+        🌐 <strong>Web App users have no push channel</strong> — they'll receive this by email, with an unsubscribe
+        link appended automatically. Anyone who has opted out of the newsletter is skipped and reported separately.
       </div>
       <div class="form-group">
         <label>Template (optional)</label>
@@ -379,18 +392,51 @@ async function sendDirect() {
 }
 
 // Broadcast
+function webAudiencePossible() {
+  const p = document.getElementById('bcPlatform').value;
+  return p === '' || p === 'web';   // 'All' includes web users
+}
+
+function onBroadcastPlatformChange() {
+  const show = webAudiencePossible();
+  document.getElementById('bcSubjectWrap').style.display = show ? '' : 'none';
+  document.getElementById('bcWebNotice').style.display  = show ? '' : 'none';
+}
+
 async function sendBroadcast() {
   const msg = document.getElementById('broadcastMessage').value.trim();
   if (!msg) { showToast('Message is required', 'error'); return; }
+
+  const needsSubject = webAudiencePossible();
+  const subject = (document.getElementById('bcSubject').value || '').trim();
+  if (needsSubject && !subject) {
+    showToast('A subject line is required when web users are included', 'error');
+    document.getElementById('bcSubject').focus();
+    return;
+  }
   if (!confirm('Send this message to all matching users?')) return;
+
   const filter = getBroadcastFilter();
   try {
     const data = await api('/api/messaging/broadcast', {
-      method: 'POST', body: JSON.stringify({ message: msg, filter, sentBy: 'admin' })
+      method: 'POST',
+      body: JSON.stringify({ message: msg, subject, kind: 'marketing', filter, sentBy: 'admin' })
     });
     if (data?.success) {
-      showToast(`Broadcast complete: ${data.sent} sent, ${data.failed} failed`);
+      const by = data.byChannel || {};
+      const parts = [];
+      if (by.whatsapp) parts.push(`${by.whatsapp} WhatsApp`);
+      if (by.telegram) parts.push(`${by.telegram} Telegram`);
+      if (by.web)      parts.push(`${by.web} email`);
+      let note = `Sent ${data.sent}` + (parts.length ? ` (${parts.join(', ')})` : '');
+      if (data.skipped) note += ` \u00b7 ${data.skipped} skipped`;
+      if (data.failed)  note += ` \u00b7 ${data.failed} failed`;
+      showToast(note);
+      if (data.reasons && Object.keys(data.reasons).length) {
+        console.log('Broadcast skip/failure reasons:', data.reasons);
+      }
       document.getElementById('broadcastMessage').value = '';
+      document.getElementById('bcSubject').value = '';
       loadStats();
     } else { showToast(data?.error || 'Broadcast failed', 'error'); }
   } catch (e) { showToast('Network error', 'error'); }
@@ -623,6 +669,11 @@ function wutBadge(o){
   return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">'
        + wutIcon(p)+' '+wutLabel(p)+'</span>';
 }
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  if (document.getElementById('bcPlatform')) onBroadcastPlatformChange();
+});
 </script>
 </body>
 </html>

@@ -635,6 +635,7 @@
                 <button class="active" onclick="filterPlatform('all')">All Platforms</button>
                 <button onclick="filterPlatform('whatsapp')">📱 WhatsApp</button>
                 <button onclick="filterPlatform('telegram')">💬 Telegram</button>
+                <button onclick="filterPlatform('web')">🌐 Web App</button>
             </div>
             <button class="card-action" onclick="logout()">🚪 Logout</button>
         </div>
@@ -1889,6 +1890,12 @@
     }
     
     function updateUserGrowthChart(data, period) {
+        try {
+            const _rows = (arguments[0] || []).slice().reverse();
+            if (userGrowthChart && userGrowthChart.data.datasets[2]) {
+                userGrowthChart.data.datasets[2].data = _rows.map(r => parseInt(r.web_users) || 0);
+            }
+        } catch (e) {}
         const ctx = document.getElementById('userGrowthChart');
         if (!ctx) return;
         
@@ -2043,6 +2050,10 @@
                         <div style="font-size: 11px; color: var(--text-secondary);">Telegram</div>
                     </div>
                     <div style="text-align: center;">
+                        <div style="font-size: 20px; font-weight: bold; color: var(--web-color);">${t.web_participants || 0}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">Web App</div>
+                    </div>
+                    <div style="text-align:center;">
                         <div style="font-size: 20px; font-weight: bold; color: var(--whatsapp-color);">${t.whatsapp_participants || 0}</div>
                         <div style="font-size: 11px; color: var(--text-secondary);">WhatsApp</div>
                     </div>

@@ -14,15 +14,18 @@ class AnalyticsService {
     
     async getDailyUserGrowth(days = 30) {
         try {
-            const result = await pool.query(`
-                SELECT 
-                    date,
-                    new_users,
-                    telegram_users,
-                    whatsapp_users
-                FROM daily_user_growth
-                WHERE date >= CURRENT_DATE - INTERVAL '${days} days'
-                ORDER BY date DESC
+                        const result = await pool.query(`
+                SELECT
+                    DATE_TRUNC('day', created_at)::date AS date,
+                    COUNT(*)                                        AS new_users,
+                    COUNT(*) FILTER (WHERE platform = 'telegram')   AS telegram_users,
+                    COUNT(*) FILTER (WHERE platform = 'web')        AS web_users,
+                    COUNT(*) FILTER (WHERE platform = 'whatsapp'
+                                        OR platform IS NULL)        AS whatsapp_users
+                FROM users
+                WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
+                GROUP BY 1
+                ORDER BY 1 DESC
             `);
             
             return result.rows;
@@ -35,14 +38,17 @@ class AnalyticsService {
     async getWeeklyUserGrowth(weeks = 12) {
         try {
             const result = await pool.query(`
-                SELECT 
-                    week_start,
-                    new_users,
-                    telegram_users,
-                    whatsapp_users
-                FROM weekly_user_growth
-                WHERE week_start >= CURRENT_DATE - INTERVAL '${weeks} weeks'
-                ORDER BY week_start DESC
+                SELECT
+                    DATE_TRUNC('week', created_at)::date AS week_start,
+                    COUNT(*)                                        AS new_users,
+                    COUNT(*) FILTER (WHERE platform = 'telegram')   AS telegram_users,
+                    COUNT(*) FILTER (WHERE platform = 'web')        AS web_users,
+                    COUNT(*) FILTER (WHERE platform = 'whatsapp'
+                                        OR platform IS NULL)        AS whatsapp_users
+                FROM users
+                WHERE created_at >= CURRENT_DATE - INTERVAL '${weeks} weeks'
+                GROUP BY 1
+                ORDER BY 1 DESC
             `);
             
             return result.rows;
@@ -55,14 +61,17 @@ class AnalyticsService {
     async getMonthlyUserGrowth(months = 12) {
         try {
             const result = await pool.query(`
-                SELECT 
-                    month_start,
-                    new_users,
-                    telegram_users,
-                    whatsapp_users
-                FROM monthly_user_growth
-                WHERE month_start >= CURRENT_DATE - INTERVAL '${months} months'
-                ORDER BY month_start DESC
+                SELECT
+                    DATE_TRUNC('month', created_at)::date AS month_start,
+                    COUNT(*)                                        AS new_users,
+                    COUNT(*) FILTER (WHERE platform = 'telegram')   AS telegram_users,
+                    COUNT(*) FILTER (WHERE platform = 'web')        AS web_users,
+                    COUNT(*) FILTER (WHERE platform = 'whatsapp'
+                                        OR platform IS NULL)        AS whatsapp_users
+                FROM users
+                WHERE created_at >= CURRENT_DATE - INTERVAL '${months} months'
+                GROUP BY 1
+                ORDER BY 1 DESC
             `);
             
             return result.rows;
@@ -306,14 +315,10 @@ class AnalyticsService {
                     t.end_date,
                     COALESCE(t.status, 'upcoming') as status,
                     COUNT(DISTINCT tp.user_id) as total_participants,
-                    COUNT(DISTINCT CASE 
-                        WHEN u.platform = 'telegram' THEN tp.user_id 
-                        WHEN u.phone_number LIKE 'tg_%' THEN tp.user_id
-                    END) as telegram_participants,
-                    COUNT(DISTINCT CASE 
-                        WHEN u.platform = 'whatsapp' OR u.platform IS NULL THEN tp.user_id
-                        WHEN u.phone_number NOT LIKE 'tg_%' THEN tp.user_id 
-                    END) as whatsapp_participants,
+                    COUNT(DISTINCT CASE WHEN u.platform = 'telegram' THEN tp.user_id END) as telegram_participants,
+                    COUNT(DISTINCT CASE WHEN u.platform = 'web'      THEN tp.user_id END) as web_participants,
+                    COUNT(DISTINCT CASE WHEN u.platform = 'whatsapp' OR u.platform IS NULL
+                                        THEN tp.user_id END) as whatsapp_participants,
                     COALESCE(MAX(tp.total_score), 0) as highest_score,
                     COALESCE(AVG(tp.total_score), 0) as avg_score
                 FROM tournaments t
