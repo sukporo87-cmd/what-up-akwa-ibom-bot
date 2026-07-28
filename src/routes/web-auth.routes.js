@@ -7,6 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const webAuthService = require('../services/web-auth.service');
+const emailService = require('../services/email.service');
 const { logger } = require('../utils/logger');
 
 const COOKIE_NAME = 'wut_session';
@@ -93,9 +94,9 @@ async function requireCompleteProfile(req, res, next) {
 
 router.post('/signup/request', async (req, res) => {
     try {
-        const { email, fullName, city, username, age, referralCode, newsletterOptIn } = req.body || {};
+        const { email, fullName, city, username, age, referralCode, acquisitionSource, newsletterOptIn } = req.body || {};
         const result = await webAuthService.requestSignupOtp({
-            email, fullName, city, username, age, referralCode,
+            email, fullName, city, username, age, referralCode, acquisitionSource,
             newsletterOptIn: newsletterOptIn !== false,   // checkbox defaults to ticked
             ip: getIp(req)
         });
@@ -187,8 +188,8 @@ router.get('/google/callback', async (req, res) => {
 
 router.post('/complete-profile', requireWebAuth, async (req, res) => {
     try {
-        const { username, city, age, referralCode } = req.body || {};
-        const user = await webAuthService.completeProfile(req.webUser.id, { username, city, age, referralCode });
+        const { username, city, age, referralCode, acquisitionSource } = req.body || {};
+        const user = await webAuthService.completeProfile(req.webUser.id, { username, city, age, referralCode, acquisitionSource });
         res.json({ success: true, user });
     } catch (error) {
         fail(res, error);
@@ -243,6 +244,8 @@ router.get('/config', (req, res) => {
     res.json({
         success: true,
         googleEnabled: webAuthService.isGoogleEnabled(),
+        emailProvider: emailService.provider,
+        acquisitionSources: webAuthService.getAcquisitionSources(),
         minAge: 18
     });
 });

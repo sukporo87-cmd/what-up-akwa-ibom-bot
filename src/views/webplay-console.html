@@ -23,7 +23,9 @@
   label{display:block;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
   input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);
         padding:9px 11px;font-family:var(--mono);font-size:13px;margin-bottom:11px}
-  input:focus{outline:none;border-color:var(--accent)}
+  select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);
+         padding:9px 11px;font-family:var(--mono);font-size:13px;margin-bottom:11px}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
   button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:9px 15px;
          font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer}
   button:hover{filter:brightness(1.12)}
@@ -59,6 +61,14 @@
   .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
        border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .result{margin-top:14px;padding:13px;border-radius:6px;border:1px solid var(--line);
+          font-family:system-ui,-apple-system,sans-serif}
+  .result.right{border-color:var(--ok);background:rgba(63,185,80,.09)}
+  .result.wrong{border-color:var(--bad);background:rgba(248,81,73,.09)}
+  .result h4{margin:0 0 6px;font-size:14px}
+  .result.right h4{color:var(--ok)} .result.wrong h4{color:var(--bad)}
+  .result p{margin:0;font-size:13px;line-height:1.55;color:var(--ink)}
+  .result .fact{margin-top:9px;padding-top:9px;border-top:1px solid var(--line);color:var(--dim)}
 
   /* log */
   #log{background:var(--panel);border:1px solid var(--line);border-radius:8px;
@@ -95,6 +105,8 @@
         <label>Username</label><input id="username" placeholder="starweb">
         <label>Age</label><input id="age" type="number" value="30">
         <label>Referral code (optional)</label><input id="referralCode" placeholder="">
+        <label>How did you hear about us?</label>
+        <select id="acquisitionSource"></select>
         <button onclick="requestCode('signup')">Create account</button>
       </div>
       <div class="err" id="authErr"></div>
@@ -129,6 +141,7 @@
     <div class="opts" id="qopts"></div>
     <div class="timer"><i id="qbar"></i></div>
     <div class="tags" id="qtags"></div>
+    <div id="qresult"></div>
   </div>
 
   <!-- CONTROLS -->
@@ -194,6 +207,7 @@ async function requestCode(purpose){
   const body = purpose === 'signup'
     ? { email, fullName:$('fullName').value.trim(), city:$('city').value.trim(),
         username:$('username').value.trim(), age:$('age').value,
+        acquisitionSource:$('acquisitionSource').value,
         referralCode:$('referralCode').value.trim() || undefined }
     : { email };
 
@@ -288,6 +302,7 @@ function renderQuestion(q){
     $('qopts').appendChild(b);
   }
   answered = false;
+  $('qresult').className = ''; $('qresult').innerHTML = '';
 
   const tags = [];
   if(q.isSafeCheckpoint) tags.push('safe checkpoint');
@@ -331,11 +346,35 @@ function selectOption(k){
 
 function markResult(r){
   clearInterval(timerInt);
+  let correctText = '';
   document.querySelectorAll('.opt').forEach(b => {
     b.disabled = true;
-    if(b.dataset.opt === r.correctAnswer) b.classList.add('right');
-    else if(b.dataset.opt === r.chosen) b.classList.add('wrong');
+    if(b.dataset.opt === r.correctAnswer){
+      b.classList.add('right');
+      correctText = b.querySelector('span').textContent;
+    } else if(b.dataset.opt === r.chosen){
+      b.classList.add('wrong');
+    }
   });
+
+  // The teaching moment belongs on the board. Burying the fun fact in a log
+  // means most players never see it.
+  const box = $('qresult');
+  box.className = 'result ' + (r.correct ? 'right' : 'wrong');
+  const head = r.correct
+    ? `Correct — ₦${(r.prizeAmount||0).toLocaleString()}`
+    : `Not quite`;
+  box.innerHTML = `<h4></h4><p></p>`;
+  box.querySelector('h4').textContent = head + (r.isSafeCheckpoint && r.correct ? ' · safe checkpoint reached' : '');
+  box.querySelector('p').textContent = r.correct
+    ? `${r.correctAnswer}) ${correctText}`
+    : `The answer was ${r.correctAnswer}) ${correctText}`;
+  if(r.funFact){
+    const f = document.createElement('div');
+    f.className = 'fact';
+    f.textContent = r.funFact;
+    box.appendChild(f);
+  }
 }
 
 // ---------- input ----------
@@ -376,6 +415,15 @@ async function refreshState(){
 
 // ---------- boot ----------
 (async () => {
+  try{
+    const cfg = await (await fetch('/web/auth/config')).json();
+    if(cfg.acquisitionSources){
+      $('acquisitionSource').innerHTML =
+        '<option value="">Select one…</option>' +
+        cfg.acquisitionSources.map(s => `<option value="${s.value}">${s.label}</option>`).join('');
+    }
+  }catch(e){ /* non-fatal */ }
+
   try{
     const r = await fetch('/web/auth/me',{headers:headers()});
     const d = await r.json();

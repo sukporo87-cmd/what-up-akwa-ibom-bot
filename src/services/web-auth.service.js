@@ -21,13 +21,30 @@ const OTP_PER_EMAIL_PER_HOUR = 5;
 const OTP_PER_IP_PER_HOUR = 15;
 const MIN_AGE = 18;                               // real-money product
 
+// Must match the slugs used by the WhatsApp/Telegram registration flow,
+// otherwise web signups fragment the acquisition-source reporting.
+const ACQUISITION_SOURCES = [
+    { value: 'instagram',     label: 'Instagram' },
+    { value: 'facebook',      label: 'Facebook' },
+    { value: 'twitter',       label: 'X (Twitter)' },
+    { value: 'youtube',       label: 'YouTube' },
+    { value: 'google',        label: 'Google' },
+    { value: 'friends',       label: 'Friends' },
+    { value: 'word_of_mouth', label: 'Word of mouth' },
+    { value: 'live_event',    label: 'Live event' },
+    { value: 'other',         label: 'Other' }
+];
+const ACQUISITION_VALUES = ACQUISITION_SOURCES.map(s => s.value);
+
 class WebAuthService {
 
     // ============================================
     // VALIDATION
     // ============================================
 
-    validateSignupInput({ email, fullName, city, username, age }) {
+    getAcquisitionSources() { return ACQUISITION_SOURCES; }
+
+    validateSignupInput({ email, fullName, city, username, age, acquisitionSource }) {
         const errors = [];
 
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
@@ -45,6 +62,9 @@ class WebAuthService {
         const parsedAge = parseInt(age, 10);
         if (isNaN(parsedAge) || parsedAge < MIN_AGE || parsedAge > 120) {
             errors.push(`You must be at least ${MIN_AGE} to play for cash prizes`);
+        }
+        if (!acquisitionSource || !ACQUISITION_VALUES.includes(acquisitionSource)) {
+            errors.push('Tell us how you heard about us');
         }
 
         return errors;
@@ -142,7 +162,12 @@ class WebAuthService {
 
         const sent = await emailService.sendOtp(email.trim(), code, purpose);
         if (!sent) {
-            const err = new Error("We couldn't send the email right now. Please try again shortly.");
+            // Set EMAIL_DEBUG=true in Render to surface the provider's reason in
+            // the API response while you're configuring email. Turn it off after.
+            const detail = (process.env.EMAIL_DEBUG === 'true' && emailService.lastError)
+                ? ` [${emailService.provider}: ${emailService.lastError}]`
+                : '';
+            const err = new Error(`We couldn't send the email right now. Please try again shortly.${detail}`);
             err.userFacing = true;
             throw err;
         }
@@ -152,8 +177,8 @@ class WebAuthService {
     }
 
     /** Step 1 of signup — validates everything, holds the payload, emails a code. */
-    async requestSignupOtp({ email, fullName, city, username, age, referralCode, newsletterOptIn = true, ip }) {
-        const errors = this.validateSignupInput({ email, fullName, city, username, age });
+    async requestSignupOtp({ email, fullName, city, username, age, referralCode, acquisitionSource, newsletterOptIn = true, ip }) {
+        const errors = this.validateSignupInput({ email, fullName, city, username, age, acquisitionSource });
         if (errors.length) {
             const err = new Error(errors[0]);
             err.userFacing = true;
@@ -187,6 +212,7 @@ class WebAuthService {
                 username: username.trim(),
                 age: parseInt(age, 10),
                 referrerId,
+                acquisitionSource,
                 newsletterOptIn: newsletterOptIn !== false
             }
         });
@@ -305,6 +331,7 @@ class WebAuthService {
                 age: payload.age,
                 referrerId: payload.referrerId,
                 authProvider: 'email',
+                acquisitionSource: payload.acquisitionSource,
                 newsletterOptIn: payload.newsletterOptIn !== false
             });
 
@@ -340,7 +367,7 @@ class WebAuthService {
      * fields and uses the `web_` identifier prefix. Kept separate so the live
      * WhatsApp/Telegram registration path is untouched.
      */
-    async createWebUser({ email, fullName, city, username, age, referrerId = null, authProvider = 'email', googleId = null, profileComplete = true, newsletterOptIn = true }) {
+    async createWebUser({ email, fullName, city, username, age, referrerId = null, authProvider = 'email', googleId = null, profileComplete = true, newsletterOptIn = true, acquisitionSource = null }) {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -367,7 +394,7 @@ class WebAuthService {
                 identifier, fullName, city, username, age,
                 referralCode, referrerId,
                 email ? email.toLowerCase() : null, authProvider, googleId, profileComplete,
-                referrerId ? 'friends' : null,
+                acquisitionSource || null,
                 newsletterOptIn !== false,
                 crypto.randomBytes(16).toString('hex')
             ]);
@@ -559,8 +586,11 @@ class WebAuthService {
     }
 
     /** Finishes a Google signup by collecting the fields Google can't provide. */
-    async completeProfile(userId, { username, city, age, referralCode }) {
+    async completeProfile(userId, { username, city, age, referralCode, acquisitionSource }) {
         const errors = [];
+        if (!acquisitionSource || !ACQUISITION_VALUES.includes(acquisitionSource)) {
+            errors.push('Tell us how you heard about us');
+        }
         if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username.trim())) {
             errors.push('Username must be 3-20 characters — letters, numbers and underscores only');
         }
@@ -600,10 +630,11 @@ class WebAuthService {
         const updated = await pool.query(`
             UPDATE users
             SET username = $1, city = $2, age = $3, referred_by = COALESCE(referred_by, $4),
+                acquisition_source = COALESCE(acquisition_source, $5),
                 profile_complete = true
-            WHERE id = $5
+            WHERE id = $6
             RETURNING *
-        `, [username.trim(), city.trim(), parsedAge, referrerId, userId]);
+        `, [username.trim(), city.trim(), parsedAge, referrerId, acquisitionSource, userId]);
 
         // Record the referral link if one was just applied
         if (referrerId && !current.rows[0].referred_by) {
