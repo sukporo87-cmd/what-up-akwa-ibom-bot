@@ -673,6 +673,7 @@
                         <option value="">All Platforms</option>
                         <option value="whatsapp">WhatsApp</option>
                         <option value="telegram">Telegram</option>
+                        <option value="web">Web App</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -880,7 +881,7 @@
                     <td>${s.game_mode || 'N/A'}</td>
                     <td>
                         <span class="platform-badge platform-${s.platform || 'whatsapp'}">
-                            ${s.platform === 'telegram' ? '📱 Telegram' : '💬 WhatsApp'}
+                            ${s.platform === 'telegram' ? '📱 Telegram' : s.platform === 'web' ? '🌐 Web App' : '💬 WhatsApp'}
                         </span>
                     </td>
                     <td>₦${(s.final_score || 0).toLocaleString()}</td>

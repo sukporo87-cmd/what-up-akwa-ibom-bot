@@ -185,13 +185,11 @@ app.listen(PORT, async () => {
 
 function startWelcomeMessageProcessor() {
   const welcomeService = require('./services/welcome-message.service');
-  const MessagingService = require('./services/messaging.service');
-  const messagingService = new MessagingService();
   
   // Check every 5 minutes
   setInterval(async () => {
     try {
-      const sent = await welcomeService.processBatch(messagingService);
+      const sent = await welcomeService.processBatch();
       if (sent > 0) console.log(`👋 Welcome processor: sent ${sent} message(s)`);
     } catch (error) {
       console.error('❌ Error in welcome message processor:', error.message);

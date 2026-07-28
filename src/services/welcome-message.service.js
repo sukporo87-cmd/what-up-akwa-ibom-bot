@@ -18,8 +18,7 @@ class WelcomeMessageService {
     async findPendingUsers(limit = 50) {
         try {
             const result = await pool.query(`
-                SELECT id, phone_number, full_name, username, platform
-                FROM users
+                SELECT * FROM users
                 WHERE welcome_message_sent_at IS NULL
                   AND last_active < NOW() - INTERVAL '20 hours'
                   AND full_name IS NOT NULL
@@ -74,7 +73,8 @@ class WelcomeMessageService {
      * Process one batch of pending welcome messages.
      * Returns count of messages successfully sent.
      */
-    async processBatch(messagingService) {
+    async processBatch() {
+        const contact = require('./contact.service');
         const pending = await this.findPendingUsers(50);
         if (pending.length === 0) return 0;
 
@@ -83,14 +83,25 @@ class WelcomeMessageService {
         let sent = 0;
         for (const user of pending) {
             try {
-                const message = this.buildMessage(user);
-                await messagingService.sendMessage(user.phone_number, message);
-                await this.markSent(user.id);
-                sent++;
-                logger.info(`👋 Welcome message sent to user ${user.id} (@${user.username})`);
+                const result = await contact.send(user, {
+                    text: this.buildMessage(user),
+                    subject: `Welcome to What's Up Trivia, @${user.username}`,
+                    kind: 'transactional'   // onboarding, not marketing
+                });
+
+                if (result.sent) {
+                    await this.markSent(user.id);
+                    sent++;
+                    logger.info(`👋 Welcome sent to user ${user.id} (@${user.username}) via ${result.channel}`);
+                } else if (result.reason === 'no email on file') {
+                    // Unreachable — mark done so we stop retrying every cycle
+                    await this.markSent(user.id);
+                    logger.warn(`👋 User ${user.id} unreachable (web, no email) — skipping`);
+                } else {
+                    logger.error(`👋 Welcome failed for user ${user.id}: ${result.reason}`);
+                }
             } catch (error) {
                 logger.error(`Error sending welcome to user ${user.id}:`, error.message);
-                // Don't mark as sent on failure — will retry next cycle
             }
         }
         return sent;

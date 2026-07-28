@@ -15,6 +15,7 @@
         :root {
             --whatsapp-color: #25D366;
             --telegram-color: #0088cc;
+            --web-color: #8b5cf6;
             --primary-color: #667eea;
             --danger-color: #f56565;
             --success-color: #48bb78;
@@ -123,6 +124,9 @@
             background: var(--whatsapp-color);
         }
 
+        .platform-card.web::before {
+            background: var(--web-color);
+        }
         .platform-card.telegram::before {
             background: var(--telegram-color);
         }
@@ -680,6 +684,38 @@
                 </div>
                 <div class="stat-item">
                     <span class="stat-value" id="telegram-revenue">₦0</span>
+                    <span class="stat-label">Revenue</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Web App Card -->
+        <div class="platform-card web">
+            <div class="platform-card-header">
+                <div>
+                    <div class="platform-icon" style="background: rgba(139, 92, 246, 0.2); color: #8b5cf6;">🌐</div>
+                    <h3 style="margin-top: 10px;">Web App</h3>
+                    <div class="health-indicator" style="margin-top: 5px;">
+                        <span class="health-dot"></span>
+                        <span>Online</span>
+                    </div>
+                </div>
+            </div>
+            <div class="platform-stats">
+                <div class="stat-item">
+                    <span class="stat-value" id="web-users">0</span>
+                    <span class="stat-label">Users</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="web-games">0</span>
+                    <span class="stat-label">Games</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="web-active">0%</span>
+                    <span class="stat-label">Active Rate</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="web-revenue">₦0</span>
                     <span class="stat-label">Revenue</span>
                 </div>
             </div>
@@ -1514,6 +1550,12 @@
         document.getElementById('whatsapp-revenue').textContent = formatCurrency(stats.whatsapp.revenue);
         
         // Telegram stats
+        const web = stats.web || { users: 0, games: 0, active_rate: 0, revenue: 0 };
+        document.getElementById('web-users').textContent = web.users;
+        document.getElementById('web-games').textContent = (web.games || 0).toLocaleString();
+        document.getElementById('web-active').textContent = (web.active_rate || 0) + '%';
+        document.getElementById('web-revenue').textContent = formatCurrency(web.revenue || 0);
+
         document.getElementById('telegram-users').textContent = stats.telegram.users;
         document.getElementById('telegram-games').textContent = stats.telegram.games.toLocaleString();
         document.getElementById('telegram-active').textContent = stats.telegram.active_rate + '%';

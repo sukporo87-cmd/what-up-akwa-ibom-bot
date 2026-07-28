@@ -880,6 +880,7 @@
               <option value="">All Platforms</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="telegram">Telegram</option>
+              <option value="web">Web App</option>
             </select>
             <select id="userStatusFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;">
               <option value="">All Statuses</option>
@@ -3326,11 +3327,18 @@ async function showAcquisitionUsers(source, label) {
     
     for (const u of d.users) {
       const joined = new Date(u.created_at).toLocaleDateString();
-      const platformBadge = u.platform === 'telegram' 
-        ? '<span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:11px;">TG</span>'
-        : '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:4px;font-size:11px;">WA</span>';
-      // Strip tg_ prefix for cleaner display
-      const phone = u.phone_number?.startsWith('tg_') ? u.phone_number.substring(3) : u.phone_number;
+      const chan = u.phone_number?.startsWith('tg_') ? 'telegram'
+                 : u.phone_number?.startsWith('web_') ? 'web' : 'whatsapp';
+      const badges = {
+        telegram: '<span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:11px;">TG</span>',
+        web:      '<span style="background:#ede9fe;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:11px;">WEB</span>',
+        whatsapp: '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:4px;font-size:11px;">WA</span>'
+      };
+      const platformBadge = badges[chan];
+      // Web users are identified by email, not a phone number
+      const phone = chan === 'web' ? (u.email || '—')
+                  : chan === 'telegram' ? u.phone_number.substring(3)
+                  : u.phone_number;
       html += `<tr>
         <td><strong>@${u.username || '—'}</strong></td>
         <td>${u.full_name || '—'}</td>
@@ -3647,7 +3655,9 @@ async function viewUserProfile(userId) {
 function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
   const { user, stats, financial, referrals, recentGames, recentTransactions, achievements } = data;
   const { devices, ips } = deviceData;
-  const platformIcon = user.phone_number.startsWith('tg_') ? '💬 Telegram' : '📱 WhatsApp';
+  const platformIcon = user.phone_number.startsWith('tg_') ? '💬 Telegram'
+                     : user.phone_number.startsWith('web_') ? '🌐 Web App'
+                     : '📱 WhatsApp';
   const suspendedBadge = user.is_suspended ? '<span class="badge" style="background:#fee2e2;color:#991b1b;">SUSPENDED</span>' : '';
   
   let html = `

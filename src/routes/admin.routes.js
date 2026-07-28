@@ -241,6 +241,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   SELECT
     CASE 
       WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+      WHEN phone_number LIKE 'web_%' THEN 'web'
       ELSE 'whatsapp'
     END as platform,
     COUNT(DISTINCT id) as total_users,
@@ -249,6 +250,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   FROM users
   GROUP BY CASE 
     WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+    WHEN phone_number LIKE 'web_%' THEN 'web'
     ELSE 'whatsapp'
   END
 `);
@@ -258,6 +260,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   SELECT
     CASE 
       WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      WHEN u.phone_number LIKE 'web_%' THEN 'web'
       ELSE 'whatsapp'
     END as platform,
     COALESCE(SUM(pt.amount), 0) as revenue
@@ -266,6 +269,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   WHERE pt.status = 'success'
   GROUP BY CASE 
     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    WHEN u.phone_number LIKE 'web_%' THEN 'web'
     ELSE 'whatsapp'
   END
 `);
@@ -274,6 +278,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   SELECT
     CASE 
       WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      WHEN u.phone_number LIKE 'web_%' THEN 'web'
       ELSE 'whatsapp'
     END as platform,
     COALESCE(SUM(tep.amount), 0) as revenue
@@ -282,6 +287,7 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
   WHERE tep.payment_status = 'success'
   GROUP BY CASE 
     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    WHEN u.phone_number LIKE 'web_%' THEN 'web'
     ELSE 'whatsapp'
   END
 `);
@@ -298,7 +304,8 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
     const stats = {
       whatsapp: { users: 0, games: 0, active_rate: 0, revenue: 0 },
       telegram: { users: 0, games: 0, active_rate: 0, revenue: 0 },
-      total: { users: 0, games: 0, active_rate: 0, revenue: 0 }
+      web:      { users: 0, games: 0, active_rate: 0, revenue: 0 },
+      total:    { users: 0, games: 0, active_rate: 0, revenue: 0 }
     };
     
     result.rows.forEach(row => {
@@ -314,9 +321,9 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
     });
     
     // Calculate totals
-    stats.total.users = stats.whatsapp.users + stats.telegram.users;
-    stats.total.games = stats.whatsapp.games + stats.telegram.games;
-    stats.total.revenue = stats.whatsapp.revenue + stats.telegram.revenue;
+    stats.total.users = stats.whatsapp.users + stats.telegram.users + stats.web.users;
+    stats.total.games = stats.whatsapp.games + stats.telegram.games + stats.web.games;
+    stats.total.revenue = stats.whatsapp.revenue + stats.telegram.revenue + stats.web.revenue;
     stats.total.active_rate = stats.total.users > 0
       ? Math.round(((stats.whatsapp.users * stats.whatsapp.active_rate / 100 + 
                     stats.telegram.users * stats.telegram.active_rate / 100) / stats.total.users) * 100)
@@ -349,6 +356,7 @@ router.get('/api/stats/platform-comparison', authenticateAdmin, async (req, res)
     DATE(created_at) as date,
     CASE 
       WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+      WHEN phone_number LIKE 'web_%' THEN 'web'
       ELSE 'whatsapp'
     END as platform,
     COUNT(*) as user_count
@@ -356,6 +364,7 @@ router.get('/api/stats/platform-comparison', authenticateAdmin, async (req, res)
   WHERE created_at >= CURRENT_DATE - INTERVAL '${days} days'
   GROUP BY DATE(created_at), CASE 
     WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+    WHEN phone_number LIKE 'web_%' THEN 'web'
     ELSE 'whatsapp'
   END
   ORDER BY date ASC
@@ -367,19 +376,22 @@ router.get('/api/stats/platform-comparison', authenticateAdmin, async (req, res)
     const dates = [...new Set(result.rows.map(r => r.date.toISOString().split('T')[0]))];
     const whatsappData = [];
     const telegramData = [];
+    const webData = [];
     
     dates.forEach(date => {
-      const whatsapp = result.rows.find(r => r.date.toISOString().split('T')[0] === date && r.platform === 'whatsapp');
-      const telegram = result.rows.find(r => r.date.toISOString().split('T')[0] === date && r.platform === 'telegram');
+      const day = d => result.rows.find(r => r.date.toISOString().split('T')[0] === date && r.platform === d);
+      const whatsapp = day('whatsapp'), telegram = day('telegram'), web = day('web');
       
       whatsappData.push(whatsapp ? parseInt(whatsapp.user_count) : 0);
       telegramData.push(telegram ? parseInt(telegram.user_count) : 0);
+      webData.push(web ? parseInt(web.user_count) : 0);
     });
     
     res.json({
       labels: dates.map(d => new Date(d).toLocaleDateString('en-US', { weekday: 'short' })),
       whatsapp: whatsappData,
-      telegram: telegramData
+      telegram: telegramData,
+      web: webData
     });
   } catch (error) {
     logger.error('Error getting platform comparison:', error);
@@ -400,6 +412,7 @@ router.get('/api/activity/live', authenticateAdmin, async (req, res) => {
         u.phone_number,
         CASE 
           WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+          WHEN u.phone_number LIKE 'web_%' THEN 'web'
           ELSE 'whatsapp'
         END as platform,
         gs.game_mode,
@@ -434,6 +447,7 @@ router.get('/api/health/platforms', authenticateAdmin, async (req, res) => {
   SELECT 
     CASE 
       WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+      WHEN u.phone_number LIKE 'web_%' THEN 'web'
       ELSE 'whatsapp'
     END as platform,
     COUNT(*) as message_count,
@@ -444,6 +458,7 @@ router.get('/api/health/platforms', authenticateAdmin, async (req, res) => {
   WHERE gs.started_at >= NOW() - INTERVAL '24 hours'
   GROUP BY CASE 
     WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+    WHEN u.phone_number LIKE 'web_%' THEN 'web'
     ELSE 'whatsapp'
   END
 `);
@@ -459,6 +474,12 @@ router.get('/api/health/platforms', authenticateAdmin, async (req, res) => {
         status: 'online',
         webhook_success: '98.8%',
         avg_response_time: '189ms',
+        last_message: 'Just now'
+      },
+      web: {
+        status: 'online',
+        webhook_success: '100%',
+        avg_response_time: '—',
         last_message: 'Just now'
       }
     };
@@ -497,9 +518,11 @@ router.get('/api/users/platform', authenticateAdmin, async (req, res) => {
     
     let platformCondition = '';
     if (platform === 'whatsapp') {
-      platformCondition = "AND phone_number NOT LIKE 'tg_%'";
+      platformCondition = "AND phone_number NOT LIKE 'tg_%' AND phone_number NOT LIKE 'web_%'";
     } else if (platform === 'telegram') {
       platformCondition = "AND phone_number LIKE 'tg_%'";
+    } else if (platform === 'web') {
+      platformCondition = "AND phone_number LIKE 'web_%'";
     }
     
     const result = await pool.query(`
@@ -510,6 +533,7 @@ router.get('/api/users/platform', authenticateAdmin, async (req, res) => {
         phone_number,
         CASE 
           WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+          WHEN phone_number LIKE 'web_%' THEN 'web'
           ELSE 'whatsapp'
         END as platform,
         city,
@@ -559,9 +583,11 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
     
     let platformCondition = '';
     if (platform === 'whatsapp') {
-      platformCondition = "AND u.phone_number NOT LIKE 'tg_%'";
+      platformCondition = "AND u.phone_number NOT LIKE 'tg_%' AND u.phone_number NOT LIKE 'web_%'";
     } else if (platform === 'telegram') {
       platformCondition = "AND u.phone_number LIKE 'tg_%'";
+    } else if (platform === 'web') {
+      platformCondition = "AND u.phone_number LIKE 'web_%'";
     }
     
     let statusCondition = '';
@@ -578,6 +604,7 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
         u.phone_number,
         CASE 
           WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+          WHEN u.phone_number LIKE 'web_%' THEN 'web'
           ELSE 'whatsapp'
         END as platform,
         u.city,
@@ -634,6 +661,7 @@ router.get('/api/users/recent', authenticateAdmin, async (req, res) => {
         phone_number,
         CASE 
           WHEN phone_number LIKE 'tg_%' THEN 'telegram'
+          WHEN phone_number LIKE 'web_%' THEN 'web'
           ELSE 'whatsapp'
         END as platform,
         city,
@@ -664,6 +692,7 @@ router.get('/api/payouts/recent', authenticateAdmin, async (req, res) => {
         u.phone_number,
         CASE 
           WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
+          WHEN u.phone_number LIKE 'web_%' THEN 'web'
           ELSE 'whatsapp'
         END as platform,
         t.amount,
@@ -4082,7 +4111,7 @@ router.get('/api/users/search', authenticateAdmin, async (req, res) => {
             if (platform === 'telegram') {
                 sql += ` AND u.phone_number LIKE 'tg_%'`;
             } else if (platform === 'whatsapp') {
-                sql += ` AND u.phone_number NOT LIKE 'tg_%'`;
+                sql += ` AND u.phone_number NOT LIKE 'tg_%' AND u.phone_number NOT LIKE 'web_%'`;
             }
         }
         
@@ -7848,26 +7877,26 @@ router.post('/api/messaging/broadcast', async (req, res) => {
       }
       if (filter.hasEmail === true) query += ' AND email IS NOT NULL';
       if (filter.hasEmail === false) query += ' AND email IS NULL';
-      if (filter.platform === 'whatsapp') query += " AND phone_number NOT LIKE 'tg_%'";
-      if (filter.platform === 'telegram') query += " AND phone_number LIKE 'tg_%'";
+      // Three real channels. 'whatsapp' previously meant "not telegram", which
+      // silently swept in every web user and counted the failed send as delivered.
+      const contactSvc = require('../services/contact.service');
+      if (['whatsapp', 'telegram', 'web'].includes(filter.platform)) {
+        query += ` AND ${contactSvc.sqlFilter(filter.platform)}`;
+      }
     }
 
     const users = await pool.query(query, params);
-    const phones = users.rows.map(u => u.phone_number);
 
-    if (phones.length === 0) return res.json({ success: true, sent: 0, failed: 0, message: 'No matching users' });
+    if (users.rows.length === 0) return res.json({ success: true, sent: 0, failed: 0, message: 'No matching users' });
 
-    const MessagingService = require('../services/messaging.service');
-    const messagingService = new MessagingService();
+    const contact = require('../services/contact.service');
+    const outcome = await contact.sendBulk(users.rows, {
+      text: message,
+      subject: req.body.subject || "What's Up Trivia",
+      kind: req.body.kind === 'transactional' ? 'transactional' : 'marketing'
+    });
 
-    let sent = 0, failed = 0;
-    for (const phone of phones) {
-      try {
-        await messagingService.sendMessage(phone, message);
-        sent++;
-        if (sent % 20 === 0) await new Promise(r => setTimeout(r, 1000));
-      } catch (e) { failed++; }
-    }
+    const sent = outcome.sent, failed = outcome.failed;
 
     await pool.query(`
       INSERT INTO admin_message_log (message_type, recipient_count, content, sent_by, status, metadata)
@@ -8014,8 +8043,9 @@ const executeScheduledMessages = async () => {
           const filter = msg.filter_criteria || {};
           if (filter.minGames) { params.push(filter.minGames); q += ` AND total_games_played >= $${params.length}`; }
           if (filter.inactiveDays) { params.push(filter.inactiveDays); q += ` AND last_active < NOW() - INTERVAL '1 day' * $${params.length}`; }
-          if (filter.platform === 'whatsapp') q += " AND phone_number NOT LIKE 'tg_%'";
+          if (filter.platform === 'whatsapp') q += " AND phone_number NOT LIKE 'tg_%' AND phone_number NOT LIKE 'web_%'";
           if (filter.platform === 'telegram') q += " AND phone_number LIKE 'tg_%'";
+          if (filter.platform === 'web') q += " AND phone_number LIKE 'web_%'";
 
           const users = await pool.query(q, params);
           let sent = 0, failed = 0;
