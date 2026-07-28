@@ -539,7 +539,24 @@
             background: var(--primary-color);
             border-radius: 4px;
         }
-    </style>
+    
+        /* nav must wrap on phones rather than run off the edge */
+        .wut-nav-responsive, .header-actions, .nav-buttons, .platform-filters {
+            display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        }
+        @media (max-width: 768px) {
+            .header, .dashboard-header { flex-wrap: wrap; gap: 12px; }
+            .header-actions, .nav-buttons, .platform-filters { width: 100%; }
+            .header-actions > *, .nav-buttons > *, .platform-filters > * {
+                flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 8px 10px;
+                white-space: nowrap;
+            }
+            .platform-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 420px) {
+            .header-actions > *, .nav-buttons > * { flex-basis: calc(50% - 4px); }
+        }
+</style>
 </head>
 <body>
 <div class="container">
@@ -1589,8 +1606,8 @@
             item.className = 'activity-item';
             
             const platform = activity.platform;
-            const iconClass = platform === 'whatsapp' ? 'whatsapp' : 'telegram';
-            const icon = platform === 'whatsapp' ? '📱' : '💬';
+            const iconClass = wutPlatform(platform);
+            const icon = wutIcon(wutPlatform(platform));
             const timeAgo = getTimeAgo(activity.completed_at || activity.started_at);
             
             item.innerHTML = `
@@ -1658,9 +1675,7 @@
         }
         
         users.forEach(user => {
-            const platformBadge = user.platform === 'whatsapp' 
-                ? '<span class="platform-badge whatsapp">📱 WhatsApp</span>'
-                : '<span class="platform-badge telegram">💬 Telegram</span>';
+            const platformBadge = wutBadge(user);
             
             const tr = document.createElement('tr');
             tr.innerHTML = `
@@ -1688,9 +1703,7 @@
         }
         
         payouts.forEach(payout => {
-            const platformBadge = payout.platform === 'whatsapp'
-                ? '<span class="platform-badge whatsapp">📱 WhatsApp</span>'
-                : '<span class="platform-badge telegram">💬 Telegram</span>';
+            const platformBadge = wutBadge(payout);
             
             const statusClass = payout.payout_status === 'paid' || payout.payout_status === 'confirmed' ? 'paid' : 'pending';
             const statusBadge = `<span class="status-badge ${statusClass}">${payout.payout_status}</span>`;
@@ -1942,9 +1955,7 @@
         }
         
         data.forEach(player => {
-            const platformBadge = player.platform === 'whatsapp'
-                ? '<span class="platform-badge whatsapp">📱 WhatsApp</span>'
-                : '<span class="platform-badge telegram">💬 Telegram</span>';
+            const platformBadge = wutBadge(player);
             
             const tr = document.createElement('tr');
             tr.innerHTML = `
@@ -2053,9 +2064,7 @@
         }
         
         data.forEach(ref => {
-            const platformBadge = ref.platform === 'whatsapp'
-                ? '<span class="platform-badge whatsapp">📱</span>'
-                : '<span class="platform-badge telegram">💬</span>';
+            const platformBadge = wutBadge(ref);
             
             const tr = document.createElement('tr');
             tr.innerHTML = `
@@ -2904,5 +2913,35 @@
     }
 </script>
 
+
+<script>
+/* ---- platform helpers (shared across admin pages) ---- */
+function wutPlatform(o){
+  if(!o) return 'whatsapp';
+  if(typeof o === 'string'){
+    if(o.startsWith('tg_')) return 'telegram';
+    if(o.startsWith('web_')) return 'web';
+    return 'whatsapp';
+  }
+  if(o.platform && ['whatsapp','telegram','web'].includes(o.platform)) return o.platform;
+  return wutPlatform(o.phone_number || '');
+}
+function wutLabel(p){ return {whatsapp:'WhatsApp',telegram:'Telegram',web:'Web App'}[p] || 'WhatsApp'; }
+function wutIcon(p){ return {whatsapp:'\uD83D\uDCF1',telegram:'\uD83D\uDCAC',web:'\uD83C\uDF10'}[p] || '\uD83D\uDCF1'; }
+/* Web accounts are identified by email — the web_ id means nothing to a human. */
+function wutDisplayId(u){
+  if(!u) return '\u2014';
+  const p = wutPlatform(u);
+  if(p === 'web') return u.email || '\u2014';
+  if(p === 'telegram') return String(u.phone_number||'').replace(/^tg_/,'');
+  return u.phone_number || '\u2014';
+}
+function wutBadge(o){
+  const p = wutPlatform(o);
+  const c = {whatsapp:['#d1fae5','#065f46'],telegram:['#dbeafe','#1e40af'],web:['#ede9fe','#5b21b6']}[p];
+  return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">'
+       + wutIcon(p)+' '+wutLabel(p)+'</span>';
+}
+</script>
 </body>
 </html>

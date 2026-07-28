@@ -2726,7 +2726,7 @@ async function loadPayouts() {
       const hasDetails = payout.account_name ? '✅' : '⏳';
       const detailsText = payout.account_name ? `${payout.account_name}<br><small>${payout.bank_name} - ${payout.account_number}</small>` : 'Awaiting details';
       const verificationBadge = payout.verified ? '<span class="verified-badge">✓ Verified</span>' : payout.account_name ? '<span class="unverified-badge">⚠ Not Verified</span>' : '-';
-      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${payout.phone_number}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}</div>` : `<button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>`}</td></tr>`;
+      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}</div>` : `<button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>`}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -2807,7 +2807,7 @@ async function loadHistory() {
     }
     let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Bank Details</th><th>Reference</th><th>Paid Date</th><th>Status</th></tr></thead><tbody>';
     data.payouts.forEach(payout => {
-      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${payout.phone_number}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><small>${payout.account_name || 'N/A'}<br>${payout.bank_name || 'N/A'}</small></td><td><small>${payout.payment_reference || 'N/A'}</small></td><td>${payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td></tr>`;
+      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><small>${payout.account_name || 'N/A'}<br>${payout.bank_name || 'N/A'}</small></td><td><small>${payout.payment_reference || 'N/A'}</small></td><td>${payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -2868,7 +2868,7 @@ function renderUsersTable(users) {
         ${platformIcon} <strong>${user.full_name}</strong><br>
         <small style="color:#666;">@${user.username || 'N/A'}</small>
       </td>
-      <td style="font-size:12px;">${user.phone_number}</td>
+      <td style="font-size:12px;">${wutDisplayId(user)}</td>
       <td>${user.city || 'N/A'}</td>
       <td>${user.total_games_played || 0}</td>
       <td style="color:#059669;font-weight:bold;">₦${parseFloat(user.total_winnings || 0).toLocaleString()}</td>
@@ -3327,18 +3327,8 @@ async function showAcquisitionUsers(source, label) {
     
     for (const u of d.users) {
       const joined = new Date(u.created_at).toLocaleDateString();
-      const chan = u.phone_number?.startsWith('tg_') ? 'telegram'
-                 : u.phone_number?.startsWith('web_') ? 'web' : 'whatsapp';
-      const badges = {
-        telegram: '<span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:11px;">TG</span>',
-        web:      '<span style="background:#ede9fe;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:11px;">WEB</span>',
-        whatsapp: '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:4px;font-size:11px;">WA</span>'
-      };
-      const platformBadge = badges[chan];
-      // Web users are identified by email, not a phone number
-      const phone = chan === 'web' ? (u.email || '—')
-                  : chan === 'telegram' ? u.phone_number.substring(3)
-                  : u.phone_number;
+      const platformBadge = wutBadge(u);
+      const phone = wutDisplayId(u);
       html += `<tr>
         <td><strong>@${u.username || '—'}</strong></td>
         <td>${u.full_name || '—'}</td>
@@ -3655,9 +3645,7 @@ async function viewUserProfile(userId) {
 function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
   const { user, stats, financial, referrals, recentGames, recentTransactions, achievements } = data;
   const { devices, ips } = deviceData;
-  const platformIcon = user.phone_number.startsWith('tg_') ? '💬 Telegram'
-                     : user.phone_number.startsWith('web_') ? '🌐 Web App'
-                     : '📱 WhatsApp';
+  const platformIcon = wutIcon(wutPlatform(user)) + ' ' + wutLabel(wutPlatform(user));
   const suspendedBadge = user.is_suspended ? '<span class="badge" style="background:#fee2e2;color:#991b1b;">SUSPENDED</span>' : '';
   
   let html = `
@@ -3668,7 +3656,7 @@ function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
           <h4 style="margin-bottom: 15px;">👤 Personal Information ${suspendedBadge}</h4>
           <div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">@${user.username}</span></div>
           <div class="detail-row"><span class="detail-label">Full Name</span><span class="detail-value">${user.full_name}</span></div>
-          <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value">${user.phone_number}</span></div>
+          <div class="detail-row"><span class="detail-label">${wutPlatform(user)==='web'?'Email':'Phone'}</span><span class="detail-value">${wutDisplayId(user)}</span></div>
           <div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">${platformIcon}</span></div>
           <div class="detail-row"><span class="detail-label">City</span><span class="detail-value">${user.city || 'N/A'}</span></div>
           <div class="detail-row"><span class="detail-label">Age</span><span class="detail-value">${user.age || 'N/A'}</span></div>
@@ -5221,7 +5209,7 @@ async function loadKYCQueue() {
     
     let html = `<table class="data-table"><thead><tr><th>User</th><th>Daily Winnings</th><th>ID Type</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>`;
     data.reviews.forEach(kyc => {
-      html += `<tr><td><strong>${kyc.full_name || 'N/A'}</strong><br><small>${kyc.phone_number || ''}</small></td><td>₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</td><td>${kyc.id_type || 'N/A'}</td><td>${kyc.submitted_at ? new Date(kyc.submitted_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-pending">${kyc.status}</span></td><td><button class="btn btn-primary btn-sm" onclick="showKYCReview(${kyc.id})">👁️ Review</button></td></tr>`;
+      html += `<tr><td><strong>${kyc.full_name || 'N/A'}</strong><br><small>${wutDisplayId(kyc)}</small></td><td>₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</td><td>${kyc.id_type || 'N/A'}</td><td>${kyc.submitted_at ? new Date(kyc.submitted_at).toLocaleDateString() : 'N/A'}</td><td><span class="status-badge status-pending">${kyc.status}</span></td><td><button class="btn btn-primary btn-sm" onclick="showKYCReview(${kyc.id})">👁️ Review</button></td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -5240,7 +5228,7 @@ async function showKYCReview(kycId) {
     const data = await response.json();
     if (data.success && data.kyc) {
       const kyc = data.kyc;
-      document.getElementById('kycReviewContent').innerHTML = `<div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;"><p><strong>User:</strong> ${kyc.full_name || 'N/A'}</p><p><strong>Phone:</strong> ${kyc.phone_number || 'N/A'}</p><p><strong>Daily Winnings:</strong> ₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</p><p><strong>ID Type:</strong> ${kyc.id_type || 'Not submitted'}</p></div><div style="margin-top: 15px;"><label>Admin Notes:</label><textarea id="kycAdminNotes" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-top: 5px; height: 60px;" placeholder="Add verification notes..."></textarea></div>`;
+      document.getElementById('kycReviewContent').innerHTML = `<div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;"><p><strong>User:</strong> ${kyc.full_name || 'N/A'}</p><p><strong>${wutPlatform(kyc)==='web'?'Email':'Phone'}:</strong> ${wutDisplayId(kyc)}</p><p><strong>Daily Winnings:</strong> ₦${parseFloat(kyc.daily_winnings || 0).toLocaleString()}</p><p><strong>ID Type:</strong> ${kyc.id_type || 'Not submitted'}</p></div><div style="margin-top: 15px;"><label>Admin Notes:</label><textarea id="kycAdminNotes" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-top: 5px; height: 60px;" placeholder="Add verification notes..."></textarea></div>`;
       document.getElementById('kycReviewModal').style.display = 'flex';
     }
   } catch (error) {
@@ -6144,5 +6132,35 @@ async function testLqPreview(bookingId) {
 
 </script>
 
+
+<script>
+/* ---- platform helpers (shared across admin pages) ---- */
+function wutPlatform(o){
+  if(!o) return 'whatsapp';
+  if(typeof o === 'string'){
+    if(o.startsWith('tg_')) return 'telegram';
+    if(o.startsWith('web_')) return 'web';
+    return 'whatsapp';
+  }
+  if(o.platform && ['whatsapp','telegram','web'].includes(o.platform)) return o.platform;
+  return wutPlatform(o.phone_number || '');
+}
+function wutLabel(p){ return {whatsapp:'WhatsApp',telegram:'Telegram',web:'Web App'}[p] || 'WhatsApp'; }
+function wutIcon(p){ return {whatsapp:'\uD83D\uDCF1',telegram:'\uD83D\uDCAC',web:'\uD83C\uDF10'}[p] || '\uD83D\uDCF1'; }
+/* Web accounts are identified by email — the web_ id means nothing to a human. */
+function wutDisplayId(u){
+  if(!u) return '\u2014';
+  const p = wutPlatform(u);
+  if(p === 'web') return u.email || '\u2014';
+  if(p === 'telegram') return String(u.phone_number||'').replace(/^tg_/,'');
+  return u.phone_number || '\u2014';
+}
+function wutBadge(o){
+  const p = wutPlatform(o);
+  const c = {whatsapp:['#d1fae5','#065f46'],telegram:['#dbeafe','#1e40af'],web:['#ede9fe','#5b21b6']}[p];
+  return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">'
+       + wutIcon(p)+' '+wutLabel(p)+'</span>';
+}
+</script>
 </body>
 </html>

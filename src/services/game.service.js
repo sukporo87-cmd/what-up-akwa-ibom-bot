@@ -32,6 +32,7 @@ const { logger } = require('../utils/logger');
 const WhatsAppService = require('./whatsapp.service');
 const cloudinaryService = require('./cloudinary.service');
 const watchlistService = require('./watchlist.service');
+const { platformOf } = require('../utils/platform');
 
 // ============================================
 // BASE CONFIGURATION
@@ -1043,7 +1044,7 @@ class GameService {
 
     async startNewGame(user, gameMode = 'classic', tournamentId = null) {
         try {
-            const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(user.phone_number);
             const isTournamentGame = tournamentId !== null;
             const isPracticeMode = gameMode === 'practice';
             const gameType = isPracticeMode ? 'practice' : (isTournamentGame ? 'tournament' : 'regular');

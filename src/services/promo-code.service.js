@@ -5,6 +5,7 @@
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const { platformOf } = require('../utils/platform');
 
 class PromoCodeService {
 
@@ -138,7 +139,7 @@ class PromoCodeService {
                 return { success: false, reason: 'User not found' };
             }
             const user = userResult.rows[0];
-            const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(user.phone_number);
             
             // Create a synthetic payment record so the tournament treats this like a regular entry
             const reference = `PROMO-${promo.id}-${tournamentId}-${userId}-${Date.now()}`;
@@ -274,7 +275,7 @@ class PromoCodeService {
 
             // User platform for synthetic payment record
             const userResult = await client.query('SELECT phone_number FROM users WHERE id = $1', [userId]);
-            const platform = userResult.rows[0]?.phone_number?.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(userResult.rows[0]?.phone_number);
 
             const tokensToAdd = tournament.tokens_per_entry;
             const reference = `PROMOR-${promo.id}-${tournamentId}-${userId}-${Date.now()}`;

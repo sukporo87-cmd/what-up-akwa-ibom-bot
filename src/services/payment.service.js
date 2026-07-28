@@ -8,6 +8,7 @@ const Paystack = require('paystack-api');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 const gatewayManager = require('./payment-gateway-manager');
+const { platformOf } = require('../utils/platform');
 
 class PaymentService {
   constructor() {
@@ -47,7 +48,7 @@ class PaymentService {
         ? await gatewayManager.getEnabledGatewayByName(gatewayName)
         : await gatewayManager.getDefaultGateway();
       
-      const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+      const platform = platformOf(user.phone_number);
 
       const packageResult = await pool.query(
         'SELECT * FROM game_packages WHERE id = $1 AND is_active = true',

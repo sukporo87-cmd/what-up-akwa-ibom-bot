@@ -6,6 +6,7 @@
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const { platformOf } = require('../utils/platform');
 
 class TournamentService {
     async getActiveTournaments() {
@@ -145,7 +146,7 @@ class TournamentService {
             }
             
             const userResult = await pool.query('SELECT phone_number FROM users WHERE id = $1', [userId]);
-            const platform = userResult.rows[0].phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(userResult.rows[0].phone_number);
             
             const tokensRemaining = tournament.uses_tokens ? tournament.tokens_per_entry : null;
             
@@ -183,7 +184,7 @@ class TournamentService {
             
             const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
             const user = userResult.rows[0];
-            const platform = user.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(user.phone_number);
             
             // Resolve gateway
             const gateway = gatewayName 
@@ -326,7 +327,7 @@ class TournamentService {
             
             const user = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
             const userData = user.rows[0];
-            const platform = userData.phone_number.startsWith('tg_') ? 'telegram' : 'whatsapp';
+            const platform = platformOf(userData.phone_number);
             
             // Resolve gateway
             const gateway = gatewayName 
