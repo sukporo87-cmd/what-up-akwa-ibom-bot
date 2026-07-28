@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Web Play Console — What's Up Trivia</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --ink:#e6edf3;
+    --dim:#8b949e; --accent:#a371f7; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13px;line-height:1.5}
+  .wrap{max-width:860px;margin:0 auto;padding:20px 16px 40px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:18px;flex-wrap:wrap}
+  h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.02em}
+  h1 span{color:var(--dim);font-weight:400}
+  .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+  .dot.live{background:var(--ok);box-shadow:0 0 0 3px rgba(63,185,80,.15)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+  input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);
+        padding:9px 11px;font-family:var(--mono);font-size:13px;margin-bottom:11px}
+  input:focus{outline:none;border-color:var(--accent)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:9px 15px;
+         font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.12)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:400}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .muted{color:var(--dim);font-size:12px}
+  .err{color:var(--bad);font-size:12px;margin-top:8px;min-height:16px}
+
+  /* question board */
+  #board{display:none}
+  .qhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+  .qnum{color:var(--accent);font-weight:600}
+  .prize{color:var(--ok);font-weight:600}
+  .qtext{font-size:15px;line-height:1.55;margin:0 0 14px;font-family:system-ui,-apple-system,sans-serif}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media(max-width:560px){.opts{grid-template-columns:1fr}}
+  .opt{display:flex;gap:9px;align-items:flex-start;text-align:left;background:var(--bg);
+       border:1px solid var(--line);color:var(--ink);padding:11px;border-radius:6px;
+       font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:400}
+  .opt:hover{border-color:var(--accent)}
+  .opt b{color:var(--accent);flex:none}
+  .timer{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:14px 0 0}
+  .timer i{display:block;height:100%;background:var(--ok);transition:width 1s linear}
+  .timer i.low{background:var(--bad)}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
+       border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+
+  /* log */
+  #log{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+       padding:12px;height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+  .ev{padding:6px 0;border-bottom:1px solid rgba(48,54,61,.5)}
+  .ev:last-child{border-bottom:0}
+  .ev .t{color:var(--dim);font-size:11px}
+  .ev .k{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .k.message{color:var(--ink)} .k.question{color:var(--accent)}
+  .k.connected{color:var(--ok)} .k.error{color:var(--bad)} .k.sent{color:var(--warn)}
+  .body{margin-top:3px;font-size:12px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Web Play Console <span>— diagnostic harness</span></h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">disconnected</span></div>
+  </header>
+
+  <!-- AUTH -->
+  <div class="card" id="authCard">
+    <div id="stepEmail">
+      <label>Email</label>
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+      <div class="row">
+        <button onclick="requestCode('login')">Send login code</button>
+        <button class="ghost" onclick="toggleSignup()">New account</button>
+      </div>
+      <div id="signupFields" style="display:none;margin-top:14px">
+        <label>Full name</label><input id="fullName" placeholder="Star Ukporo">
+        <label>City</label><input id="city" placeholder="Abuja">
+        <label>Username</label><input id="username" placeholder="starweb">
+        <label>Age</label><input id="age" type="number" value="30">
+        <label>Referral code (optional)</label><input id="referralCode" placeholder="">
+        <button onclick="requestCode('signup')">Create account</button>
+      </div>
+      <div class="err" id="authErr"></div>
+    </div>
+
+    <div id="stepCode" style="display:none">
+      <label>6-digit code sent to <span id="codeTarget"></span></label>
+      <input id="code" inputmode="numeric" maxlength="6" placeholder="123456">
+      <div class="row">
+        <button onclick="verifyCode()">Verify</button>
+        <button class="ghost" onclick="backToEmail()">Back</button>
+      </div>
+      <div class="err" id="codeErr"></div>
+    </div>
+  </div>
+
+  <!-- SIGNED IN -->
+  <div class="card" id="userCard" style="display:none">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div><strong id="who"></strong> <span class="muted" id="credits"></span></div>
+      <button class="ghost" onclick="signOut()">Sign out</button>
+    </div>
+  </div>
+
+  <!-- QUESTION BOARD -->
+  <div class="card" id="board">
+    <div class="qhead">
+      <span class="qnum" id="qnum"></span>
+      <span class="prize" id="qprize"></span>
+    </div>
+    <p class="qtext" id="qtext"></p>
+    <div class="opts" id="qopts"></div>
+    <div class="timer"><i id="qbar"></i></div>
+    <div class="tags" id="qtags"></div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="card" id="controls" style="display:none">
+    <label>Send input</label>
+    <div class="row" style="margin-bottom:10px">
+      <input id="cmd" placeholder="PLAY" style="flex:1;min-width:160px;margin:0"
+             onkeydown="if(event.key==='Enter')sendCmd()">
+      <button onclick="sendCmd()">Send</button>
+    </div>
+    <div class="row">
+      <button class="ghost" onclick="send('PLAY')">PLAY</button>
+      <button class="ghost" onclick="send('MENU')">MENU</button>
+      <button class="ghost" onclick="send('50:50')">50:50</button>
+      <button class="ghost" onclick="send('SKIP')">SKIP</button>
+      <button class="ghost" onclick="send('TOURNAMENTS')">TOURNAMENTS</button>
+      <button class="ghost" onclick="abandon()">Abandon game</button>
+      <button class="ghost" onclick="clearLog()">Clear log</button>
+    </div>
+  </div>
+
+  <div id="log"></div>
+</div>
+
+<script>
+let es = null, token = localStorage.getItem('wut_token') || null, timerInt = null;
+
+const $ = id => document.getElementById(id);
+const headers = () => {
+  const h = {'Content-Type':'application/json'};
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return h;
+};
+
+// ---------- logging ----------
+function log(kind, body){
+  const el = document.createElement('div');
+  el.className = 'ev';
+  const time = new Date().toLocaleTimeString();
+  el.innerHTML = `<span class="t">${time}</span> <span class="k ${kind}">${kind}</span>
+                  <div class="body"></div>`;
+  el.querySelector('.body').textContent = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function clearLog(){ $('log').innerHTML = ''; }
+
+// ---------- auth ----------
+function toggleSignup(){
+  const f = $('signupFields');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+function backToEmail(){ $('stepCode').style.display='none'; $('stepEmail').style.display='block'; }
+
+let pendingPurpose = 'login';
+
+async function requestCode(purpose){
+  $('authErr').textContent = '';
+  pendingPurpose = purpose;
+  const email = $('email').value.trim();
+  if(!email){ $('authErr').textContent = 'Enter your email'; return; }
+
+  const body = purpose === 'signup'
+    ? { email, fullName:$('fullName').value.trim(), city:$('city').value.trim(),
+        username:$('username').value.trim(), age:$('age').value,
+        referralCode:$('referralCode').value.trim() || undefined }
+    : { email };
+
+  try{
+    const r = await fetch(`/web/auth/${purpose}/request`, {method:'POST',headers:headers(),body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!d.success){ $('authErr').textContent = d.error || 'Failed'; return; }
+    $('codeTarget').textContent = email;
+    $('stepEmail').style.display='none';
+    $('stepCode').style.display='block';
+    log('connected', `Code sent (${purpose}). Check your inbox or the Render logs.`);
+  }catch(e){ $('authErr').textContent = e.message; }
+}
+
+async function verifyCode(){
+  $('codeErr').textContent = '';
+  try{
+    const r = await fetch(`/web/auth/${pendingPurpose}/verify`, {
+      method:'POST', headers:headers(),
+      body: JSON.stringify({ email:$('email').value.trim(), code:$('code').value.trim() })
+    });
+    const d = await r.json();
+    if(!d.success){ $('codeErr').textContent = d.error || 'Failed'; return; }
+    token = d.token;
+    localStorage.setItem('wut_token', token);
+    onSignedIn(d.user);
+  }catch(e){ $('codeErr').textContent = e.message; }
+}
+
+async function signOut(){
+  try{ await fetch('/web/auth/logout',{method:'POST',headers:headers()}); }catch(e){}
+  localStorage.removeItem('wut_token'); token = null;
+  if(es){ es.close(); es = null; }
+  location.reload();
+}
+
+function onSignedIn(user){
+  $('authCard').style.display='none';
+  $('userCard').style.display='block';
+  $('controls').style.display='block';
+  $('who').textContent = '@' + user.username;
+  $('credits').textContent = `· ${user.gamesRemaining} credits · id ${user.id}`;
+  connect();
+  refreshState();
+}
+
+// ---------- stream ----------
+function setStatus(live, text){
+  $('dot').className = 'dot' + (live ? ' live' : '');
+  $('statusText').textContent = text;
+}
+
+function connect(){
+  if(es) es.close();
+  // Cookie auth works same-origin; token param is the fallback.
+  es = new EventSource('/web/game/stream?token=' + encodeURIComponent(token));
+
+  es.onopen = () => setStatus(true, 'streaming');
+  es.onerror = () => setStatus(false, 'reconnecting…');
+
+  es.addEventListener('connected', e => log('connected', JSON.parse(e.data)));
+  es.addEventListener('message',   e => log('message', JSON.parse(e.data).text));
+  es.addEventListener('error',     e => { try{ log('error', JSON.parse(e.data)); }catch(_){} });
+  es.addEventListener('question.asked', e => {
+    const q = JSON.parse(e.data);
+    log('question', `Q${q.questionNumber} · ₦${q.prizeAmount.toLocaleString()} · ${q.timerSeconds}s${q.restored ? ' (restored)' : ''}`);
+    renderQuestion(q);
+  });
+}
+
+// ---------- question board ----------
+function renderQuestion(q){
+  $('board').style.display = 'block';
+  $('qnum').textContent = `Question ${q.questionNumber} of ${q.totalQuestions}`;
+  $('qprize').textContent = '₦' + q.prizeAmount.toLocaleString();
+  $('qtext').textContent = q.text;
+
+  $('qopts').innerHTML = '';
+  for(const [k,v] of Object.entries(q.options)){
+    const b = document.createElement('button');
+    b.className = 'opt';
+    b.innerHTML = `<b>${k}</b><span></span>`;
+    b.querySelector('span').textContent = v;
+    b.onclick = () => send(k);
+    $('qopts').appendChild(b);
+  }
+
+  const tags = [];
+  if(q.isSafeCheckpoint) tags.push('safe checkpoint');
+  if(q.turbo) tags.push('turbo');
+  if(q.penalty) tags.push('penalty');
+  if(q.lifelines?.fiftyFifty) tags.push('50:50 available');
+  if(q.lifelines?.skip) tags.push('skip available');
+  if(q.restored) tags.push('restored');
+  $('qtags').innerHTML = tags.map(t=>`<span class="tag">${t}</span>`).join('');
+
+  startTimer(q.expiresAt, q.timerSeconds);
+}
+
+function startTimer(expiresAt, total){
+  clearInterval(timerInt);
+  const bar = $('qbar');
+  const tick = () => {
+    const left = Math.max(0, (expiresAt - Date.now())/1000);
+    const pct = Math.max(0, Math.min(100, (left/total)*100));
+    bar.style.width = pct + '%';
+    bar.className = left <= 5 ? 'low' : '';
+    if(left <= 0){ clearInterval(timerInt); }
+  };
+  tick();
+  timerInt = setInterval(tick, 250);
+}
+
+// ---------- input ----------
+async function send(text){
+  log('sent', text);
+  try{
+    const r = await fetch('/web/game/input',{method:'POST',headers:headers(),body:JSON.stringify({text})});
+    const d = await r.json();
+    if(!d.success) log('error', d.error || 'rejected');
+  }catch(e){ log('error', e.message); }
+}
+function sendCmd(){
+  const v = $('cmd').value.trim();
+  if(!v) return;
+  $('cmd').value = '';
+  send(v);
+}
+
+async function abandon(){
+  try{
+    const r = await fetch('/web/game/abandon',{method:'POST',headers:headers()});
+    log('sent', JSON.stringify(await r.json()));
+    $('board').style.display='none';
+    clearInterval(timerInt);
+  }catch(e){ log('error', e.message); }
+}
+
+async function refreshState(){
+  try{
+    const r = await fetch('/web/game/state',{headers:headers()});
+    const d = await r.json();
+    if(!d.success) return;
+    $('credits').textContent = `· ${d.user.gamesRemaining} credits · id ${d.user.id}`;
+    log('connected', d.game ? `Game in progress: Q${d.game.questionNumber}, mode ${d.game.mode}` : 'No game in progress');
+    if(d.question && !d.question.stale) renderQuestion(d.question);
+  }catch(e){ log('error', e.message); }
+}
+
+// ---------- boot ----------
+(async () => {
+  try{
+    const r = await fetch('/web/auth/me',{headers:headers()});
+    const d = await r.json();
+    if(d.authenticated){ onSignedIn(d.user); }
+    else { localStorage.removeItem('wut_token'); token = null; }
+  }catch(e){ log('error', 'Could not reach the server: ' + e.message); }
+})();
+</script>
+</body>
+</html>
