@@ -1515,7 +1515,7 @@
                 },
                 {
                     label: 'Web App Users',
-                    data: [0, 0, 0, 0, 0, 0, 0],
+                    data: data.map(d => parseInt(d.web_users) || 0),
                     borderColor: '#8b5cf6',
                     backgroundColor: 'rgba(139, 92, 246, 0.1)',
                     tension: 0.4,
@@ -1890,12 +1890,6 @@
     }
     
     function updateUserGrowthChart(data, period) {
-        try {
-            const _rows = (arguments[0] || []).slice().reverse();
-            if (userGrowthChart && userGrowthChart.data.datasets[2]) {
-                userGrowthChart.data.datasets[2].data = _rows.map(r => parseInt(r.web_users) || 0);
-            }
-        } catch (e) {}
         const ctx = document.getElementById('userGrowthChart');
         if (!ctx) return;
         
@@ -1913,21 +1907,21 @@
                 datasets: [
                     {
                         label: 'WhatsApp Users',
-                        data: data.map(d => d.whatsapp_users),
+                        data: data.map(d => parseInt(d.whatsapp_users) || 0),
                         backgroundColor: 'rgba(37, 211, 102, 0.7)',
                         borderColor: '#25D366',
                         borderWidth: 1
                     },
                     {
                         label: 'Telegram Users',
-                        data: data.map(d => d.telegram_users),
+                        data: data.map(d => parseInt(d.telegram_users) || 0),
                         backgroundColor: 'rgba(0, 136, 204, 0.7)',
                         borderColor: '#0088cc',
                         borderWidth: 1
                     },
                     {
                         label: 'Web App Users',
-                        data: [],
+                        data: data.map(d => parseInt(d.web_users) || 0),
                         borderColor: '#8b5cf6',
                         backgroundColor: 'rgba(139, 92, 246, 0.5)'
                     }

@@ -7837,12 +7837,25 @@ router.get('/api/messaging/search-users', async (req, res) => {
 // Send direct message to a user
 router.post('/api/messaging/send-direct', async (req, res) => {
   try {
-    const { phone, message, sentBy } = req.body;
-    if (!phone || !message) return res.status(400).json({ error: 'Phone and message required' });
+    const { phone, message, subject, kind, sentBy } = req.body;
+    if (!phone || !message) return res.status(400).json({ error: 'Recipient and message required' });
 
     const MessagingService = require('../services/messaging.service');
     const messagingService = new MessagingService();
-    await messagingService.sendMessage(phone, message);
+    // Route through the contact service so web recipients get an email
+    // rather than a push into an SSE connection that isn't open.
+    const contact = require('../services/contact.service');
+    const ur = await pool.query('SELECT * FROM users WHERE phone_number = $1 LIMIT 1', [phone]);
+    if (ur.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    const outcome = await contact.send(ur.rows[0], {
+      text: message,
+      subject: subject || "A message from What's Up Trivia",
+      kind: kind === 'marketing' ? 'marketing' : 'transactional'
+    });
+    if (!outcome.sent) {
+      return res.status(400).json({ error: outcome.reason || 'Could not deliver the message' });
+    }
 
     await pool.query(`
       INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status)

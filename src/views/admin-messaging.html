@@ -137,6 +137,15 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
       <div id="selectedUserBox" style="display:none"></div>
       <div class="form-group">
         <label>Template (optional)</label>
+        <div class="form-group" id="directSubjectWrap" style="display:none">
+          <label>Email Subject <span style="color:#94a3b8;font-weight:400">— required for web users</span></label>
+          <input type="text" id="directSubject" placeholder="e.g. About your recent game" maxlength="120">
+        </div>
+        <div id="directWebNote" style="display:none;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.4);
+             border-radius:8px;padding:10px 13px;margin-bottom:14px;font-size:13px;color:#c4b5fd;line-height:1.5">
+          🌐 This is a <strong>Web App</strong> user — they'll receive this as an email. Direct messages are
+          treated as transactional, so it sends even if they've opted out of the newsletter.
+        </div>
         <select id="directTemplate" onchange="applyTemplate('direct')">
           <option value="">-- Write custom message --</option>
         </select>
@@ -330,7 +339,7 @@ async function searchUsers(q) {
     if (!data || !data.users.length) { box.innerHTML = '<div style="padding:12px;color:#64748b">No users found</div>'; box.style.display = 'block'; return; }
     box.innerHTML = data.users.map(u => `
       <div class="search-item" onclick='selectUser(${JSON.stringify(u)})'>
-        <div><div class="name">${u.username || u.full_name || 'Unknown'}</div><div class="phone">${u.phone_number}</div></div>
+        <div><div class="name">${u.username || u.full_name || 'Unknown'} ${wutBadge(u)}</div><div class="phone">${wutDisplayId(u)}</div></div>
         <div class="meta">${u.total_games_played} games | ₦${(u.total_winnings||0).toLocaleString()}</div>
       </div>
     `).join('');
@@ -339,13 +348,18 @@ async function searchUsers(q) {
 }
 
 function selectUser(u) {
+  const isWeb = wutPlatform(u) === 'web';
+  const wrap = document.getElementById('directSubjectWrap');
+  const note = document.getElementById('directWebNote');
+  if (wrap) wrap.style.display = isWeb ? '' : 'none';
+  if (note) note.style.display = isWeb ? '' : 'none';
   selectedUser = u;
   document.getElementById('searchResults').style.display = 'none';
   document.getElementById('userSearch').value = '';
   document.getElementById('selectedUserBox').style.display = 'block';
   document.getElementById('selectedUserBox').innerHTML = `
     <div class="selected-user">
-      <div><strong>${u.username || u.full_name || 'User'}</strong> — ${u.phone_number}<br>
+      <div><strong>${u.username || u.full_name || 'User'}</strong> ${wutBadge(u)} \u2014 ${wutDisplayId(u)}<br>
       <span style="font-size:12px;color:#94a3b8">${u.total_games_played} games | ₦${(u.total_winnings||0).toLocaleString()} won</span></div>
       <span class="remove" onclick="clearUser()">✕</span>
     </div>
@@ -376,14 +390,23 @@ async function sendDirect() {
   if (!selectedUser) return;
   const msg = document.getElementById('directMessage').value.trim();
   if (!msg) return;
+  const isWeb = wutPlatform(selectedUser) === 'web';
+  const subject = (document.getElementById('directSubject')?.value || '').trim();
+  if (isWeb && !subject) {
+    showToast('A subject line is required for web users', 'error');
+    document.getElementById('directSubject').focus();
+    return;
+  }
   const btn = document.getElementById('sendDirectBtn');
   btn.disabled = true; btn.textContent = 'Sending...';
   try {
     const data = await api('/api/messaging/send-direct', {
-      method: 'POST', body: JSON.stringify({ phone: selectedUser.phone_number, message: msg, sentBy: 'admin' })
+      method: 'POST', body: JSON.stringify({ phone: selectedUser.phone_number, message: msg,
+                             subject, kind: 'transactional', sentBy: 'admin' })
     });
     if (data?.success) {
-      showToast(`Message sent to ${selectedUser.username || selectedUser.phone_number}`);
+      showToast(`Message sent to ${selectedUser.username || wutDisplayId(selectedUser)}`);
+      const ds = document.getElementById('directSubject'); if (ds) ds.value = '';
       document.getElementById('directMessage').value = '';
       clearUser(); loadStats();
     } else { showToast(data?.error || 'Failed to send', 'error'); }
