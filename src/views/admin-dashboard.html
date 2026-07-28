@@ -857,6 +857,31 @@
 
             <div class="health-card">
                 <div class="health-card-title">
+                    <span>🌐</span>
+                    <span>Web App</span>
+                </div>
+                <div class="health-metrics">
+                    <div class="health-metric">
+                        <span class="health-metric-label">Status</span>
+                        <span class="health-metric-value" style="color: var(--success-color);">● Online</span>
+                    </div>
+                    <div class="health-metric">
+                        <span class="health-metric-label">Delivery</span>
+                        <span class="health-metric-value" id="web-health-success">—</span>
+                    </div>
+                    <div class="health-metric">
+                        <span class="health-metric-label">Avg Response Time</span>
+                        <span class="health-metric-value" id="web-health-response">—</span>
+                    </div>
+                    <div class="health-metric">
+                        <span class="health-metric-label">Last Message</span>
+                        <span class="health-metric-value" id="web-health-last">—</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="health-card">
+                <div class="health-card-title">
                     <span>💬</span>
                     <span>Telegram API</span>
                 </div>
@@ -1486,6 +1511,16 @@
                     fill: true,
                     pointRadius: 4,
                     pointHoverRadius: 6
+                },
+                {
+                    label: 'Web App Users',
+                    data: [0, 0, 0, 0, 0, 0, 0],
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 }
             ]
         },
@@ -1589,6 +1624,7 @@
         platformChart.data.labels = data.labels;
         platformChart.data.datasets[0].data = data.whatsapp;
         platformChart.data.datasets[1].data = data.telegram;
+        if (platformChart.data.datasets[2]) platformChart.data.datasets[2].data = data.web || [];
         platformChart.update();
     }
 
@@ -1881,6 +1917,12 @@
                         backgroundColor: 'rgba(0, 136, 204, 0.7)',
                         borderColor: '#0088cc',
                         borderWidth: 1
+                    },
+                    {
+                        label: 'Web App Users',
+                        data: [],
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139, 92, 246, 0.5)'
                     }
                 ]
             },
@@ -2117,6 +2159,16 @@
                     tension: 0.4,
                     pointRadius: 4,
                     pointHoverRadius: 6
+                },
+                {
+                    label: 'Web App Users',
+                    data: [0, 0, 0, 0, 0, 0, 0],
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 }]
             },
             options: {
@@ -2310,16 +2362,10 @@
         console.log('Filtering by platform:', platform);
         
         // Update chart based on filter
-        if (platform === 'whatsapp') {
-            platformChart.data.datasets[1].hidden = true;
-            platformChart.data.datasets[0].hidden = false;
-        } else if (platform === 'telegram') {
-            platformChart.data.datasets[0].hidden = true;
-            platformChart.data.datasets[1].hidden = false;
-        } else {
-            platformChart.data.datasets[0].hidden = false;
-            platformChart.data.datasets[1].hidden = false;
-        }
+        const order = ['whatsapp', 'telegram', 'web'];
+        platformChart.data.datasets.forEach((ds, i) => {
+            ds.hidden = (platform !== 'all' && order[i] !== platform);
+        });
         
         platformChart.update();
     }
