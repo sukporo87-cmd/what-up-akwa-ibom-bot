@@ -132,6 +132,25 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .msg{font-size:13.5px;min-height:19px;margin-bottom:6px;color:var(--ember)}
 .otp{letter-spacing:.5em;font-family:var(--display);font-size:22px;text-align:center}
 
+/* ---------- buy ---------- */
+.back{font-size:13px;color:var(--mute);padding:6px 0}
+.back:hover{color:var(--brass)}
+.pack{width:100%;text-align:left;padding:16px 18px;border-radius:15px;background:var(--slate);
+      border:1.5px solid transparent;margin-bottom:10px;display:flex;align-items:center;gap:14px;
+      transition:border-color .18s}
+.pack:hover{border-color:var(--line)}
+.pack.sel{border-color:var(--brass);background:linear-gradient(150deg,#3a2c1a,#241d33)}
+.pack .amt{font-family:var(--display);font-weight:800;font-size:20px;color:var(--brass);
+           min-width:78px;flex:none}
+.pack .who{flex:1;min-width:0}
+.pack .who strong{display:block;font-family:var(--display);font-size:15px;margin-bottom:2px}
+.pack .who span{font-size:13px;color:var(--mute)}
+.tag{display:inline-block;margin-left:7px;padding:2px 7px;border-radius:6px;background:var(--brass);
+     color:#1a1206;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+     vertical-align:middle}
+.note{font-size:13px;color:var(--mute);margin:0 0 18px;line-height:1.55}
+.spin{text-align:center;color:var(--mute);font-size:14px;padding:26px 0}
+
 /* ---------- overlay ---------- */
 .over{position:fixed;inset:0;background:rgba(22,18,31,.93);backdrop-filter:blur(7px);
       display:none;place-items:center;padding:var(--pad);z-index:20}
@@ -207,7 +226,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <strong>Tournaments</strong>
       <span>Compete for the weekly prize pool</span>
     </button>
-    <button class="tile" onclick="go('BUY')">
+    <button class="tile" onclick="openBuy()">
       <strong>Buy credits</strong>
       <span>Top up to play Classic</span>
     </button>
@@ -216,6 +235,36 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <div class="stat"><span class="fig" id="stStreak">0</span><span>streak</span></div>
       <div class="stat"><span class="fig" id="stBest">0</span><span>best</span></div>
     </div>
+  </section>
+
+  <!-- ============ BUY ============ -->
+  <section class="view" id="vBuy">
+    <div class="bar">
+      <button class="back" onclick="view('vLobby');refresh()">← Back</button>
+      <div class="icons">
+        <button class="icon" onclick="toggleSound()">♪</button>
+      </div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 18px">
+      <span class="fig" style="font-size:30px">Buy credits</span>
+      <p>One credit is one game of Classic. Practice stays free.</p>
+    </div>
+
+    <!-- step 1: package -->
+    <div id="sPacks">
+      <div class="spin" id="packSpin">Loading packages…</div>
+      <div id="packList"></div>
+    </div>
+
+    <!-- step 2: processor -->
+    <div id="sGates" style="display:none">
+      <p class="note" id="gateNote"></p>
+      <div id="gateList"></div>
+      <button class="back" onclick="backToPacks()">← Choose a different package</button>
+    </div>
+
+    <div class="msg" id="mBuy" style="margin-top:10px"></div>
   </section>
 
   <!-- ============ GAME ============ -->
@@ -259,7 +308,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <span class="fig" id="ovFig"></span>
     <h2 id="ovTitle"></h2>
     <p id="ovBody"></p>
-    <button class="cta" onclick="closeOver()">Back to menu</button>
+    <button class="cta" id="ovAct" style="display:none;margin-bottom:10px"></button>
+    <button class="link" onclick="closeOver()">Back to menu</button>
   </div>
 </div>
 
@@ -268,6 +318,9 @@ const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
     banked=0, seen={};
+
+/* buy flow */
+let packs=[], gates=[], chosenPack=null, pendingPaid=null;
 
 const $=id=>document.getElementById(id);
 const H=()=>{const h={'Content-Type':'application/json'};if(token)h.Authorization='Bearer '+token;return h;};
@@ -345,6 +398,10 @@ function enter(user){
   $('lobbyName').textContent='@'+user.username;
   $('lobbyCredits').textContent=user.gamesRemaining??0;
   view('vLobby'); stream(); refresh();
+  if(pendingPaid){
+    const p=pendingPaid; pendingPaid=null;
+    settlePayment(p.reference,p.hint);
+  }
 }
 async function refresh(){
   try{
@@ -374,10 +431,149 @@ function relay(text){
     setTimeout(()=>overlay(won?won[0]:'—',
       t.includes('CONGRAT')?'Well played':'Game over', text.replace(/\*/g,'')),900);
   } else if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
-    overlay('0','Out of credits',text.replace(/\*/g,''));
+    overlay('0','Out of credits',
+      'You need at least one credit to play Classic. Practice mode is always free.',
+      'Buy credits',openBuy);
+  } else if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
+    // The chat buy flow leaked through — web has its own screen for this.
+    openBuy();
   } else if(t.includes('TOURNAMENT')||t.includes('PACKAGE')||t.includes('SELECT')){
     overlay('','Choose',text.replace(/\*/g,''));
   }
+}
+
+/* ---------- buy ---------- */
+async function openBuy(){
+  view('vBuy'); $('mBuy').textContent=''; backToPacks();
+  $('packSpin').style.display='block'; $('packList').innerHTML='';
+  try{
+    const d=await(await fetch('/web/payment/packages',{headers:H()})).json();
+    $('packSpin').style.display='none';
+    if(!d.success){$('mBuy').textContent=d.error||'Could not load packages';return;}
+
+    if(!d.paymentEnabled){
+      $('packList').innerHTML='<p class="note">Games are free at the moment — no credits needed. '
+        +'Head back and hit Play Classic.</p>';
+      return;
+    }
+    if(!d.gateways.length){
+      $('packList').innerHTML='<p class="note">No payment processors are available right now. '
+        +'Please try again in a few minutes.</p>';
+      return;
+    }
+
+    packs=d.packages; gates=d.gateways;
+    $('lobbyCredits').textContent=d.gamesRemaining;
+
+    packs.forEach(p=>{
+      const b=document.createElement('button');
+      b.className='pack';
+      b.innerHTML='<span class="amt"></span><span class="who"><strong></strong><span></span></span>';
+      b.querySelector('.amt').textContent=naira(p.price);
+      const h=b.querySelector('strong');
+      h.textContent=`${p.games} credit${p.games===1?'':'s'}`;
+      if(p.bestValue){const t=document.createElement('span');t.className='tag';t.textContent='Best value';h.appendChild(t);}
+      b.querySelector('.who span').textContent=p.description||p.name;
+      b.onclick=()=>pickPack(p);
+      $('packList').appendChild(b);
+    });
+  }catch(e){
+    $('packSpin').style.display='none';
+    $('mBuy').textContent='Could not reach the server';
+  }
+}
+function backToPacks(){
+  chosenPack=null;
+  $('sPacks').style.display='block'; $('sGates').style.display='none';
+  $('mBuy').textContent='';
+}
+function pickPack(p){
+  chosenPack=p; sfx.tap(); $('mBuy').textContent='';
+
+  // One processor enabled — no point making them choose.
+  if(gates.length===1) return startCheckout(gates[0].name);
+
+  $('gateNote').textContent=`${p.games} credits for ${naira(p.price)}. How would you like to pay?`;
+  const box=$('gateList'); box.innerHTML='';
+  gates.forEach(g=>{
+    const b=document.createElement('button');
+    b.className='pack';
+    b.innerHTML='<span class="who"><strong></strong><span>Card, bank transfer or USSD</span></span>';
+    b.querySelector('strong').textContent='Pay with '+g.displayName;
+    b.onclick=()=>startCheckout(g.name);
+    box.appendChild(b);
+  });
+  $('sPacks').style.display='none'; $('sGates').style.display='block';
+}
+async function startCheckout(gateway){
+  if(!chosenPack)return;
+  $('mBuy').style.color='var(--mute)';
+  $('mBuy').textContent='Opening secure checkout…';
+  document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=true);
+  try{
+    const d=await(await fetch('/web/payment/initialize',{method:'POST',headers:H(),
+      body:JSON.stringify({packageId:chosenPack.id,gateway})})).json();
+    if(!d.success||!d.authorizationUrl){
+      $('mBuy').style.color='var(--ember)';
+      $('mBuy').textContent=d.error||'Could not start that payment';
+      document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=false);
+      return;
+    }
+    // Remembered so we can still resolve the payment if the gateway drops us
+    // back without the query string.
+    localStorage.setItem('wut_pending_ref',d.reference+'|'+Date.now());
+    location.href=d.authorizationUrl;
+  }catch(e){
+    $('mBuy').style.color='var(--ember)';
+    $('mBuy').textContent='Could not reach the server';
+    document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=false);
+  }
+}
+
+/* Back from the gateway. The callback has already tried to verify; we poll
+   because a bank transfer can settle after the redirect. */
+async function settlePayment(reference,hint){
+  if(!reference)return;
+  localStorage.removeItem('wut_pending_ref');
+
+  if(hint==='failed'){
+    overlay('','Payment not completed',
+      'That payment didn\'t go through and you have not been charged. You can try again whenever you like.',
+      'Try again',openBuy);
+    return;
+  }
+
+  overlay('⏳','Confirming your payment','Just a moment — checking with your bank.');
+  $('ovAct').style.display='none';
+
+  for(let i=0;i<15;i++){
+    try{
+      const d=await(await fetch('/web/payment/status/'+encodeURIComponent(reference),{headers:H()})).json();
+      if(d.success&&d.status==='success'){
+        sfx.lock();
+        $('lobbyCredits').textContent=d.gamesRemaining;
+        overlay(String(d.gamesRemaining),'Credits added',
+          `${d.games} credit${d.games===1?'':'s'} for ${naira(d.amount)}. `
+          +`You've got ${d.gamesRemaining} in the bank — a receipt is on its way to your email.`,
+          'Play Classic',()=>{closeOver();go('PLAY');});
+        return;
+      }
+      if(d.success&&d.status==='failed'){
+        overlay('','Payment not completed',
+          'We couldn\'t confirm that payment. If you were charged it will be credited automatically — '
+          +'otherwise nothing has left your account.','Try again',openBuy);
+        return;
+      }
+      if(!d.success&&d.error){
+        overlay('','Hmm',d.error);return;
+      }
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,2000));
+  }
+
+  overlay('⏳','Still confirming',
+    'Your bank is taking a little longer than usual. Your credits will be added automatically '
+    +'and we\'ll email you the moment it clears.');
 }
 
 /* ---------- board ---------- */
@@ -473,8 +669,13 @@ async function quit(){
   try{await fetch('/web/game/abandon',{method:'POST',headers:H()});}catch(e){}
   clearInterval(tick); banked=0; view('vLobby'); refresh();
 }
-function overlay(fig,title,body){
-  $('ovFig').textContent=fig; $('ovTitle').textContent=title; $('ovBody').textContent=body.trim();
+function overlay(fig,title,body,actLabel,actFn){
+  $('ovFig').textContent=fig; $('ovTitle').textContent=title; $('ovBody').textContent=(body||'').trim();
+  const a=$('ovAct');
+  if(actLabel&&actFn){
+    a.textContent=actLabel; a.style.display='block';
+    a.onclick=()=>{ $('over').classList.remove('on'); actFn(); };
+  } else { a.style.display='none'; a.onclick=null; }
   $('over').classList.add('on');
 }
 function closeOver(){
@@ -484,6 +685,22 @@ function closeOver(){
 /* ---------- boot ---------- */
 (async()=>{
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
+
+  // Returning from a gateway. Prefer the query string; fall back to what we
+  // stashed before leaving, in case the gateway dropped the params.
+  const qs=new URLSearchParams(location.search);
+  let ref=qs.get('paid');
+  if(!ref){
+    const [stashed,at]=(localStorage.getItem('wut_pending_ref')||'').split('|');
+    // An abandoned checkout shouldn't pop up days later.
+    if(stashed&&Date.now()-Number(at||0)<30*60*1000) ref=stashed;
+    else localStorage.removeItem('wut_pending_ref');
+  }
+  if(ref){
+    pendingPaid={reference:ref,hint:qs.get('status')||null};
+    history.replaceState({},'',location.pathname);
+  }
+
   try{
     const cfg=await(await fetch('/web/auth/config')).json();
     if(cfg.acquisitionSources)

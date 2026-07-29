@@ -15,6 +15,7 @@ const publicRoutes = require('./routes/public.routes');
 const webAuthRoutes = require('./routes/web-auth.routes');
 const newsletterRoutes = require('./routes/newsletter.routes');
 const webGameRoutes = require('./routes/web-game.routes');
+const webPaymentRoutes = require('./routes/web-payment.routes');
 
 // Load environment variables
 dotenv.config();
@@ -30,6 +31,15 @@ app.use(cors());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// play.<domain> should serve the game at the bare root, not require /play.html.
+// Must sit ABOVE express.static so it wins the '/' match.
+app.get('/', (req, res, next) => {
+  if (req.hostname.startsWith('play.')) {
+    return res.sendFile('play.html', { root: path.join(__dirname, 'views') });
+  }
+  next();
+});
 
 // Serve static files from views directory (for admin dashboard)
 app.use(express.static(path.join(__dirname, 'views')));
@@ -52,6 +62,7 @@ app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
+app.use('/web/payment', webPaymentRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {

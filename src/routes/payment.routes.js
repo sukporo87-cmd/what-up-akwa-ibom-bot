@@ -41,15 +41,32 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
             
             const user = userResult.rows[0];
             logger.info(`User ${user.id} now has ${user.games_remaining} games remaining`);
-            
-            await messagingService.sendMessage(
-                user.phone_number,
+
+            const web = isWeb(user.phone_number);
+
+            const body =
                 `✅ PAYMENT SUCCESSFUL! ✅\n\n` +
                 `${verification.games} games have been credited to your account!\n\n` +
                 `Amount: ₦${verification.amount.toLocaleString()}\n` +
                 `Games Remaining: ${user.games_remaining}\n\n` +
-                `Type PLAY to start a game! 🎮`
-            );
+                (web ? `Head back to the game and pick Play Classic. 🎮`
+                     : `Type PLAY to start a game! 🎮`);
+
+            if (web) {
+                // Two channels on purpose. The SSE nudge only lands if the tab
+                // is still open — and it usually isn't, because the player was
+                // just redirected off to a gateway. Email is the durable copy.
+                messagingService.sendMessage(user.phone_number, body).catch(() => {});
+
+                const contactService = require('../services/contact.service');
+                await contactService.send(user, {
+                    text: body,
+                    subject: `Your ${verification.games} game credits are ready`,
+                    kind: 'transactional'
+                });
+            } else {
+                await messagingService.sendMessage(user.phone_number, body);
+            }
         }
         
         logger.info(`Payment webhook (${gatewayName}) processed: ${reference}`);
@@ -248,18 +265,35 @@ async function handleTournamentPaymentWebhook(reference, metadata) {
 // ============================================
 // HELPER: Get redirect URL based on platform
 // ============================================
-function getRedirectUrl(phoneNumber) {
-    if (phoneNumber.startsWith('tg_')) {
-        // Telegram user - return to Telegram bot
-        return `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`;
-    } else {
-        // WhatsApp user
-        return `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
+function isWeb(phoneNumber) {
+    return String(phoneNumber || '').startsWith('web_');
+}
+
+/**
+ * Where to send the player after checkout.
+ *
+ * Chat platforms get a deeplink back into the conversation. Web players go
+ * back into the app carrying the reference, so play.html can poll
+ * /web/payment/status and show the outcome itself — no interstitial.
+ */
+function getRedirectUrl(phoneNumber, reference = '', outcome = 'success') {
+    const id = String(phoneNumber || '');
+
+    if (isWeb(id)) {
+        const base = (process.env.WEB_APP_URL || 'https://play.whatsuptrivia.com.ng').replace(/\/$/, '');
+        return `${base}/play.html?paid=${encodeURIComponent(reference)}&status=${outcome}`;
     }
+    if (id.startsWith('tg_')) {
+        return `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`;
+    }
+    return `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
 }
 
 function getPlatformName(phoneNumber) {
-    return phoneNumber.startsWith('tg_') ? 'Telegram' : 'WhatsApp';
+    const id = String(phoneNumber || '');
+    if (isWeb(id)) return 'the game';
+    if (id.startsWith('tg_')) return 'Telegram';
+    return 'WhatsApp';
 }
 
 // ============================================
@@ -274,31 +308,44 @@ router.get('/callback', async (req, res) => {
         return res.status(400).send('No reference provided');
     }
     
+    // Resolve the player BEFORE verifying. Every exit path — success, still
+    // processing, outright failure — needs to know where to send them, and on
+    // the failure paths verifyPayment has already thrown.
+    // Reference format: {WUAIB|KOR}-{user_id}-{timestamp}-{random}
+    const userId = reference.split('-')[1];
+    let phoneNumber = '';
+
     try {
-        const verification = await paymentService.verifyPayment(reference);
-        
-        // Extract user_id from reference (format: WUAIB-{user_id}-{timestamp}-{random})
-        const userId = reference.split('-')[1];
-        
-        // Capture user's real IP for device tracking
-        try {
-            const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
-            if (clientIp && userId) {
-                const deviceTrackingService = require('../services/device-tracking.service');
-                await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'payment_callback');
-            }
-        } catch (ipErr) {
-            logger.error('Error recording payment IP (non-fatal):', ipErr.message);
-        }
-        
-        // Get user to determine platform
         const userResult = await pool.query(
             'SELECT phone_number FROM users WHERE id = $1',
-            [userId]  // ✅ FIXED
+            [userId]
         );
-        
-        const phoneNumber = userResult.rows[0]?.phone_number || '';
-        const redirectUrl = getRedirectUrl(phoneNumber);
+        phoneNumber = userResult.rows[0]?.phone_number || '';
+    } catch (lookupErr) {
+        logger.error('Could not resolve user for payment callback:', lookupErr.message);
+    }
+
+    // Capture user's real IP for device tracking
+    try {
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
+        if (clientIp && userId) {
+            const deviceTrackingService = require('../services/device-tracking.service');
+            await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'payment_callback');
+        }
+    } catch (ipErr) {
+        logger.error('Error recording payment IP (non-fatal):', ipErr.message);
+    }
+
+    try {
+        const verification = await paymentService.verifyPayment(reference);
+
+        // Web players go straight back into the app — it polls the status
+        // endpoint and renders the result in its own UI.
+        if (isWeb(phoneNumber)) {
+            return res.redirect(302, getRedirectUrl(phoneNumber, reference, 'success'));
+        }
+
+        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success');
         const platformName = getPlatformName(phoneNumber);
         
         res.send(`
@@ -392,6 +439,42 @@ router.get('/callback', async (req, res) => {
         
     } catch (error) {
         logger.error('Payment callback error:', error);
+
+        // transient = the bank hasn't settled yet. The row stays pending and
+        // the webhook will finish it, so this is not a failure.
+        const outcome = error.transient ? 'pending' : 'failed';
+
+        if (isWeb(phoneNumber)) {
+            return res.redirect(302, getRedirectUrl(phoneNumber, reference, outcome));
+        }
+
+        if (error.transient) {
+            return res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Processing</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .container { background: white; max-width: 500px; margin: 0 auto; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #f59e0b; }
+        a { display: inline-block; margin-top: 20px; padding: 15px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⏳ Payment Still Processing</h1>
+        <p>Your bank is still confirming this payment. It usually takes a minute or two.</p>
+        <p>Your games will be credited automatically once it clears.</p>
+        <a href="javascript:location.reload()">Retry Check</a>
+    </div>
+</body>
+</html>
+            `);
+        }
+
         res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -475,7 +558,7 @@ const userResult = await pool.query(
 );
         
         const phoneNumber = userResult.rows[0]?.phone_number || '';
-        const redirectUrl = getRedirectUrl(phoneNumber);
+        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success');
         const platformName = getPlatformName(phoneNumber);
         
         res.send(`

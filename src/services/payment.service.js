@@ -41,14 +41,22 @@ class PaymentService {
     return `${prefix}-${userId}-${timestamp}-${random}`;
   }
 
-  async initializePayment(user, packageId, gatewayName = null) {
+  /**
+   * @param {object} user       full users row
+   * @param {number} packageId
+   * @param {string|null} gatewayName
+   * @param {object} options    { email, callbackUrl } — per-call overrides.
+   *                            Web players have a real email on file; chat
+   *                            players don't, hence the synthetic fallback.
+   */
+  async initializePayment(user, packageId, gatewayName = null, options = {}) {
     try {
       // Resolve which gateway to use
       const gateway = gatewayName 
         ? await gatewayManager.getEnabledGatewayByName(gatewayName)
         : await gatewayManager.getDefaultGateway();
       
-      const platform = platformOf(user.phone_number);
+      const platform = platformOf(user);
 
       const packageResult = await pool.query(
         'SELECT * FROM game_packages WHERE id = $1 AND is_active = true',
@@ -62,11 +70,17 @@ class PaymentService {
       const pkg = packageResult.rows[0];
       const reference = this.generateReference(user.id, gateway.getName());
 
+      // Gateways email the receipt to this address, so send the real one when
+      // we have it. web_a1b2c3@wuaib.com is a black hole.
+      const email = options.email
+        || user.email
+        || `${user.phone_number}@wuaib.com`;
+
       const initResult = await gateway.initialize({
         reference,
         amount: pkg.price_naira,
-        email: `${user.phone_number}@wuaib.com`,
-        callbackUrl: `${process.env.APP_URL}/payment/callback`,
+        email,
+        callbackUrl: options.callbackUrl || `${process.env.APP_URL}/payment/callback`,
         customerName: user.full_name,
         metadata: {
           user_id: user.id,
