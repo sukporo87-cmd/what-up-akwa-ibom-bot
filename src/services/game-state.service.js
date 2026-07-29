@@ -96,10 +96,27 @@ class GameStateService {
      * game_ready is checked before photo verification, which is checked before
      * answers. Get this order wrong and the client offers the wrong control.
      */
+    /**
+     * Lazily resolved so this module can be required from messaging.service
+     * without a cycle. Note user.service and game.service export CLASSES, not
+     * instances — treating them as instances is what silently broke every
+     * game.state emit on the first deploy of this file.
+     */
+    _deps() {
+        if (!this._cached) {
+            const UserService = require('./user.service');
+            const GameService = require('./game.service');
+            this._cached = {
+                userService: new UserService(),
+                gameService: GameService.shared,
+                gameEvents: require('./game-events.service')
+            };
+        }
+        return this._cached;
+    }
+
     async derive(user) {
-        const userService = require('./user.service');
-        const gameService = require('./game.service');
-        const gameEvents  = require('./game-events.service');
+        const { userService, gameService, gameEvents } = this._deps();
 
         const [rawState, ready, session, postGameRaw] = await Promise.all([
             userService.getUserState(user.phone_number).catch(() => null),
@@ -164,17 +181,22 @@ class GameStateService {
             } catch (e) { /* treat as no */ }
 
             if (needsPhoto) {
-                // 25 second window — the client needs the deadline to run a
-                // countdown, and to stop someone uploading into a closed window.
-                let secondsRemaining = null;
+                // Read the real deadline out of the stored payload, not the key
+                // TTL — the TTL deliberately outlives the deadline by a few
+                // seconds so a late arrival can be told the window closed.
+                let secondsRemaining = null, expiresAt = null;
                 try {
-                    const ttl = await redis.ttl(`photo_verify:${session.session_key}`);
-                    if (ttl > 0) secondsRemaining = ttl;
+                    const raw = await redis.get(`photo_verify:${session.session_key}`);
+                    const data = raw ? JSON.parse(raw) : null;
+                    if (data && data.expiresAt) {
+                        expiresAt = data.expiresAt;
+                        secondsRemaining = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
+                    }
                 } catch (e) { /* non-fatal */ }
 
                 return { ...base, phase: 'photo', expects: 'photo',
                          sessionId: session.id, title: 'Quick photo check',
-                         secondsRemaining, canCancel: false };
+                         secondsRemaining, expiresAt, canCancel: false };
             }
 
             // 4. Live question.
@@ -211,7 +233,7 @@ class GameStateService {
 
     /** Derive and push over SSE. Returns the state, or null if we can't resolve the user. */
     async emit(userOrIdentifier) {
-        const gameEvents = require('./game-events.service');
+        const { gameEvents } = this._deps();
         const user = typeof userOrIdentifier === 'object'
             ? userOrIdentifier
             : await this._load(userOrIdentifier);
@@ -237,7 +259,10 @@ class GameStateService {
             try {
                 await this.emit(identifier);
             } catch (e) {
-                logger.error('Could not emit game.state:', e.message);
+                // Template literal, not a second argument: winston's JSON format
+                // treats a bare string as meta and drops it, which is exactly
+                // how these errors logged with no message for a whole session.
+                logger.error(`Could not emit game.state: ${e && e.stack ? e.stack : e}`);
             }
         }, delay);
 
@@ -254,7 +279,7 @@ class GameStateService {
             );
             return r.rows[0] || null;
         } catch (e) {
-            logger.error('Could not load user for game.state:', e.message);
+            logger.error(`Could not load user for game.state: ${e && e.message}`);
             return null;
         }
     }

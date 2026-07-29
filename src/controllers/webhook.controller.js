@@ -24,7 +24,7 @@ const loveQuestService = require('../services/love-quest.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
-const gameService = new GameService();
+const gameService = GameService.shared;
 const userService = new UserService();
 const paymentService = new PaymentService();
 const payoutService = new PayoutService();

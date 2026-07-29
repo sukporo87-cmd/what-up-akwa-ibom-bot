@@ -184,6 +184,12 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
 /* ---------- photo verification ---------- */
+.reqs{list-style:none;margin:0 0 14px;padding:0}
+.reqs li{font-size:13.5px;color:var(--mute);line-height:1.5;padding:6px 0 6px 22px;position:relative}
+.reqs li::before{content:'';position:absolute;left:4px;top:12px;width:6px;height:6px;
+                 border-radius:50%;background:var(--brass)}
+.reqs li.warn{color:var(--ember)}
+.reqs li.warn::before{background:var(--ember)}
 .shot{border:1.5px dashed var(--line);border-radius:15px;padding:26px 18px;text-align:center;
       background:var(--slate);margin-bottom:14px}
 .shot img{width:100%;max-width:210px;border-radius:12px;display:block;margin:0 auto 14px}
@@ -362,6 +368,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="countdown" id="photoClock"></div>
+
+    <ul class="reqs" id="photoReqs"></ul>
 
     <div class="shot" id="photoBox">
       <span class="ico">📷</span>
@@ -854,7 +862,7 @@ function duplicatesStructured(text){
 let lastOver=0;
 function endGame(g){
   clearInterval(tick); clearInterval(photoTick);
-  lastOver=Date.now(); banked=0;
+  lastOver=Date.now(); banked=0; photoMode=false;
 
   const won=Number(g.amountWon)||0;
   const reached=g.questionsAnswered, total=g.totalQuestions||15;
@@ -917,6 +925,13 @@ function gameOver(text){
 /* Text the engine sends that has no structured event yet. */
 function relay(text){
   const t=text.toUpperCase();
+
+  // A dedicated screen owns the viewport. Covering it with a modal is never
+  // right — and the verification text matches "send your…", which is exactly
+  // how it ended up as a chooser on top of the camera button.
+  if(photoMode||$('vPhoto').classList.contains('on')){
+    return;
+  }
 
   // A question is on screen. Nothing informational is worth burying it under a
   // modal — this is the backstop for any text that outruns game.state.
@@ -984,14 +999,25 @@ function info(text){
    Anti-fraud can demand a selfie mid-game. Chat platforms just send an image;
    web had no path at all, so a flagged player was simply stuck. The window is
    25 seconds, hence the countdown. */
-let photoTick=null;
+let photoTick=null, photoMode=false;
 function showPhoto(p){
   clearInterval(tick); clearInterval(photoTick);
+  photoMode=true;
   if(p&&p.prompt) $('photoPrompt').textContent=p.prompt.replace(/[*_📸]/g,'').trim();
   $('mPhoto').textContent='';
   $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera';
   $('photoBox').innerHTML='<span class="ico">📷</span><p>Your camera opens when you tap below. '
     +'The photo is used once, to verify this game.</p>';
+
+  const reqs=$('photoReqs'); reqs.innerHTML='';
+  ((p&&p.requirements)||[]).forEach(r=>{
+    const li=document.createElement('li'); li.textContent=r; reqs.appendChild(li);
+  });
+  if(p&&p.warning){
+    const li=document.createElement('li'); li.className='warn'; li.textContent=p.warning;
+    reqs.appendChild(li);
+  }
+
   view('vPhoto');
 
   const until = p&&p.expiresAt ? p.expiresAt
@@ -1003,10 +1029,30 @@ function showPhoto(p){
       el.textContent = left ? `${left}s to send it` : 'Time is up';
       el.className = 'countdown'+(left<=8?' hot':'');
       if(left<=5&&left>0) sfx.urgent();
-      if(!left) clearInterval(photoTick);
+      if(!left){ clearInterval(photoTick); photoExpired(); }
     };
     paint(); photoTick=setInterval(paint,1000);
   } else { $('photoClock').textContent=''; }
+}
+
+/* The window closed. The server's own timer should already have ended the
+   game, but that timer is in-process — a restart inside the 20 seconds would
+   otherwise leave the player parked here forever. Tell the server, and stop
+   pretending the camera button still does something. */
+async function photoExpired(){
+  $('photoBtn').disabled=true;
+  $('photoBtn').textContent='Window closed';
+  $('mPhoto').style.color='var(--mute)';
+  $('mPhoto').textContent='Wrapping up this game…';
+  try{
+    await fetch('/web/game/photo/expired',{method:'POST',headers:H()});
+  }catch(e){}
+  // game.over arrives over the stream; if it somehow doesn't, don't strand them.
+  setTimeout(()=>{
+    if($('vPhoto').classList.contains('on')&&!$('over').classList.contains('on')){
+      photoMode=false; view('vLobby'); refresh();
+    }
+  },6000);
 }
 
 async function sendPhoto(file){
@@ -1033,6 +1079,17 @@ async function sendPhoto(file){
       $('mPhoto').style.color='var(--mint)';
       $('mPhoto').textContent='Sent — checking…';
       // The engine decides what happens next and says so over the stream.
+    } else if(d.expired){
+      // The server has resolved the game on its side; game.over follows.
+      $('mPhoto').style.color='var(--ember)';
+      $('mPhoto').textContent=d.error||'The verification window closed';
+      $('photoBtn').disabled=true; $('photoBtn').textContent='Window closed';
+      clearInterval(photoTick);
+      setTimeout(()=>{
+        if($('vPhoto').classList.contains('on')&&!$('over').classList.contains('on')){
+          photoMode=false; view('vLobby'); refresh();
+        }
+      },6000);
     } else {
       $('mPhoto').style.color='var(--ember)';
       $('mPhoto').textContent=d.error||'That did not go through';
@@ -1303,7 +1360,7 @@ function ladder(n){
   }
 }
 function paint(q){
-  view('vGame'); answered=false; clearInterval(tick);
+  view('vGame'); answered=false; photoMode=false; clearInterval(tick); clearInterval(photoTick);
   seen[q.questionNumber]=q.prizeAmount;
   $('qCount').textContent=`Question ${q.questionNumber} of ${q.totalQuestions||15}`;
   $('qPrize').textContent=naira(q.prizeAmount);

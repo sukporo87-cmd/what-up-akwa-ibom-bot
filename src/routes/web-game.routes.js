@@ -20,7 +20,7 @@ const gameEvents = require('../services/game-events.service');
 const gameState = require('../services/game-state.service');
 const webhookController = require('../controllers/webhook.controller');
 const GameService = require('../services/game.service');
-const gameService = new GameService();
+const gameService = GameService.shared;
 const redis = require('../config/redis');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
@@ -207,10 +207,13 @@ router.post('/photo',
 
             const pending = await gameService.hasPendingPhotoVerification(session.session_key);
             if (!pending) {
-                // The 25s window is short; expiring mid-upload is a real outcome.
+                // The window is short and expiring mid-upload is a real outcome.
+                // Resolve the game rather than leaving them on a dead screen —
+                // this also covers a timeout whose in-process timer was lost.
+                await gameService.reconcilePhotoTimeout(session, req.webUser);
                 return res.status(409).json({
                     success: false, expired: true,
-                    error: 'The verification window has closed'
+                    error: 'The verification window closed before that arrived'
                 });
             }
 
@@ -228,5 +231,22 @@ router.post('/photo',
         }
     }
 );
+
+// The client calls this the moment its countdown reaches zero. The server's
+// own timer should already have ended the game — this exists because that
+// timer is in-process, and a restart during the 20-second window would
+// otherwise strand the session active forever.
+router.post('/photo/expired', requireWebAuth, async (req, res) => {
+    try {
+        const session = await gameService.getActiveSession(req.webUser.id);
+        if (!session) return res.json({ success: true, resolved: false, reason: 'no_session' });
+
+        const resolved = await gameService.reconcilePhotoTimeout(session, req.webUser);
+        res.json({ success: true, resolved });
+    } catch (error) {
+        logger.error('Web photo expiry error:', error);
+        res.status(500).json({ success: false, error: 'Could not resolve that' });
+    }
+});
 
 module.exports = router;

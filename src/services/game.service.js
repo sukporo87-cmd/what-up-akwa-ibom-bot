@@ -749,10 +749,16 @@ class GameService {
 
         // Store verification state
         const photoKey = `photo_verify:${session.session_key}`;
-        await redis.setex(photoKey, 25, JSON.stringify({
+        const photoExpiresAt = Date.now() + PHOTO_VERIFICATION_CONFIG.TIMEOUT_MS;
+
+        // TTL runs a little past the real deadline on purpose: the extra seconds
+        // are what let a late arrival be told "the window has closed" rather
+        // than "no game in progress". expiresAt is the deadline that counts.
+        await redis.setex(photoKey, PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS + 5, JSON.stringify({
             challengeType: challenge.type,
             questionNumber,
             startTime: Date.now(),
+            expiresAt: photoExpiresAt,
             sessionId: session.id,
             userId: user.id
         }));
@@ -767,8 +773,14 @@ class GameService {
                     challengeType: challenge.type,
                     prompt: challenge.text,
                     questionNumber,
-                    secondsAllowed: 25,
-                    expiresAt: Date.now() + 25000
+                    requirements: [
+                        'Your face clearly visible',
+                        'Good lighting — no dark photos',
+                        'Live capture, not a gallery upload'
+                    ],
+                    warning: 'Failing this ends the game and may forfeit winnings.',
+                    secondsAllowed: PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS,
+                    expiresAt: photoExpiresAt
                 });
             } catch (e) {
                 logger.error('Could not emit photo.required:', e.message);
@@ -801,7 +813,8 @@ class GameService {
             `⚠️ Failed verification ends the game and may forfeit winnings.\n\n` +
             `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send your selfie.`;
 
-        await messagingService.sendMessage(user.phone_number, message);
+        // web has this as photo.required, with the requirements as real list items
+        await messagingService.sendMessage(user.phone_number, message, { webRedundant: true });
 
         // Set timeout
         const timeoutKey = `photo_timeout:${session.session_key}`;
@@ -818,6 +831,41 @@ class GameService {
         }, PHOTO_VERIFICATION_CONFIG.TIMEOUT_MS);
 
         activeTimeouts.set(timeoutKey, timeoutId);
+    }
+
+    /**
+     * Finish a photo check whose timeout never fired.
+     *
+     * The 20-second deadline is an in-process setTimeout. If the process
+     * restarts in that window — a deploy, a crash, Render spinning down — the
+     * timer dies with it and the session is stranded active forever: the
+     * player sits on a verification screen that nothing will ever resolve.
+     *
+     * This is the safety net. It only acts when the window has genuinely
+     * lapsed, and completeGame's own lock makes a double call harmless.
+     */
+    async reconcilePhotoTimeout(session, user) {
+        try {
+            const photoKey = `photo_verify:${session.session_key}`;
+            if (await redis.get(photoKey)) return false;      // still open, leave it
+
+            const check = await pool.query(
+                `SELECT status, photo_verification_requested, photo_verification_passed
+                 FROM game_sessions WHERE id = $1`,
+                [session.id]
+            );
+            const row = check.rows[0];
+            if (!row || row.status !== 'active') return false;
+            if (!row.photo_verification_requested) return false;
+            if (row.photo_verification_passed !== null) return false;
+
+            logger.warn(`📸⏱️ Reconciling stranded photo verification for session ${session.id}`);
+            await this.handlePhotoVerificationFailure(session, user, 'timeout');
+            return true;
+        } catch (error) {
+            logger.error('Error reconciling photo timeout:', error.message);
+            return false;
+        }
     }
 
     /** Check if waiting for photo verification */
@@ -2639,4 +2687,12 @@ class GameService {
     }
 }
 
+// The constructor starts the zombie-session and timeout cleanup intervals, so
+// every `new GameService()` adds another pair of them. There are already two
+// instances in the codebase, meaning that cleanup has been running twice over.
+// Export a shared instance and prefer it; the class export stays so nothing
+// existing breaks.
+const sharedGameService = new GameService();
+
 module.exports = GameService;
+module.exports.shared = sharedGameService;
