@@ -757,6 +757,24 @@ class GameService {
             userId: user.id
         }));
 
+        // Web gets a structured heads-up with the deadline, so it can show a
+        // camera control and a countdown instead of a message telling it to
+        // open WhatsApp. 25 seconds is tight — the player needs every one.
+        if (user.phone_number && user.phone_number.startsWith('web_')) {
+            try {
+                const gameEvents = require('./game-events.service');
+                gameEvents.emit(user.id, 'photo.required', {
+                    challengeType: challenge.type,
+                    prompt: challenge.text,
+                    questionNumber,
+                    secondsAllowed: 25,
+                    expiresAt: Date.now() + 25000
+                });
+            } catch (e) {
+                logger.error('Could not emit photo.required:', e.message);
+            }
+        }
+
         // Update session
         await pool.query(`
             UPDATE game_sessions 
@@ -833,6 +851,8 @@ class GameService {
             const waMediaId = message?.image?.id;
             // Telegram: photo already downloaded as buffer
             const tgPhoto = message?.telegramPhoto;
+            // Web (and anything else): a raw buffer handed straight in
+            const rawPhoto = message?.photoBuffer;
             
             if (waMediaId) {
                 try {
@@ -861,6 +881,18 @@ class GameService {
                     }
                 } catch (dlErr) {
                     logger.error('Error uploading Telegram verification photo:', dlErr.message);
+                }
+            } else if (rawPhoto && rawPhoto.length) {
+                try {
+                    const uploadResult = await cloudinaryService.uploadVerificationPhoto(
+                        rawPhoto, user.id, session.id
+                    );
+                    if (uploadResult) {
+                        imageUrl = uploadResult.url;
+                        analysis = uploadResult.analysis;
+                    }
+                } catch (dlErr) {
+                    logger.error('Error uploading web verification photo:', dlErr.message);
                 }
             }
 
@@ -1488,6 +1520,51 @@ class GameService {
                 isTournament: session.is_tournament_game,
                 tournamentId: session.tournament_id, finalScore
             }));
+
+            // ============================================
+            // WEB: structured game.over
+            // Every ending funnels through completeGame, so this is the one
+            // place it needs to live. The menu below mirrors the post-game
+            // handler in webhook.controller exactly — 3 is Claim Prize when
+            // there is money to claim and Main Menu when there isn't, and 4
+            // only exists while a victory card is pending. Get those digits
+            // wrong and the buttons lie.
+            // ============================================
+            if (user.phone_number && user.phone_number.startsWith('web_')) {
+                try {
+                    const gameEvents = require('./game-events.service');
+                    const isPractice = session.game_type === 'practice';
+                    const hasWinnings = finalScore > 0 && !isPractice;
+                    const sharePending = !!(await redis.get(`win_share_pending:${user.id}`));
+
+                    const menu = [
+                        { k: '1', v: 'Play again' },
+                        { k: '2', v: session.is_tournament_game ? 'Tournament leaderboard' : 'View leaderboard' },
+                        { k: '3', v: hasWinnings ? 'Claim your prize' : 'Main menu' }
+                    ];
+                    if (sharePending) menu.push({ k: '4', v: 'Share victory card' });
+
+                    gameEvents.emit(user.id, 'game.over', {
+                        outcome,                                   // grand_prize | wrong_answer | timeout | ...
+                        amountWon: finalScore,
+                        wonGrandPrize: !!wonGrandPrize,
+                        perfect: !!wonGrandPrize,
+                        questionsAnswered: Math.max(0, questionNumber - 1),
+                        totalQuestions: Object.keys(PRIZE_LADDER).length,
+                        gameMode: session.game_mode,
+                        gameType: session.game_type,
+                        isPractice,
+                        isTournament: !!session.is_tournament_game,
+                        tournamentId: session.tournament_id || null,
+                        hasWinnings,
+                        canClaim: hasWinnings,
+                        sessionId: session.id,
+                        menu
+                    });
+                } catch (evtErr) {
+                    logger.error('Could not emit game.over event:', evtErr.message);
+                }
+            }
 
             // Trigger email collection prompt (delayed, non-blocking)
             // Only runs if user hasn't provided email and cooldown expired

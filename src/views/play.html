@@ -150,6 +150,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
      color:#1a1206;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
      vertical-align:middle}
 .note{font-size:13px;color:var(--mute);margin:0 0 18px;line-height:1.55}
+.note.hot{color:var(--ember)}
 .spin{text-align:center;color:var(--mute);font-size:14px;padding:26px 0}
 
 /* ---------- ask (interactive engine prompt) ---------- */
@@ -181,6 +182,16 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .qimg.on{display:block;animation:rise .3s ease forwards}
 .qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
+
+/* ---------- photo verification ---------- */
+.shot{border:1.5px dashed var(--line);border-radius:15px;padding:26px 18px;text-align:center;
+      background:var(--slate);margin-bottom:14px}
+.shot img{width:100%;max-width:210px;border-radius:12px;display:block;margin:0 auto 14px}
+.shot .ico{font-size:36px;display:block;margin-bottom:10px}
+.shot p{margin:0;font-size:13.5px;color:var(--mute);line-height:1.55}
+.countdown{font-family:var(--display);font-size:15px;color:var(--brass);text-align:center;
+           margin-bottom:14px}
+.countdown.hot{color:var(--ember)}
 
 /* ---------- pre-game rules ---------- */
 .rules{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:16px 17px;
@@ -334,7 +345,32 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="rules" id="readyRules"></div>
-    <button class="cta" onclick="beginGame()">Start game</button>
+    <p class="note" id="readyNote" style="text-align:center"></p>
+    <button class="cta" id="startBtn" onclick="beginGame()">Start game</button>
+  </section>
+
+  <!-- ============ PHOTO CHECK ============ -->
+  <section class="view" id="vPhoto">
+    <div class="bar">
+      <div class="brand">Verification</div>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 14px">
+      <span class="fig" style="font-size:28px">Quick photo check</span>
+      <p id="photoPrompt">Take a selfie to confirm it's really you playing.</p>
+    </div>
+
+    <div class="countdown" id="photoClock"></div>
+
+    <div class="shot" id="photoBox">
+      <span class="ico">📷</span>
+      <p>Your camera opens when you tap below. The photo is used once, to verify this game.</p>
+    </div>
+
+    <input type="file" id="photoInput" accept="image/*" capture="user" style="display:none">
+    <button class="cta" id="photoBtn" onclick="$('photoInput').click()">Open camera</button>
+    <div class="msg" id="mPhoto" style="margin-top:10px"></div>
   </section>
 
   <!-- ============ GAME ============ -->
@@ -590,7 +626,8 @@ async function refresh(){
     // where a live stream would.
     if(d.state){
       gstate=d.state;
-      if(d.state.phase==='awaiting_start'){ showReady(''); return; }
+      if(d.state.phase==='awaiting_start'){ showReady('',d.state.secondsRemaining); return; }
+      if(d.state.phase==='photo'){ showPhoto(d.state); return; }
       if(d.state.phase==='prompt' && d.state.web==='buy'){ openBuy(); return; }
     }
     if(d.game){ banked=d.game.currentScore||0; view('vGame'); }
@@ -622,6 +659,18 @@ function stream(){
     clearTimeout(textT);
     applyState(JSON.parse(e.data), flushText());
   });
+
+  // The last piece of text-sniffing is gone: the engine now says how a game
+  // ended, what it paid and which follow-ups it will accept.
+  es.addEventListener('game.over',e=>{
+    clearTimeout(textT); flushText();
+    endGame(JSON.parse(e.data));
+  });
+
+  es.addEventListener('photo.required',e=>{
+    clearTimeout(textT); flushText();
+    showPhoto(JSON.parse(e.data));
+  });
 }
 
 let textBuf=[], textT=null, gstate=null;
@@ -638,7 +687,7 @@ function applyState(st, text){
   switch(st.phase){
 
     case 'awaiting_start':
-      showReady(text);
+      showReady(text, st.secondsRemaining);
       return;
 
     case 'question':
@@ -655,9 +704,7 @@ function applyState(st, text){
       return;
 
     case 'photo':
-      overlay('','Photo check',
-        text||'A quick photo check is needed before you can carry on. Open the game on WhatsApp to send it.',
-        null,null);
+      showPhoto(st);
       return;
 
     case 'prompt':
@@ -801,7 +848,49 @@ function duplicatesStructured(text){
   return false;
 }
 
-/* Game over: celebrate properly, and make the follow-up options tappable. */
+/* Structured game over. Everything here is stated by the engine rather than
+   scraped out of a sentence, so the amount is exact and the menu digits are
+   guaranteed to be the ones the post-game handler actually accepts. */
+let lastOver=0;
+function endGame(g){
+  clearInterval(tick); clearInterval(photoTick);
+  lastOver=Date.now(); banked=0;
+
+  const won=Number(g.amountWon)||0;
+  const reached=g.questionsAnswered, total=g.totalQuestions||15;
+
+  let title, body;
+  if(g.perfect){
+    title='You went all the way';
+    body=`All ${total} questions. `+(g.isPractice
+      ? 'Practice run, so nothing to collect — but that was a clean sheet.'
+      : `${naira(won)} is yours.`);
+  } else if(g.isPractice){
+    title='Practice done';
+    body=`${reached} of ${total} correct. No prizes in practice — worth ${naira(won)} had it been real.`;
+  } else if(won>0){
+    title='Banked';
+    body=`You got to question ${reached} and banked ${naira(won)}.`
+       + (g.canClaim?' Claim it whenever you like.':'');
+  } else {
+    title = g.outcome==='timeout' ? 'Out of time' : 'Game over';
+    body=`You reached question ${reached} of ${total}. Nothing banked this run.`;
+  }
+  if(g.isTournament) body+=' Your score has gone to the tournament board.';
+
+  setTimeout(()=>{
+    // Practice wins are real achievements but not real money — celebrate the
+    // clean sheet, not the imaginary payout.
+    if(won>0&&!g.isPractice){ sfx.fanfare(); celebrate(g.perfect?1.7:1); }
+    else if(g.perfect){ sfx.fanfare(); celebrate(1.2); }
+    else { sfx.bust(); }
+
+    overlay(g.isPractice?`${reached}/${total}`:naira(won), title, body, null, null, g.menu||[]);
+  },800);
+}
+
+/* Legacy text-parsed game over. Kept only as a fallback for the brief window
+   where a deployed server predates the game.over event. */
 function gameOver(text){
   clearInterval(tick);
   const clean=text.replace(/\*/g,'').replace(/_/g,'');
@@ -851,6 +940,8 @@ function relay(text){
   }
 
   if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')||t.includes("TIME'S UP")){
+    // game.over already handled this properly — don't show it twice.
+    if(Date.now()-lastOver < 8000) return;
     gameOver(text); return;
   }
 
@@ -889,9 +980,100 @@ function info(text){
   overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
 }
 
+/* ---------- photo verification ----------
+   Anti-fraud can demand a selfie mid-game. Chat platforms just send an image;
+   web had no path at all, so a flagged player was simply stuck. The window is
+   25 seconds, hence the countdown. */
+let photoTick=null;
+function showPhoto(p){
+  clearInterval(tick); clearInterval(photoTick);
+  if(p&&p.prompt) $('photoPrompt').textContent=p.prompt.replace(/[*_📸]/g,'').trim();
+  $('mPhoto').textContent='';
+  $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera';
+  $('photoBox').innerHTML='<span class="ico">📷</span><p>Your camera opens when you tap below. '
+    +'The photo is used once, to verify this game.</p>';
+  view('vPhoto');
+
+  const until = p&&p.expiresAt ? p.expiresAt
+              : (p&&p.secondsRemaining ? Date.now()+p.secondsRemaining*1000 : null);
+  if(until){
+    const paint=()=>{
+      const left=Math.max(0,Math.ceil((until-Date.now())/1000));
+      const el=$('photoClock');
+      el.textContent = left ? `${left}s to send it` : 'Time is up';
+      el.className = 'countdown'+(left<=8?' hot':'');
+      if(left<=5&&left>0) sfx.urgent();
+      if(!left) clearInterval(photoTick);
+    };
+    paint(); photoTick=setInterval(paint,1000);
+  } else { $('photoClock').textContent=''; }
+}
+
+async function sendPhoto(file){
+  if(!file) return;
+  clearInterval(photoTick);
+  $('mPhoto').style.color='var(--mute)';
+  $('mPhoto').textContent='Uploading…';
+  $('photoBtn').disabled=true;
+
+  // Show them what was captured while it uploads.
+  try{
+    const url=URL.createObjectURL(file);
+    $('photoBox').innerHTML='';
+    const img=new Image(); img.src=url; img.onload=()=>URL.revokeObjectURL(url);
+    $('photoBox').appendChild(img);
+  }catch(e){}
+
+  try{
+    const h={'Content-Type':file.type||'application/octet-stream'};
+    if(token)h.Authorization='Bearer '+token;
+    const r=await fetch('/web/game/photo',{method:'POST',headers:h,body:file});
+    const d=await r.json();
+    if(d.success){
+      $('mPhoto').style.color='var(--mint)';
+      $('mPhoto').textContent='Sent — checking…';
+      // The engine decides what happens next and says so over the stream.
+    } else {
+      $('mPhoto').style.color='var(--ember)';
+      $('mPhoto').textContent=d.error||'That did not go through';
+      $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+    }
+  }catch(e){
+    $('mPhoto').style.color='var(--ember)';
+    $('mPhoto').textContent='Could not reach the server';
+    $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+  }
+}
+
 /* ---------- pre-game ---------- */
-function showReady(text){
-  clearInterval(tick);
+let readyTick=null;
+function showReady(text,secondsLeft){
+  clearInterval(tick); clearInterval(readyTick);
+
+  // game_ready expires after 5 minutes. On chat that never mattered; on web
+  // people leave tabs open, and a lapsed window makes Start silently do
+  // nothing. Count it down and offer a clean restart when it goes.
+  const note=$('readyNote');
+  if(secondsLeft&&secondsLeft>0){
+    const until=Date.now()+secondsLeft*1000;
+    const paint=()=>{
+      const left=Math.max(0,Math.ceil((until-Date.now())/1000));
+      if(!left){
+        clearInterval(readyTick);
+        note.textContent='This game has expired. Start a fresh one from the menu.';
+        note.className='note hot';
+        $('startBtn').disabled=true;
+        return;
+      }
+      note.textContent = left<60
+        ? `Starts within ${left}s or this game expires`
+        : `You have ${Math.ceil(left/60)} minutes to begin`;
+      note.className='note';
+    };
+    paint(); readyTick=setInterval(paint,1000);
+    $('startBtn').disabled=false;
+  } else { note.textContent=''; $('startBtn').disabled=false; }
+
   const body=(text||'').replace(/\*/g,'').replace(/_/g,'').trim();
   // Recovering from a refresh we have no rules text — say something useful
   // rather than leaving a screen that is just a button in a void.
@@ -902,7 +1084,7 @@ function showReady(text){
   view('vReady');
 }
 function beginGame(){
-  sfx.tap();
+  sfx.tap(); clearInterval(readyTick);
   view('vGame');
   $('qText').textContent='Starting…'; $('qOpts').innerHTML='';
   $('verdict').className='verdict'; $('secs').textContent='–';
@@ -1280,6 +1462,7 @@ function closeOver(){
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
 
   $('askInput').addEventListener('keydown',e=>{ if(e.key==='Enter') askSend(); });
+  $('photoInput').addEventListener('change',e=>{ sendPhoto(e.target.files&&e.target.files[0]); });
 
   // Returning from a gateway in this same tab (popup was blocked, or the
   // gateway ignored the target). Prefer the query string; fall back to what we

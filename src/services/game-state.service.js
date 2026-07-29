@@ -112,23 +112,48 @@ class GameStateService {
 
         // 1. Parked in a text state — the router handles these before anything else.
         if (rawState && rawState.state) {
-            const spec = PROMPTS[rawState.state] || UNKNOWN;
+            const spec = PROMPTS[rawState.state];
+
+            // The map has to track setUserState() calls in the engine. Rather
+            // than trusting anyone to remember, say so the moment a real player
+            // lands in something unmapped — the fallback still works, but this
+            // is how you find out it happened.
+            if (!spec) {
+                logger.warn(
+                    `game.state: engine state "${rawState.state}" is not in PROMPTS — ` +
+                    `falling back to a plain text field. Add it to game-state.service.js.`
+                );
+            }
+            const resolved = spec || UNKNOWN;
             return {
                 ...base,
                 phase: 'prompt',
-                expects: spec.expects,
+                expects: resolved.expects,
                 state: rawState.state,
-                title: spec.title,
-                field: spec.field || null,
-                web: spec.web || null,      // web has a purpose-built screen for this
+                title: resolved.title,
+                field: resolved.field || null,
+                web: resolved.web || null,  // web has a purpose-built screen for this
+                mapped: !!spec,
                 canCancel: true
             };
         }
 
         // 2. Session built, rules sent, engine wants START.
+        //
+        // game_ready lives for 300s. On chat nobody sits on a rules message for
+        // five minutes; on web people leave tabs open constantly, and once it
+        // lapses START silently does nothing. Send the remaining time so the
+        // client can warn rather than let them tap a dead button.
         if (session && ready) {
+            let secondsRemaining = null;
+            try {
+                const ttl = await redis.ttl(`game_ready:${user.id}`);
+                if (ttl > 0) secondsRemaining = ttl;
+            } catch (e) { /* non-fatal */ }
+
             return { ...base, phase: 'awaiting_start', expects: 'start',
-                     sessionId: session.id, gameMode: session.game_mode, canCancel: true };
+                     sessionId: session.id, gameMode: session.game_mode,
+                     secondsRemaining, canCancel: true };
         }
 
         if (session) {
@@ -139,8 +164,17 @@ class GameStateService {
             } catch (e) { /* treat as no */ }
 
             if (needsPhoto) {
+                // 25 second window — the client needs the deadline to run a
+                // countdown, and to stop someone uploading into a closed window.
+                let secondsRemaining = null;
+                try {
+                    const ttl = await redis.ttl(`photo_verify:${session.session_key}`);
+                    if (ttl > 0) secondsRemaining = ttl;
+                } catch (e) { /* non-fatal */ }
+
                 return { ...base, phase: 'photo', expects: 'photo',
-                         sessionId: session.id, title: 'Photo check', canCancel: true };
+                         sessionId: session.id, title: 'Quick photo check',
+                         secondsRemaining, canCancel: false };
             }
 
             // 4. Live question.
@@ -227,3 +261,4 @@ class GameStateService {
 }
 
 module.exports = new GameStateService();
+module.exports.PROMPTS = PROMPTS;   // exported so scripts/check-state-map.js can diff it

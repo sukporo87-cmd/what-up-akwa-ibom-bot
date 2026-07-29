@@ -178,4 +178,55 @@ router.post('/abandon', requireWebAuth, async (req, res) => {
     }
 });
 
+// ============================================
+// PHOTO VERIFICATION
+// Anti-fraud can demand a selfie mid-game. Chat platforms just send an image;
+// web had no way to comply at all, so a flagged web player was dead in the
+// water. The body is the raw image — no base64 padding, no multipart
+// dependency — and it goes through the same processPhotoVerification the
+// other platforms use, so validation and scoring stay identical.
+// ============================================
+
+router.post('/photo',
+    requireWebAuth,
+    express.raw({ type: ['image/*', 'application/octet-stream'], limit: '10mb' }),
+    async (req, res) => {
+        try {
+            const buf = req.body;
+            if (!Buffer.isBuffer(buf) || buf.length === 0) {
+                return res.status(400).json({ success: false, error: 'No image received' });
+            }
+            if (buf.length < 1024) {
+                return res.status(400).json({ success: false, error: 'That image looks empty — try again' });
+            }
+
+            const session = await gameService.getActiveSession(req.webUser.id);
+            if (!session) {
+                return res.status(409).json({ success: false, error: 'No game in progress' });
+            }
+
+            const pending = await gameService.hasPendingPhotoVerification(session.session_key);
+            if (!pending) {
+                // The 25s window is short; expiring mid-upload is a real outcome.
+                return res.status(409).json({
+                    success: false, expired: true,
+                    error: 'The verification window has closed'
+                });
+            }
+
+            const handled = await gameService.processPhotoVerification(
+                session, req.webUser, { photoBuffer: buf }
+            );
+
+            // processPhotoVerification emits its own result messages and, on
+            // failure, ends the game — so the client just needs to know it landed.
+            res.json({ success: true, handled: !!handled });
+
+        } catch (error) {
+            logger.error('Web photo verification error:', error);
+            res.status(500).json({ success: false, error: 'Could not process that photo' });
+        }
+    }
+);
+
 module.exports = router;
