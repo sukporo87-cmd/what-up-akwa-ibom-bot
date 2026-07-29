@@ -42,7 +42,17 @@ app.get('/', (req, res, next) => {
 });
 
 // Serve static files from views directory (for admin dashboard)
-app.use(express.static(path.join(__dirname, 'views')));
+// HTML is never cached: the game UI ships as one file, and a browser holding
+// yesterday's copy looks exactly like a bug in today's code.
+app.use(express.static(path.join(__dirname, 'views'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // Health check
 app.get('/health', (req, res) => {

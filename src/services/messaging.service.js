@@ -77,7 +77,7 @@ class MessagingService {
   /**
    * Send text message to any platform
    */
-  async sendMessage(identifier, text) {
+  async sendMessage(identifier, text, opts = {}) {
     const platform = this.getPlatform(identifier);
     const id = this.extractId(identifier);
     
@@ -87,14 +87,19 @@ class MessagingService {
     if (platform === 'web') {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
-      if (userId) gameEvents.emitMessage(userId, text);
+
+      // opts.webRedundant marks a message that is only the chat *rendering* of
+      // something web already received as a structured event — the question,
+      // the answer result. Web gets the event; sending the text as well put a
+      // second, unclickable copy of the question on top of the real board.
+      if (userId && !opts.webRedundant) gameEvents.emitMessage(userId, text);
 
       // Every engine output for web funnels through here — including the ones
       // fired from setTimeout, outside any request. This is therefore the one
       // hook that guarantees the client is told what the engine now expects.
       require('./game-state.service').schedule(identifier);
 
-      return { platform: 'web', delivered: !!userId };
+      return { platform: 'web', delivered: !!userId, suppressed: !!opts.webRedundant };
     }
 
     try {

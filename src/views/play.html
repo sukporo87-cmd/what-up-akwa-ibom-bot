@@ -174,6 +174,14 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
        max-height:30vh;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,.45);
        animation:rise .28s ease forwards}
 
+/* ---------- question image (flags) ---------- */
+.qimg{display:none;margin:0 0 16px}
+.qimg img{width:100%;max-width:230px;border-radius:11px;border:1px solid var(--line);
+          background:var(--slate);display:block}
+.qimg.on{display:block;animation:rise .3s ease forwards}
+.qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
+            border:1px solid var(--line);border-radius:11px;background:var(--slate)}
+
 /* ---------- pre-game rules ---------- */
 .rules{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:16px 17px;
        font-size:13.5px;line-height:1.62;color:var(--mute);white-space:pre-wrap;
@@ -346,6 +354,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="qwrap">
+      <div class="qimg" id="qImg"></div>
       <p class="qtext" id="qText">Waiting for your question…</p>
       <div class="opts" id="qOpts"></div>
       <div class="verdict" id="verdict"></div>
@@ -377,6 +386,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <canvas id="fx"></canvas>
+<audio id="silence" loop playsinline preload="auto"
+  src="data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgP////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAnGmXvMQAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//sQxCmDwAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"></audio>
 
 <!-- ============ ASK (any prompt the engine sends as text) ============ -->
 <div class="over" id="ask">
@@ -393,6 +404,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
+const BUILD = '2026-07-29 08:32 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -421,6 +433,34 @@ function audio(){
   if(actx.state==='suspended') actx.resume();
   return actx;
 }
+/* iOS will not let a page make sound unless the AudioContext was created or
+   resumed inside a real user gesture — and an SSE event is not one. That is
+   why desktop had sound and the phone was silent: nothing ever unlocked it.
+   We unlock on the first touch anywhere and never think about it again.
+
+   The silent muted <audio> loop is the second half of the trick: without a
+   media element playing, iOS treats Web Audio as "ambient" and the physical
+   ringer switch mutes the whole game. */
+let audioReady=false;
+function unlockAudio(){
+  if(audioReady) return;
+  audioReady=true;
+  try{
+    const a=audio();
+    const b=a.createBufferSource();
+    b.buffer=a.createBuffer(1,1,22050);
+    b.connect(a.destination); b.start(0);
+    const el=$('silence');
+    if(el){ el.volume=0.001; const pr=el.play(); if(pr&&pr.catch) pr.catch(()=>{}); }
+  }catch(e){ audioReady=false; }
+}
+['pointerdown','touchstart','click','keydown'].forEach(ev=>
+  window.addEventListener(ev,unlockAudio,{once:false,passive:true}));
+// Coming back from a background tab re-suspends it on mobile.
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&actx&&actx.state==='suspended') actx.resume().catch(()=>{});
+});
+
 function tone(freq,dur=.12,type='sine',vol=.5,when=0,slideTo=null){
   if(!sound)return;
   try{
@@ -602,10 +642,11 @@ function applyState(st, text){
       return;
 
     case 'question':
-      // question.asked has already painted the board — the text version of the
-      // same question is a duplicate and gets dropped on the floor.
+      // question.asked has already painted the board. Clear anything a stray
+      // text message may have thrown up over it — leaving it open was why
+      // "Back to menu" was the only control on screen.
+      closeAsk(); $('over').classList.remove('on');
       if(!$('vGame').classList.contains('on')) view('vGame');
-      closeAsk();
       return;
 
     case 'between':
@@ -787,6 +828,13 @@ function gameOver(text){
 /* Text the engine sends that has no structured event yet. */
 function relay(text){
   const t=text.toUpperCase();
+
+  // A question is on screen. Nothing informational is worth burying it under a
+  // modal — this is the backstop for any text that outruns game.state.
+  if(gstate&&gstate.phase==='question'&&!answered){
+    if(!duplicatesStructured(text)) toast(text);
+    return;
+  }
 
   // We already know which mode they tapped — answer the menu for them rather
   // than showing a chooser they have effectively already used.
@@ -1081,6 +1129,24 @@ function paint(q){
   $('qText').textContent=q.text;
   $('verdict').className='verdict';
 
+  // The question payload has carried imageUrl since web play was built —
+  // nothing ever read it, which is why flag questions arrived unanswerable.
+  const img=$('qImg');
+  img.innerHTML=''; img.className='qimg';
+  if(q.imageUrl){
+    const el=new Image();
+    el.alt='Flag for this question';
+    el.onerror=()=>{ img.innerHTML='<p class="miss">The image for this question didn\'t load. '
+      +'Use Skip if you can\'t answer it.</p>'; };
+    el.src=q.imageUrl;
+    img.appendChild(el); img.className='qimg on';
+  } else if(q.imageType){
+    // Flag question with no URL — FLAG_BASE_URL is almost certainly unset.
+    img.innerHTML='<p class="miss">This question needs an image that isn\'t available. '
+      +'Use Skip to get another one.</p>';
+    img.className='qimg on';
+  }
+
   const box=$('qOpts'); box.innerHTML='';
   Object.entries(q.options).forEach(([k,v],i)=>{
     const b=document.createElement('button');
@@ -1191,6 +1257,7 @@ function closeOver(){
 
 /* ---------- boot ---------- */
 (async()=>{
+  console.log('What\'s Up Trivia — web build', BUILD);
   const qs=new URLSearchParams(location.search);
 
   // We are the checkout tab: hand the reference to the app tab and get out of

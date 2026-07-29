@@ -2038,6 +2038,8 @@ class GameService {
                             skip: !session.lifeline_skip_used
                         },
                         imageUrl,
+                        imageType: question.image_type || null,   // so the client can say
+                        imageCode: question.image_data || null,   // when a flag is missing
                         gameMode: session.game_mode,
                         tournamentId: session.tournament_id
                     });
@@ -2046,8 +2048,15 @@ class GameService {
                 }
             }
             
-            // Send as image+caption for flag questions, text for regular
-            if (question.image_type === 'flag' && question.image_data) {
+            // Web already received the whole question as question.asked above —
+            // text, options, timer, lifelines and the flag image URL. Sending the
+            // chat rendering too is pure duplication, and it used to surface as a
+            // second, unclickable copy of the question sitting over the real board.
+            const webPlayer = !!(user.phone_number && user.phone_number.startsWith('web_'));
+
+            if (webPlayer) {
+                require('./game-state.service').schedule(user.phone_number);
+            } else if (question.image_type === 'flag' && question.image_data) {
                 const flagBaseUrl = process.env.FLAG_BASE_URL;
                 if (flagBaseUrl) {
                     const flagUrl = `${flagBaseUrl}${question.image_data}.png`;
@@ -2233,7 +2242,8 @@ class GameService {
                     message += `💪 Question: ${questionNumber} of 15\n`;
                     if (SAFE_CHECKPOINTS.includes(questionNumber)) message += `\n🔒 SAFE! ₦${prizeAmount.toLocaleString()} guaranteed!\n`;
                     
-                    await messagingService.sendMessage(user.phone_number, message);
+                    // web has this as answer.result already
+                    await messagingService.sendMessage(user.phone_number, message, { webRedundant: true });
                     
                     if (questionNumber === 15) {
                         await this.completeGame(session, user, true);
