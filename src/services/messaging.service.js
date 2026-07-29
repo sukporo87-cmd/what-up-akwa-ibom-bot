@@ -88,6 +88,12 @@ class MessagingService {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
       if (userId) gameEvents.emitMessage(userId, text);
+
+      // Every engine output for web funnels through here — including the ones
+      // fired from setTimeout, outside any request. This is therefore the one
+      // hook that guarantees the client is told what the engine now expects.
+      require('./game-state.service').schedule(identifier);
+
       return { platform: 'web', delivered: !!userId };
     }
 
@@ -128,6 +134,7 @@ class MessagingService {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
       if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      require('./game-state.service').schedule(identifier);
       return { platform: 'web', delivered: !!userId };
     }
 
@@ -161,6 +168,7 @@ class MessagingService {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
       if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      require('./game-state.service').schedule(identifier);
       return { platform: 'web', delivered: !!userId };
     }
 
@@ -313,6 +321,7 @@ class MessagingService {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
       if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      require('./game-state.service').schedule(identifier);
       return { platform: 'web', delivered: !!userId };
     }
 
@@ -349,6 +358,7 @@ class MessagingService {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
       if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      require('./game-state.service').schedule(identifier);
       return { platform: 'web', delivered: !!userId };
     }
 

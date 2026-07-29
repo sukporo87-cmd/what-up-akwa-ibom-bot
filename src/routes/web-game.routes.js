@@ -17,6 +17,7 @@ const { requireWebAuth, requireCompleteProfile, getToken } = webAuthRoutes;
 
 const webAuthService = require('../services/web-auth.service');
 const gameEvents = require('../services/game-events.service');
+const gameState = require('../services/game-state.service');
 const webhookController = require('../controllers/webhook.controller');
 const GameService = require('../services/game.service');
 const gameService = new GameService();
@@ -56,6 +57,10 @@ router.get('/stream', async (req, res) => {
         gameEvents.emit(user.id, 'question.asked', { ...snapshot, restored: true });
     }
 
+    // Then the authoritative state, so a reconnecting client knows what the
+    // engine wants without having to guess from whatever text arrives next.
+    gameState.emit(user).catch(() => {});
+
     req.on('close', () => {
         gameEvents.unsubscribe(user.id, res);
         try { res.end(); } catch (e) { /* already closed */ }
@@ -81,11 +86,17 @@ router.post('/input', requireWebAuth, requireCompleteProfile, async (req, res) =
         // Fire and forget — the engine's replies arrive over the SSE stream,
         // so this response only confirms the input was accepted.
         webhookController.routeMessage(req.webUser.phone_number, text)
+            .then(() => {
+                // messaging.service already schedules this after any reply, but
+                // a turn can change state without the engine saying a word.
+                gameState.schedule(req.webUser.phone_number, 200);
+            })
             .catch(err => {
                 logger.error(`Web input failed for user ${req.webUser.id}: ${err.message}`);
                 gameEvents.emit(req.webUser.id, 'error', {
                     message: 'Something went wrong handling that. Type MENU to start again.'
                 });
+                gameState.schedule(req.webUser.phone_number, 200);
             });
 
         res.json({ success: true, accepted: text });
@@ -117,20 +128,16 @@ router.get('/state', requireWebAuth, async (req, res) => {
             if (snapshot && !snapshot.stale) question = snapshot;
         }
 
-        // startNewGame() creates the session, sends the rules and then waits
-        // for the player to send START — it parks that intent in Redis. On
-        // chat you just type it; the web UI needs to know so it can show a
-        // button instead of an empty board.
-        let awaitingStart = false;
-        try {
-            awaitingStart = !!(await redis.get(`game_ready:${user.id}`));
-        } catch (e) { /* non-fatal */ }
+        // Same derivation the SSE event uses, so a cold page load and a live
+        // stream can never disagree about what the engine wants.
+        const state = await gameState.derive(user);
 
         res.json({
             success: true,
             user: webAuthService.publicUser({ ...user, ...stats }),
             streaming: gameEvents.isConnected(user.id),
-            awaitingStart,
+            state,
+            awaitingStart: state.phase === 'awaiting_start',   // kept for compatibility
             game: session ? {
                 sessionId: session.id,
                 mode: session.game_mode,

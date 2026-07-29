@@ -18,10 +18,11 @@
   --pad:clamp(16px,4vw,28px);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%}
+html{height:100%}
+body{min-height:100%;min-height:100dvh}
 body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);
      font-size:16px;line-height:1.5;overscroll-behavior:none}
-.app{max-width:520px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;
+.app{max-width:520px;margin:0 auto;min-height:100%;min-height:100dvh;display:flex;flex-direction:column;
      padding:env(safe-area-inset-top) var(--pad) calc(env(safe-area-inset-bottom) + 20px)}
 .view{display:none;flex:1;flex-direction:column}
 .view.on{display:flex}
@@ -167,7 +168,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .spin2{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--brass);
        border-radius:50%;animation:whirl .8s linear infinite;vertical-align:-3px;margin-right:9px}
 @keyframes whirl{to{transform:rotate(360deg)}}
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:440px;width:calc(100% - 32px);
+.toast{position:fixed;left:16px;right:16px;bottom:22px;max-width:440px;margin:0 auto;
        background:var(--raise);border:1.5px solid var(--line);border-radius:13px;padding:13px 16px;
        font-size:13.5px;line-height:1.5;color:var(--paper);white-space:pre-wrap;z-index:30;
        max-height:30vh;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,.45);
@@ -188,6 +189,20 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .sheet .fig{font-size:42px;color:var(--brass);display:block;line-height:1.1}
 .sheet h2{font-size:19px;margin:14px 0 7px}
 .sheet p{color:var(--mute);font-size:14.5px;margin:0 0 22px;white-space:pre-wrap;text-align:left}
+
+#ovOpts{text-align:left;margin-bottom:14px}
+#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40;display:none}
+
+/* short phones: claw back vertical space so the verdict isn't pushed off */
+@media (max-height:720px){
+  .ladderMeta{margin-bottom:14px}
+  .qtext{margin-bottom:16px}
+  .opt{padding:12px 14px;font-size:15px}
+  .opts{gap:7px}
+  .hero{padding:22px 0 18px}
+  .foot{padding-top:14px}
+  .verdict{margin-top:14px;padding:14px}
+}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -355,10 +370,13 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <span class="fig" id="ovFig"></span>
     <h2 id="ovTitle"></h2>
     <p id="ovBody"></p>
+    <div id="ovOpts"></div>
     <button class="cta" id="ovAct" style="display:none;margin-bottom:10px"></button>
     <button class="link" onclick="closeOver()">Back to menu</button>
   </div>
 </div>
+
+<canvas id="fx"></canvas>
 
 <!-- ============ ASK (any prompt the engine sends as text) ============ -->
 <div class="over" id="ask">
@@ -390,25 +408,83 @@ function view(v){document.querySelectorAll('.view').forEach(s=>s.classList.remov
 function show(on,off){$(on).style.display='block';$(off).style.display='none';}
 
 /* ---------- sound: generated, nothing to download ---------- */
-let actx=null;
-function beep(freq,dur=.09,type='sine',vol=.16){
+let actx=null, master=null;
+function audio(){
+  if(!actx){
+    actx=new (window.AudioContext||window.webkitAudioContext)();
+    master=actx.createGain(); master.gain.value=.85;
+    const comp=actx.createDynamicsCompressor();   // keeps stacked notes from clipping
+    master.connect(comp); comp.connect(actx.destination);
+  }
+  // Mobile browsers park the context until a gesture, and re-park it on tab
+  // switch. Without this the whole game is silent on iOS.
+  if(actx.state==='suspended') actx.resume();
+  return actx;
+}
+function tone(freq,dur=.12,type='sine',vol=.5,when=0,slideTo=null){
   if(!sound)return;
   try{
-    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
-    const o=actx.createOscillator(),g=actx.createGain();
-    o.type=type;o.frequency.value=freq;o.connect(g);g.connect(actx.destination);
-    g.gain.setValueAtTime(vol,actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+dur);
-    o.start();o.stop(actx.currentTime+dur);
+    const a=audio(), t=a.currentTime+when;
+    const o=a.createOscillator(), g=a.createGain();
+    o.type=type; o.frequency.setValueAtTime(freq,t);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t+dur);
+    o.connect(g); g.connect(master);
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol,t+.014);      // quick attack
+    g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    o.start(t); o.stop(t+dur+.03);
   }catch(e){}
 }
 const sfx={
-  tap:()=>beep(520,.05,'square',.08),
-  right:()=>{beep(660,.1);setTimeout(()=>beep(880,.16),90);},
-  wrong:()=>beep(150,.3,'sawtooth',.13),
-  lock:()=>{beep(440,.07);setTimeout(()=>beep(1046,.2),70);},
-  urgent:()=>beep(880,.05,'triangle',.09)
+  tap:   ()=>tone(560,.06,'square',.30),
+  right: ()=>{tone(659,.13,'triangle',.55);tone(880,.17,'triangle',.5,.09);tone(1319,.3,'sine',.4,.19);},
+  wrong: ()=>{tone(210,.24,'sawtooth',.5);tone(120,.45,'sawtooth',.42,.14);},
+  lock:  ()=>{tone(523,.1,'triangle',.5);tone(784,.14,'triangle',.48,.08);tone(1047,.36,'sine',.45,.18);},
+  urgent:()=>tone(960,.07,'triangle',.42),
+  // finishing the ladder deserves more than a beep
+  fanfare:()=>{
+    [523,659,784,1047].forEach((f,i)=>tone(f,.22,'triangle',.55,i*.10));
+    tone(1319,.85,'triangle',.5,.42);
+    tone(1047,.85,'sine',.34,.42);
+    tone(1568,.85,'sine',.26,.46);
+  },
+  bust:  ()=>{[440,392,330,262].forEach((f,i)=>tone(f,.3,'sawtooth',.4,i*.13));}
 };
+/* Confetti. Canvas sits above the overlay so it rains over the result sheet. */
+function celebrate(strength=1){
+  const c=$('fx'); if(!c) return;
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+  const ctx=c.getContext('2d');
+  const dpr=Math.min(window.devicePixelRatio||1,2), W=innerWidth, Hh=innerHeight;
+  c.width=W*dpr; c.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  c.style.display='block';
+
+  const cols=['#e8b64c','#35d39a','#ff6b5b','#f4f1ea','#c9a0ff'];
+  const bits=[];
+  for(let i=0;i<Math.round(130*strength);i++) bits.push({
+    x:W/2+(Math.random()-.5)*W*.55, y:Hh*.32+(Math.random()-.5)*70,
+    vx:(Math.random()-.5)*8, vy:-6-Math.random()*9,
+    w:5+Math.random()*6, h:8+Math.random()*9,
+    rot:Math.random()*Math.PI, vr:(Math.random()-.5)*.36,
+    col:cols[(Math.random()*cols.length)|0]
+  });
+
+  let t0=performance.now();
+  (function frame(now){
+    const dt=Math.min((now-t0)/16.7,3); t0=now;
+    ctx.clearRect(0,0,W,Hh);
+    let alive=false;
+    for(const b of bits){
+      b.vy+=.27*dt; b.vx*=.995; b.x+=b.vx*dt; b.y+=b.vy*dt; b.rot+=b.vr*dt;
+      if(b.y<Hh+50) alive=true;
+      ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(b.rot);
+      ctx.fillStyle=b.col; ctx.fillRect(-b.w/2,-b.h/2,b.w,b.h); ctx.restore();
+    }
+    if(alive) requestAnimationFrame(frame);
+    else { ctx.clearRect(0,0,W,Hh); c.style.display='none'; }
+  })(t0);
+}
+
 function toggleSound(){
   sound=!sound; localStorage.setItem('wut_sound',sound?'on':'off');
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
@@ -469,9 +545,14 @@ async function refresh(){
     const d=await(await fetch('/web/game/state',{headers:H()})).json();
     if(!d.success)return;
     $('lobbyCredits').textContent=d.user.gamesRemaining??0;
-    // Session exists but the engine is still waiting for START — show the
-    // start screen, not an empty board.
-    if(d.awaitingStart){ showReady(''); return; }
+
+    // Same state object the SSE event carries, so a cold load lands exactly
+    // where a live stream would.
+    if(d.state){
+      gstate=d.state;
+      if(d.state.phase==='awaiting_start'){ showReady(''); return; }
+      if(d.state.phase==='prompt' && d.state.web==='buy'){ openBuy(); return; }
+    }
     if(d.game){ banked=d.game.currentScore||0; view('vGame'); }
     if(d.question&&!d.question.stale) paint(d.question);
   }catch(e){}
@@ -483,7 +564,107 @@ function stream(){
   es=new EventSource('/web/game/stream?token='+encodeURIComponent(token));
   es.addEventListener('question.asked',e=>paint(JSON.parse(e.data)));
   es.addEventListener('answer.result',e=>reveal(JSON.parse(e.data)));
-  es.addEventListener('message',e=>relay(JSON.parse(e.data).text||''));
+
+  /* Text and state arrive as a pair: the message carries the engine's words,
+     game.state carries what it now wants. We buffer the words briefly and let
+     the state decide how to render them. If no state turns up (older server,
+     dropped event) the buffer flushes into relay() as before, so the client
+     still works either way. */
+  es.addEventListener('message',e=>{
+    const t=JSON.parse(e.data).text||'';
+    if(!t.trim())return;
+    textBuf.push(t);
+    clearTimeout(textT);
+    textT=setTimeout(()=>{ const all=flushText(); if(all) relay(all); },340);
+  });
+
+  es.addEventListener('game.state',e=>{
+    clearTimeout(textT);
+    applyState(JSON.parse(e.data), flushText());
+  });
+}
+
+let textBuf=[], textT=null, gstate=null;
+function flushText(){ const t=textBuf.join('\n\n').trim(); textBuf=[]; return t; }
+
+/* ---------- game.state: the engine tells us what it wants ----------
+   Previously this file inferred the engine's state by pattern-matching message
+   text, and every bug in that approach came from a state it did not know
+   existed. Now the server derives it and says so. Text only supplies wording. */
+
+function applyState(st, text){
+  gstate=st;
+
+  switch(st.phase){
+
+    case 'awaiting_start':
+      showReady(text);
+      return;
+
+    case 'question':
+      // question.asked has already painted the board — the text version of the
+      // same question is a duplicate and gets dropped on the floor.
+      if(!$('vGame').classList.contains('on')) view('vGame');
+      closeAsk();
+      return;
+
+    case 'between':
+      if(!$('vGame').classList.contains('on')) view('vGame');
+      if(text) toast(text);
+      return;
+
+    case 'photo':
+      overlay('','Photo check',
+        text||'A quick photo check is needed before you can carry on. Open the game on WhatsApp to send it.',
+        null,null);
+      return;
+
+    case 'prompt':
+      // Web has purpose-built screens for some of these; use them.
+      if(st.web==='buy'){ openBuy(); return; }
+      if(pendingMode && st.state==='SELECT_GAME_MODE'){
+        const m=pendingMode; pendingMode=null; go(m); return;
+      }
+      if(st.expects==='text' && st.field){ askField(st,text); return; }
+      ask(text||st.title||'');
+      return;
+
+    case 'post_game':
+      if(/GAME OVER|CONGRATULATIONS|TIME'S UP/i.test(text)){ gameOver(text); return; }
+      if(text) relay(text);
+      return;
+
+    case 'idle':
+    default:
+      closeAsk();
+      if(text) relay(text);
+      else if(!$('vLobby').classList.contains('on') && !$('vBuy').classList.contains('on')
+              && !$('over').classList.contains('on')){ view('vLobby'); refresh(); }
+      return;
+  }
+}
+
+/* A typed prompt with a real labelled field, driven by st.field. This is what
+   makes the payout flow (bank name, account number, account name) render as a
+   form rather than a bare box you have to guess the format of. */
+function askField(st,text){
+  const f=st.field||{};
+  $('askTitle').textContent = st.title || 'One more thing';
+  const body=(text||'').replace(/[*_]/g,'').trim();
+  $('askBody').textContent = body;
+  $('askBody').style.display = body?'block':'none';
+  $('askOpts').innerHTML='';
+
+  const i=$('askInput');
+  i.value='';
+  i.type = f.type || 'text';
+  i.placeholder = f.placeholder || f.label || 'Type your reply…';
+  if(f.inputmode) i.setAttribute('inputmode',f.inputmode); else i.removeAttribute('inputmode');
+  if(f.maxLength) i.setAttribute('maxlength',f.maxLength); else i.removeAttribute('maxlength');
+  i.dataset.transform = f.transform || '';
+
+  $('ask').classList.add('on');
+  setTimeout(()=>i.focus(),80);
 }
 
 /* ---------- engine text -> something you can actually click ----------
@@ -533,14 +714,18 @@ function ask(text){
     box.appendChild(b);
   });
 
-  $('askInput').value='';
+  const inp=$('askInput');
+  inp.value=''; inp.type='text'; inp.placeholder='Or type your reply…';
+  inp.removeAttribute('inputmode'); inp.removeAttribute('maxlength'); inp.dataset.transform='';
   $('ask').classList.add('on');
   if(!opts.length) setTimeout(()=>$('askInput').focus(),80);
 }
 function closeAsk(){ $('ask').classList.remove('on'); }
 function askSend(){
-  const v = $('askInput').value.trim();
+  const i=$('askInput');
+  let v = i.value.trim();
   if(!v) return;
+  if(i.dataset.transform==='upper') v=v.toUpperCase();
   closeAsk(); go(v);
 }
 /* RESET is the one command the engine honours from any state, so this is what
@@ -561,6 +746,44 @@ function toast(text){
   toastT=setTimeout(()=>{ el.remove(); },4500);
 }
 
+/* The engine sends BOTH a structured event and the chat text for the same
+   thing. Rendering both is why a question showed up as an unclickable modal
+   sitting on top of the real, clickable board. If an event already covered it,
+   the text is dropped. */
+function duplicatesStructured(text){
+  const t=text.toUpperCase();
+  if(/QUESTION\s+\d+/.test(t) && /\bA\)/.test(text) && /\bB\)/.test(text)) return true;   // question.asked
+  if((t.includes('CORRECT')||t.includes('WRONG')||t.includes('INCORRECT'))
+     && (t.includes("YOU'VE WON")||t.includes('QUESTION:'))) return true;                 // answer.result
+  if(t.includes('50:50')&&(t.includes('USED')||t.includes('REMOVED'))) return true;        // 50:50 re-emit
+  if(t.includes('MODE SELECTED')) return true;                                            // ready screen shown
+  return false;
+}
+
+/* Game over: celebrate properly, and make the follow-up options tappable. */
+function gameOver(text){
+  clearInterval(tick);
+  const clean=text.replace(/\*/g,'').replace(/_/g,'');
+  const t=clean.toUpperCase();
+
+  const m=/YOU(?:'VE)?\s+WON:?\s*\u20a6\s*([\d,]+)/i.exec(clean) || /\u20a6\s*([\d,]+)/.exec(clean);
+  const won=m?Number(m[1].replace(/,/g,'')):0;
+  const perfect=t.includes('CONGRATULATIONS')||/15\s*\/\s*15/.test(clean)||t.includes('ALL 15');
+
+  const opts=parseOpts(clean);
+  const body=clean.split('\n')
+    .filter(l=>!/^\s*[1-9](\uFE0F?\u20E3|[.)\-:])/.test(l))
+    .join('\n').replace(/\n{3,}/g,'\n\n').trim();
+
+  setTimeout(()=>{
+    if(won>0){ sfx.fanfare(); celebrate(perfect?1.7:1); }
+    else { sfx.bust(); }
+    overlay(naira(won),
+      perfect ? 'You went all the way' : (won>0 ? 'Banked' : 'Game over'),
+      body, null, null, opts);
+  },800);
+}
+
 /* Text the engine sends that has no structured event yet. */
 function relay(text){
   const t=text.toUpperCase();
@@ -579,13 +802,12 @@ function relay(text){
     $('verdict').className='verdict'; return;
   }
 
-  if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')){
-    clearInterval(tick);
-    const won=/\u20a6[\d,]+/.exec(text);
-    setTimeout(()=>overlay(won?won[0]:'\u2014',
-      t.includes('CONGRAT')?'Well played':'Game over', text.replace(/\*/g,'')),900);
-    return;
+  if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')||t.includes("TIME'S UP")){
+    gameOver(text); return;
   }
+
+  // Already on screen via a structured event — say nothing.
+  if(duplicatesStructured(text)) return;
   if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
     overlay('0','Out of credits',
       'You need at least one credit to play Classic. Practice mode is always free.',
@@ -623,8 +845,12 @@ function info(text){
 function showReady(text){
   clearInterval(tick);
   const body=(text||'').replace(/\*/g,'').replace(/_/g,'').trim();
-  $('readyRules').textContent=body;
-  $('readyRules').style.display=body?'block':'none';
+  // Recovering from a refresh we have no rules text — say something useful
+  // rather than leaving a screen that is just a button in a void.
+  $('readyRules').textContent = body ||
+    'Your game is set up and waiting.\n\n15 questions. The clock starts as soon as you begin, '
+    +'so get comfortable first. Lifelines and the prize ladder appear once you are in.';
+  $('readyRules').style.display='block';
   view('vReady');
 }
 function beginGame(){
@@ -895,6 +1121,7 @@ function reveal(r){
   }
   const v=$('verdict');
   v.className='verdict on '+(r.correct?'good':'bad');
+  setTimeout(()=>{ try{ v.scrollIntoView({behavior:'smooth',block:'nearest'}); }catch(e){} },90);
   v.innerHTML='<h3></h3><p></p>';
   v.querySelector('h3').textContent=r.correct
     ? (r.isSafeCheckpoint?`${naira(r.prizeAmount)} — locked in`:`Correct · ${naira(r.prizeAmount)}`)
@@ -929,13 +1156,33 @@ async function quit(){
   try{await fetch('/web/game/abandon',{method:'POST',headers:H()});}catch(e){}
   clearInterval(tick); banked=0; view('vLobby'); refresh();
 }
-function overlay(fig,title,body,actLabel,actFn){
-  $('ovFig').textContent=fig; $('ovTitle').textContent=title; $('ovBody').textContent=(body||'').trim();
-  const a=$('ovAct');
+function overlay(fig,title,body,actLabel,actFn,opts){
+  $('ovFig').textContent=fig||'';
+  $('ovFig').style.display=fig?'block':'none';
+  $('ovTitle').textContent=title||'';
+  const bd=(body||'').trim();
+  $('ovBody').textContent=bd;
+  $('ovBody').style.display=bd?'block':'none';
+
+  // Engine follow-ups (Play Again / Leaderboard / Main Menu) become real
+  // buttons instead of text you cannot click.
+  const box=$('ovOpts'); box.innerHTML='';
+  (opts||[]).forEach(o=>{
+    const btn=document.createElement('button');
+    btn.className='askOpt';
+    btn.innerHTML='<span class="k"></span><span class="t"><b></b></span>';
+    btn.querySelector('.k').textContent=o.k;
+    btn.querySelector('b').textContent=o.v;
+    btn.onclick=()=>{ sfx.tap(); $('over').classList.remove('on'); banked=0; go(o.k); };
+    box.appendChild(btn);
+  });
+  box.style.display=(opts&&opts.length)?'block':'none';
+
+  const act=$('ovAct');
   if(actLabel&&actFn){
-    a.textContent=actLabel; a.style.display='block';
-    a.onclick=()=>{ $('over').classList.remove('on'); actFn(); };
-  } else { a.style.display='none'; a.onclick=null; }
+    act.textContent=actLabel; act.style.display='block';
+    act.onclick=()=>{ $('over').classList.remove('on'); actFn(); };
+  } else { act.style.display='none'; act.onclick=null; }
   $('over').classList.add('on');
 }
 function closeOver(){

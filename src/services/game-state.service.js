@@ -1,0 +1,229 @@
+// ============================================
+// FILE: src/services/game-state.service.js
+//
+// game.state — one authoritative answer to "what does the engine expect from
+// the player right now?"
+//
+// Everything here is DERIVED, never stored. It reads the engine's own sources
+// of truth (user_state in Redis, game_ready, the active session, the question
+// snapshot) at the moment it's asked. That matters: the web client used to
+// infer the engine's state by pattern-matching message text, and every bug in
+// that approach came from a state it didn't know existed. A derived view
+// cannot drift, because there is nothing to keep in sync.
+//
+// Division of labour with the existing events:
+//   game.state      what the engine wants next  (meaning)
+//   message         the engine's own words      (content)
+//   question.asked  the question, structured    (content)
+//
+// The client pairs them: state decides how to render, text supplies the words.
+// ============================================
+
+const redis = require('../config/redis');
+const { logger } = require('../utils/logger');
+
+// ============================================
+// STATE MAP
+// Every state the engine can park a user in, and what the player must send to
+// get out of it. Keep this in step with setUserState() calls in the engine —
+// an unmapped state still works, it just falls back to a plain text field.
+// ============================================
+
+const PROMPTS = {
+    // --- pick one of a numbered list ---
+    SELECT_GAME_MODE:           { expects: 'choice', title: 'Choose a mode' },
+    SELECT_TOURNAMENT:          { expects: 'choice', title: 'Pick a tournament' },
+    SELECT_LEADERBOARD:         { expects: 'choice', title: 'Which leaderboard?' },
+    SELECT_PACKAGE:             { expects: 'choice', title: 'Choose a package',       web: 'buy' },
+    SELECT_PACKAGE_GATEWAY:     { expects: 'choice', title: 'How would you like to pay?', web: 'buy' },
+    SELECT_TOURNAMENT_GATEWAY:  { expects: 'choice', title: 'How would you like to pay?' },
+    SELECT_REBUY_GATEWAY:       { expects: 'choice', title: 'How would you like to pay?' },
+    CONFIRM_TOURNAMENT_PAYMENT: { expects: 'choice', title: 'Confirm your entry' },
+    CONFIRM_TOURNAMENT_REBUY:   { expects: 'choice', title: 'Confirm your re-buy' },
+    CONFIRM_BANK_DETAILS:       { expects: 'choice', title: 'Are these details right?' },
+    TERMS_ACCEPTANCE:           { expects: 'choice', title: 'Terms and conditions' },
+    LOVE_QUEST_PACKAGE_SELECT:  { expects: 'choice', title: 'Choose a package' },
+    LOVE_QUEST_VIDEO_MENU:      { expects: 'choice', title: 'Video options' },
+    LOVE_QUEST_VOICE_MENU:      { expects: 'choice', title: 'Voice options' },
+
+    // --- type something ---
+    ENTER_PROMO_CODE: { expects: 'text', title: 'Promo code',
+        field: { label: 'Promo code', type: 'text', transform: 'upper', placeholder: 'Enter your code' } },
+    EMAIL_COLLECT:    { expects: 'text', title: 'Your email',
+        field: { label: 'Email address', type: 'email', placeholder: 'you@example.com' } },
+
+    // --- payout details (item 3 on the roadmap gets proper form fields for free) ---
+    COLLECT_BANK_NAME: { expects: 'text', title: 'Your bank',
+        field: { label: 'Bank name', type: 'text', placeholder: 'e.g. GTBank' } },
+    COLLECT_CUSTOM_BANK: { expects: 'text', title: 'Your bank',
+        field: { label: 'Bank name', type: 'text', placeholder: 'Type your bank name' } },
+    COLLECT_ACCOUNT_NUMBER: { expects: 'text', title: 'Account number',
+        field: { label: 'Account number', type: 'tel', inputmode: 'numeric', maxLength: 10,
+                 placeholder: '10 digits' } },
+    COLLECT_ACCOUNT_NAME: { expects: 'text', title: 'Account name',
+        field: { label: 'Name on the account', type: 'text', placeholder: 'As it appears at your bank' } },
+
+    LOVE_QUEST_PLAYER_NAME:  { expects: 'text', title: 'Their name',
+        field: { label: 'Name', type: 'text' } },
+    LOVE_QUEST_PLAYER_PHONE: { expects: 'text', title: 'Their number',
+        field: { label: 'Phone number', type: 'tel', inputmode: 'tel' } },
+    LOVE_QUEST_VOICE_NOTE:   { expects: 'media', title: 'Voice note' },
+    LOVE_QUEST_VIDEO:        { expects: 'media', title: 'Video' },
+
+    // --- registration: web signs people up through web-auth, so these should
+    //     never appear here. Mapped defensively rather than left to guesswork. ---
+    REGISTRATION_NAME:     { expects: 'text', title: 'Your name',     field: { label: 'Full name', type: 'text' } },
+    REGISTRATION_USERNAME: { expects: 'text', title: 'Pick a username', field: { label: 'Username', type: 'text' } },
+    REGISTRATION_CITY:     { expects: 'text', title: 'Your city',     field: { label: 'City', type: 'text' } },
+    REGISTRATION_AGE:      { expects: 'text', title: 'Your age',      field: { label: 'Age', type: 'number', inputmode: 'numeric' } },
+    REGISTRATION_SOURCE:   { expects: 'choice', title: 'How did you hear about us?' },
+    REGISTRATION_REFERRAL: { expects: 'text', title: 'Referral code', field: { label: 'Referral code', type: 'text' } }
+};
+
+const UNKNOWN = { expects: 'text', title: 'One more thing' };
+
+class GameStateService {
+
+    constructor() {
+        this.timers = new Map();
+    }
+
+    /**
+     * Work out what the engine is waiting for.
+     *
+     * Order matters and mirrors webhookController.routeMessage() exactly:
+     * a parked user_state is checked before game input, and inside game input
+     * game_ready is checked before photo verification, which is checked before
+     * answers. Get this order wrong and the client offers the wrong control.
+     */
+    async derive(user) {
+        const userService = require('./user.service');
+        const gameService = require('./game.service');
+        const gameEvents  = require('./game-events.service');
+
+        const [rawState, ready, session, postGameRaw] = await Promise.all([
+            userService.getUserState(user.phone_number).catch(() => null),
+            redis.get(`game_ready:${user.id}`).catch(() => null),
+            gameService.getActiveSession(user.id).catch(() => null),
+            redis.get(`post_game:${user.id}`).catch(() => null)
+        ]);
+
+        const base = { phase: 'idle', expects: 'nothing', canCancel: false, at: Date.now() };
+
+        // 1. Parked in a text state — the router handles these before anything else.
+        if (rawState && rawState.state) {
+            const spec = PROMPTS[rawState.state] || UNKNOWN;
+            return {
+                ...base,
+                phase: 'prompt',
+                expects: spec.expects,
+                state: rawState.state,
+                title: spec.title,
+                field: spec.field || null,
+                web: spec.web || null,      // web has a purpose-built screen for this
+                canCancel: true
+            };
+        }
+
+        // 2. Session built, rules sent, engine wants START.
+        if (session && ready) {
+            return { ...base, phase: 'awaiting_start', expects: 'start',
+                     sessionId: session.id, gameMode: session.game_mode, canCancel: true };
+        }
+
+        if (session) {
+            // 3. Photo verification blocks answering.
+            let needsPhoto = false;
+            try {
+                needsPhoto = await gameService.hasPendingPhotoVerification(session.session_key);
+            } catch (e) { /* treat as no */ }
+
+            if (needsPhoto) {
+                return { ...base, phase: 'photo', expects: 'photo',
+                         sessionId: session.id, title: 'Photo check', canCancel: true };
+            }
+
+            // 4. Live question.
+            const snap = await gameEvents.getSnapshot(user.id).catch(() => null);
+            if (snap && !snap.stale) {
+                return {
+                    ...base,
+                    phase: 'question',
+                    expects: 'answer',
+                    sessionId: session.id,
+                    gameMode: session.game_mode,
+                    questionNumber: snap.questionNumber,
+                    secondsRemaining: snap.secondsRemaining,
+                    lifelines: snap.lifelines || null,
+                    canCancel: true
+                };
+            }
+
+            // Session alive but nothing to answer yet — between questions.
+            return { ...base, phase: 'between', expects: 'nothing',
+                     sessionId: session.id, gameMode: session.game_mode, canCancel: true };
+        }
+
+        // 5. Game just finished; the engine accepts the follow-up menu for a while.
+        if (postGameRaw) {
+            let data = null;
+            try { data = JSON.parse(postGameRaw); } catch (e) { /* legacy timestamp */ }
+            return { ...base, phase: 'post_game', expects: 'choice',
+                     gameMode: data?.gameType || null, title: 'What next?' };
+        }
+
+        return base;
+    }
+
+    /** Derive and push over SSE. Returns the state, or null if we can't resolve the user. */
+    async emit(userOrIdentifier) {
+        const gameEvents = require('./game-events.service');
+        const user = typeof userOrIdentifier === 'object'
+            ? userOrIdentifier
+            : await this._load(userOrIdentifier);
+
+        if (!user) return null;
+
+        const state = await this.derive(user);
+        gameEvents.emit(user.id, 'game.state', state);
+        return state;
+    }
+
+    /**
+     * Debounced emit. The engine often sends two or three messages in one turn
+     * ("Classic Mode selected!", then the rules); the player only needs the
+     * state it settles on, so coalesce them into a single event.
+     */
+    schedule(identifier, delay = 160) {
+        if (!String(identifier || '').startsWith('web_')) return;
+
+        clearTimeout(this.timers.get(identifier));
+        const t = setTimeout(async () => {
+            this.timers.delete(identifier);
+            try {
+                await this.emit(identifier);
+            } catch (e) {
+                logger.error('Could not emit game.state:', e.message);
+            }
+        }, delay);
+
+        if (t.unref) t.unref();          // never hold the process open for this
+        this.timers.set(identifier, t);
+    }
+
+    async _load(identifier) {
+        try {
+            const pool = require('../config/database');
+            const r = await pool.query(
+                'SELECT * FROM users WHERE phone_number = $1 LIMIT 1',
+                [identifier]
+            );
+            return r.rows[0] || null;
+        } catch (e) {
+            logger.error('Could not load user for game.state:', e.message);
+            return null;
+        }
+    }
+}
+
+module.exports = new GameStateService();
