@@ -170,14 +170,21 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:440px;width:calc(100% - 32px);
        background:var(--raise);border:1.5px solid var(--line);border-radius:13px;padding:13px 16px;
        font-size:13.5px;line-height:1.5;color:var(--paper);white-space:pre-wrap;z-index:30;
-       box-shadow:0 10px 30px rgba(0,0,0,.45);animation:rise .28s ease forwards}
+       max-height:30vh;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,.45);
+       animation:rise .28s ease forwards}
+
+/* ---------- pre-game rules ---------- */
+.rules{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:16px 17px;
+       font-size:13.5px;line-height:1.62;color:var(--mute);white-space:pre-wrap;
+       max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch;margin-bottom:16px}
 
 /* ---------- overlay ---------- */
 .over{position:fixed;inset:0;background:rgba(22,18,31,.93);backdrop-filter:blur(7px);
       display:none;place-items:center;padding:var(--pad);z-index:20}
 .over.on{display:grid}
 .sheet{background:var(--slate);border:1.5px solid var(--line);border-radius:19px;
-       padding:28px;max-width:400px;width:100%;text-align:center;animation:rise .35s ease forwards}
+       padding:28px;max-width:420px;width:100%;text-align:center;animation:rise .35s ease forwards;
+       max-height:84vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .sheet .fig{font-size:42px;color:var(--brass);display:block;line-height:1.1}
 .sheet h2{font-size:19px;margin:14px 0 7px}
 .sheet p{color:var(--mute);font-size:14.5px;margin:0 0 22px;white-space:pre-wrap;text-align:left}
@@ -286,6 +293,25 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="msg" id="mBuy" style="margin-top:10px"></div>
+  </section>
+
+  <!-- ============ READY (engine waits for START) ============ -->
+  <section class="view" id="vReady">
+    <div class="bar">
+      <div class="brand">What's Up <i>Trivia</i></div>
+      <div class="icons">
+        <button class="icon" onclick="toggleSound()" title="Sound">♪</button>
+        <button class="icon" onclick="cancelReady()" title="Cancel">✕</button>
+      </div>
+    </div>
+
+    <div class="hero" style="padding:22px 0 16px">
+      <span class="fig" style="font-size:30px" id="readyTitle">Before you start</span>
+      <p>Read this once — it matters for real-money play.</p>
+    </div>
+
+    <div class="rules" id="readyRules"></div>
+    <button class="cta" onclick="beginGame()">Start game</button>
   </section>
 
   <!-- ============ GAME ============ -->
@@ -443,6 +469,9 @@ async function refresh(){
     const d=await(await fetch('/web/game/state',{headers:H()})).json();
     if(!d.success)return;
     $('lobbyCredits').textContent=d.user.gamesRemaining??0;
+    // Session exists but the engine is still waiting for START — show the
+    // start screen, not an empty board.
+    if(d.awaitingStart){ showReady(''); return; }
     if(d.game){ banked=d.game.currentScore||0; view('vGame'); }
     if(d.question&&!d.question.stale) paint(d.question);
   }catch(e){}
@@ -466,7 +495,7 @@ function stream(){
 
 function parseOpts(text){
   const lines = text.split('\n');
-  const head = /^\s*([1-9])(?:\uFE0F?\u20E3|[.)\-:])\s*(.*)$/;   // 1\uFE0F\u20E3  1.  1)  1-  1:
+  const head = /^\s*([1-9])(?:\uFE0F?\u20E3|[.)\-:])\s*(.*)$/;   // 1 (keycap)  1.  1)  1-  1:
   const out = []; let cur = null;
   for(const line of lines){
     const m = head.exec(line);
@@ -542,6 +571,14 @@ function relay(text){
     const m=pendingMode; pendingMode=null; go(m); return;
   }
 
+  // The engine creates the session, sends the rules, then waits for START.
+  // On chat you just type it; here that left an empty board forever.
+  if(t.includes('START TO BEGIN')||t.includes('REPLY START')){ showReady(text); return; }
+  if(t.includes("LET'S GO")||t.includes('STARTING IN')){
+    view('vGame'); $('qText').textContent='Starting…'; $('qOpts').innerHTML='';
+    $('verdict').className='verdict'; return;
+  }
+
   if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')){
     clearInterval(tick);
     const won=/\u20a6[\d,]+/.exec(text);
@@ -571,8 +608,34 @@ function relay(text){
     ask(text); return;
   }
 
-  // Purely informational \u2014 surfaced rather than silently dropped.
-  toast(text);
+  // Purely informational. Short things get a toast; anything long gets a real
+  // dialog — a 30-line rules dump in a corner toast is unreadable.
+  if(text.length>200 || text.split('\n').filter(l=>l.trim()).length>4) info(text);
+  else toast(text);
+}
+
+function info(text){
+  const lines=text.replace(/\*/g,'').replace(/_/g,'').split('\n').filter(l=>l.trim());
+  overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
+}
+
+/* ---------- pre-game ---------- */
+function showReady(text){
+  clearInterval(tick);
+  const body=(text||'').replace(/\*/g,'').replace(/_/g,'').trim();
+  $('readyRules').textContent=body;
+  $('readyRules').style.display=body?'block':'none';
+  view('vReady');
+}
+function beginGame(){
+  sfx.tap();
+  view('vGame');
+  $('qText').textContent='Starting…'; $('qOpts').innerHTML='';
+  $('verdict').className='verdict'; $('secs').textContent='–';
+  go('START');
+}
+function cancelReady(){
+  go('RESET'); view('vLobby'); setTimeout(refresh,400);
 }
 
 /* ---------- game modes ---------- */
@@ -589,6 +652,18 @@ function startMode(digit){
 async function openBuy(){
   view('vBuy'); $('mBuy').textContent=''; backToPacks();
   $('packSpin').style.display='block'; $('packList').innerHTML='';
+
+  // Sweep up anything that settled after we stopped watching — money that
+  // arrived late becomes credits here rather than a support ticket.
+  try{
+    const r=await(await fetch('/web/payment/recover',{method:'POST',headers:H()})).json();
+    if(r.success&&r.recovered&&r.recovered.length){
+      const got=r.recovered.reduce((a,b)=>a+b.games,0);
+      $('lobbyCredits').textContent=r.gamesRemaining;
+      toast(`A recent payment has now cleared — ${got} credit${got===1?'':'s'} added.`);
+    }
+  }catch(e){}
+
   try{
     const d=await(await fetch('/web/payment/packages',{headers:H()})).json();
     $('packSpin').style.display='none';
@@ -709,11 +784,16 @@ function awaitPayment(reference,win){
   payPoll=setInterval(async()=>{
     if(++n>100){ clearInterval(payPoll); return; }        // ~5 minutes
     try{
-      const d=await(await fetch('/web/payment/status/'+encodeURIComponent(reference),{headers:H()})).json();
-      if(d.success&&(d.status==='success'||d.status==='failed')){
+      // probe=1 is read-only. The previous version called the authoritative
+      // endpoint every 3s, which asked the gateway about a payment the player
+      // hadn't made yet and buried it as failed while they were still typing
+      // their card number. Only success ends the wait here.
+      const d=await(await fetch('/web/payment/status/'+encodeURIComponent(reference)+'?probe=1',
+        {headers:H()})).json();
+      if(d.success&&d.status==='success'){
         clearInterval(payPoll);
         try{ if(win&&!win.closed) win.close(); }catch(e){}
-        settlePayment(reference,d.status==='failed'?'failed':null);
+        settlePayment(reference,null);
       }
     }catch(e){}
   },3000);
@@ -726,44 +806,34 @@ async function settlePayment(reference,hint){
   clearInterval(payPoll);
   localStorage.removeItem('wut_pending_ref');
 
-  if(hint==='failed'){
-    overlay('','Payment not completed',
-      'That payment didn\'t go through and you have not been charged. You can try again whenever you like.',
-      'Try again',openBuy);
-    return;
-  }
+  overlay('','Confirming your payment','Just a moment — checking with your bank.');
 
-  overlay('⏳','Confirming your payment','Just a moment — checking with your bank.');
-  $('ovAct').style.display='none';
-
+  let last=null;
   for(let i=0;i<15;i++){
     try{
       const d=await(await fetch('/web/payment/status/'+encodeURIComponent(reference),{headers:H()})).json();
+      last=d;
       if(d.success&&d.status==='success'){
         sfx.lock();
         $('lobbyCredits').textContent=d.gamesRemaining;
         overlay(String(d.gamesRemaining),'Credits added',
           `${d.games} credit${d.games===1?'':'s'} for ${naira(d.amount)}. `
           +`You've got ${d.gamesRemaining} in the bank — a receipt is on its way to your email.`,
-          'Play Classic',()=>{closeOver();go('PLAY');});
+          'Play Classic',()=>{ closeOver(); startMode('2'); });
         return;
       }
-      if(d.success&&d.status==='failed'){
-        overlay('','Payment not completed',
-          'We couldn\'t confirm that payment. If you were charged it will be credited automatically — '
-          +'otherwise nothing has left your account.','Try again',openBuy);
-        return;
-      }
-      if(!d.success&&d.error){
-        overlay('','Hmm',d.error);return;
-      }
+      if(!d.success&&d.error){ overlay('','Hmm',d.error); return; }
     }catch(e){}
     await new Promise(r=>setTimeout(r,2000));
   }
 
-  overlay('⏳','Still confirming',
-    'Your bank is taking a little longer than usual. Your credits will be added automatically '
-    +'and we\'ll email you the moment it clears.');
+  // Deliberately NOT phrased as a failure. We genuinely don't know: the money
+  // may be in flight, and the webhook can still credit it afterwards.
+  overlay('','Not confirmed yet',
+    'We haven\'t had confirmation of this payment. If the money left your account it will be '
+    +'credited automatically and we\'ll email you — do not pay again. If you cancelled at the '
+    +'payment page, nothing has been charged.',
+    'Back to credits',openBuy);
 }
 
 /* ---------- board ---------- */

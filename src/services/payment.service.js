@@ -119,7 +119,13 @@ class PaymentService {
     }
   }
 
-  async verifyPayment(reference) {
+  /**
+   * @param {string} reference
+   * @param {object} opts  { markFailed } — set false for background polling.
+   *   A poll that fires while the player is still typing their card number
+   *   would otherwise bury a perfectly good transaction as 'failed'.
+   */
+  async verifyPayment(reference, { markFailed = true } = {}) {
     try {
       // Check if already verified in our database
       const existingTransaction = await pool.query(
@@ -146,8 +152,10 @@ class PaymentService {
         };
       }
 
-      // Only verify with gateway if status is still 'pending'
-      if (transaction.status !== 'pending') {
+      // 'failed' is recoverable, not terminal. A slow bank transfer — or a
+      // verification attempt we made too early — can be followed by the money
+      // actually arriving, and the webhook must still be able to credit it.
+      if (transaction.status !== 'pending' && transaction.status !== 'failed') {
         throw new Error(`Transaction status is ${transaction.status}`);
       }
 
@@ -169,28 +177,37 @@ class PaymentService {
       const channel = verifyResult.raw?.channel || verifyResult.raw?.payment_method || 'unknown';
       const paid_at = verifyResult.raw?.paid_at || verifyResult.raw?.transaction_date || new Date();
 
-      // Update transaction status FIRST (prevents race conditions)
-      await pool.query(
+      // Flip the status first and use the row count as the lock. Whichever
+      // path gets here first (callback, poll, webhook) does the crediting;
+      // the others see rowCount 0 and skip it. That is what makes this safe
+      // to call from three places at once.
+      const claimed = await pool.query(
         `UPDATE payment_transactions 
          SET status = 'success', 
              paystack_reference = $1,
              payment_channel = $2,
              paid_at = $3
-         WHERE reference = $4 AND status = 'pending'`,
+         WHERE reference = $4 AND status <> 'success'`,
         [verifyResult.raw?.reference || reference, channel, paid_at, reference]
       );
 
-      // Then credit games to user
-      await pool.query(
-        `UPDATE users 
-         SET games_remaining = games_remaining + $1,
-             total_games_purchased = total_games_purchased + $1,
-             last_purchase_date = NOW()
-         WHERE id = $2`,
-        [transaction.games_purchased, transaction.user_id]
-      );
+      if (claimed.rowCount > 0) {
+        await pool.query(
+          `UPDATE users 
+           SET games_remaining = games_remaining + $1,
+               total_games_purchased = total_games_purchased + $1,
+               last_purchase_date = NOW()
+           WHERE id = $2`,
+          [transaction.games_purchased, transaction.user_id]
+        );
 
-      logger.info(`✅ Payment verified via ${gateway.getName()} (${transaction.platform}): ${reference} - ${transaction.games_purchased} games credited to user ${transaction.user_id}`);
+        if (transaction.status === 'failed') {
+          logger.warn(`♻️ Recovered payment previously marked failed: ${reference}`);
+        }
+        logger.info(`✅ Payment verified via ${gateway.getName()} (${transaction.platform}): ${reference} - ${transaction.games_purchased} games credited to user ${transaction.user_id}`);
+      } else {
+        logger.info(`Payment ${reference} already credited by another path — not crediting twice`);
+      }
 
       return {
         success: true,
@@ -204,8 +221,10 @@ class PaymentService {
     } catch (error) {
       logger.error('Error verifying payment:', error);
       
-      // Don't mark transient errors as failed — leave pending so webhook can retry
-      if (!error.transient) {
+      // Don't mark transient errors as failed — leave pending so webhook can retry.
+      // markFailed=false does the same for background polling, which runs while
+      // the player may not have finished paying yet.
+      if (markFailed && !error.transient) {
         await pool.query(
           `UPDATE payment_transactions 
            SET status = 'failed' 

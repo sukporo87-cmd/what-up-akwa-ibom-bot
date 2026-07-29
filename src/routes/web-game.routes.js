@@ -117,10 +117,20 @@ router.get('/state', requireWebAuth, async (req, res) => {
             if (snapshot && !snapshot.stale) question = snapshot;
         }
 
+        // startNewGame() creates the session, sends the rules and then waits
+        // for the player to send START — it parks that intent in Redis. On
+        // chat you just type it; the web UI needs to know so it can show a
+        // button instead of an empty board.
+        let awaitingStart = false;
+        try {
+            awaitingStart = !!(await redis.get(`game_ready:${user.id}`));
+        } catch (e) { /* non-fatal */ }
+
         res.json({
             success: true,
             user: webAuthService.publicUser({ ...user, ...stats }),
             streaming: gameEvents.isConnected(user.id),
+            awaitingStart,
             game: session ? {
                 sessionId: session.id,
                 mode: session.game_mode,

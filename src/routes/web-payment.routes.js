@@ -213,16 +213,22 @@ router.get('/status/:reference', requireWebAuth, async (req, res) => {
 
         let stillProcessing = false;
 
-        if (txn.status === 'pending') {
+        // probe=1 is the background poll: read the row, touch nothing. The
+        // player may still be on the gateway page entering card details, and
+        // asking the gateway about a payment that hasn't happened yet returns
+        // "not found", which must not be mistaken for "declined".
+        const probe = req.query.probe === '1';
+
+        if (!probe && (txn.status === 'pending' || txn.status === 'failed')) {
             const age = Date.now() - new Date(txn.created_at).getTime();
             if (age < VERIFY_WINDOW_MS) {
                 try {
-                    await paymentService.verifyPayment(reference);
+                    // markFailed:false — a web verify is never authoritative
+                    // enough to condemn a transaction. Only the gateway's own
+                    // webhook settles that, and it can still credit later.
+                    await paymentService.verifyPayment(reference, { markFailed: false });
                 } catch (error) {
-                    // transient = gateway says "not settled yet"; verifyPayment
-                    // deliberately leaves the row pending so the webhook can
-                    // finish the job. Anything else is already marked failed.
-                    if (error.transient) stillProcessing = true;
+                    stillProcessing = true;
                 }
                 txn = await load();
             }
@@ -233,9 +239,17 @@ router.get('/status/:reference', requireWebAuth, async (req, res) => {
             [req.webUser.id]
         );
 
+        // 'failed' is never reported to the browser as final — a payment can
+        // still land afterwards. The UI shows "still checking" and the webhook
+        // gets the last word.
+        let status = txn.status;
+        if (status === 'pending' || (status === 'failed' && stillProcessing)) status = 'processing';
+        else if (status === 'failed') status = 'unsettled';
+
         res.json({
             success: true,
-            status: stillProcessing ? 'processing' : txn.status,   // pending|processing|success|failed
+            status,                                  // processing | unsettled | success
+            raw: txn.status,
             reference: txn.reference,
             amount: Number(txn.amount),
             games: txn.games_purchased,
@@ -246,6 +260,52 @@ router.get('/status/:reference', requireWebAuth, async (req, res) => {
     } catch (error) {
         logger.error('Web payment status error:', error);
         res.status(500).json({ success: false, error: 'Could not check that payment' });
+    }
+});
+
+// ============================================
+// RECOVER
+// Re-checks any recent unsettled payment for this user. Called when the buy
+// screen opens, so money that arrived after we gave up still turns into
+// credits without anyone having to file a support ticket.
+// ============================================
+
+router.post('/recover', requireWebAuth, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT reference FROM payment_transactions
+            WHERE user_id = $1
+              AND status IN ('pending', 'failed')
+              AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC
+            LIMIT 5
+        `, [req.webUser.id]);
+
+        const recovered = [];
+        for (const row of r.rows) {
+            try {
+                const v = await paymentService.verifyPayment(row.reference, { markFailed: false });
+                if (v.success) recovered.push({ reference: row.reference, games: v.games, amount: v.amount });
+            } catch (e) { /* still not settled — leave it alone */ }
+        }
+
+        const fresh = await pool.query(
+            'SELECT games_remaining FROM users WHERE id = $1',
+            [req.webUser.id]
+        );
+
+        if (recovered.length) {
+            logger.info(`♻️ Recovered ${recovered.length} payment(s) for user ${req.webUser.id}`);
+        }
+
+        res.json({
+            success: true,
+            recovered,
+            gamesRemaining: fresh.rows[0]?.games_remaining ?? 0
+        });
+    } catch (error) {
+        logger.error('Web payment recover error:', error);
+        res.status(500).json({ success: false, error: 'Could not check recent payments' });
     }
 });
 
