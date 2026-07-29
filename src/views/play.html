@@ -151,6 +151,27 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .note{font-size:13px;color:var(--mute);margin:0 0 18px;line-height:1.55}
 .spin{text-align:center;color:var(--mute);font-size:14px;padding:26px 0}
 
+/* ---------- ask (interactive engine prompt) ---------- */
+.askOpt{width:100%;text-align:left;padding:13px 15px;border-radius:12px;background:var(--raise);
+        border:1.5px solid transparent;margin-bottom:8px;display:flex;gap:11px;align-items:flex-start}
+.askOpt:hover{border-color:var(--brass)}
+.askOpt .k{font-family:var(--display);font-weight:600;font-size:12px;width:22px;height:22px;flex:none;
+           border-radius:7px;background:var(--slate);color:var(--brass);display:grid;place-items:center;
+           margin-top:1px}
+.askOpt .t{flex:1;min-width:0}
+.askOpt .t b{display:block;font-size:14.5px;font-weight:600;margin-bottom:2px}
+.askOpt .t i{display:block;font-style:normal;font-size:12.5px;color:var(--mute);line-height:1.45}
+.askRow{display:flex;gap:8px;margin-top:4px}
+.askRow input{margin-bottom:0}
+.askRow .cta{width:auto;flex:none;padding:13px 18px}
+.spin2{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--brass);
+       border-radius:50%;animation:whirl .8s linear infinite;vertical-align:-3px;margin-right:9px}
+@keyframes whirl{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:440px;width:calc(100% - 32px);
+       background:var(--raise);border:1.5px solid var(--line);border-radius:13px;padding:13px 16px;
+       font-size:13.5px;line-height:1.5;color:var(--paper);white-space:pre-wrap;z-index:30;
+       box-shadow:0 10px 30px rgba(0,0,0,.45);animation:rise .28s ease forwards}
+
 /* ---------- overlay ---------- */
 .over{position:fixed;inset:0;background:rgba(22,18,31,.93);backdrop-filter:blur(7px);
       display:none;place-items:center;padding:var(--pad);z-index:20}
@@ -214,15 +235,15 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <p><span id="lobbyName">player</span> — game credits available</p>
     </div>
 
-    <button class="tile primary" onclick="go('PLAY')">
+    <button class="tile primary" onclick="startMode('2')">
       <strong>Play Classic</strong>
       <span>15 questions, prizes up to ₦50,000</span>
     </button>
-    <button class="tile" onclick="go('PLAY')">
+    <button class="tile" onclick="startMode('1')">
       <strong>Practice</strong>
       <span>Free. No prizes. Learn the format.</span>
     </button>
-    <button class="tile" onclick="go('TOURNAMENTS')">
+    <button class="tile" onclick="startMode('3')">
       <strong>Tournaments</strong>
       <span>Compete for the weekly prize pool</span>
     </button>
@@ -313,6 +334,20 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
   </div>
 </div>
 
+<!-- ============ ASK (any prompt the engine sends as text) ============ -->
+<div class="over" id="ask">
+  <div class="sheet" style="text-align:left">
+    <h2 id="askTitle" style="margin-top:0">Choose</h2>
+    <p id="askBody" style="margin-bottom:16px"></p>
+    <div id="askOpts"></div>
+    <div class="askRow">
+      <input id="askInput" placeholder="Or type your reply…" autocomplete="off" autocapitalize="off">
+      <button class="cta" onclick="askSend()">Send</button>
+    </div>
+    <button class="link" onclick="askCancel()">Cancel and go back</button>
+  </div>
+</div>
+
 <script>
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
@@ -320,7 +355,7 @@ let token = localStorage.getItem('wut_token'), es=null, tick=null,
     banked=0, seen={};
 
 /* buy flow */
-let packs=[], gates=[], chosenPack=null, pendingPaid=null;
+let packs=[], gates=[], chosenPack=null, pendingPaid=null, pendingMode=null, payPoll=null;
 
 const $=id=>document.getElementById(id);
 const H=()=>{const h={'Content-Type':'application/json'};if(token)h.Authorization='Bearer '+token;return h;};
@@ -422,24 +457,132 @@ function stream(){
   es.addEventListener('message',e=>relay(JSON.parse(e.data).text||''));
 }
 
+/* ---------- engine text -> something you can actually click ----------
+   The engine speaks chat. On WhatsApp "reply 1, 2 or 3" is fine; here there
+   was nothing to reply WITH, so any unstructured prompt was a dead end — and
+   the server stayed parked in that state, which is why every tile afterwards
+   looked broken. Now: known prompts are answered automatically, everything
+   else becomes buttons plus a text field, and cancelling clears the state. */
+
+function parseOpts(text){
+  const lines = text.split('\n');
+  const head = /^\s*([1-9])(?:\uFE0F?\u20E3|[.)\-:])\s*(.*)$/;   // 1\uFE0F\u20E3  1.  1)  1-  1:
+  const out = []; let cur = null;
+  for(const line of lines){
+    const m = head.exec(line);
+    if(m){ cur = {k:m[1], v:m[2].replace(/[*_]/g,'').trim(), sub:[]}; out.push(cur); }
+    else if(!line.trim()){ cur = null; }
+    else if(cur && /^(\s{2,}|\t)/.test(line)){ cur.sub.push(line.replace(/[*_]/g,'').trim()); }
+  }
+  return out.filter(o=>o.v);
+}
+
+function ask(text){
+  const clean = text.replace(/\*/g,'').replace(/_/g,'');
+  const opts  = parseOpts(clean);
+  const lines = clean.split('\n');
+
+  // Everything before the first numbered option is context; a trailing
+  // "Reply with your choice" is a chat instruction that doesn't apply here.
+  const firstOpt = lines.findIndex(l=>/^\s*[1-9](\uFE0F?\u20E3|[.)\-:])/.test(l));
+  const head = (firstOpt === -1 ? lines : lines.slice(0, firstOpt)).filter(l=>l.trim());
+
+  $('askTitle').textContent  = (head[0] || 'One moment').trim();
+  $('askBody').textContent   = head.slice(1).join('\n').trim();
+  $('askBody').style.display = head.length > 1 ? 'block' : 'none';
+
+  const box = $('askOpts'); box.innerHTML='';
+  opts.forEach(o=>{
+    const b = document.createElement('button');
+    b.className='askOpt';
+    b.innerHTML='<span class="k"></span><span class="t"><b></b><i></i></span>';
+    b.querySelector('.k').textContent = o.k;
+    b.querySelector('b').textContent  = o.v;
+    b.querySelector('i').textContent  = o.sub.join(' \u00b7 ');
+    if(!o.sub.length) b.querySelector('i').style.display='none';
+    b.onclick = ()=>{ sfx.tap(); closeAsk(); go(o.k); };
+    box.appendChild(b);
+  });
+
+  $('askInput').value='';
+  $('ask').classList.add('on');
+  if(!opts.length) setTimeout(()=>$('askInput').focus(),80);
+}
+function closeAsk(){ $('ask').classList.remove('on'); }
+function askSend(){
+  const v = $('askInput').value.trim();
+  if(!v) return;
+  closeAsk(); go(v);
+}
+/* RESET is the one command the engine honours from any state, so this is what
+   actually unsticks things — MENU does not escape SELECT_GAME_MODE. */
+function askCancel(){
+  closeAsk(); pendingMode=null; go('RESET');
+  view('vLobby'); setTimeout(refresh,400);
+}
+
+let toastT=null;
+function toast(text){
+  const t=(text||'').replace(/\*/g,'').trim();
+  if(!t) return;
+  let el=document.getElementById('toast');
+  if(!el){ el=document.createElement('div'); el.id='toast'; el.className='toast'; document.body.appendChild(el); }
+  el.textContent=t;
+  clearTimeout(toastT);
+  toastT=setTimeout(()=>{ el.remove(); },4500);
+}
+
 /* Text the engine sends that has no structured event yet. */
 function relay(text){
   const t=text.toUpperCase();
+
+  // We already know which mode they tapped — answer the menu for them rather
+  // than showing a chooser they have effectively already used.
+  if(pendingMode && (t.includes('SELECT GAME MODE') || t.includes('REPLY WITH 1, 2, OR 3'))){
+    const m=pendingMode; pendingMode=null; go(m); return;
+  }
+
   if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')){
     clearInterval(tick);
-    const won=/₦[\d,]+/.exec(text);
-    setTimeout(()=>overlay(won?won[0]:'—',
+    const won=/\u20a6[\d,]+/.exec(text);
+    setTimeout(()=>overlay(won?won[0]:'\u2014',
       t.includes('CONGRAT')?'Well played':'Game over', text.replace(/\*/g,'')),900);
-  } else if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
+    return;
+  }
+  if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
     overlay('0','Out of credits',
       'You need at least one credit to play Classic. Practice mode is always free.',
       'Buy credits',openBuy);
-  } else if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
-    // The chat buy flow leaked through — web has its own screen for this.
-    openBuy();
-  } else if(t.includes('TOURNAMENT')||t.includes('PACKAGE')||t.includes('SELECT')){
-    overlay('','Choose',text.replace(/\*/g,''));
+    return;
   }
+  if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
+    // The chat buy flow leaked through — web has its own screen for this.
+    openBuy(); return;
+  }
+  if(t.includes('ACTIVE GAME')&&t.includes('RESET')){
+    overlay('','Game already running',
+      'You have a game in progress. Reset to start a fresh one.',
+      'Reset and go back',()=>{ go('RESET'); view('vLobby'); setTimeout(refresh,400); });
+    return;
+  }
+
+  // Anything that wants a reply becomes clickable.
+  if(parseOpts(text).length>=2 || /REPLY WITH|PLEASE REPLY|ENTER YOUR|SEND YOUR|WHICH ONE/.test(t)){
+    ask(text); return;
+  }
+
+  // Purely informational \u2014 surfaced rather than silently dropped.
+  toast(text);
+}
+
+/* ---------- game modes ---------- */
+let modeT=null;
+function startMode(digit){
+  pendingMode=digit;
+  clearTimeout(modeT);
+  modeT=setTimeout(()=>{ pendingMode=null; },10000);   // don't let intent go stale
+  sfx.tap();
+  go('PLAY');
 }
 
 /* ---------- buy ---------- */
@@ -507,33 +650,80 @@ function pickPack(p){
 }
 async function startCheckout(gateway){
   if(!chosenPack)return;
+
+  // Gateway checkout pages send X-Frame-Options: DENY — they cannot be put in
+  // an iframe, by design. A child tab is the closest thing that works: this
+  // page never unloads, so the session survives and we can poll from here.
+  // The window must be opened synchronously inside the click or the popup
+  // blocker eats it, hence the blank open before the fetch.
+  const win = window.open('', '_blank');
+
   $('mBuy').style.color='var(--mute)';
   $('mBuy').textContent='Opening secure checkout…';
   document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=true);
+
+  const unlock=()=>document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=false);
+
   try{
     const d=await(await fetch('/web/payment/initialize',{method:'POST',headers:H(),
       body:JSON.stringify({packageId:chosenPack.id,gateway})})).json();
+
     if(!d.success||!d.authorizationUrl){
+      if(win)win.close();
       $('mBuy').style.color='var(--ember)';
       $('mBuy').textContent=d.error||'Could not start that payment';
-      document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=false);
-      return;
+      unlock(); return;
     }
-    // Remembered so we can still resolve the payment if the gateway drops us
-    // back without the query string.
+
+    // Remembered so we can still resolve the payment if the tab route fails
+    // and the gateway navigates this window instead.
     localStorage.setItem('wut_pending_ref',d.reference+'|'+Date.now());
-    location.href=d.authorizationUrl;
+
+    if(win){
+      win.location.href=d.authorizationUrl;
+      $('mBuy').textContent='';
+      unlock();
+      awaitPayment(d.reference,win);
+    } else {
+      // Popup blocked — fall back to navigating this tab.
+      location.href=d.authorizationUrl;
+    }
   }catch(e){
+    if(win)win.close();
     $('mBuy').style.color='var(--ember)';
     $('mBuy').textContent='Could not reach the server';
-    document.querySelectorAll('#vBuy .pack').forEach(b=>b.disabled=false);
+    unlock();
   }
+}
+
+/* Waiting on the checkout tab. Polls, and also listens for the postMessage
+   the child tab fires the moment it lands back on our origin. */
+function awaitPayment(reference,win){
+  overlay('','Waiting for your payment',
+    'Finish the payment in the tab that just opened. This page will update on its own — '
+    +'you do not need to do anything here.',
+    'I\'ve finished paying',()=>settlePayment(reference,null));
+
+  clearInterval(payPoll);
+  let n=0;
+  payPoll=setInterval(async()=>{
+    if(++n>100){ clearInterval(payPoll); return; }        // ~5 minutes
+    try{
+      const d=await(await fetch('/web/payment/status/'+encodeURIComponent(reference),{headers:H()})).json();
+      if(d.success&&(d.status==='success'||d.status==='failed')){
+        clearInterval(payPoll);
+        try{ if(win&&!win.closed) win.close(); }catch(e){}
+        settlePayment(reference,d.status==='failed'?'failed':null);
+      }
+    }catch(e){}
+  },3000);
 }
 
 /* Back from the gateway. The callback has already tried to verify; we poll
    because a bank transfer can settle after the redirect. */
 async function settlePayment(reference,hint){
   if(!reference)return;
+  clearInterval(payPoll);
   localStorage.removeItem('wut_pending_ref');
 
   if(hint==='failed'){
@@ -684,12 +874,33 @@ function closeOver(){
 
 /* ---------- boot ---------- */
 (async()=>{
+  const qs=new URLSearchParams(location.search);
+
+  // We are the checkout tab: hand the reference to the app tab and get out of
+  // the way, rather than booting a second copy of the whole game.
+  const qref=qs.get('paid');
+  if(qref && window.opener && !window.opener.closed){
+    try{ window.opener.postMessage({wutPaid:qref,wutStatus:qs.get('status')||null},location.origin); }catch(e){}
+    document.body.innerHTML='<div style="display:grid;place-items:center;height:100vh;padding:24px;'
+      +'text-align:center;color:#9b8fb0;font-family:Inter,system-ui,sans-serif;font-size:15px">'
+      +'Payment received — you can close this tab.</div>';
+    setTimeout(()=>{ try{ window.close(); }catch(e){} },1400);
+    return;
+  }
+
+  window.addEventListener('message',e=>{
+    if(e.origin!==location.origin) return;
+    if(e.data&&e.data.wutPaid) settlePayment(e.data.wutPaid,e.data.wutStatus);
+  });
+
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
 
-  // Returning from a gateway. Prefer the query string; fall back to what we
-  // stashed before leaving, in case the gateway dropped the params.
-  const qs=new URLSearchParams(location.search);
-  let ref=qs.get('paid');
+  $('askInput').addEventListener('keydown',e=>{ if(e.key==='Enter') askSend(); });
+
+  // Returning from a gateway in this same tab (popup was blocked, or the
+  // gateway ignored the target). Prefer the query string; fall back to what we
+  // stashed before leaving, in case the params were dropped.
+  let ref=qref;
   if(!ref){
     const [stashed,at]=(localStorage.getItem('wut_pending_ref')||'').split('|');
     // An abandoned checkout shouldn't pop up days later.

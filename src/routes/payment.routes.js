@@ -276,11 +276,20 @@ function isWeb(phoneNumber) {
  * back into the app carrying the reference, so play.html can poll
  * /web/payment/status and show the outcome itself — no interstitial.
  */
-function getRedirectUrl(phoneNumber, reference = '', outcome = 'success') {
+function getRedirectUrl(phoneNumber, reference = '', outcome = 'success', req = null) {
     const id = String(phoneNumber || '');
 
     if (isWeb(id)) {
-        const base = (process.env.WEB_APP_URL || 'https://play.whatsuptrivia.com.ng').replace(/\/$/, '');
+        // Return them to the origin they came in on, not a hardcoded one. The
+        // session cookie is host-only and the localStorage token is per-origin,
+        // so bouncing a player to a different host lands them signed-out.
+        let base = null;
+        if (req) {
+            const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+            const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+            if (host) base = `${proto}://${host}`;
+        }
+        base = (base || process.env.WEB_APP_URL || 'https://play.whatsuptrivia.com.ng').replace(/\/$/, '');
         return `${base}/play.html?paid=${encodeURIComponent(reference)}&status=${outcome}`;
     }
     if (id.startsWith('tg_')) {
@@ -342,10 +351,10 @@ router.get('/callback', async (req, res) => {
         // Web players go straight back into the app — it polls the status
         // endpoint and renders the result in its own UI.
         if (isWeb(phoneNumber)) {
-            return res.redirect(302, getRedirectUrl(phoneNumber, reference, 'success'));
+            return res.redirect(302, getRedirectUrl(phoneNumber, reference, 'success', req));
         }
 
-        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success');
+        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success', req);
         const platformName = getPlatformName(phoneNumber);
         
         res.send(`
@@ -445,7 +454,7 @@ router.get('/callback', async (req, res) => {
         const outcome = error.transient ? 'pending' : 'failed';
 
         if (isWeb(phoneNumber)) {
-            return res.redirect(302, getRedirectUrl(phoneNumber, reference, outcome));
+            return res.redirect(302, getRedirectUrl(phoneNumber, reference, outcome, req));
         }
 
         if (error.transient) {
@@ -558,7 +567,7 @@ const userResult = await pool.query(
 );
         
         const phoneNumber = userResult.rows[0]?.phone_number || '';
-        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success');
+        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success', req);
         const platformName = getPlatformName(phoneNumber);
         
         res.send(`

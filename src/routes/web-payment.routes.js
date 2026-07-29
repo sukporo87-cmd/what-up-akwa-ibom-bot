@@ -34,6 +34,21 @@ function clientIp(req) {
         || null;
 }
 
+/**
+ * The origin the browser is actually talking to.
+ *
+ * This matters more than it looks. The session cookie is host-only and the
+ * token in localStorage is per-origin, so if checkout returns the player to a
+ * DIFFERENT host than the one they signed in on, they land signed-out. Sending
+ * the gateway back to the origin the request came from keeps the whole round
+ * trip on one origin, whatever domain they happen to be using.
+ */
+function originOf(req) {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    return host ? `${proto}://${host}` : null;
+}
+
 // ============================================
 // PACKAGES + AVAILABLE PROCESSORS
 // One call, because the UI needs both to render the buy screen.
@@ -123,11 +138,16 @@ router.post('/initialize', requireWebAuth, requireCompleteProfile, async (req, r
         }
         const gatewayName = (match || enabled[0]).getName();
 
+        const origin = originOf(req);
+
         const payment = await paymentService.initializePayment(
             req.webUser,
             packageId,
             gatewayName,
-            { email: req.webUser.email }
+            {
+                email: req.webUser.email,
+                callbackUrl: origin ? `${origin}/payment/callback` : undefined
+            }
         );
 
         // Record the IP at intent time as well as at callback — a mismatch
