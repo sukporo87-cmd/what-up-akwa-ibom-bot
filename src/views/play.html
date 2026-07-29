@@ -39,68 +39,143 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .icon:hover{border-color:var(--brass);color:var(--brass)}
 .icon.off{opacity:.4}
 
-/* ---------- ladder (signature) ---------- */
-.ladder{display:flex;align-items:flex-end;gap:3px;height:44px;margin-bottom:6px}
-.rung{flex:1;background:var(--slate);border-radius:2px;height:8px;position:relative;
-      transition:height .3s cubic-bezier(.2,.8,.3,1),background .3s}
-.rung.done{background:var(--brass);height:14px}
-.rung.now{background:var(--paper);height:30px}
-.rung.cp::after{content:'';position:absolute;left:50%;top:-11px;transform:translateX(-50%);
-   width:7px;height:7px;border-radius:2px;border:1.5px solid var(--mute);border-bottom-width:3px}
+/* ================================================================
+   THE STAGE — Billionaire
+   Millionaire's *format*, not its look. Deliberately avoids the
+   blue-radial / gold-lozenge / right-hand-rows vocabulary: this is
+   aubergine and brass, angular clipped cards, and a ladder rail that
+   reads as a climb rather than a scoreboard.
+   ================================================================ */
+
+#vGame.on{display:flex}
+.stage{position:relative;flex:1;display:flex;flex-direction:column}
+.stage::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(120% 70% at 50% -10%, rgba(232,182,76,.11), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(155,143,176,.09), transparent 65%);}
+
+/* ---------- ladder rail ---------- */
+.rail{display:none}
+.ladder{display:flex;align-items:flex-end;gap:3px;height:38px;margin-bottom:8px}
+.rung{flex:1;background:var(--slate);border-radius:2px;height:7px;position:relative;
+      transition:height .3s cubic-bezier(.2,.9,.3,1),background .3s}
+.rung.done{background:var(--brass);height:13px}
+.rung.now{background:var(--paper);height:26px;box-shadow:0 0 14px rgba(242,238,233,.35)}
+.rung.cp::after{content:'';position:absolute;left:50%;top:-10px;transform:translateX(-50%);
+  width:6px;height:6px;border:1.5px solid var(--line);border-radius:50%;background:var(--night)}
 .rung.cp.locked::after{border-color:var(--brass);background:var(--brass);
-   animation:snap .45s cubic-bezier(.3,1.4,.5,1)}
-@keyframes snap{0%{transform:translateX(-50%) scale(1.9) translateY(-4px)}100%{transform:translateX(-50%) scale(1)}}
+  box-shadow:0 0 9px rgba(232,182,76,.6)}
+
 .ladderMeta{display:flex;justify-content:space-between;align-items:baseline;
-   font-size:12px;color:var(--mute);margin-bottom:22px}
+            font-size:12.5px;color:var(--mute);margin-bottom:22px}
 .ladderMeta .fig{font-size:15px;color:var(--brass)}
 
 /* ---------- question ---------- */
 .qwrap{flex:1;display:flex;flex-direction:column}
-.qtext{font-size:clamp(20px,5.4vw,25px);line-height:1.3;font-weight:500;
-       margin:0 0 22px;letter-spacing:-.015em}
-.opts{display:flex;flex-direction:column;gap:9px}
-.opt{display:flex;align-items:center;gap:13px;width:100%;text-align:left;padding:15px 16px;
-     background:var(--slate);border:1.5px solid transparent;border-radius:13px;
-     font-size:15.5px;line-height:1.35;transition:transform .12s,border-color .18s,background .18s;
-     opacity:0;animation:rise .32s cubic-bezier(.2,.8,.3,1) forwards}
-@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
-.opt .k{font-family:var(--display);font-weight:600;font-size:13px;width:25px;height:25px;flex:none;
-        border-radius:8px;background:var(--raise);color:var(--brass);display:grid;place-items:center}
-.opt:not(:disabled):active{transform:scale(.985)}
-.opt:not(:disabled):hover{border-color:var(--line)}
+.qtext{font-size:clamp(20px,5.4vw,26px);line-height:1.32;font-weight:500;
+       margin:0 0 22px;letter-spacing:-.01em}
+
+/* ---------- options ----------
+   Angular, not lozenge. One clipped corner plus a left accent rail
+   gives it a distinct silhouette at a glance. */
+.opts{display:flex;flex-direction:column;gap:10px}
+.opt{position:relative;display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+     padding:16px 17px 16px 19px;background:var(--slate);border:1.5px solid transparent;
+     font-size:15.5px;line-height:1.35;color:var(--paper);overflow:hidden;
+     clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+     transition:transform .16s cubic-bezier(.2,.9,.3,1),background .22s,border-color .22s;
+     opacity:0;animation:dealIn .34s cubic-bezier(.2,.9,.3,1) forwards}
+.opt::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+             background:var(--line);transition:background .22s}
+.opt .k{font-family:var(--display);font-weight:600;font-size:13px;width:26px;height:26px;flex:none;
+        display:grid;place-items:center;background:var(--raise);color:var(--brass);
+        clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);transition:all .22s}
+@keyframes dealIn{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+
+.opt:not(:disabled):hover{background:var(--raise)}
+.opt:not(:disabled):hover::before{background:var(--brass)}
+.opt:not(:disabled):active{transform:scale(.988)}
 .opt:disabled{cursor:default}
-.opt.pick{border-color:var(--paper);background:var(--raise)}
-.opt.right{border-color:var(--mint);background:rgba(53,211,154,.13)}
+
+/* locked in — the beat before the reveal */
+.opt.pick{background:var(--raise);border-color:var(--brass);animation:heartbeat 1s ease-in-out infinite}
+.opt.pick::before{background:var(--brass)}
+.opt.pick .k{background:var(--brass);color:#1a1206}
+@keyframes heartbeat{0%,100%{box-shadow:0 0 0 0 rgba(232,182,76,0)}
+                     50%{box-shadow:0 0 22px 0 rgba(232,182,76,.42)}}
+
+.opt.right{background:rgba(53,211,154,.14);border-color:var(--mint);animation:none;
+           box-shadow:0 0 26px rgba(53,211,154,.22)}
+.opt.right::before{background:var(--mint)}
 .opt.right .k{background:var(--mint);color:#08150f}
-.opt.wrong{border-color:var(--ember);background:rgba(255,107,91,.11)}
+.opt.wrong{background:rgba(255,107,91,.12);border-color:var(--ember);animation:none}
+.opt.wrong::before{background:var(--ember)}
 .opt.wrong .k{background:var(--ember);color:#2a0d09}
-.opt.gone{opacity:.16;pointer-events:none}
+.opt.gone{opacity:.14;pointer-events:none;animation:none}
 
 /* ---------- verdict ---------- */
-.verdict{margin-top:18px;padding:16px;border-radius:13px;border:1.5px solid var(--line);
-         background:var(--slate);display:none}
-.verdict.on{display:block;animation:rise .3s ease forwards}
-.verdict h3{margin:0 0 4px;font-family:var(--display);font-size:17px}
+.verdict{margin-top:20px;padding:17px;border:1.5px solid var(--line);display:none;
+         background:var(--slate);
+         clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))}
+.verdict.on{display:block;animation:rise .32s ease forwards}
+.verdict h3{margin:0 0 5px;font-family:var(--display);font-size:17px;letter-spacing:-.01em}
 .verdict.good h3{color:var(--mint)} .verdict.bad h3{color:var(--ember)}
 .verdict p{margin:0;font-size:14.5px;color:var(--paper)}
-.verdict .fact{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);
+.verdict .fact{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);
                font-size:13.5px;color:var(--mute);line-height:1.55}
 
 /* ---------- footer ---------- */
-.foot{padding-top:20px;margin-top:auto}
+.foot{padding-top:22px;margin-top:auto}
 .clock{display:flex;align-items:center;gap:11px;margin-bottom:13px}
-.track{flex:1;height:5px;background:var(--slate);border-radius:3px;overflow:hidden}
+.track{flex:1;height:5px;background:var(--slate);overflow:hidden}
 .track i{display:block;height:100%;width:100%;background:var(--brass);
          transition:width .25s linear,background .3s}
-.track i.hot{background:var(--ember)}
-.secs{font-family:var(--display);font-size:15px;min-width:34px;text-align:right;color:var(--mute)}
+.track i.hot{background:var(--ember);animation:pulseBar .55s ease-in-out infinite}
+@keyframes pulseBar{0%,100%{opacity:1}50%{opacity:.55}}
+.secs{font-family:var(--display);font-size:16px;min-width:34px;text-align:right;color:var(--mute)}
 .secs.hot{color:var(--ember)}
-.chips{display:flex;gap:8px}
-.chip{flex:1;padding:11px;border-radius:11px;border:1px solid var(--line);
-      font-size:13px;font-weight:500;color:var(--mute);text-align:center}
-.chip:not(:disabled):hover{border-color:var(--brass);color:var(--brass)}
-.chip:disabled{opacity:.3;cursor:default}
+.chips{display:flex;gap:9px}
+.chip{flex:1;padding:12px;border:1px solid var(--line);background:transparent;
+      font-size:13px;font-weight:500;color:var(--mute);text-align:center;
+      clip-path:polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+      transition:color .2s,border-color .2s,background .2s}
+.chip:not(:disabled):hover{border-color:var(--brass);color:var(--brass);background:var(--slate)}
+.chip:disabled{opacity:.28;cursor:default}
 
+/* ================================================================
+   DESKTOP — two columns, ladder as a vertical climb.
+   Below 900px this all collapses and the phone layout above applies
+   unchanged, so mobile is untouched by any of it.
+   ================================================================ */
+@media (min-width:900px){
+  #vGame .app, .app:has(#vGame.on){max-width:none}
+  .stage{display:grid;grid-template-columns:1fr 232px;gap:40px;align-items:start}
+  .stage > .bar{grid-column:1 / -1}
+  .stage > .ladder,.stage > .ladderMeta{display:none}
+
+  .rail{display:flex;flex-direction:column-reverse;gap:3px;padding:4px 0}
+  .step{display:flex;align-items:center;justify-content:space-between;gap:10px;
+        padding:7px 12px;font-size:13px;color:var(--mute);border:1px solid transparent;
+        clip-path:polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+        transition:all .28s cubic-bezier(.2,.9,.3,1)}
+  .step .n{font-family:var(--display);font-size:11px;opacity:.5;min-width:20px}
+  .step .v{font-family:var(--display);font-weight:600;letter-spacing:-.01em}
+  .step.done{color:var(--brass)}
+  .step.cp{color:var(--paper)}
+  .step.cp .v::after{content:' 🔒';font-size:10px;opacity:.55}
+  .step.cp.locked{color:var(--brass)}
+  .step.now{background:linear-gradient(90deg,rgba(232,182,76,.18),transparent);
+            border-color:var(--brass);color:var(--paper);transform:translateX(-5px)}
+  .step.now .v{color:var(--brass);font-size:15px}
+  .step.now .n{opacity:1;color:var(--brass)}
+
+  .qtext{font-size:30px;margin-bottom:26px}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .foot{grid-column:1 / -1;margin-top:26px;padding-top:22px;border-top:1px solid var(--line)}
+  .chips{max-width:420px}
+}
+
+/* ---------- lobby ---------- */
 /* ---------- lobby ---------- */
 .hero{padding:34px 0 26px}
 .hero .fig{font-size:clamp(38px,11vw,52px);line-height:1;color:var(--brass);display:block}
@@ -383,6 +458,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
   <!-- ============ GAME ============ -->
   <section class="view" id="vGame">
+   <div class="stage">
     <div class="bar">
       <div class="brand" id="qCount">Question 1 of 15</div>
       <div class="icons">
@@ -391,6 +467,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       </div>
     </div>
 
+    <!-- phone: compressed horizontal ladder -->
     <div class="ladder" id="ladder"></div>
     <div class="ladderMeta">
       <span>Playing for <b class="fig" id="qPrize">₦0</b></span>
@@ -404,6 +481,9 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <div class="verdict" id="verdict"></div>
     </div>
 
+    <!-- desktop: the full climb, visible from Q1 -->
+    <div class="rail" id="rail"></div>
+
     <div class="foot">
       <div class="clock">
         <div class="track"><i id="bar"></i></div>
@@ -414,6 +494,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
         <button class="chip" id="cSkip" onclick="go('SKIP')">Skip question</button>
       </div>
     </div>
+   </div>
   </section>
 </div>
 
@@ -448,8 +529,13 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-29 08:32 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-29 13:49 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
+// Mirrors PRIZE_LADDER in game.service.js. Kept here because the question
+// payload doesn't include it — without this the player can only see a rung's
+// value once they've reached it, which removes the whole point of a climb.
+const LADDER = {1:200,2:250,3:300,4:500,5:1000,6:2000,7:3000,8:5000,9:8000,
+                10:10000,11:20000,12:25000,13:30000,14:40000,15:50000};
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
     banked=0, seen={};
@@ -1358,6 +1444,19 @@ function ladder(n){
       +(CHECKPOINTS.includes(i)&&i<n?' locked':'');
     l.appendChild(d);
   }
+
+  // Desktop rail: the whole climb, so you can see what you're playing towards.
+  const r=$('rail'); if(!r) return;
+  r.innerHTML='';
+  for(let i=1;i<=15;i++){
+    const st=document.createElement('div');
+    st.className='step'+(i<n?' done':'')+(i===n?' now':'')+(CHECKPOINTS.includes(i)?' cp':'')
+      +(CHECKPOINTS.includes(i)&&i<n?' locked':'');
+    st.innerHTML='<span class="n"></span><span class="v"></span>';
+    st.querySelector('.n').textContent=i;
+    st.querySelector('.v').textContent=naira(LADDER[i]);
+    r.appendChild(st);
+  }
 }
 function paint(q){
   view('vGame'); answered=false; photoMode=false; clearInterval(tick); clearInterval(photoTick);
@@ -1389,7 +1488,7 @@ function paint(q){
   const box=$('qOpts'); box.innerHTML='';
   Object.entries(q.options).forEach(([k,v],i)=>{
     const b=document.createElement('button');
-    b.className='opt'; b.dataset.k=k; b.style.animationDelay=(i*55)+'ms';
+    b.className='opt'; b.dataset.k=k; b.style.animationDelay=(i*70)+'ms';  // dealt, not dumped
     b.innerHTML='<span class="k"></span><span class="v"></span>';
     b.querySelector('.k').textContent=k; b.querySelector('.v').textContent=v;
     b.onclick=()=>pick(k,b);
@@ -1402,39 +1501,55 @@ function paint(q){
   clock(q.expiresAt,q.timerSeconds);
 }
 function pick(k,btn){
-  if(answered)return; answered=true; sfx.tap();
+  if(answered)return; answered=true; sfx.lock();
   document.querySelectorAll('.opt').forEach(b=>{b.disabled=true;if(b===btn)b.classList.add('pick');});
   clearInterval(tick);
   go(k);
 }
 function reveal(r){
   clearInterval(tick); answered=true;
-  let correctText='';
-  document.querySelectorAll('.opt').forEach(b=>{
-    b.disabled=true;
-    if(b.dataset.k===r.correctAnswer){b.classList.add('right');correctText=b.querySelector('.v').textContent;}
-    else if(b.dataset.k===r.chosen)b.classList.add('wrong');
-  });
-  r.correct?sfx.right():sfx.wrong();
-  if(r.correct){
-    banked=r.prizeAmount||banked;
-    $('qBanked').textContent=naira(banked)+' banked';
-    if(r.isSafeCheckpoint){
-      const rungs=$('ladder').children;
-      if(rungs[r.questionNumber-1]){rungs[r.questionNumber-1].classList.add('locked');setTimeout(sfx.lock,180);}
+
+  // Hold the locked-in answer for a beat before revealing. The engine waits
+  // ~3 seconds before the next question, and that pause is where the whole
+  // format lives. Nothing that matters is delayed — the clock already stopped
+  // the moment they answered.
+  const hadPick = !!document.querySelector('.opt.pick');
+  document.querySelectorAll('.opt').forEach(b=>{ b.disabled=true; });
+
+  setTimeout(()=>{
+    let correctText='';
+    document.querySelectorAll('.opt').forEach(b=>{
+      b.classList.remove('pick');
+      if(b.dataset.k===r.correctAnswer){ b.classList.add('right'); correctText=b.querySelector('.v').textContent; }
+      else if(b.dataset.k===r.chosen) b.classList.add('wrong');
+    });
+
+    r.correct?sfx.right():sfx.wrong();
+
+    if(r.correct){
+      banked=r.prizeAmount||banked;
+      $('qBanked').textContent=naira(banked)+' banked';
+      if(r.isSafeCheckpoint){
+        const rungs=$('ladder').children;
+        if(rungs[r.questionNumber-1]) rungs[r.questionNumber-1].classList.add('locked');
+        const steps=$('rail').children;
+        if(steps[r.questionNumber-1]) steps[r.questionNumber-1].classList.add('locked');
+        setTimeout(sfx.lock,180);
+      }
     }
-  }
-  const v=$('verdict');
-  v.className='verdict on '+(r.correct?'good':'bad');
-  setTimeout(()=>{ try{ v.scrollIntoView({behavior:'smooth',block:'nearest'}); }catch(e){} },90);
-  v.innerHTML='<h3></h3><p></p>';
-  v.querySelector('h3').textContent=r.correct
-    ? (r.isSafeCheckpoint?`${naira(r.prizeAmount)} — locked in`:`Correct · ${naira(r.prizeAmount)}`)
-    : 'Not this time';
-  v.querySelector('p').textContent=`${r.correctAnswer}) ${correctText}`;
-  if(r.funFact){
-    const f=document.createElement('div'); f.className='fact'; f.textContent=r.funFact; v.appendChild(f);
-  }
+
+    const v=$('verdict');
+    v.className='verdict on '+(r.correct?'good':'bad');
+    v.innerHTML='<h3></h3><p></p>';
+    v.querySelector('h3').textContent=r.correct
+      ? (r.isSafeCheckpoint?`${naira(r.prizeAmount)} — locked in`:`Correct · ${naira(r.prizeAmount)}`)
+      : 'Not this time';
+    v.querySelector('p').textContent=`${r.correctAnswer}) ${correctText}`;
+    if(r.funFact){
+      const f=document.createElement('div'); f.className='fact'; f.textContent=r.funFact; v.appendChild(f);
+    }
+    setTimeout(()=>{ try{ v.scrollIntoView({behavior:'smooth',block:'nearest'}); }catch(e){} },90);
+  }, hadPick ? 750 : 120);
 }
 function clock(expiresAt,total){
   clearInterval(tick);
