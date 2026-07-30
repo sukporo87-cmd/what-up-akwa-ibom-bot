@@ -184,6 +184,20 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
+/* ---------- claim tile + stats ---------- */
+.claimTile{border-color:var(--mint)!important;
+           background:linear-gradient(150deg,rgba(53,211,154,.16),var(--slate))!important}
+.claimTile strong{color:var(--mint)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.cell{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:15px 16px}
+.cell .n{display:block;font-family:var(--display);font-weight:700;font-size:22px;
+         letter-spacing:-.02em;margin-bottom:3px}
+.cell .l{display:block;font-size:12px;color:var(--mute);text-transform:uppercase;
+         letter-spacing:.06em}
+.cell.wide{grid-column:1 / -1}
+.cell.gold .n{color:var(--brass)}
+.cell.mint .n{color:var(--mint)}
+
 /* ---------- victory card ---------- */
 .card{border:1.5px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:16px;
       background:var(--slate);min-height:120px;display:grid;place-items:center}
@@ -324,6 +338,17 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <span>Top up to play Classic</span>
     </button>
 
+    <!-- only rendered when there is actually money waiting -->
+    <button class="tile claimTile" id="tileClaim" onclick="claimPrize()" style="display:none">
+      <strong id="claimLabel">Claim your prize</strong>
+      <span id="claimSub">Waiting to be collected</span>
+    </button>
+
+    <button class="tile" onclick="openStats()">
+      <strong>Your stats</strong>
+      <span>Games, wins and streaks</span>
+    </button>
+
     <div class="stats">
       <div class="stat"><span class="fig" id="stStreak">0</span><span>streak</span></div>
       <div class="stat"><span class="fig" id="stBest">0</span><span>best</span></div>
@@ -378,6 +403,47 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <div class="rules" id="readyRules"></div>
     <p class="note" id="readyNote" style="text-align:center"></p>
     <button class="cta" id="startBtn" onclick="beginGame()">Start game</button>
+  </section>
+
+  <!-- ============ CHECKOUT (tournament entry etc) ============ -->
+  <section class="view" id="vPay">
+    <div class="bar">
+      <button class="back" onclick="cancelCheckout()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 16px">
+      <span class="fig" style="font-size:30px" id="payAmt">₦0</span>
+      <p id="paySub">Tournament entry</p>
+    </div>
+
+    <div class="grid2">
+      <div class="cell wide"><span class="n" id="payTitle" style="font-size:17px"></span>
+        <span class="l" id="payGateway"></span></div>
+    </div>
+
+    <p class="note" id="payNote"></p>
+    <button class="cta" id="payBtn" onclick="openCheckout()">Pay now</button>
+    <div class="msg" id="mPay" style="margin-top:10px"></div>
+  </section>
+
+  <!-- ============ STATS ============ -->
+  <section class="view" id="vStats">
+    <div class="bar">
+      <button class="back" onclick="view('vLobby');refresh()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 18px">
+      <span class="fig" style="font-size:30px">Your stats</span>
+      <p id="statsSub">Everything you've played on this account.</p>
+    </div>
+
+    <div class="spin" id="statsSpin">Loading…</div>
+    <div id="statsBody" style="display:none">
+      <div class="grid2" id="statsGrid"></div>
+    </div>
+    <div class="msg" id="mStats" style="margin-top:10px"></div>
   </section>
 
   <!-- ============ VICTORY CARD ============ -->
@@ -520,7 +586,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 07:12 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 08:48 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -701,6 +767,19 @@ async function refresh(){
     const d=await(await fetch('/web/game/state',{headers:H()})).json();
     if(!d.success)return;
     $('lobbyCredits').textContent=d.user.gamesRemaining??0;
+    $('stStreak').textContent=d.user.currentStreak??0;
+    $('stBest').textContent=d.user.longestStreak??0;
+
+    // An unclaimed prize gets its own tile. Nothing else in the lobby matters
+    // as much as money the player hasn't collected.
+    const t=$('tileClaim');
+    if(d.pendingWin && d.pendingWin.amount>0){
+      t.style.display='block';
+      $('claimLabel').textContent=`Claim ${naira(d.pendingWin.amount)}`;
+      $('claimSub').textContent = d.pendingWin.detailsGiven
+        ? `Details received · ref ${d.pendingWin.reference} · being processed`
+        : 'Tap to send your bank details';
+    } else { t.style.display='none'; }
 
     // Same state object the SSE event carries, so a cold load lands exactly
     // where a live stream would.
@@ -750,6 +829,11 @@ function stream(){
   es.addEventListener('photo.required',e=>{
     clearTimeout(textT); flushText();
     showPhoto(JSON.parse(e.data));
+  });
+
+  es.addEventListener('checkout.required',e=>{
+    clearTimeout(textT); flushText();
+    showCheckout(JSON.parse(e.data));
   });
 
   es.addEventListener('victory.card',e=>{
@@ -1065,6 +1149,7 @@ function relay(text){
   if(photoMode||$('vPhoto').classList.contains('on')) return;
   if(capMode||$('vCap').classList.contains('on')) return;
   if($('vCard').classList.contains('on')) return;
+  if($('vPay').classList.contains('on')) return;
 
   // A question is on screen. Nothing informational is worth burying it under a
   // modal — this is the backstop for any text that outruns game.state.
@@ -1126,6 +1211,110 @@ function relay(text){
 function info(text){
   const lines=text.replace(/\*/g,'').replace(/_/g,'').split('\n').filter(l=>l.trim());
   overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
+}
+
+/* ---------- stats ---------- */
+async function openStats(){
+  view('vStats');
+  $('mStats').textContent='';
+  $('statsSpin').style.display='block';
+  $('statsBody').style.display='none';
+  try{
+    const d=await(await fetch('/web/game/stats',{headers:H()})).json();
+    $('statsSpin').style.display='none';
+    if(!d.success){ $('mStats').textContent=d.error||'Could not load your stats'; return; }
+
+    const s=d.stats, w=s.winnings||{};
+    const cells=[
+      {n:s.gamesPlayed,               l:'games played'},
+      {n:s.gamesWon,                  l:'games won'},
+      {n:s.currentStreak,             l:'current streak'},
+      {n:s.longestStreak,             l:'best streak'},
+      {n:naira(s.highestWin),         l:'biggest single win', c:'gold'},
+      {n:'Q'+(s.highestQuestion||0),  l:'furthest reached'},
+      {n:naira(w.total||0),           l:'won in total',   c:'gold', wide:true},
+      {n:naira(w.pending||0),         l:'awaiting payout',c:'mint', wide:true}
+    ];
+    if(s.rank) cells.push({n:'#'+s.rank, l:'leaderboard rank', wide:true});
+
+    const box=$('statsGrid'); box.innerHTML='';
+    cells.forEach(c=>{
+      const d2=document.createElement('div');
+      d2.className='cell'+(c.c?' '+c.c:'')+(c.wide?' wide':'');
+      d2.innerHTML='<span class="n"></span><span class="l"></span>';
+      d2.querySelector('.n').textContent=c.n;
+      d2.querySelector('.l').textContent=c.l;
+      box.appendChild(d2);
+    });
+    $('statsBody').style.display='block';
+    $('statsSub').textContent = s.gamesPlayed
+      ? `${s.gamesPlayed} game${s.gamesPlayed===1?'':'s'} on this account.`
+      : "You haven't finished a game yet — play one and this fills up.";
+  }catch(e){
+    $('statsSpin').style.display='none';
+    $('mStats').textContent='Could not reach the server';
+  }
+}
+
+/* ---------- checkout (tournament entry) ----------
+   The gateway URL arrives over SSE, which is not a user gesture — window.open
+   from there gets eaten by the popup blocker. So this is a confirm screen, and
+   the tab opens from the player's own tap. */
+let payData=null;
+function showCheckout(c){
+  payData=c;
+  $('payAmt').textContent=naira(c.amount||0);
+  $('paySub').textContent=c.subtitle||'Payment';
+  $('payTitle').textContent=c.title||'';
+  $('payGateway').textContent='via '+(c.gatewayLabel||c.gateway||'card');
+  $('payNote').textContent=(c.note||'')
+    +(c.expiresInMinutes?` This link expires in ${c.expiresInMinutes} minutes.`:'');
+  $('payBtn').disabled=false;
+  $('payBtn').textContent='Pay '+naira(c.amount||0);
+  $('mPay').textContent='';
+  view('vPay');
+}
+
+function openCheckout(){
+  if(!payData||!payData.authorizationUrl)return;
+  // Opened inside the tap, so it survives the popup blocker.
+  const win=window.open(payData.authorizationUrl,'_blank');
+  $('mPay').style.color='var(--mute)';
+  if(!win){
+    // Blocked anyway — navigate this tab as a last resort.
+    location.href=payData.authorizationUrl;
+    return;
+  }
+  $('payBtn').disabled=true;
+  $('payBtn').textContent='Waiting for payment…';
+  $('mPay').textContent='Finish in the other tab. This page updates on its own.';
+  watchEntry(payData.reference,win);
+}
+
+function watchEntry(reference,win){
+  clearInterval(payPoll);
+  let n=0;
+  payPoll=setInterval(async()=>{
+    if(++n>100){ clearInterval(payPoll); return; }
+    try{
+      const d=await(await fetch('/web/payment/tournament-status/'+encodeURIComponent(reference),
+        {headers:H()})).json();
+      if(d.success&&d.status==='success'){
+        clearInterval(payPoll);
+        try{ if(win&&!win.closed) win.close(); }catch(e){}
+        sfx.lock();
+        overlay('','You\'re in',
+          `${d.tournamentName||'The tournament'} entry confirmed`
+          +(d.joined?'.':' — you\'ll appear on the board shortly.'),
+          'Back to menu',()=>{ closeOver(); });
+      }
+    }catch(e){}
+  },3000);
+}
+
+function cancelCheckout(){
+  clearInterval(payPoll); payData=null;
+  view('vLobby'); refresh();
 }
 
 /* ---------- victory card ----------

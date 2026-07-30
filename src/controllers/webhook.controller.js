@@ -1482,8 +1482,39 @@ Type the code, or type SKIP to continue:`
     msg += `Payment Reference: ${payment.reference}\n\n`;
     msg += `⚠️ Link expires in 30 minutes\n\n`;
     msg += `After payment, you'll be automatically added to the tournament!`;
-    
-    await messagingService.sendMessage(user.phone_number, msg);
+
+    // ============================================
+    // WEB: a bare URL in a text bubble is not a checkout.
+    //
+    // Note this deliberately does NOT auto-open a tab. The URL arrives over
+    // SSE, which is not a user gesture, so window.open would be swallowed by
+    // the popup blocker. The client shows a confirm screen instead and opens
+    // the tab from the player's own tap — which is better anyway, since they
+    // get to see what they're paying for.
+    // ============================================
+    const isWebPlayer = !!(user.phone_number && user.phone_number.startsWith('web_'));
+
+    if (isWebPlayer) {
+        try {
+            const gameEvents = require('../services/game-events.service');
+            gameEvents.emit(user.id, 'checkout.required', {
+                kind: 'tournament',
+                title: stateData.tournamentName,
+                subtitle: 'Tournament entry',
+                amount: Number(stateData.entryFee) || 0,
+                gateway: payment.gateway,
+                gatewayLabel: payment.gateway.charAt(0).toUpperCase() + payment.gateway.slice(1),
+                authorizationUrl: payment.authorization_url,
+                reference: payment.reference,
+                expiresInMinutes: 30,
+                note: "You'll be added to the tournament automatically once payment clears."
+            });
+        } catch (evtErr) {
+            logger.error(`Could not emit checkout.required: ${evtErr && evtErr.message}`);
+        }
+    }
+
+    await messagingService.sendMessage(user.phone_number, msg, { webRedundant: isWebPlayer });
   }
 
   /**

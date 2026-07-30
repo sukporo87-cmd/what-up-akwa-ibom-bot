@@ -343,4 +343,63 @@ router.get('/history', requireWebAuth, async (req, res) => {
     }
 });
 
+// ============================================
+// TOURNAMENT ENTRY STATUS
+// Tournament payments live in tournament_entry_payments keyed by
+// payment_reference, not in payment_transactions — so /status/:reference
+// cannot see them. Read-only: the tournament webhook is what settles entry,
+// and polling must never be able to condemn a payment in flight.
+// ============================================
+
+router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => {
+    try {
+        const reference = String(req.params.reference || '').trim();
+        if (!reference) {
+            return res.status(400).json({ success: false, error: 'No reference given' });
+        }
+
+        const r = await pool.query(
+            `SELECT tep.*, t.name AS tournament_name
+             FROM tournament_entry_payments tep
+             LEFT JOIN tournaments t ON t.id = tep.tournament_id
+             WHERE tep.payment_reference = $1`,
+            [reference]
+        );
+        const row = r.rows[0];
+
+        // 404 rather than 403 on someone else's reference.
+        if (!row || row.user_id !== req.webUser.id) {
+            return res.status(404).json({ success: false, error: 'Entry not found' });
+        }
+
+        const paid = String(row.status || '').toLowerCase() === 'success'
+                  || String(row.status || '').toLowerCase() === 'paid';
+
+        // Confirm they actually landed in the tournament, not just that money moved.
+        let joined = false;
+        try {
+            const p = await pool.query(
+                `SELECT 1 FROM tournament_participants
+                 WHERE tournament_id = $1 AND user_id = $2 LIMIT 1`,
+                [row.tournament_id, req.webUser.id]
+            );
+            joined = p.rows.length > 0;
+        } catch (e) { /* non-fatal */ }
+
+        res.json({
+            success: true,
+            status: paid ? 'success' : 'processing',
+            raw: row.status || null,
+            joined,
+            tournamentId: row.tournament_id,
+            tournamentName: row.tournament_name || null,
+            amount: Number(row.amount || 0),
+            reference
+        });
+    } catch (error) {
+        logger.error('Web tournament status error:', error);
+        res.status(500).json({ success: false, error: 'Could not check that entry' });
+    }
+});
+
 module.exports = router;

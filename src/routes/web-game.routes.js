@@ -132,10 +132,30 @@ router.get('/state', requireWebAuth, async (req, res) => {
         // stream can never disagree about what the engine wants.
         const state = await gameState.derive(user);
 
+        // An unclaimed prize is the single most important thing the lobby can
+        // tell someone, and there was no way to reach it from web at all.
+        let pendingWin = null;
+        try {
+            const payoutService = require('../services/payout.service');
+            const txn = await payoutService.getPendingTransaction(user.id);
+            if (txn && Number(txn.amount) > 0) {
+                const details = await payoutService.getPayoutDetails(txn.id);
+                pendingWin = {
+                    amount: Number(txn.amount),
+                    reference: `WUA-${String(txn.id).padStart(4, '0')}`,
+                    detailsGiven: !!details,
+                    status: txn.payout_status || 'pending'
+                };
+            }
+        } catch (e) {
+            logger.error(`Could not read pending payout: ${e && e.message}`);
+        }
+
         res.json({
             success: true,
             user: webAuthService.publicUser({ ...user, ...stats }),
             streaming: gameEvents.isConnected(user.id),
+            pendingWin,
             state,
             awaitingStart: state.phase === 'awaiting_start',   // kept for compatibility
             game: session ? {
@@ -278,6 +298,70 @@ router.get('/victory-card', requireWebAuth, async (req, res) => {
     } catch (error) {
         logger.error('Web victory card error:', error);
         res.status(500).json({ success: false, error: 'Could not load that card' });
+    }
+});
+
+// ============================================
+// STATS
+// Web players had no way to see anything about their own play. Uses the same
+// userService.getUserStats the chat STATS command uses, so the numbers can't
+// disagree between platforms.
+// ============================================
+
+router.get('/stats', requireWebAuth, async (req, res) => {
+    try {
+        const UserService = require('../services/user.service');
+        const userService = new UserService();
+        const raw = await userService.getUserStats(req.webUser.id);
+
+        // Winnings live in transactions, not on the users row.
+        let won = { total: 0, paid: 0, pending: 0, wins: 0 };
+        try {
+            const w = await pool.query(`
+                SELECT
+                  COALESCE(SUM(amount), 0) AS total,
+                  COALESCE(SUM(CASE WHEN payout_status = 'paid' THEN amount ELSE 0 END), 0) AS paid,
+                  COALESCE(SUM(CASE WHEN payout_status IS NULL
+                                     OR payout_status IN ('pending','details_collected','approved')
+                                    THEN amount ELSE 0 END), 0) AS pending,
+                  COUNT(*) AS wins
+                FROM transactions
+                WHERE user_id = $1
+                  AND transaction_type IN ('prize', 'tournament_prize')
+                  AND amount > 0
+            `, [req.webUser.id]);
+            const r = w.rows[0] || {};
+            // Postgres returns these as strings — Number() or the UI shows "0"
+            // concatenated onto things.
+            won = {
+                total: Number(r.total || 0),
+                paid: Number(r.paid || 0),
+                pending: Number(r.pending || 0),
+                wins: parseInt(r.wins || 0, 10)
+            };
+        } catch (e) {
+            logger.error(`Could not total winnings: ${e && e.message}`);
+        }
+
+        res.json({
+            success: true,
+            stats: {
+                gamesPlayed: raw?.totalGamesPlayed ?? 0,
+                gamesWon: raw?.gamesWon ?? 0,
+                winRate: raw?.winRate ?? 0,
+                highestWin: raw?.highestWin ?? 0,
+                highestQuestion: raw?.highestQuestionReached ?? 0,
+                rank: raw?.rank ?? null,
+                currentStreak: req.webUser.current_streak ?? 0,
+                longestStreak: req.webUser.longest_streak ?? 0,
+                gamesRemaining: req.webUser.games_remaining ?? 0,
+                joined: raw?.joinedDate ?? req.webUser.created_at,
+                winnings: won
+            }
+        });
+    } catch (error) {
+        logger.error('Web stats error:', error);
+        res.status(500).json({ success: false, error: 'Could not load your stats' });
     }
 });
 

@@ -711,6 +711,11 @@ class WebAuthService {
             referralCode: user.referral_code,
             gamesRemaining: user.games_remaining ?? 0,
             totalGamesPurchased: user.total_games_purchased ?? 0,
+            // /web/game/state queries these and spread them in — but the
+            // whitelist below dropped them on the floor, which is why the
+            // lobby showed 0 streak and 0 best for every player, always.
+            currentStreak: user.current_streak ?? 0,
+            longestStreak: user.longest_streak ?? 0,
             profileComplete: user.profile_complete !== false,
             authProvider: user.auth_provider,
             createdAt: user.created_at
