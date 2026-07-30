@@ -196,7 +196,9 @@ class TournamentService {
             const initResult = await gateway.initialize({
                 reference,
                 amount: tournament.entry_fee,
-                email: `${user.phone_number}@whatsuptrivia.com`,
+                // Web players have a real address; a web_xxx@ synthetic one is
+                // a black hole for the gateway's receipt.
+                email: user.email || `${user.phone_number}@whatsuptrivia.com`,
                 callbackUrl: `${process.env.APP_URL}/payment/tournament-callback`,
                 customerName: user.full_name,
                 metadata: {

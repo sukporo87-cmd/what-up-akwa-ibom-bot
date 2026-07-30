@@ -373,8 +373,10 @@ router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => 
             return res.status(404).json({ success: false, error: 'Entry not found' });
         }
 
-        const paid = String(row.status || '').toLowerCase() === 'success'
-                  || String(row.status || '').toLowerCase() === 'paid';
+        // Column is payment_status. Reading row.status gave undefined, so this
+        // could never report success no matter how the payment went.
+        const st = String(row.payment_status || '').toLowerCase();
+        const paid = st === 'success' || st === 'paid';
 
         // Confirm they actually landed in the tournament, not just that money moved.
         let joined = false;
@@ -396,7 +398,7 @@ router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => 
         res.json({
             success: true,
             status: paid ? 'success' : 'processing',
-            raw: row.status || null,
+            raw: row.payment_status || null,
             joined,
             tournamentId: row.tournament_id,
             tournamentName: row.tournament_name || null,
@@ -406,6 +408,132 @@ router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => 
     } catch (error) {
         logger.error('Web tournament status error:', error);
         res.status(500).json({ success: false, error: 'Could not check that entry' });
+    }
+});
+
+// ============================================
+// TOURNAMENTS — list and enter
+//
+// Same money, different thing bought. Sits under the credit packages on the
+// top-up screen rather than behind a chat menu, which is where it was
+// effectively invisible to web players.
+// ============================================
+
+router.get('/tournaments', requireWebAuth, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT
+                t.id, t.tournament_name, t.entry_fee, t.prize_pool, t.payment_type,
+                t.start_date, t.end_date, t.max_participants,
+                COUNT(DISTINCT tp.user_id) AS participant_count,
+                BOOL_OR(tp.user_id = $1) AS joined,
+                BOOL_OR(tep.user_id = $1 AND tep.payment_status = 'success') AS paid
+            FROM tournaments t
+            LEFT JOIN tournament_participants tp ON tp.tournament_id = t.id
+            LEFT JOIN tournament_entry_payments tep ON tep.tournament_id = t.id
+            WHERE t.status = 'active' AND t.end_date > NOW()
+            GROUP BY t.id
+            ORDER BY (t.start_date <= NOW()) DESC, t.prize_pool DESC
+        `, [req.webUser.id]);
+
+        const gateways = await gatewayManager.getEnabledGatewaysForPicker();
+
+        res.json({
+            success: true,
+            tournaments: r.rows.map(t => ({
+                id: t.id,
+                name: t.tournament_name,
+                entryFee: Number(t.entry_fee) || 0,
+                prizePool: Number(t.prize_pool) || 0,
+                isFree: t.payment_type === 'free' || Number(t.entry_fee) === 0,
+                participants: parseInt(t.participant_count, 10) || 0,   // COUNT returns a string
+                maxParticipants: t.max_participants || null,
+                startsAt: t.start_date,
+                endsAt: t.end_date,
+                started: new Date(t.start_date) <= new Date(),
+                joined: t.joined === true,
+                paid: t.paid === true
+            })),
+            gateways: gateways.map((g, i) => ({
+                name: g.getName(),
+                displayName: g.getDisplayName(),
+                isDefault: i === 0
+            }))
+        });
+    } catch (error) {
+        logger.error('Web tournaments list error:', error);
+        res.status(500).json({ success: false, error: 'Could not load tournaments' });
+    }
+});
+
+router.post('/tournament/initialize', requireWebAuth, requireCompleteProfile, async (req, res) => {
+    try {
+        const tournamentId = parseInt(req.body?.tournamentId, 10);
+        if (!Number.isInteger(tournamentId)) {
+            return res.status(400).json({ success: false, error: 'Pick a tournament first' });
+        }
+
+        const tournamentService = require('../services/tournament.service');
+        const tournament = await tournamentService.getTournamentById(tournamentId);
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'That tournament is no longer available' });
+        }
+
+        // Free tournaments never touch a gateway.
+        if (tournament.payment_type !== 'paid' || Number(tournament.entry_fee) === 0) {
+            const joined = await tournamentService.joinFreeTournament(req.webUser.id, tournamentId);
+            return res.json({
+                success: true, free: true, joined: !!joined,
+                tournamentName: tournament.tournament_name
+            });
+        }
+
+        const enabled = await gatewayManager.getEnabledGatewaysForPicker();
+        if (enabled.length === 0) {
+            return res.status(503).json({ success: false, error: 'No payment processors available right now' });
+        }
+
+        const requested = (req.body?.gateway || '').toString().trim().toLowerCase();
+        const match = enabled.find(g => g.getName() === requested);
+        if (requested && !match) {
+            return res.status(400).json({ success: false, error: 'That payment option is not available' });
+        }
+        const gatewayName = (match || enabled[0]).getName();
+
+        const payment = await tournamentService.initializeTournamentPayment(
+            req.webUser.id, tournamentId, gatewayName
+        );
+
+        const checkout = {
+            kind: 'tournament',
+            title: tournament.tournament_name,
+            subtitle: 'Tournament entry',
+            amount: Number(tournament.entry_fee) || 0,
+            gateway: gatewayName,
+            gatewayLabel: gatewayName.charAt(0).toUpperCase() + gatewayName.slice(1),
+            authorizationUrl: payment.authorization_url,
+            reference: payment.reference,
+            expiresInMinutes: 30,
+            note: "You'll be added to the tournament automatically once payment clears."
+        };
+
+        // Same recovery record the chat-initiated flow writes, so a lost tab or
+        // a dropped stream doesn't strand a paid entry.
+        await redis.setex(`pending_checkout:${req.webUser.id}`, 1800, JSON.stringify(checkout));
+
+        res.json({ success: true, checkout });
+
+    } catch (error) {
+        const msg = String(error && error.message || '');
+        // These are expected states, not failures — say so plainly.
+        if (/already paid/i.test(msg)) {
+            return res.status(409).json({ success: false, error: "You've already paid for this tournament" });
+        }
+        if (/free tournament/i.test(msg)) {
+            return res.status(400).json({ success: false, error: 'That tournament is free to enter' });
+        }
+        logger.error('Web tournament initialize error:', error);
+        res.status(500).json({ success: false, error: 'Could not start that entry' });
     }
 });
 

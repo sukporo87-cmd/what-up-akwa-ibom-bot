@@ -184,6 +184,24 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
+/* ---------- top-up: two things for sale, clearly separated ---------- */
+.rule{display:flex;align-items:center;gap:12px;margin:26px 0 16px}
+.rule::before,.rule::after{content:'';flex:1;height:1px;background:var(--line)}
+.rule span{font-size:11.5px;color:var(--mute);text-transform:uppercase;letter-spacing:.1em;
+           white-space:nowrap}
+.trn{width:100%;text-align:left;padding:16px 17px;border-radius:15px;background:var(--slate);
+     border:1.5px solid transparent;margin-bottom:10px;transition:border-color .18s}
+.trn:hover:not(:disabled){border-color:var(--brass)}
+.trn:disabled{opacity:.55}
+.trn .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.trn .nm{font-family:var(--display);font-size:15.5px;font-weight:600}
+.trn .fee{font-family:var(--display);font-weight:700;color:var(--brass);white-space:nowrap}
+.trn .fee.free{color:var(--mint)}
+.trn .meta{font-size:12.5px;color:var(--mute);line-height:1.5}
+.trn .in{display:inline-block;margin-top:7px;padding:3px 9px;border-radius:7px;
+         background:rgba(53,211,154,.16);color:var(--mint);font-size:11px;font-weight:600;
+         letter-spacing:.04em;text-transform:uppercase}
+
 /* ---------- claim tile + stats ---------- */
 .who{background:var(--slate);border:1px solid var(--line);border-radius:14px;
      padding:16px 17px;margin-bottom:10px}
@@ -340,8 +358,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <span>Compete for the weekly prize pool</span>
     </button>
     <button class="tile" onclick="openBuy()">
-      <strong>Buy credits</strong>
-      <span>Top up to play Classic</span>
+      <strong>Top up</strong>
+      <span>Credits and tournament entries</span>
     </button>
 
     <!-- only rendered when there is actually money waiting -->
@@ -371,8 +389,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="hero" style="padding:20px 0 18px">
-      <span class="fig" style="font-size:30px">Buy credits</span>
-      <p>One credit is one game of Classic. Practice stays free.</p>
+      <span class="fig" style="font-size:30px">Top up</span>
+      <p>Credits for Classic, or an entry into a tournament.</p>
     </div>
 
     <!-- step 1: package -->
@@ -389,6 +407,15 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="msg" id="mBuy" style="margin-top:10px"></div>
+
+    <!-- second thing for sale: entries, not credits -->
+    <div id="sTrn" style="display:none">
+      <div class="rule"><span>Tournament entry</span></div>
+      <p class="note">Entry fees go into the prize pool. Credits aren't used —
+        tournaments are played on their own tokens.</p>
+      <div id="trnList"></div>
+      <div class="msg" id="mTrn"></div>
+    </div>
   </section>
 
   <!-- ============ READY (engine waits for START) ============ -->
@@ -593,7 +620,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 12:37 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 13:52 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -1809,6 +1836,7 @@ async function openBuy(){
     if(!d.paymentEnabled){
       $('packList').innerHTML='<p class="note">Games are free at the moment — no credits needed. '
         +'Head back and hit Play Classic.</p>';
+      loadTournaments();
       return;
     }
     if(!d.gateways.length){
@@ -1819,6 +1847,7 @@ async function openBuy(){
 
     packs=d.packages; gates=d.gateways;
     $('lobbyCredits').textContent=d.gamesRemaining;
+    loadTournaments();
 
     packs.forEach(p=>{
       const b=document.createElement('button');
@@ -1837,9 +1866,123 @@ async function openBuy(){
     $('mBuy').textContent='Could not reach the server';
   }
 }
-function backToPacks(){
+/* ---------- tournaments on the top-up screen ---------- */
+let trns=[], chosenTrn=null;
+
+async function loadTournaments(){
+  try{
+    const d=await(await fetch('/web/payment/tournaments',{headers:H()})).json();
+    if(!d.success || !d.tournaments || !d.tournaments.length){ $('sTrn').style.display='none'; return; }
+
+    trns=d.tournaments;
+    if(d.gateways && d.gateways.length) gates=d.gateways;
+
+    const box=$('trnList'); box.innerHTML='';
+    trns.forEach(t=>{
+      const b=document.createElement('button');
+      b.className='trn';
+      b.innerHTML='<span class="top"><span class="nm"></span><span class="fee"></span></span>'
+                 +'<span class="meta"></span>';
+      b.querySelector('.nm').textContent=t.name;
+
+      const fee=b.querySelector('.fee');
+      fee.textContent=t.isFree?'Free':naira(t.entryFee);
+      if(t.isFree) fee.classList.add('free');
+
+      const bits=[];
+      if(t.prizePool)  bits.push(naira(t.prizePool)+' prize pool');
+      bits.push(t.participants+' entered');
+      if(!t.started && t.startsAt){
+        bits.push('starts '+new Date(t.startsAt).toLocaleDateString(undefined,
+          {weekday:'short',day:'numeric',month:'short'}));
+      }
+      b.querySelector('.meta').textContent=bits.join(' · ');
+
+      // Already in? Say so and don't let them pay twice.
+      if(t.joined||t.paid){
+        const tag=document.createElement('span');
+        tag.className='in'; tag.textContent="You're in";
+        b.appendChild(tag);
+        b.disabled=true;
+      } else {
+        b.onclick=()=>pickTournament(t);
+      }
+      box.appendChild(b);
+    });
+    $('sTrn').style.display='block';
+  }catch(e){ $('sTrn').style.display='none'; }
+}
+
+function pickTournament(t){
+  sfx.tap(); chosenTrn=t; $('mTrn').textContent='';
+
+  // Free entries need no gateway, but still get a confirm — an entry is a
+  // commitment even when it costs nothing.
+  if(t.isFree){
+    overlay('Free',t.name,
+      `Enter this tournament? ${t.prizePool?naira(t.prizePool)+' prize pool. ':''}`
+      +`Tournaments are played on their own tokens, so your credits aren't touched.`,
+      'Enter',()=>{ closeOver(); startEntry(null); });
+    return;
+  }
+
+  if(gates.length===1){ confirmEntry(t,gates[0]); return; }
+
+  // Reuse the gateway picker rather than growing a second one.
   chosenPack=null;
+  $('gateNote').textContent=`${t.name} — ${naira(t.entryFee)} entry. How would you like to pay?`;
+  const box=$('gateList'); box.innerHTML='';
+  gates.forEach(g=>{
+    const b=document.createElement('button');
+    b.className='pack';
+    b.innerHTML='<span class="who"><strong></strong><span>Card, bank transfer or USSD</span></span>';
+    b.querySelector('strong').textContent='Pay with '+g.displayName;
+    b.onclick=()=>confirmEntry(t,g);
+    box.appendChild(b);
+  });
+  $('sPacks').style.display='none'; $('sTrn').style.display='none'; $('sGates').style.display='block';
+}
+
+function confirmEntry(t,g){
+  overlay(naira(t.entryFee),t.name,
+    `Entry fee ${naira(t.entryFee)} via ${g.displayName}.`
+    +(t.prizePool?` Prize pool ${naira(t.prizePool)}.`:'')
+    +` Entry fees are not refundable once paid.`,
+    'Continue to payment',()=>{ closeOver(); startEntry(g.name); });
+}
+
+async function startEntry(gateway){
+  if(!chosenTrn)return;
+  $('mTrn').style.color='var(--mute)';
+  $('mTrn').textContent='Setting up your entry…';
+  try{
+    const d=await(await fetch('/web/payment/tournament/initialize',{method:'POST',headers:H(),
+      body:JSON.stringify({tournamentId:chosenTrn.id,gateway})})).json();
+
+    if(!d.success){
+      $('mTrn').style.color='var(--ember)';
+      $('mTrn').textContent=d.error||'Could not start that entry';
+      backToPacks(); loadTournaments();
+      return;
+    }
+    if(d.free){
+      sfx.lock();
+      overlay('','You\'re in',`${d.tournamentName} — entry confirmed.`,
+        'Back to menu',()=>{ closeOver(); });
+      return;
+    }
+    // Straight to the same confirm screen the chat flow uses.
+    showCheckout(d.checkout);
+  }catch(e){
+    $('mTrn').style.color='var(--ember)';
+    $('mTrn').textContent='Could not reach the server';
+  }
+}
+
+function backToPacks(){
+  chosenPack=null; chosenTrn=null;
   $('sPacks').style.display='block'; $('sGates').style.display='none';
+  if(trns.length) $('sTrn').style.display='block';
   $('mBuy').textContent='';
 }
 function pickPack(p){
