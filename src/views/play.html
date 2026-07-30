@@ -593,7 +593,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 11:25 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 11:43 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -1175,6 +1175,17 @@ function relay(text){
 
   // We already know which mode they tapped — answer the menu for them rather
   // than showing a chooser they have effectively already used.
+  // "Reply SHARE or 4" is meaningless on web. This can arrive in any phase —
+  // tapping Claim from the lobby hits it with no post_game marker at all.
+  if(t.includes('VICTORY CARD REQUIRED')||
+     (t.includes('VICTORY CARD')&&t.includes('SHARE'))){
+    const won=/\u20a6\s*([\d,]+)/.exec(text);
+    overlay(won?'\u20a6'+won[1]:'','One step first',
+      'Your prize is waiting. Generate your victory card and you can claim straight after.',
+      'Get my card',()=>{ closeOver(); requestCard(); });
+    return;
+  }
+
   if(pendingMode && (t.includes('SELECT GAME MODE') || t.includes('REPLY WITH 1, 2, OR 3'))){
     const m=pendingMode; pendingMode=null; go(m); return;
   }
@@ -1187,7 +1198,11 @@ function relay(text){
     $('verdict').className='verdict'; return;
   }
 
-  if(t.includes('GAME OVER')||t.includes('CONGRATULATIONS')||t.includes("TIME'S UP")){
+  // Excludes the victory-card gate explicitly: that message opens with
+  // "Congratulations on winning ₦1,000" and was being read as a game ending,
+  // which is how it kept rendering as a dead result card.
+  if((t.includes('GAME OVER')||t.includes('CONGRATULATIONS')||t.includes("TIME'S UP"))
+     && !t.includes('VICTORY CARD')){
     // game.over already handled this properly — don't show it twice.
     if(Date.now()-lastOver < 8000) return;
     gameOver(text); return;
@@ -1201,17 +1216,6 @@ function relay(text){
       'Buy credits',openBuy);
     return;
   }
-  // "Reply SHARE or 4" is meaningless on web. This can arrive in any phase —
-  // tapping Claim from the lobby hits it with no post_game marker at all.
-  if(t.includes('VICTORY CARD REQUIRED')||
-     (t.includes('VICTORY CARD')&&t.includes('SHARE'))){
-    const won=/\u20a6\s*([\d,]+)/.exec(text);
-    overlay(won?'\u20a6'+won[1]:'','One step first',
-      'Your prize is waiting. Generate your victory card and you can claim straight after.',
-      'Get my card',()=>{ closeOver(); go('SHARE'); });
-    return;
-  }
-
   if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
     // The chat buy flow leaked through — web has its own screen for this.
     openBuy(); return;
@@ -1224,7 +1228,10 @@ function relay(text){
   }
 
   // Anything that wants a reply becomes clickable.
-  if(parseOpts(text).length>=2 || /REPLY WITH|PLEASE REPLY|ENTER YOUR|SEND YOUR|WHICH ONE/.test(t)){
+  // Broadened deliberately. Any message that tells the player to reply gets a
+  // way to reply — the old list of exact phrases meant "Reply SHARE or 4" fell
+  // through to a read-only dialog and dead-ended the whole payout.
+  if(parseOpts(text).length>=2 || /\bREPLY\b|\bTYPE\b|ENTER YOUR|SEND YOUR|WHICH ONE/.test(t)){
     ask(text); return;
   }
 
@@ -1405,6 +1412,22 @@ async function cancelCheckout(){
   view('vLobby'); refresh();
 }
 
+/* Ask for the card, and don't leave the player staring at nothing if the
+   server fails to draw one — generation runs canvas-side and can fall over. */
+let cardWait=null;
+function requestCard(){
+  clearTimeout(cardWait);
+  go('SHARE');
+  cardWait=setTimeout(()=>{
+    if($('vCard').classList.contains('on')) return;      // it arrived, all good
+    overlay('','Card is taking a while',
+      "We couldn't produce your victory card just now. Your ₦ is safe and still "
+      +"yours — try once more, and if it keeps failing contact support with your "
+      +"username and we'll release it manually.",
+      'Try again',()=>{ closeOver(); requestCard(); });
+  },15000);
+}
+
 /* ---------- victory card ----------
    The card gates the payout: the engine will not let anyone claim until it
    has been shared. On WhatsApp "shared" means the image was sent and the
@@ -1414,6 +1437,7 @@ async function cancelCheckout(){
 let cardBlob=null, cardData=null;
 
 async function showCard(c){
+  clearTimeout(cardWait);
   cardData=c; cardBlob=null;
   $('cardAmt').textContent = c.isTournament ? 'Nice run' : naira(c.amount||0);
   $('cardSub').textContent = c.isTournament
