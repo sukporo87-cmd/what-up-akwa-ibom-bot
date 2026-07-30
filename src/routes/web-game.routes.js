@@ -152,27 +152,38 @@ router.get('/state', requireWebAuth, async (req, res) => {
         const state = await gameState.derive(user);
         rememberOrigin(req, user.id);
 
-        // An unclaimed prize is the single most important thing the lobby can
-        // tell someone, and there was no way to reach it from web at all.
+        // Anything about the player's money that still needs them.
+        //
+        // Deliberately NOT payoutService.getPendingTransaction: that excludes
+        // 'paid', because for the claim flow a paid prize is finished. Here it
+        // isn't — a paid prize still needs the player to confirm it arrived,
+        // which is the step WhatsApp does with "reply RECEIVED". Using the
+        // claim query meant the tile vanished the moment you were paid.
         let pendingWin = null;
         try {
-            // payout.service exports a CLASS, not an instance — same trap that
-            // silently killed every game.state emit. This one silently meant
-            // pendingWin was always null, so the claim tile never appeared.
-            const PayoutService = require('../services/payout.service');
-            const payoutService = new PayoutService();
-            const txn = await payoutService.getPendingTransaction(user.id);
+            const r = await pool.query(`
+                SELECT t.id, t.amount, t.payout_status, t.paid_at, t.confirmed_at,
+                       (pd.id IS NOT NULL) AS details_given
+                FROM transactions t
+                LEFT JOIN payout_details pd ON pd.transaction_id = t.id
+                WHERE t.user_id = $1
+                  AND t.transaction_type IN ('prize', 'tournament_prize')
+                  AND t.amount > 0
+                  AND t.confirmed_at IS NULL
+                  AND (t.payout_status IS NULL
+                       OR t.payout_status IN ('pending', 'details_collected', 'approved', 'paid'))
+                ORDER BY t.created_at DESC
+                LIMIT 1
+            `, [user.id]);
+
+            const txn = r.rows[0];
             if (txn && Number(txn.amount) > 0) {
-                const details = await payoutService.getPayoutDetails(txn.id);
                 const status = txn.payout_status || 'pending';
                 pendingWin = {
                     amount: Number(txn.amount),
                     reference: `WUA-${String(txn.id).padStart(4, '0')}`,
-                    detailsGiven: !!details,
+                    detailsGiven: txn.details_given === true,
                     status,
-                    // 'paid' means we've sent it and are waiting for the player
-                    // to confirm it arrived — the step WhatsApp does with
-                    // "reply RECEIVED", which web had no way to answer.
                     awaitingReceipt: status === 'paid',
                     paidAt: txn.paid_at || null
                 };

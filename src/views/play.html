@@ -593,7 +593,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 12:06 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 12:37 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -1241,6 +1241,22 @@ function relay(text){
       'Buy credits',openBuy);
     return;
   }
+  if(t.includes('PAYMENT SENT')){
+    const amt=/\u20a6\s*([\d,]+)/.exec(text);
+    const ref=/Reference:\s*(\S+)/i.exec(text);
+    const body=text.replace(/[*_]/g,'')
+      .split('\n')
+      .filter(l=>!/^open the game|^reply /i.test(l.trim()))   // no longer true here
+      .join('\n').replace(/\n{3,}/g,'\n\n').trim();
+    overlay(amt?'\u20a6'+amt[1]:'','Payment sent',body,
+      'Confirm it arrived',()=>{
+        sfx.lock(); go('RECEIVED');
+        overlay('','Thank you','Payment confirmed. Keep playing to win more.',
+          'Back to menu',()=>{ closeOver(); });
+      });
+    return;
+  }
+
   if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
     // The chat buy flow leaked through — web has its own screen for this.
     openBuy(); return;
