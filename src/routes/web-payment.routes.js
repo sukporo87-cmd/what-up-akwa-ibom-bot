@@ -20,6 +20,7 @@ const { requireWebAuth, requireCompleteProfile } = webAuthRoutes;
 const PaymentService = require('../services/payment.service');
 const gatewayManager = require('../services/payment-gateway-manager');
 const pool = require('../config/database');
+const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 
 const paymentService = new PaymentService();
@@ -385,6 +386,12 @@ router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => 
             );
             joined = p.rows.length > 0;
         } catch (e) { /* non-fatal */ }
+
+        // Entry confirmed — clear the recovery record so the checkout screen
+        // stops reappearing on refresh.
+        if (paid) {
+            try { await redis.del(`pending_checkout:${req.webUser.id}`); } catch (e) { /* non-fatal */ }
+        }
 
         res.json({
             success: true,

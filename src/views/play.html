@@ -185,6 +185,12 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
 /* ---------- claim tile + stats ---------- */
+.who{background:var(--slate);border:1px solid var(--line);border-radius:14px;
+     padding:16px 17px;margin-bottom:10px}
+.who dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:7px 14px}
+.who dt{font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
+.who dd{margin:0;font-size:14px;text-align:right}
+.who dd.code{font-family:var(--display);color:var(--brass);letter-spacing:.06em}
 .claimTile{border-color:var(--mint)!important;
            background:linear-gradient(150deg,rgba(53,211,154,.16),var(--slate))!important}
 .claimTile strong{color:var(--mint)}
@@ -441,6 +447,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="spin" id="statsSpin">Loading…</div>
     <div id="statsBody" style="display:none">
+      <div class="who" id="statsWho"></div>
       <div class="grid2" id="statsGrid"></div>
     </div>
     <div class="msg" id="mStats" style="margin-top:10px"></div>
@@ -586,7 +593,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 08:48 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 10:57 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -769,6 +776,14 @@ async function refresh(){
     $('lobbyCredits').textContent=d.user.gamesRemaining??0;
     $('stStreak').textContent=d.user.currentStreak??0;
     $('stBest').textContent=d.user.longestStreak??0;
+
+    // A checkout that never reached the player — the event can be lost to a
+    // reconnect, and the text carrying the link is suppressed on web.
+    if(d.pendingCheckout && !$('vPay').classList.contains('on')
+       && !$('vGame').classList.contains('on') && !$('over').classList.contains('on')){
+      showCheckout(d.pendingCheckout);
+      return;
+    }
 
     // An unclaimed prize gets its own tile. Nothing else in the lobby matters
     // as much as money the player hasn't collected.
@@ -1224,31 +1239,60 @@ async function openStats(){
     $('statsSpin').style.display='none';
     if(!d.success){ $('mStats').textContent=d.error||'Could not load your stats'; return; }
 
-    const s=d.stats, w=s.winnings||{};
-    const cells=[
-      {n:s.gamesPlayed,               l:'games played'},
-      {n:s.gamesWon,                  l:'games won'},
-      {n:s.currentStreak,             l:'current streak'},
-      {n:s.longestStreak,             l:'best streak'},
-      {n:naira(s.highestWin),         l:'biggest single win', c:'gold'},
-      {n:'Q'+(s.highestQuestion||0),  l:'furthest reached'},
-      {n:naira(w.total||0),           l:'won in total',   c:'gold', wide:true},
-      {n:naira(w.pending||0),         l:'awaiting payout',c:'mint', wide:true}
+    const p=d.profile||{}, s=d.stats, w=s.winnings||{}, b=s.breakdown||{};
+
+    const rows=[
+      ['Name', p.fullName||'—'],
+      ['Username', p.username?'@'+p.username:'—'],
+      ['City', p.city||'—'],
+      ['Referral code', p.referralCode||'—', 'code']
     ];
+    if(p.joined){
+      rows.push(['Playing since',
+        new Date(p.joined).toLocaleDateString(undefined,{month:'long',year:'numeric'})]);
+    }
+    const dl=document.createElement('dl');
+    rows.forEach(([k,v,cls])=>{
+      const dt=document.createElement('dt'); dt.textContent=k;
+      const dd=document.createElement('dd'); dd.textContent=v; if(cls)dd.className=cls;
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    $('statsWho').innerHTML=''; $('statsWho').appendChild(dl);
+
+    // Practice is shown but never counted as a win — it pays nothing.
+    const parts=[];
+    if(b.classic)    parts.push(b.classic+' classic');
+    if(b.tournament) parts.push(b.tournament+' tournament');
+    if(b.practice)   parts.push(b.practice+' practice');
+
+    const cells=[
+      {n:s.gamesPlayed,      l:parts.length?parts.join(' · '):'games played', wide:true},
+      {n:s.gamesWon,         l:'games won (real money)', c:'mint'},
+      {n:s.winRate+'%',      l:'win rate'},
+      {n:naira(s.highestWin),l:'biggest single win', c:'gold'},
+      {n:'Q'+(s.highestQuestion||0), l:'furthest in a real game'},
+      {n:s.currentStreak,    l:'current streak'},
+      {n:s.longestStreak,    l:'best streak'},
+      {n:naira(w.total||0),  l:'won in total',    c:'gold', wide:true},
+      {n:naira(w.pending||0),l:'awaiting payout', c:'mint', wide:true}
+    ];
+    if(w.paid>0) cells.push({n:naira(w.paid), l:'already paid out', wide:true});
+    if(s.practiceBest) cells.push({n:'Q'+s.practiceBest, l:'furthest in practice', wide:true});
     if(s.rank) cells.push({n:'#'+s.rank, l:'leaderboard rank', wide:true});
 
     const box=$('statsGrid'); box.innerHTML='';
     cells.forEach(c=>{
-      const d2=document.createElement('div');
-      d2.className='cell'+(c.c?' '+c.c:'')+(c.wide?' wide':'');
-      d2.innerHTML='<span class="n"></span><span class="l"></span>';
-      d2.querySelector('.n').textContent=c.n;
-      d2.querySelector('.l').textContent=c.l;
-      box.appendChild(d2);
+      const el=document.createElement('div');
+      el.className='cell'+(c.c?' '+c.c:'')+(c.wide?' wide':'');
+      el.innerHTML='<span class="n"></span><span class="l"></span>';
+      el.querySelector('.n').textContent=c.n;
+      el.querySelector('.l').textContent=c.l;
+      box.appendChild(el);
     });
+
     $('statsBody').style.display='block';
     $('statsSub').textContent = s.gamesPlayed
-      ? `${s.gamesPlayed} game${s.gamesPlayed===1?'':'s'} on this account.`
+      ? 'Practice games are shown but never counted as wins.'
       : "You haven't finished a game yet — play one and this fills up.";
   }catch(e){
     $('statsSpin').style.display='none';

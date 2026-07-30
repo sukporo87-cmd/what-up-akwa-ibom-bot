@@ -136,7 +136,11 @@ router.get('/state', requireWebAuth, async (req, res) => {
         // tell someone, and there was no way to reach it from web at all.
         let pendingWin = null;
         try {
-            const payoutService = require('../services/payout.service');
+            // payout.service exports a CLASS, not an instance — same trap that
+            // silently killed every game.state emit. This one silently meant
+            // pendingWin was always null, so the claim tile never appeared.
+            const PayoutService = require('../services/payout.service');
+            const payoutService = new PayoutService();
             const txn = await payoutService.getPendingTransaction(user.id);
             if (txn && Number(txn.amount) > 0) {
                 const details = await payoutService.getPayoutDetails(txn.id);
@@ -151,11 +155,24 @@ router.get('/state', requireWebAuth, async (req, res) => {
             logger.error(`Could not read pending payout: ${e && e.message}`);
         }
 
+        // checkout.required is a one-shot event, and the chat text that used to
+        // carry the link is now suppressed for web. If the stream blinks at the
+        // wrong moment the player gets nothing at all — which is exactly what
+        // happened. Persisted alongside so a refresh recovers it.
+        let pendingCheckout = null;
+        try {
+            const raw = await redis.get(`pending_checkout:${user.id}`);
+            if (raw) pendingCheckout = JSON.parse(raw);
+        } catch (e) {
+            logger.error(`Could not read pending checkout: ${e && e.message}`);
+        }
+
         res.json({
             success: true,
             user: webAuthService.publicUser({ ...user, ...stats }),
             streaming: gameEvents.isConnected(user.id),
             pendingWin,
+            pendingCheckout,
             state,
             awaitingStart: state.phase === 'awaiting_start',   // kept for compatibility
             game: session ? {
@@ -310,11 +327,53 @@ router.get('/victory-card', requireWebAuth, async (req, res) => {
 
 router.get('/stats', requireWebAuth, async (req, res) => {
     try {
-        const UserService = require('../services/user.service');
-        const userService = new UserService();
-        const raw = await userService.getUserStats(req.webUser.id);
+        const u = req.webUser;
 
-        // Winnings live in transactions, not on the users row.
+        // Bucketed explicitly rather than reusing userService.getUserStats,
+        // which counts practice games as wins and takes "furthest reached"
+        // from a denormalised column that practice also writes to. Practice
+        // awards a notional score and no money, so counting it as a win
+        // overstates everything that matters.
+        //
+        // NOTE: the same flaw affects the chat STATS command. Left alone here
+        // rather than silently changing numbers players already know.
+        const rows = await pool.query(`
+            SELECT
+              CASE WHEN game_type = 'practice'      THEN 'practice'
+                   WHEN is_tournament_game IS TRUE  THEN 'tournament'
+                   ELSE 'classic' END                AS bucket,
+              COUNT(*)                                                  AS played,
+              COUNT(CASE WHEN final_score > 0 THEN 1 END)               AS won,
+              COALESCE(MAX(final_score), 0)                             AS best,
+              COALESCE(MAX(current_question), 0)                        AS furthest
+            FROM game_sessions
+            WHERE user_id = $1 AND status = 'completed'
+            GROUP BY 1
+        `, [u.id]);
+
+        const empty = { played: 0, won: 0, best: 0, furthest: 0 };
+        const by = { practice: { ...empty }, classic: { ...empty }, tournament: { ...empty } };
+        for (const r of rows.rows) {
+            by[r.bucket] = {
+                // Postgres hands COUNT and MAX back as strings.
+                played: parseInt(r.played, 10) || 0,
+                won: parseInt(r.won, 10) || 0,
+                best: Number(r.best) || 0,
+                furthest: parseInt(r.furthest, 10) || 0
+            };
+        }
+
+        // "Real" play is anything that could pay out.
+        const real = {
+            played: by.classic.played + by.tournament.played,
+            won: by.classic.won + by.tournament.won,
+            best: Math.max(by.classic.best, by.tournament.best),
+            furthest: Math.max(by.classic.furthest, by.tournament.furthest)
+        };
+        const totalPlayed = real.played + by.practice.played;
+
+        // Winnings come from transactions, which is the only place payout
+        // status lives.
         let won = { total: 0, paid: 0, pending: 0, wins: 0 };
         try {
             const w = await pool.query(`
@@ -329,10 +388,8 @@ router.get('/stats', requireWebAuth, async (req, res) => {
                 WHERE user_id = $1
                   AND transaction_type IN ('prize', 'tournament_prize')
                   AND amount > 0
-            `, [req.webUser.id]);
+            `, [u.id]);
             const r = w.rows[0] || {};
-            // Postgres returns these as strings — Number() or the UI shows "0"
-            // concatenated onto things.
             won = {
                 total: Number(r.total || 0),
                 paid: Number(r.paid || 0),
@@ -343,19 +400,42 @@ router.get('/stats', requireWebAuth, async (req, res) => {
             logger.error(`Could not total winnings: ${e && e.message}`);
         }
 
+        let rank = null;
+        try {
+            const rk = await pool.query(
+                `SELECT COUNT(*) + 1 AS rank FROM users
+                 WHERE COALESCE(total_winnings, 0) > COALESCE((SELECT total_winnings FROM users WHERE id = $1), 0)`,
+                [u.id]
+            );
+            rank = parseInt(rk.rows[0]?.rank, 10) || null;
+        } catch (e) { /* non-fatal */ }
+
         res.json({
             success: true,
+            profile: {
+                fullName: u.full_name,
+                username: u.username,
+                city: u.city,
+                email: u.email,
+                referralCode: u.referral_code,
+                joined: u.created_at
+            },
             stats: {
-                gamesPlayed: raw?.totalGamesPlayed ?? 0,
-                gamesWon: raw?.gamesWon ?? 0,
-                winRate: raw?.winRate ?? 0,
-                highestWin: raw?.highestWin ?? 0,
-                highestQuestion: raw?.highestQuestionReached ?? 0,
-                rank: raw?.rank ?? null,
-                currentStreak: req.webUser.current_streak ?? 0,
-                longestStreak: req.webUser.longest_streak ?? 0,
-                gamesRemaining: req.webUser.games_remaining ?? 0,
-                joined: raw?.joinedDate ?? req.webUser.created_at,
+                gamesPlayed: totalPlayed,
+                breakdown: {
+                    classic: by.classic.played,
+                    tournament: by.tournament.played,
+                    practice: by.practice.played
+                },
+                gamesWon: real.won,                 // classic + tournament only
+                winRate: real.played ? Math.round((real.won / real.played) * 100) : 0,
+                highestWin: real.best,              // never a practice score
+                highestQuestion: real.furthest,     // never a practice run
+                practiceBest: by.practice.furthest,
+                currentStreak: u.current_streak ?? 0,
+                longestStreak: u.longest_streak ?? 0,
+                gamesRemaining: u.games_remaining ?? 0,
+                rank,
                 winnings: won
             }
         });

@@ -1497,7 +1497,8 @@ Type the code, or type SKIP to continue:`
     if (isWebPlayer) {
         try {
             const gameEvents = require('../services/game-events.service');
-            gameEvents.emit(user.id, 'checkout.required', {
+
+            const payload = {
                 kind: 'tournament',
                 title: stateData.tournamentName,
                 subtitle: 'Tournament entry',
@@ -1508,7 +1509,12 @@ Type the code, or type SKIP to continue:`
                 reference: payment.reference,
                 expiresInMinutes: 30,
                 note: "You'll be added to the tournament automatically once payment clears."
-            });
+            };
+
+            // Persist before emitting: the event can be lost to a reconnect,
+            // and the text that used to carry the link is suppressed for web.
+            await redis.setex(`pending_checkout:${user.id}`, 1800, JSON.stringify(payload));
+            gameEvents.emit(user.id, 'checkout.required', payload);
         } catch (evtErr) {
             logger.error(`Could not emit checkout.required: ${evtErr && evtErr.message}`);
         }
