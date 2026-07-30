@@ -593,7 +593,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 10:57 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 11:25 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -1201,6 +1201,17 @@ function relay(text){
       'Buy credits',openBuy);
     return;
   }
+  // "Reply SHARE or 4" is meaningless on web. This can arrive in any phase —
+  // tapping Claim from the lobby hits it with no post_game marker at all.
+  if(t.includes('VICTORY CARD REQUIRED')||
+     (t.includes('VICTORY CARD')&&t.includes('SHARE'))){
+    const won=/\u20a6\s*([\d,]+)/.exec(text);
+    overlay(won?'\u20a6'+won[1]:'','One step first',
+      'Your prize is waiting. Generate your victory card and you can claim straight after.',
+      'Get my card',()=>{ closeOver(); go('SHARE'); });
+    return;
+  }
+
   if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
     // The chat buy flow leaked through — web has its own screen for this.
     openBuy(); return;
@@ -1300,6 +1311,36 @@ async function openStats(){
   }
 }
 
+/* Confirm a tournament entry after returning from the gateway. */
+async function settleEntry(reference){
+  overlay('','Confirming your entry','Just a moment — checking with your bank.');
+  let last=null;
+  for(let i=0;i<15;i++){
+    try{
+      const d=await(await fetch('/web/payment/tournament-status/'+encodeURIComponent(reference),
+        {headers:H()})).json();
+      last=d;
+      if(d.success&&d.status==='success'){
+        sfx.lock();
+        try{ await fetch('/web/game/checkout/dismiss',{method:'POST',headers:H()}); }catch(e){}
+        overlay('','You\'re in',
+          `${d.tournamentName||'The tournament'} entry confirmed`
+          +(d.joined?'.':' — you\'ll appear on the board shortly.'),
+          'Back to menu',()=>{ closeOver(); });
+        return;
+      }
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,2000));
+  }
+  overlay('','Not confirmed yet',
+    'Your bank hasn\'t confirmed this entry yet. If the money left your account you\'ll be '
+    +'added automatically — don\'t pay again.',
+    'Back to menu',async()=>{
+      try{ await fetch('/web/game/checkout/dismiss',{method:'POST',headers:H()}); }catch(e){}
+      closeOver();
+    });
+}
+
 /* ---------- checkout (tournament entry) ----------
    The gateway URL arrives over SSE, which is not a user gesture — window.open
    from there gets eaten by the popup blocker. So this is a confirm screen, and
@@ -1356,8 +1397,11 @@ function watchEntry(reference,win){
   },3000);
 }
 
-function cancelCheckout(){
+async function cancelCheckout(){
   clearInterval(payPoll); payData=null;
+  // Clear the server-side recovery record too, or refresh() drags us straight
+  // back to this screen — which is exactly what happened.
+  try{ await fetch('/web/game/checkout/dismiss',{method:'POST',headers:H()}); }catch(e){}
   view('vLobby'); refresh();
 }
 
@@ -1819,6 +1863,11 @@ async function settlePayment(reference,hint){
   if(!reference)return;
   clearInterval(payPoll);
   localStorage.removeItem('wut_pending_ref');
+
+  // Tournament entries are a different table entirely — asking
+  // /status/:reference about a TRN- ref gets an honest "not found", which is
+  // how a successful ₦1,500 payment reported itself as missing.
+  if(/^TRNR?-/i.test(reference)) return settleEntry(reference);
 
   overlay('','Confirming your payment','Just a moment — checking with your bank.');
 

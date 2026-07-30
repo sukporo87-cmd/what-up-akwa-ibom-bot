@@ -360,7 +360,7 @@ router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => 
         }
 
         const r = await pool.query(
-            `SELECT tep.*, t.name AS tournament_name
+            `SELECT tep.*, t.tournament_name
              FROM tournament_entry_payments tep
              LEFT JOIN tournaments t ON t.id = tep.tournament_id
              WHERE tep.payment_reference = $1`,

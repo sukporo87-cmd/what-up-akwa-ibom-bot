@@ -10,6 +10,7 @@ const TournamentService = require('../services/tournament.service');
 const MessagingService = require('../services/messaging.service');
 const gatewayManager = require('../services/payment-gateway-manager');
 const pool = require('../config/database');
+const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 
 const paymentService = new PaymentService();
@@ -276,10 +277,17 @@ function isWeb(phoneNumber) {
  * back into the app carrying the reference, so play.html can poll
  * /web/payment/status and show the outcome itself — no interstitial.
  */
-function getRedirectUrl(phoneNumber, reference = '', outcome = 'success', req = null) {
+function getRedirectUrl(phoneNumber, reference = '', outcome = 'success', req = null, knownOrigin = null) {
     const id = String(phoneNumber || '');
 
     if (isWeb(id)) {
+        // knownOrigin is the origin the player was recorded on. It beats the
+        // request host, because a gateway callback arrives at APP_URL — not at
+        // whatever domain the player is using.
+        if (knownOrigin) {
+            const base = String(knownOrigin).replace(/\/$/, '');
+            return `${base}/play.html?paid=${encodeURIComponent(reference)}&status=${outcome}`;
+        }
         // Return them to the origin they came in on, not a hardcoded one. The
         // session cookie is host-only and the localStorage token is per-origin,
         // so bouncing a player to a different host lands them signed-out.
@@ -351,7 +359,9 @@ router.get('/callback', async (req, res) => {
         // Web players go straight back into the app — it polls the status
         // endpoint and renders the result in its own UI.
         if (isWeb(phoneNumber)) {
-            return res.redirect(302, getRedirectUrl(phoneNumber, reference, 'success', req));
+            let knownOrigin = null;
+            try { knownOrigin = await redis.get(`web_origin:${userId}`); } catch (e) { /* fall back */ }
+            return res.redirect(302, getRedirectUrl(phoneNumber, reference, 'success', req, knownOrigin));
         }
 
         const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success', req);
@@ -567,8 +577,21 @@ const userResult = await pool.query(
 );
         
         const phoneNumber = userResult.rows[0]?.phone_number || '';
-        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success', req);
+
+        let knownOrigin = null;
+        if (isWeb(phoneNumber)) {
+            try { knownOrigin = await redis.get(`web_origin:${userId}`); } catch (e) { /* fall back */ }
+        }
+
+        const redirectUrl = getRedirectUrl(phoneNumber, reference, 'success', req, knownOrigin);
         const platformName = getPlatformName(phoneNumber);
+
+        // Web players go straight back into the app, same as the credit
+        // purchase callback — no interstitial page they have to read.
+        if (isWeb(phoneNumber)) {
+            try { await redis.del(`pending_checkout:${userId}`); } catch (e) { /* non-fatal */ }
+            return res.redirect(302, redirectUrl);
+        }
         
         res.send(`
 <!DOCTYPE html>

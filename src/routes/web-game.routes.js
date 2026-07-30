@@ -23,6 +23,23 @@ const GameService = require('../services/game.service');
 const gameService = GameService.shared;
 const redis = require('../config/redis');
 const pool = require('../config/database');
+
+/**
+ * Record the origin this player is actually on.
+ *
+ * Payment callbacks are hit by the gateway at APP_URL, not by the player, so a
+ * callback has no way to know where to send them back to. Credit purchase gets
+ * around this by passing the origin at initialize time; the tournament flow is
+ * driven from a chat state machine with no request available, so it needs this.
+ */
+function rememberOrigin(req, userId) {
+    try {
+        const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+        const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+        if (!host || !userId) return;
+        redis.setex(`web_origin:${userId}`, 86400, `${proto}://${host}`).catch(() => {});
+    } catch (e) { /* never worth failing a request over */ }
+}
 const { logger } = require('../utils/logger');
 
 // ============================================
@@ -60,6 +77,8 @@ router.get('/stream', async (req, res) => {
     // Then the authoritative state, so a reconnecting client knows what the
     // engine wants without having to guess from whatever text arrives next.
     gameState.emit(user).catch(() => {});
+
+    rememberOrigin(req, user.id);
 
     req.on('close', () => {
         gameEvents.unsubscribe(user.id, res);
@@ -131,6 +150,7 @@ router.get('/state', requireWebAuth, async (req, res) => {
         // Same derivation the SSE event uses, so a cold page load and a live
         // stream can never disagree about what the engine wants.
         const state = await gameState.derive(user);
+        rememberOrigin(req, user.id);
 
         // An unclaimed prize is the single most important thing the lobby can
         // tell someone, and there was no way to reach it from web at all.
@@ -442,6 +462,19 @@ router.get('/stats', requireWebAuth, async (req, res) => {
     } catch (error) {
         logger.error('Web stats error:', error);
         res.status(500).json({ success: false, error: 'Could not load your stats' });
+    }
+});
+
+// The checkout recovery record is deliberately sticky so a lost event can be
+// recovered. That also means an abandoned one traps the player on the payment
+// screen, so they need a way out.
+router.post('/checkout/dismiss', requireWebAuth, async (req, res) => {
+    try {
+        await redis.del(`pending_checkout:${req.webUser.id}`);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error(`Could not dismiss checkout: ${error && error.message}`);
+        res.status(500).json({ success: false, error: 'Could not dismiss that' });
     }
 });
 
