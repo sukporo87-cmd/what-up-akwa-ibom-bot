@@ -593,7 +593,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 11:43 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 12:06 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -787,14 +787,27 @@ async function refresh(){
 
     // An unclaimed prize gets its own tile. Nothing else in the lobby matters
     // as much as money the player hasn't collected.
-    const t=$('tileClaim');
-    if(d.pendingWin && d.pendingWin.amount>0){
+    const t=$('tileClaim'), pw=d.pendingWin;
+    if(pw && pw.amount>0){
       t.style.display='block';
-      $('claimLabel').textContent=`Claim ${naira(d.pendingWin.amount)}`;
-      $('claimSub').textContent = d.pendingWin.detailsGiven
-        ? `Details received · ref ${d.pendingWin.reference} · being processed`
-        : 'Tap to send your bank details';
-    } else { t.style.display='none'; }
+      if(pw.awaitingReceipt){
+        // We've sent the money. WhatsApp asks them to reply RECEIVED; this is
+        // the web equivalent, and without it the payout never gets closed out.
+        $('claimLabel').textContent=`Confirm you received ${naira(pw.amount)}`;
+        $('claimSub').textContent=`Sent to your bank · ref ${pw.reference} · tap once it lands`;
+        t.onclick=()=>confirmReceipt(pw);
+      } else if(pw.detailsGiven){
+        $('claimLabel').textContent=`${naira(pw.amount)} on its way`;
+        $('claimSub').textContent=`Details received · ref ${pw.reference} · being processed`;
+        t.onclick=()=>overlay(naira(pw.amount),'Payment in progress',
+          `We have your bank details and your prize is being processed. Payments usually land `
+          +`within 12–24 hours. Reference ${pw.reference}. We'll email you the moment it's sent.`);
+      } else {
+        $('claimLabel').textContent=`Claim ${naira(pw.amount)}`;
+        $('claimSub').textContent='Tap to send your bank details';
+        t.onclick=()=>claimPrize();
+      }
+    } else { t.style.display='none'; t.onclick=null; }
 
     // Same state object the SSE event carries, so a cold load lands exactly
     // where a live stream would.
@@ -870,6 +883,15 @@ function flushText(){ const t=textBuf.join('\n\n').trim(); textBuf=[]; return t;
    text, and every bug in that approach came from a state it did not know
    existed. Now the server derives it and says so. Text only supplies wording. */
 
+/* Screens that own the viewport and must never be navigated away from by a
+   passing state event. Anything added here later needs to go in this list. */
+function onDedicatedScreen(){
+  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame']
+    .some(id=>{ const el=document.getElementById(id); return el && el.classList.contains('on'); })
+    || $('over').classList.contains('on')
+    || $('ask').classList.contains('on');
+}
+
 function applyState(st, text){
   gstate=st;
 
@@ -935,8 +957,11 @@ function applyState(st, text){
     default:
       closeAsk();
       if(text) relay(text);
-      else if(!$('vLobby').classList.contains('on') && !$('vBuy').classList.contains('on')
-              && !$('over').classList.contains('on')){ view('vLobby'); refresh(); }
+      // Only wander back to the lobby if nothing is actually holding the
+      // screen. This listed vLobby/vBuy/over and nothing else, so a state
+      // event with no text would yank the player off the victory card the
+      // instant it rendered — the card was generated, shown, and stolen.
+      else if(!onDedicatedScreen()){ view('vLobby'); refresh(); }
       return;
   }
 }
@@ -1495,6 +1520,20 @@ function saveCard(){
 }
 
 function claimPrize(){ sfx.tap(); go('CLAIM'); }
+
+/* Closing the loop on a payout. The engine accepts RECEIVED from any state,
+   so this is just the button WhatsApp users get as a text reply. */
+function confirmReceipt(pw){
+  overlay(naira(pw.amount),'Has it arrived?',
+    `We sent ${naira(pw.amount)} to your bank — reference ${pw.reference}. `
+    +`Only confirm once you can see it in your account. If it hasn't arrived within `
+    +`24 hours, contact support with that reference.`,
+    'Yes, it arrived',()=>{
+      sfx.lock(); go('RECEIVED');
+      overlay('','Thank you','Payment confirmed. Keep playing to win more.',
+        'Back to menu',()=>{ closeOver(); });
+    });
+}
 
 /* ---------- security check ----------
    The engine can interrupt any non-practice game with a CAPTCHA. It isn't a

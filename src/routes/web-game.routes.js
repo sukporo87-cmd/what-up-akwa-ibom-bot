@@ -164,11 +164,17 @@ router.get('/state', requireWebAuth, async (req, res) => {
             const txn = await payoutService.getPendingTransaction(user.id);
             if (txn && Number(txn.amount) > 0) {
                 const details = await payoutService.getPayoutDetails(txn.id);
+                const status = txn.payout_status || 'pending';
                 pendingWin = {
                     amount: Number(txn.amount),
                     reference: `WUA-${String(txn.id).padStart(4, '0')}`,
                     detailsGiven: !!details,
-                    status: txn.payout_status || 'pending'
+                    status,
+                    // 'paid' means we've sent it and are waiting for the player
+                    // to confirm it arrived — the step WhatsApp does with
+                    // "reply RECEIVED", which web had no way to answer.
+                    awaitingReceipt: status === 'paid',
+                    paidAt: txn.paid_at || null
                 };
             }
         } catch (e) {

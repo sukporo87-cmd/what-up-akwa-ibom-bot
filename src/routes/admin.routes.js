@@ -1647,7 +1647,7 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
       );
 
       const result = await pool.query(
-        `SELECT t.*, u.phone_number, u.full_name, pd.account_name, pd.bank_name, pd.account_number
+        `SELECT t.*, u.phone_number, u.full_name, u.email, pd.account_name, pd.bank_name, pd.account_number
          FROM transactions t
          JOIN users u ON t.user_id = u.id
          LEFT JOIN payout_details pd ON t.id = pd.transaction_id
@@ -1658,22 +1658,43 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
       if (result.rows.length > 0) {
         const transaction = result.rows[0];
         
-        // Use MessagingService to handle both platforms
         const MessagingService = require('../services/messaging.service');
         const messagingService = new MessagingService();
-        
-        await messagingService.sendMessage(
-          transaction.phone_number,
+
+        const isWeb = String(transaction.phone_number || '').startsWith('web_');
+
+        const body =
           `✅ PAYMENT SENT! 🎉\n\n` +
           `₦${parseFloat(transaction.amount).toLocaleString()} has been sent to:\n` +
           `${transaction.account_name}\n` +
           `${transaction.bank_name} (${transaction.account_number})\n\n` +
           `Transaction Reference: ${paymentReference}\n\n` +
           `Please check your account within 2 hours and confirm receipt.\n\n` +
-          `Reply "RECEIVED" to confirm!\n\n` +
-          `Keep playing to win more! 🏆`
-        );
-        logger.info(`Payment notification sent to ${transaction.phone_number}`);
+          (isWeb
+            ? `Open the game and tap "Confirm I received it" on your prize.\n\n`
+            : `Reply "RECEIVED" to confirm!\n\n`) +
+          `Keep playing to win more! 🏆`;
+
+        if (isWeb) {
+          // A payout lands hours after the player closed the tab, so an SSE
+          // push reaches nobody. Email is the only durable channel web has —
+          // this notification was simply being lost before.
+          const contactService = require('../services/contact.service');
+
+          messagingService.sendMessage(transaction.phone_number, body).catch(() => {});
+          await contactService.send(
+            { id: transaction.user_id, phone_number: transaction.phone_number, email: transaction.email },
+            {
+              text: body,
+              subject: `Your ₦${parseFloat(transaction.amount).toLocaleString()} prize has been sent`,
+              kind: 'transactional'
+            }
+          );
+          logger.info(`Payment notification emailed to web user ${transaction.user_id}`);
+        } else {
+          await messagingService.sendMessage(transaction.phone_number, body);
+          logger.info(`Payment notification sent to ${transaction.phone_number}`);
+        }
       }
 
       res.json({ success: true, message: 'Payout marked as paid and user notified' });
