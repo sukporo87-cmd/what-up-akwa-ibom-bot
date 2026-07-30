@@ -40,8 +40,17 @@ const PROMPTS = {
     SELECT_REBUY_GATEWAY:       { expects: 'choice', title: 'How would you like to pay?' },
     CONFIRM_TOURNAMENT_PAYMENT: { expects: 'choice', title: 'Confirm your entry' },
     CONFIRM_TOURNAMENT_REBUY:   { expects: 'choice', title: 'Confirm your re-buy' },
-    CONFIRM_BANK_DETAILS:       { expects: 'choice', title: 'Are these details right?' },
-    TERMS_ACCEPTANCE:           { expects: 'choice', title: 'Terms and conditions' },
+    CONFIRM_BANK_DETAILS:       { expects: 'choice', title: 'Are these details right?',
+        actions: [
+            { send: 'YES',    label: 'Use these details', primary: true },
+            { send: 'UPDATE', label: 'Enter different details' },
+            { send: 'CANCEL', label: 'Cancel this claim' }
+        ] },
+    TERMS_ACCEPTANCE:           { expects: 'choice', title: 'Terms and conditions',
+        actions: [
+            { send: 'AGREE',  label: 'I agree', primary: true },
+            { send: 'CANCEL', label: 'Not now' }
+        ] },
     LOVE_QUEST_PACKAGE_SELECT:  { expects: 'choice', title: 'Choose a package' },
     LOVE_QUEST_VIDEO_MENU:      { expects: 'choice', title: 'Video options' },
     LOVE_QUEST_VOICE_MENU:      { expects: 'choice', title: 'Voice options' },
@@ -53,8 +62,8 @@ const PROMPTS = {
         field: { label: 'Email address', type: 'email', placeholder: 'you@example.com' } },
 
     // --- payout details (item 3 on the roadmap gets proper form fields for free) ---
-    COLLECT_BANK_NAME: { expects: 'text', title: 'Your bank',
-        field: { label: 'Bank name', type: 'text', placeholder: 'e.g. GTBank' } },
+    COLLECT_BANK_NAME: { expects: 'choice', title: 'Choose your bank',
+        field: { label: 'Or type your bank name', type: 'text', placeholder: 'e.g. Kuda' } },
     COLLECT_CUSTOM_BANK: { expects: 'text', title: 'Your bank',
         field: { label: 'Bank name', type: 'text', placeholder: 'Type your bank name' } },
     COLLECT_ACCOUNT_NUMBER: { expects: 'text', title: 'Account number',
@@ -149,6 +158,7 @@ class GameStateService {
                 state: rawState.state,
                 title: resolved.title,
                 field: resolved.field || null,
+                actions: resolved.actions || null,   // word commands as buttons
                 web: resolved.web || null,  // web has a purpose-built screen for this
                 mapped: !!spec,
                 canCancel: true
@@ -260,8 +270,13 @@ class GameStateService {
         if (postGameRaw) {
             let data = null;
             try { data = JSON.parse(postGameRaw); } catch (e) { /* legacy timestamp */ }
+            let sharePending = false;
+            try { sharePending = !!(await redis.get(`win_share_pending:${user.id}`)); }
+            catch (e) { /* non-fatal */ }
+
             return { ...base, phase: 'post_game', expects: 'choice',
-                     gameMode: data?.gameType || null, title: 'What next?' };
+                     gameMode: data?.gameType || null, title: 'What next?',
+                     sharePending };
         }
 
         return base;

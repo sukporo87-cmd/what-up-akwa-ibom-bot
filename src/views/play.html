@@ -184,6 +184,17 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
+/* ---------- victory card ---------- */
+.card{border:1.5px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:16px;
+      background:var(--slate);min-height:120px;display:grid;place-items:center}
+.card img{width:100%;display:block}
+.card .load{font-size:13.5px;color:var(--mute);padding:34px}
+.cardActs{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
+.ghost{padding:14px;border:1px solid var(--line);background:transparent;border-radius:12px;
+       font-size:13.5px;font-weight:500;color:var(--paper);transition:border-color .18s,background .18s}
+.ghost:hover{border-color:var(--brass);background:var(--slate)}
+.ghost:disabled{opacity:.4}
+
 /* ---------- security check ---------- */
 .puzzle{background:var(--slate);border:1.5px solid var(--line);border-radius:15px;
         padding:20px 18px;margin-bottom:16px;text-align:center;
@@ -369,6 +380,30 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <button class="cta" id="startBtn" onclick="beginGame()">Start game</button>
   </section>
 
+  <!-- ============ VICTORY CARD ============ -->
+  <section class="view" id="vCard">
+    <div class="bar">
+      <div class="brand">Your win</div>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 14px">
+      <span class="fig" style="font-size:30px" id="cardAmt">₦0</span>
+      <p id="cardSub">Share your card, then claim your prize.</p>
+    </div>
+
+    <div class="card" id="cardBox"><span class="load">Creating your card…</span></div>
+
+    <div class="cardActs">
+      <button class="ghost" id="cardShare" onclick="shareCard()">Share</button>
+      <button class="ghost" id="cardSave" onclick="saveCard()">Save image</button>
+    </div>
+
+    <button class="cta" id="cardClaim" onclick="claimPrize()">Claim your prize</button>
+    <button class="link" onclick="view('vLobby');refresh()">Later</button>
+    <div class="msg" id="mCard" style="margin-top:10px"></div>
+  </section>
+
   <!-- ============ SECURITY CHECK (captcha) ============ -->
   <section class="view" id="vCap">
     <div class="bar">
@@ -485,7 +520,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 05:35 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 07:12 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -717,6 +752,11 @@ function stream(){
     showPhoto(JSON.parse(e.data));
   });
 
+  es.addEventListener('victory.card',e=>{
+    clearTimeout(textT); flushText();
+    showCard(JSON.parse(e.data));
+  });
+
   es.addEventListener('captcha.required',e=>{
     clearTimeout(textT); flushText();
     showCaptcha(JSON.parse(e.data));
@@ -776,10 +816,18 @@ function applyState(st, text){
         const m=pendingMode; pendingMode=null; go(m); return;
       }
       if(st.expects==='text' && st.field){ askField(st,text); return; }
-      ask(text||st.title||'');
+      ask(text||st.title||'', st.actions);
       return;
 
     case 'post_game':
+      // The engine refuses a claim until the card is shared, and the chat text
+      // says "reply SHARE or 4" — which is meaningless here. Ask for it.
+      if(st.sharePending && /VICTORY CARD REQUIRED/i.test(text||'')){
+        overlay(naira(gstate&&gstate.amount||0),'One step first',
+          'Your prize is waiting. Generate your victory card and you can claim straight after.',
+          'Get my card',()=>{ closeOver(); go('SHARE'); });
+        return;
+      }
       if(/GAME OVER|CONGRATULATIONS|TIME'S UP/i.test(text)){ gameOver(text); return; }
       if(text) relay(text);
       return;
@@ -826,25 +874,43 @@ function askField(st,text){
 
 function parseOpts(text){
   const lines = text.split('\n');
-  const head = /^\s*([1-9])(?:\uFE0F?\u20E3|[.)\-:])\s*(.*)$/;   // 1 (keycap)  1.  1)  1-  1:
   const out = []; let cur = null;
+
+  // The bank list runs to eleven, and the engine writes 10 as 🔟 and 11 as
+  // two stacked keycaps. A single-digit regex silently dropped Wema Bank and
+  // the "type your own" option — on a payout screen, of all places.
+  const KEYCAP = /^\s*((?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F}|[1-9][0-9]?)(?:[.)\-:]|(?=\s))\s*(.*)$/u;
+  const readKey = raw => {
+    if(raw === '\u{1F51F}') return '10';
+    const digits = raw.replace(/[\uFE0F\u20E3]/g,'');
+    return digits;
+  };
+
   for(const line of lines){
-    const m = head.exec(line);
-    if(m){ cur = {k:m[1], v:m[2].replace(/[*_]/g,'').trim(), sub:[]}; out.push(cur); }
-    else if(!line.trim()){ cur = null; }
+    const m = KEYCAP.exec(line);
+    if(m && m[2] !== undefined){
+      const k = readKey(m[1]);
+      if(k && Number(k) >= 1 && Number(k) <= 20){
+        cur = {k, v:m[2].replace(/[*_]/g,'').trim(), sub:[]};
+        out.push(cur);
+        continue;
+      }
+    }
+    if(!line.trim()){ cur = null; }
     else if(cur && /^(\s{2,}|\t)/.test(line)){ cur.sub.push(line.replace(/[*_]/g,'').trim()); }
   }
   return out.filter(o=>o.v);
 }
 
-function ask(text){
+function ask(text, actions){
   const clean = text.replace(/\*/g,'').replace(/_/g,'');
   const opts  = parseOpts(clean);
   const lines = clean.split('\n');
 
   // Everything before the first numbered option is context; a trailing
   // "Reply with your choice" is a chat instruction that doesn't apply here.
-  const firstOpt = lines.findIndex(l=>/^\s*[1-9](\uFE0F?\u20E3|[.)\-:])/.test(l));
+  const firstOpt = lines.findIndex(l=>
+    /^\s*(?:(?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F}|[1-9][0-9]?[.)\-:])/u.test(l));
   const head = (firstOpt === -1 ? lines : lines.slice(0, firstOpt)).filter(l=>l.trim());
 
   $('askTitle').textContent  = (head[0] || 'One moment').trim();
@@ -864,11 +930,24 @@ function ask(text){
     box.appendChild(b);
   });
 
+  // Word commands the engine accepts but never numbers — YES / UPDATE /
+  // CANCEL. Without buttons the player has to guess what to type.
+  (actions||[]).forEach(a=>{
+    const b=document.createElement('button');
+    b.className='askOpt';
+    b.innerHTML='<span class="k">\u203a</span><span class="t"><b></b></span>';
+    b.querySelector('b').textContent=a.label;
+    if(a.primary) b.style.borderColor='var(--brass)';
+    b.onclick=()=>{ sfx.tap(); closeAsk(); go(a.send); };
+    box.appendChild(b);
+  });
+
   const inp=$('askInput');
-  inp.value=''; inp.type='text'; inp.placeholder='Or type your reply…';
+  inp.value=''; inp.type='text';
+  inp.placeholder=(actions&&actions.length)?'Or type a reply…':'Or type your reply…';
   inp.removeAttribute('inputmode'); inp.removeAttribute('maxlength'); inp.dataset.transform='';
   $('ask').classList.add('on');
-  if(!opts.length) setTimeout(()=>$('askInput').focus(),80);
+  if(!opts.length && !(actions&&actions.length)) setTimeout(()=>$('askInput').focus(),80);
 }
 function closeAsk(){ $('ask').classList.remove('on'); }
 function askSend(){
@@ -985,6 +1064,7 @@ function relay(text){
   // how it ended up as a chooser on top of the camera button.
   if(photoMode||$('vPhoto').classList.contains('on')) return;
   if(capMode||$('vCap').classList.contains('on')) return;
+  if($('vCard').classList.contains('on')) return;
 
   // A question is on screen. Nothing informational is worth burying it under a
   // modal — this is the backstop for any text that outruns game.state.
@@ -1047,6 +1127,73 @@ function info(text){
   const lines=text.replace(/\*/g,'').replace(/_/g,'').split('\n').filter(l=>l.trim());
   overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
 }
+
+/* ---------- victory card ----------
+   The card gates the payout: the engine will not let anyone claim until it
+   has been shared. On WhatsApp "shared" means the image was sent and the
+   player posts it to their Status. The browser equivalent is the Web Share
+   API where it exists, and a plain download where it doesn't — either way
+   delivering it here is what satisfies the gate. */
+let cardBlob=null, cardData=null;
+
+async function showCard(c){
+  cardData=c; cardBlob=null;
+  $('cardAmt').textContent = c.isTournament ? 'Nice run' : naira(c.amount||0);
+  $('cardSub').textContent = c.isTournament
+    ? 'Share your card and challenge someone to beat it.'
+    : 'Share your card, then claim your prize.';
+  $('cardClaim').style.display = c.canClaimAfter ? 'block' : 'none';
+  $('mCard').textContent='';
+  $('cardBox').innerHTML='<span class="load">Creating your card…</span>';
+  view('vCard');
+
+  // Fetch as a blob so the same bytes serve the preview, the share sheet and
+  // the download — no second request, and it still works once the cache
+  // entry expires behind us.
+  try{
+    const r=await fetch(c.url||'/web/game/victory-card',{headers:H()});
+    if(!r.ok) throw new Error('not available');
+    cardBlob=await r.blob();
+    const img=new Image();
+    img.alt='Your victory card';
+    img.src=URL.createObjectURL(cardBlob);
+    $('cardBox').innerHTML=''; $('cardBox').appendChild(img);
+    sfx.lock();
+  }catch(e){
+    $('cardBox').innerHTML='<span class="load">Your card couldn\'t be loaded, but your '
+      +'win is safe. You can still claim your prize.</span>';
+    $('cardShare').disabled=true; $('cardSave').disabled=true;
+  }
+}
+
+async function shareCard(){
+  const text=(cardData&&cardData.caption)||'';
+  try{
+    const file=cardBlob?new File([cardBlob],'whatsup-trivia-win.png',{type:'image/png'}):null;
+    if(file&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],text});
+      return;
+    }
+    if(navigator.share){ await navigator.share({text}); return; }
+    await navigator.clipboard.writeText(text);
+    $('mCard').style.color='var(--mint)';
+    $('mCard').textContent='Caption copied — save the image and post them together.';
+  }catch(e){
+    // A cancelled share sheet throws too; nothing worth reporting.
+  }
+}
+
+function saveCard(){
+  if(!cardBlob) return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(cardBlob);
+  a.download='whatsup-trivia-win.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  $('mCard').style.color='var(--mute)';
+  $('mCard').textContent='Saved. Post it wherever you like.';
+}
+
+function claimPrize(){ sfx.tap(); go('CLAIM'); }
 
 /* ---------- security check ----------
    The engine can interrupt any non-practice game with a CAPTCHA. It isn't a

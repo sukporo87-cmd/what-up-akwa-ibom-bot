@@ -249,4 +249,36 @@ router.post('/photo/expired', requireWebAuth, async (req, res) => {
     }
 });
 
+// ============================================
+// VICTORY CARD
+// The engine generates the card as a temp file and unlinks it straight after
+// sending, which works for WhatsApp and is useless to a browser. handleWinShare
+// caches the PNG for web; this serves it so the player can view, save and
+// share it — the gate that stands between them and claiming their prize.
+// ============================================
+
+router.get('/victory-card', requireWebAuth, async (req, res) => {
+    try {
+        const raw = await redis.get(`victory_card:${req.webUser.id}`);
+        if (!raw) {
+            return res.status(404).json({
+                success: false,
+                error: 'That card is no longer available — reopen it from the menu'
+            });
+        }
+
+        const data = JSON.parse(raw);
+        const buf = Buffer.from(data.png, 'base64');
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Content-Length', buf.length);
+        res.setHeader('Cache-Control', 'private, max-age=1800');
+        res.setHeader('Content-Disposition', 'inline; filename="whatsup-trivia-win.png"');
+        res.end(buf);
+    } catch (error) {
+        logger.error('Web victory card error:', error);
+        res.status(500).json({ success: false, error: 'Could not load that card' });
+    }
+});
+
 module.exports = router;

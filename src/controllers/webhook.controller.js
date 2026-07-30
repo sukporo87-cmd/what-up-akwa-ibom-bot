@@ -3293,7 +3293,35 @@ Reply with your choice:`
         caption = `🏆 @${user.username} won ₦${winData.amount.toLocaleString()} playing What's Up Trivia Game! Join now: https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER}`;
       }
 
-      await messagingService.sendImage(user.phone_number, imagePath, caption);
+      // ============================================
+      // WEB: the card is a file path, which a browser cannot load.
+      // Cache the PNG and hand the client a URL it can show, download and
+      // share. Delivering it here is the share — same semantics as sending
+      // it on WhatsApp, where posting to Status is the player's own step.
+      // ============================================
+      const isWebPlayer = !!(user.phone_number && user.phone_number.startsWith('web_'));
+
+      if (isWebPlayer) {
+        const buf = fs.readFileSync(imagePath);
+        await redis.setex(
+          `victory_card:${user.id}`,
+          1800,                                   // 30 minutes is plenty to save it
+          JSON.stringify({ png: buf.toString('base64'), caption, at: Date.now() })
+        );
+
+        const gameEvents = require('../services/game-events.service');
+        gameEvents.emit(user.id, 'victory.card', {
+          url: '/web/game/victory-card',
+          caption,
+          isTournament,
+          amount: winData.amount || 0,
+          questionsAnswered: winData.questionsAnswered,
+          totalQuestions: winData.totalQuestions,
+          canClaimAfter: !isTournament
+        });
+      } else {
+        await messagingService.sendImage(user.phone_number, imagePath, caption);
+      }
 
       // Mark ALL victory cards as shared in database (user may have multiple pending)
       if (!isTournament) {
