@@ -620,7 +620,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-30 13:52 UTC';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 16:32 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -903,7 +903,17 @@ function stream(){
 }
 
 let textBuf=[], textT=null, gstate=null;
-function flushText(){ const t=textBuf.join('\n\n').trim(); textBuf=[]; return t; }
+
+/* Filter per message, THEN join. Testing the joined batch meant a single
+   suppressible part ("Classic Mode selected!") discarded everything sent with
+   it — including "You have no games remaining", which is the one thing a new
+   player needs to see. They got silence, tapped again, and tripped the rate
+   limiter. */
+function flushText(){
+  const kept = textBuf.filter(t => t && t.trim() && !duplicatesStructured(t));
+  textBuf = [];
+  return kept.join('\n\n').trim();
+}
 
 /* ---------- game.state: the engine tells us what it wants ----------
    Previously this file inferred the engine's state by pattern-matching message
@@ -1260,7 +1270,8 @@ function relay(text){
     gameOver(text); return;
   }
 
-  // Already on screen via a structured event — say nothing.
+  // Buffered text is already filtered per message in flushText; this only
+  // catches a single message arriving on its own.
   if(duplicatesStructured(text)) return;
   if(t.includes('NO GAMES')||t.includes('NEED GAMES')||t.includes('INSUFFICIENT')){
     overlay('0','Out of credits',
@@ -1805,6 +1816,16 @@ function cancelReady(){
 /* ---------- game modes ---------- */
 let modeT=null;
 function startMode(digit){
+  // Classic needs a credit. Sending them to the engine to be told no is a
+  // wasted round trip — and every one of those taps counts against the
+  // server's games-per-hour limit.
+  if(digit==='2' && Number($('lobbyCredits').textContent||0) <= 0){
+    sfx.tap();
+    overlay('0','You need a credit',
+      'Classic costs one credit a game. Practice is always free, or top up to play for real money.',
+      'Top up',()=>{ closeOver(); openBuy(); });
+    return;
+  }
   pendingMode=digit;
   clearTimeout(modeT);
   modeT=setTimeout(()=>{ pendingMode=null; },10000);   // don't let intent go stale

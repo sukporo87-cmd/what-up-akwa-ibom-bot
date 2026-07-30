@@ -157,16 +157,21 @@ class AntiFraudService {
     // CHECK GAME RATE LIMIT
     // ============================================
     
+    /**
+     * Read-only. This used to INCR, which meant it counted *checks* rather than
+     * games — so every tap that never started a game still burned quota. A web
+     * player with no credits tapped Play Classic sixteen times, started nothing,
+     * and was told she'd played sixteen games in an hour.
+     *
+     * Call recordGameStart() once a game actually begins.
+     */
     async checkGameRateLimit(userId) {
         try {
             const key = `games_per_hour:${userId}`;
-            const count = await redis.incr(key);
-            
-            if (count === 1) {
-                await redis.expire(key, 3600); // 1 hour window
-            }
-            
-            if (count > THRESHOLDS.MAX_GAMES_PER_HOUR) {
+            const raw = await redis.get(key);
+            const count = parseInt(raw, 10) || 0;      // redis returns a string
+
+            if (count >= THRESHOLDS.MAX_GAMES_PER_HOUR) {
                 return {
                     allowed: false,
                     count,
@@ -179,6 +184,19 @@ class AntiFraudService {
         } catch (error) {
             logger.error('Error checking game rate limit:', error);
             return { allowed: true };
+        }
+    }
+
+    /** Count a game that actually started. */
+    async recordGameStart(userId) {
+        try {
+            const key = `games_per_hour:${userId}`;
+            const count = await redis.incr(key);
+            if (count === 1) await redis.expire(key, 3600);
+            return count;
+        } catch (error) {
+            logger.error('Error recording game start:', error);
+            return 0;
         }
     }
 

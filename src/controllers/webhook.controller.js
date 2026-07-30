@@ -996,6 +996,13 @@ Type the code, or type SKIP to continue:`
           await messagingService.sendMessage(user.phone_number, tournamentRateLimit.message);
           return;
         }
+
+        // checkGameRateLimit no longer increments — it used to, and the count
+        // happened here at selection time. Kept exactly as it was for
+        // tournaments so chat behaviour is unchanged. (Note this still means
+        // browsing the tournament menu consumes a game's worth of quota; that
+        // is pre-existing and left alone deliberately.)
+        await antiFraudService.recordGameStart(user.id);
         
         await this.showTournamentCategories(user);
         break;

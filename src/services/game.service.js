@@ -1232,6 +1232,25 @@ class GameService {
 
             await auditService.logGameStart(session.id, user.id, gameMode, platform, tournamentId);
 
+            // Count it here, where a game has genuinely begun. checkGameRateLimit
+            // is read-only precisely so that failed attempts don't burn quota.
+            //
+            // Scoped to Classic only, on purpose.
+            //   practice   — has its own separate 5/hour limit (practice_per_hour)
+            //                and never touched games_per_hour.
+            //   tournament — still counts at mode-selection time in
+            //                webhook.controller, exactly as it always has.
+            // Widening this to tournaments would change chat behaviour, which is
+            // out of scope for a web fix.
+            if (!isPracticeMode && !isTournamentGame) {
+                try {
+                    const antiFraudService = require('./anti-fraud.service');
+                    if (antiFraudService.recordGameStart) await antiFraudService.recordGameStart(user.id);
+                } catch (rlErr) {
+                    logger.error(`Could not record game start for rate limit: ${rlErr && rlErr.message}`);
+                }
+            }
+
             // Device tracking
             try {
                 const deviceId = deviceTrackingService.generateDeviceFingerprint({
