@@ -199,7 +199,43 @@ class GameStateService {
                          secondsRemaining, expiresAt, canCancel: false };
             }
 
-            // 4. Live question.
+            // 4. Turbo mode is waiting for GO.
+            let waitingGo = false;
+            try {
+                waitingGo = await gameService.isWaitingForTurboGo(session.session_key);
+            } catch (e) { /* treat as no */ }
+
+            if (waitingGo) {
+                return { ...base, phase: 'turbo_go', expects: 'go',
+                         sessionId: session.id, title: 'Ready?', canCancel: true };
+            }
+
+            // 5. Security check. Not a setUserState state, which is exactly how
+            //    it slipped past the state map — it lives in its own Redis key.
+            try {
+                const raw = await redis.get(`captcha:${session.session_key}`);
+                if (raw) {
+                    let data = null;
+                    try { data = JSON.parse(raw); } catch (e) { /* legacy shape */ }
+                    const started = data && data.startTime ? data.startTime : null;
+                    const expiresAt = started ? started + 12000 : null;
+                    return {
+                        ...base,
+                        phase: 'captcha',
+                        expects: 'captcha',
+                        sessionId: session.id,
+                        title: 'Security check',
+                        captchaType: data ? data.type : null,
+                        questionNumber: data ? data.questionNumber : null,
+                        expiresAt,
+                        secondsRemaining: expiresAt
+                            ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)) : null,
+                        canCancel: false
+                    };
+                }
+            } catch (e) { /* non-fatal */ }
+
+            // 6. Live question.
             const snap = await gameEvents.getSnapshot(user.id).catch(() => null);
             if (snap && !snap.stale) {
                 return {

@@ -184,6 +184,19 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .qimg .miss{font-size:13px;color:var(--ember);line-height:1.5;padding:12px 14px;
             border:1px solid var(--line);border-radius:11px;background:var(--slate)}
 
+/* ---------- security check ---------- */
+.puzzle{background:var(--slate);border:1.5px solid var(--line);border-radius:15px;
+        padding:20px 18px;margin-bottom:16px;text-align:center;
+        font-size:clamp(19px,5vw,23px);line-height:1.5;white-space:pre-wrap;
+        letter-spacing:.02em}
+.capOpts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.capOpt{padding:18px 12px;border-radius:14px;background:var(--slate);
+        border:1.5px solid transparent;display:flex;align-items:center;gap:11px;
+        justify-content:center;font-size:22px;transition:border-color .18s,background .18s}
+.capOpt:hover{border-color:var(--brass);background:var(--raise)}
+.capOpt .k{font-family:var(--display);font-size:12px;color:var(--brass);opacity:.8}
+.capOpt:disabled{opacity:.4}
+
 /* ---------- photo verification ---------- */
 .reqs{list-style:none;margin:0 0 14px;padding:0}
 .reqs li{font-size:13.5px;color:var(--mute);line-height:1.5;padding:6px 0 6px 22px;position:relative}
@@ -356,6 +369,29 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <button class="cta" id="startBtn" onclick="beginGame()">Start game</button>
   </section>
 
+  <!-- ============ SECURITY CHECK (captcha) ============ -->
+  <section class="view" id="vCap">
+    <div class="bar">
+      <div class="brand">Security check</div>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:18px 0 12px">
+      <span class="fig" style="font-size:26px" id="capTitle">Quick check</span>
+      <p>Just confirming there's a person here. This doesn't affect your winnings.</p>
+    </div>
+
+    <div class="countdown" id="capClock"></div>
+    <div class="puzzle" id="capBody"></div>
+    <div class="capOpts" id="capOpts"></div>
+
+    <div class="askRow" id="capRow">
+      <input id="capInput" placeholder="Your answer" autocomplete="off" autocapitalize="off">
+      <button class="cta" onclick="capSend()">Send</button>
+    </div>
+    <div class="msg" id="mCap" style="margin-top:10px"></div>
+  </section>
+
   <!-- ============ PHOTO CHECK ============ -->
   <section class="view" id="vPhoto">
     <div class="bar">
@@ -449,7 +485,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <script>
-const BUILD = '2026-07-29 22:01 UTC (reverted UI)';   // console.log below tells you which copy is loaded
+const BUILD = '2026-07-30 05:35 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
 let token = localStorage.getItem('wut_token'), es=null, tick=null,
     mode='login', answered=false, sound=localStorage.getItem('wut_sound')!=='off',
@@ -680,6 +716,11 @@ function stream(){
     clearTimeout(textT); flushText();
     showPhoto(JSON.parse(e.data));
   });
+
+  es.addEventListener('captcha.required',e=>{
+    clearTimeout(textT); flushText();
+    showCaptcha(JSON.parse(e.data));
+  });
 }
 
 let textBuf=[], textT=null, gstate=null;
@@ -714,6 +755,18 @@ function applyState(st, text){
 
     case 'photo':
       showPhoto(st);
+      return;
+
+    case 'captcha':
+      // A reconnect or refresh mid-check: we have the deadline but not the
+      // puzzle, which only ships with the event. Re-render what we can.
+      if(!$('vCap').classList.contains('on')) showCaptcha(st);
+      return;
+
+    case 'turbo_go':
+      overlay('','Ready when you are',
+        text||'Tap to start the next question — the clock begins immediately.',
+        'Go',()=>{ closeOver(); go('GO'); });
       return;
 
     case 'prompt':
@@ -862,8 +915,8 @@ function duplicatesStructured(text){
    guaranteed to be the ones the post-game handler actually accepts. */
 let lastOver=0;
 function endGame(g){
-  clearInterval(tick); clearInterval(photoTick);
-  lastOver=Date.now(); banked=0; photoMode=false;
+  clearInterval(tick); clearInterval(photoTick); clearInterval(capTick);
+  lastOver=Date.now(); banked=0; photoMode=false; capMode=false;
 
   const won=Number(g.amountWon)||0;
   const reached=g.questionsAnswered, total=g.totalQuestions||15;
@@ -930,9 +983,8 @@ function relay(text){
   // A dedicated screen owns the viewport. Covering it with a modal is never
   // right — and the verification text matches "send your…", which is exactly
   // how it ended up as a chooser on top of the camera button.
-  if(photoMode||$('vPhoto').classList.contains('on')){
-    return;
-  }
+  if(photoMode||$('vPhoto').classList.contains('on')) return;
+  if(capMode||$('vCap').classList.contains('on')) return;
 
   // A question is on screen. Nothing informational is worth burying it under a
   // modal — this is the backstop for any text that outruns game.state.
@@ -994,6 +1046,74 @@ function relay(text){
 function info(text){
   const lines=text.replace(/\*/g,'').replace(/_/g,'').split('\n').filter(l=>l.trim());
   overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
+}
+
+/* ---------- security check ----------
+   The engine can interrupt any non-practice game with a CAPTCHA. It isn't a
+   setUserState state, so it never appeared in the state map, and web had no
+   path for it at all: nothing rendered, nothing to type into, and a 12-second
+   timeout ended the game with money already banked. */
+let capTick=null, capMode=false;
+
+function showCaptcha(c){
+  clearInterval(tick); clearInterval(capTick);
+  capMode=true;
+  $('mCap').textContent='';
+  $('capTitle').textContent=c.title||'Quick check';
+  $('capBody').textContent=(c.body||c.summary||'').trim();
+
+  // Some types are multiple choice, some want a typed answer. Show one or the
+  // other, never both — a text box under four emoji buttons is just confusing.
+  const box=$('capOpts'); box.innerHTML='';
+  const opts=c.options||[];
+  opts.forEach(o=>{
+    const b=document.createElement('button');
+    b.className='capOpt';
+    b.innerHTML='<span class="k"></span><span class="v"></span>';
+    b.querySelector('.k').textContent=o.k;
+    b.querySelector('.v').textContent=o.v;
+    b.onclick=()=>capAnswer(o.k);
+    box.appendChild(b);
+  });
+  box.style.display=opts.length?'grid':'none';
+  $('capRow').style.display=opts.length?'none':'flex';
+
+  const inp=$('capInput'); inp.value='';
+  view('vCap');
+  if(!opts.length) setTimeout(()=>inp.focus(),90);
+
+  const until=c.expiresAt||(c.secondsRemaining?Date.now()+c.secondsRemaining*1000:null);
+  if(until){
+    const paint=()=>{
+      const left=Math.max(0,Math.ceil((until-Date.now())/1000));
+      const el=$('capClock');
+      el.textContent=left?`${left}s`:'Time is up';
+      el.className='countdown'+(left<=5?' hot':'');
+      if(left<=3&&left>0) sfx.urgent();
+      if(!left){ clearInterval(capTick); capLapsed(); }
+    };
+    paint(); capTick=setInterval(paint,1000);
+  } else { $('capClock').textContent=''; }
+}
+
+function capAnswer(v){
+  if(!capMode)return;
+  clearInterval(capTick);
+  sfx.tap();
+  document.querySelectorAll('.capOpt').forEach(b=>b.disabled=true);
+  $('mCap').style.color='var(--mute)';
+  $('mCap').textContent='Checking…';
+  go(v);
+}
+function capSend(){
+  const v=$('capInput').value.trim();
+  if(!v)return;
+  capAnswer(v);
+}
+function capLapsed(){
+  document.querySelectorAll('.capOpt').forEach(b=>b.disabled=true);
+  $('mCap').style.color='var(--ember)';
+  $('mCap').textContent='Time is up — wrapping up this game.';
 }
 
 /* ---------- photo verification ----------
@@ -1361,7 +1481,8 @@ function ladder(n){
   }
 }
 function paint(q){
-  view('vGame'); answered=false; photoMode=false; clearInterval(tick); clearInterval(photoTick);
+  view('vGame'); answered=false; photoMode=false; capMode=false;
+  clearInterval(tick); clearInterval(photoTick); clearInterval(capTick);
   seen[q.questionNumber]=q.prizeAmount;
   $('qCount').textContent=`Question ${q.questionNumber} of ${q.totalQuestions||15}`;
   $('qPrize').textContent=naira(q.prizeAmount);
@@ -1521,6 +1642,7 @@ function closeOver(){
 
   $('askInput').addEventListener('keydown',e=>{ if(e.key==='Enter') askSend(); });
   $('photoInput').addEventListener('change',e=>{ sendPhoto(e.target.files&&e.target.files[0]); });
+  $('capInput').addEventListener('keydown',e=>{ if(e.key==='Enter') capSend(); });
 
   // Returning from a gateway in this same tab (popup was blocked, or the
   // gateway ignored the target). Prefer the query string; fall back to what we

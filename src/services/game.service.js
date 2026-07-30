@@ -1896,7 +1896,69 @@ class GameService {
             session.captcha_shown_at = JSON.stringify(shownCaptchas);
             
             const message = captchaService.formatCaptchaMessage(captcha, session.current_score, questionNumber);
-            await messagingService.sendMessage(user.phone_number, message);
+
+            // ============================================
+            // WEB: structured security check
+            //
+            // This was the one engine state web had no path for at all. A
+            // CAPTCHA is not a setUserState state, so it slipped past the
+            // 30-state map entirely: the player saw nothing, had nothing to
+            // type into, and lost the game on a 12-second timeout with money
+            // on the ladder.
+            //
+            // The puzzle itself (grids, sequences) only exists inside the chat
+            // message, so the body is sent along with the structured bits
+            // rather than relying on displayQuestion, which is only a summary.
+            // ============================================
+            const isWebPlayer = !!(user.phone_number && user.phone_number.startsWith('web_'));
+
+            if (isWebPlayer) {
+                try {
+                    const gameEvents = require('./game-events.service');
+
+                    const opts = Array.isArray(captcha.options)
+                        ? captcha.options.map(o => {
+                            const m = /^\s*(\d+)[.)]\s*(.*)$/.exec(o);
+                            return m ? { k: m[1], v: m[2].trim() } : null;
+                        }).filter(Boolean)
+                        : null;
+
+                    // Strip the chat scaffolding: header, markdown, the
+                    // "reply with" instruction, the timer line, and — when we
+                    // are rendering real buttons — the numbered option lines.
+                    const body = String(captcha.question || '')
+                        .split('\n')
+                        .filter(line => {
+                            const t = line.trim();
+                            if (!t) return true;
+                            if (/SECURITY CHECK/i.test(t)) return false;
+                            if (/^reply with/i.test(t.replace(/[*_]/g, ''))) return false;
+                            if (/^\u23f1|seconds\b/i.test(t.replace(/[*_]/g, ''))) return false;
+                            if (opts && opts.length && /^[1-9](\uFE0F?\u20E3|[.)])/.test(t)) return false;
+                            return true;
+                        })
+                        .join('\n')
+                        .replace(/[*_]/g, '')
+                        .replace(/\n{3,}/g, '\n\n')
+                        .trim();
+
+                    gameEvents.emit(user.id, 'captcha.required', {
+                        captchaType: captcha.type,
+                        title: 'Security check',
+                        body,
+                        summary: captcha.displayQuestion || null,
+                        options: opts && opts.length ? opts : null,
+                        questionNumber,
+                        secondsAllowed: Math.round(QUESTION_TIMEOUT_MS / 1000),
+                        expiresAt: Date.now() + QUESTION_TIMEOUT_MS
+                    });
+                } catch (evtErr) {
+                    logger.error(`Could not emit captcha.required: ${evtErr && evtErr.message}`);
+                }
+            }
+
+            // web has it as captcha.required
+            await messagingService.sendMessage(user.phone_number, message, { webRedundant: isWebPlayer });
             
             await auditService.logCaptchaShown(session.id, user.id, questionNumber, captcha.type, captcha.displayQuestion);
             
