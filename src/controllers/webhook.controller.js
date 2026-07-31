@@ -1663,8 +1663,39 @@ Type the code, or type SKIP to continue:`
     msg += `Reference: ${payment.reference}\n\n`;
     msg += `⚠️ Link expires in 30 minutes\n\n`;
     msg += `After payment, your tokens will be added automatically!`;
-    
-    await messagingService.sendMessage(user.phone_number, msg);
+
+    // ============================================
+    // WEB: same treatment as tournament entry.
+    // This is a separate code path from initTournamentPayment, so it kept
+    // posting a bare URL into a chat bubble that a browser can't click.
+    // Persisted as well as emitted, because the event is lost if the stream
+    // happens to be reconnecting — and the text is suppressed for web.
+    // ============================================
+    const isWebPlayer = !!(user.phone_number && user.phone_number.startsWith('web_'));
+
+    if (isWebPlayer) {
+        try {
+            const gameEvents = require('../services/game-events.service');
+            const payload = {
+                kind: 'tournament_rebuy',
+                title: stateData.tournamentName,
+                subtitle: `${stateData.tokensPerEntry} more attempts`,
+                amount: Number(stateData.entryFee) || 0,
+                gateway: payment.gateway,
+                gatewayLabel: payment.gateway.charAt(0).toUpperCase() + payment.gateway.slice(1),
+                authorizationUrl: payment.authorization_url,
+                reference: payment.reference,
+                expiresInMinutes: 30,
+                note: 'Your tokens are added automatically once payment clears.'
+            };
+            await redis.setex(`pending_checkout:${user.id}`, 1800, JSON.stringify(payload));
+            gameEvents.emit(user.id, 'checkout.required', payload);
+        } catch (evtErr) {
+            logger.error(`Could not emit rebuy checkout.required: ${evtErr && evtErr.message}`);
+        }
+    }
+
+    await messagingService.sendMessage(user.phone_number, msg, { webRedundant: isWebPlayer });
   }
 
   /**

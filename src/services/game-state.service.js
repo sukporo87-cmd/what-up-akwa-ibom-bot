@@ -39,7 +39,13 @@ const PROMPTS = {
     SELECT_TOURNAMENT_GATEWAY:  { expects: 'choice', title: 'How would you like to pay?' },
     SELECT_REBUY_GATEWAY:       { expects: 'choice', title: 'How would you like to pay?' },
     CONFIRM_TOURNAMENT_PAYMENT: { expects: 'choice', title: 'Confirm your entry' },
-    CONFIRM_TOURNAMENT_REBUY:   { expects: 'choice', title: 'Confirm your re-buy' },
+    CONFIRM_TOURNAMENT_REBUY:   { expects: 'choice', title: 'Buy more tokens?',
+        // The engine wants the word REBUY, not a number — without these the
+        // player gets a bare text box and has to guess what to type.
+        actions: [
+            { send: 'REBUY',  label: 'Buy more tokens', primary: true },
+            { send: 'MENU',   label: 'Not now' }
+        ] },
     CONFIRM_BANK_DETAILS:       { expects: 'choice', title: 'Are these details right?',
         actions: [
             { send: 'YES',    label: 'Use these details', primary: true },
