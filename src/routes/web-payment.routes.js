@@ -284,10 +284,30 @@ router.post('/recover', requireWebAuth, async (req, res) => {
 
         const recovered = [];
         for (const row of r.rows) {
+            // A payment the player abandoned at the gateway never existed as far
+            // as the gateway is concerned, and asking about it forever fills the
+            // log with "No transaction was found for this id" on every single
+            // visit to the top-up screen. Give each reference a few chances —
+            // enough for a slow bank transfer — then stop asking.
+            const triesKey = `recover_tries:${row.reference}`;
+            let tries = 0;
+            try {
+                tries = parseInt(await redis.get(triesKey), 10) || 0;
+            } catch (e) { /* if redis is unavailable, just try */ }
+            if (tries >= 5) continue;
+
             try {
                 const v = await paymentService.verifyPayment(row.reference, { markFailed: false });
-                if (v.success) recovered.push({ reference: row.reference, games: v.games, amount: v.amount });
-            } catch (e) { /* still not settled — leave it alone */ }
+                if (v.success) {
+                    recovered.push({ reference: row.reference, games: v.games, amount: v.amount });
+                    try { await redis.del(triesKey); } catch (e) { /* non-fatal */ }
+                }
+            } catch (e) {
+                try {
+                    const n = await redis.incr(triesKey);
+                    if (n === 1) await redis.expire(triesKey, 172800);   // 48h
+                } catch (e2) { /* non-fatal */ }
+            }
         }
 
         const fresh = await pool.query(

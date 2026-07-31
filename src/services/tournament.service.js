@@ -116,9 +116,22 @@ class TournamentService {
                     tep.paid_at
                 FROM tournament_participants tp
                 JOIN tournaments t ON tp.tournament_id = t.id
-                LEFT JOIN tournament_entry_payments tep 
-                    ON tp.tournament_id = tep.tournament_id 
-                    AND tp.user_id = tep.user_id
+                -- A player can have several rows here: an abandoned attempt,
+                -- a retry, and the one that actually went through. A plain
+                -- LEFT JOIN returned whichever Postgres felt like, so a paid
+                -- player could be told "payment not completed" because an old
+                -- pending row won the toss. Pick the successful one if there
+                -- is one, most recent otherwise.
+                LEFT JOIN LATERAL (
+                    SELECT payment_status, paid_at
+                    FROM tournament_entry_payments x
+                    WHERE x.tournament_id = tp.tournament_id
+                      AND x.user_id = tp.user_id
+                    ORDER BY (x.payment_status = 'success') DESC,
+                             x.paid_at DESC NULLS LAST,
+                             x.id DESC
+                    LIMIT 1
+                ) tep ON TRUE
                 WHERE tp.user_id = $1 AND tp.tournament_id = $2
             `, [userId, tournamentId]);
             return result.rows[0] || null;
