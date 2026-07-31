@@ -131,10 +131,7 @@ class AnalyticsService {
                     u.full_name,
                     COALESCE(u.lga, u.city) as lga,
                     u.phone_number,
-                    CASE 
-                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                        ELSE 'whatsapp'
-                    END as platform,
+                    COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                     COUNT(gs.id) as total_games_played,
                     COALESCE(SUM(gs.final_score), 0) as total_score,
                     COALESCE(MAX(gs.final_score), 0) as highest_score,
@@ -165,10 +162,7 @@ class AnalyticsService {
                     u.full_name,
                     COALESCE(u.lga, u.city) as lga,
                     u.phone_number,
-                    CASE 
-                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                        ELSE 'whatsapp'
-                    END as platform,
+                    COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                     COUNT(gs.id) as total_games_played,
                     COALESCE(SUM(gs.final_score), 0) as total_score,
                     COALESCE(MAX(gs.final_score), 0) as highest_score,
@@ -225,10 +219,7 @@ class AnalyticsService {
                     u.full_name,
                     COALESCE(u.lga, u.city) as lga,
                     u.phone_number,
-                    CASE 
-                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                        ELSE 'whatsapp'
-                    END as platform,
+                    COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                     COUNT(gs.id) as games_played,
                     SUM(COALESCE(gs.final_score, 0)) as total_score,
                     MAX(COALESCE(gs.final_score, 0)) as highest_score,
@@ -272,10 +263,7 @@ class AnalyticsService {
                         ROW_NUMBER() OVER (ORDER BY tp.total_score DESC) as rank,
                         u.username,
                         u.full_name,
-                        CASE 
-                            WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                            ELSE 'whatsapp'
-                        END as platform,
+                        COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                         tp.total_score,
                         tp.games_played,
                         tp.best_score
@@ -376,10 +364,7 @@ class AnalyticsService {
                     u.username,
                     u.full_name,
                     u.phone_number,
-                    CASE 
-                        WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                        ELSE 'whatsapp'
-                    END as platform,
+                    COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                     COUNT(r.id) as total_referrals,
                     COUNT(CASE WHEN ru.total_games_played > 0 THEN 1 END) as active_referrals,
                     u.referral_code

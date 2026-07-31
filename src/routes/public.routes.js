@@ -139,10 +139,7 @@ router.get('/tournaments/:id/leaderboard', async (req, res) => {
                 COALESCE(tp.best_time_taken, 0) as time_taken,
                 tp.best_score as score,
                 tp.games_played,
-                CASE 
-                    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                    ELSE 'whatsapp'
-                END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 COALESCE(tp.last_played_at, tp.joined_at) as last_played
             FROM tournament_participants tp
             JOIN users u ON tp.user_id = u.id
@@ -216,10 +213,7 @@ router.get('/leaderboard/all-time', async (req, res) => {
                 COALESCE(SUM(tp.prize_won), 0) as total_winnings,
                 COALESCE(SUM(tp.best_score), 0) as total_score,
                 COUNT(DISTINCT tp.tournament_id) as tournaments_played,
-                CASE 
-                    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                    ELSE 'whatsapp'
-                END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 MAX(tp.joined_at) as last_active
             FROM users u
             JOIN tournament_participants tp ON u.id = tp.user_id
@@ -263,10 +257,7 @@ router.get('/leaderboard/daily', async (req, res) => {
                 SUM(COALESCE(gs.final_score, 0)) as total_score,
                 COUNT(gs.id) as games_played,
                 MAX(COALESCE(gs.final_score, 0)) as best_score,
-                CASE 
-                    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                    ELSE 'whatsapp'
-                END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 MAX(gs.completed_at) as last_played
             FROM users u
             JOIN game_sessions gs ON u.id = gs.user_id
@@ -315,10 +306,7 @@ router.get('/leaderboard/weekly', async (req, res) => {
                 SUM(COALESCE(gs.final_score, 0)) as total_score,
                 COUNT(gs.id) as games_played,
                 MAX(COALESCE(gs.final_score, 0)) as best_score,
-                CASE 
-                    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                    ELSE 'whatsapp'
-                END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 MAX(gs.completed_at) as last_played
             FROM users u
             JOIN game_sessions gs ON u.id = gs.user_id
@@ -367,10 +355,7 @@ router.get('/leaderboard/monthly', async (req, res) => {
                 SUM(COALESCE(gs.final_score, 0)) as total_score,
                 COUNT(gs.id) as games_played,
                 MAX(COALESCE(gs.final_score, 0)) as best_score,
-                CASE 
-                    WHEN u.phone_number LIKE 'tg_%' THEN 'telegram'
-                    ELSE 'whatsapp'
-                END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 MAX(gs.completed_at) as last_played
             FROM users u
             JOIN game_sessions gs ON u.id = gs.user_id

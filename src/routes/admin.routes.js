@@ -6769,7 +6769,7 @@ router.get('/api/tournaments/:id/participants', authenticateAdmin, async (req, r
                 u.username,
                 u.full_name,
                 u.city,
-                CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' ELSE 'whatsapp' END as platform,
+                COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform,
                 tp.joined_at
             FROM tournament_participants tp
             JOIN users u ON tp.user_id = u.id

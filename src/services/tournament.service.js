@@ -610,7 +610,7 @@ class TournamentService {
                     COALESCE(tp.best_time_taken, 999) as time_taken,
                     tp.games_played, tp.total_score,
                     u.username, u.full_name, u.phone_number,
-                    CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' ELSE 'whatsapp' END as platform
+                    COALESCE(u.platform, CASE WHEN u.phone_number LIKE 'tg_%' THEN 'telegram' WHEN u.phone_number LIKE 'web_%' THEN 'web' ELSE 'whatsapp' END) as platform
                 FROM tournament_participants tp
                 JOIN users u ON tp.user_id = u.id
                 WHERE tp.tournament_id = $1
