@@ -29,11 +29,11 @@ body.home{background:var(--navy-deep)}
   display:grid;gap:26px;align-items:center}
 .hero-copy{text-align:center;max-width:640px;margin:0 auto}
 /* the arena visual */
-.hero-visual{position:relative;height:min(38dvh,340px);order:-1}
+.hero-visual{position:relative;height:min(46dvh,420px);order:-1}
 #arena{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity 1s ease}
 #arena.ready{opacity:1}
 .arena-fallback{position:absolute;inset:0;display:grid;place-items:center}
-.af-globe{position:relative;width:min(78%,300px);aspect-ratio:1;border-radius:50%;
+.af-globe{position:relative;width:min(80%,420px);aspect-ratio:1;border-radius:50%;
   background:
     radial-gradient(circle at 34% 30%, rgba(240,200,75,.28), transparent 42%),
     radial-gradient(circle at 50% 50%, rgba(212,175,55,.10), rgba(109,40,217,.10) 62%, transparent 72%);
@@ -54,12 +54,19 @@ body.home{background:var(--navy-deep)}
 .af-ic:nth-child(7){top:38%;right:-3%;animation-delay:-1.1s}
 @keyframes afFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 @media(prefers-reduced-motion:reduce){.af-ic{animation:none}}
+.arena-tip{position:absolute;pointer-events:none;z-index:5;transform:translate(-50%,-130%);
+  background:rgba(8,18,36,.92);border:1px solid rgba(212,175,55,.45);color:var(--gold-bright);
+  font-family:var(--font-data);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  border-radius:8px;padding:5px 10px;white-space:nowrap;opacity:0;transition:opacity .15s}
+.arena-tip.on{opacity:1}
+#arena{cursor:default}
+#arena.hot{cursor:pointer}
 
 /* desktop: copy left, arena right, both larger */
 @media(min-width:980px){
-  .hero-grid{grid-template-columns:1.05fr .95fr;gap:24px}
+  .hero-grid{grid-template-columns:1fr 1.05fr;gap:18px}
   .hero-copy{text-align:left;margin:0;max-width:none}
-  .hero-visual{order:2;height:min(72dvh,600px)}
+  .hero-visual{order:2}
   .hero-ctas,.hero-plat-row{justify-content:flex-start}
   .hero-trust{justify-content:flex-start}
 }
@@ -84,11 +91,16 @@ body.home{background:var(--navy-deep)}
 .hero-trust .t span{font-size:11px;color:#7E93B0;letter-spacing:.06em;text-transform:uppercase}
 @media(max-height:720px){
   .hero{padding-top:calc(var(--header-h) + 8px)}
-  .hero-visual{height:min(24dvh,180px)}
   .hero-badge{margin-bottom:10px}
   .hero h1{font-size:clamp(36px,7vw,56px);margin-bottom:10px}
   .hero-sub{margin-bottom:14px}
   .hero-trust{margin-top:14px}
+}
+@media(max-height:720px) and (max-width:979px){
+  .hero-visual{height:min(30dvh,230px)}
+}
+@media(min-width:980px){
+  .hero-visual{height:min(86dvh,700px)}
 }
 
 /* platform trio */
@@ -536,6 +548,7 @@ body.theme-light .social-row a{border-color:rgba(30,58,95,.2);color:var(--ink-so
         <span class="af-ic">₦</span><span class="af-ic">🧪</span><span class="af-ic">📚</span>
       </div>
       <canvas id="arena"></canvas>
+      <div class="arena-tip" id="arenaTip"></div>
     </div>
   </div>
 </section>
@@ -895,7 +908,7 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
   // ACTIVITY_API: flip to true when /api/public/activity/recent
   //   ships. Until then the social-proof ticker stays dormant —
   //   it never invents events.
-  C.FEATURES = { REVIEWS_API: true, CONTENT_API: true, ACTIVITY_API: true };
+  C.FEATURES = { REVIEWS_API: false, CONTENT_API: false, ACTIVITY_API: false };
 })(window.WUT_CONFIG);
 
 /* ---------- tiny helpers ---------- */
@@ -1043,10 +1056,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* ============================================================
    LIVE ACTIVITY TICKER — social proof, real events only.
-   Reads /api/public/activity/recent (see API-SPEC.md §3) and
-   shows small toasts: credit purchases, tournament joins,
-   completed climbs, rewards claimed. Names arrive pre-masked
-   by the server. Dormant until FEATURES.ACTIVITY_API is true.
+   Reads /api/public/activity/recent (see API-SPEC.md §3): events
+   from the last 72 hours, actor = the player's public username.
+   Behaviour: ONE toast at a time — fade in, hold ~4s, fade out,
+   short gap, next event — cycling through the pool continuously
+   and refreshing it every 60s. Dormant until FEATURES.ACTIVITY_API
+   is true; it never invents events.
    ============================================================ */
 (function () {
   var C = window.WUT_CONFIG;
@@ -1054,11 +1069,12 @@ document.addEventListener('DOMContentLoaded', function () {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
   var ICON = { purchase: '💳', tournament_join: '🏆', game_complete: '🎯', reward_claim: '💰' };
-  var wrap = document.createElement('div');
-  wrap.className = 'ticker'; wrap.setAttribute('aria-live', 'polite'); wrap.setAttribute('role', 'status');
-  document.body.appendChild(wrap);
+  var SHOW_MS = 4000;   // visible time per event
+  var GAP_MS = 1100;    // quiet gap between events
+  var POLL_MS = 60000;  // pool refresh
+  var MAX_AGE = 72 * 3600 * 1000;
 
-  var seen = {}, queue = [], showing = 0, MAX_VISIBLE = 2;
+  var wrap = null, pool = [], idx = 0, cycling = false;
 
   function ago(iso) {
     var s = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
@@ -1066,8 +1082,23 @@ document.addEventListener('DOMContentLoaded', function () {
     var m = Math.round(s / 60); if (m < 60) return m + 'm ago';
     var h = Math.round(m / 60); return h + 'h ago';
   }
-  function show(ev) {
-    showing++;
+
+  function ensureWrap() {
+    if (wrap) return;
+    wrap = document.createElement('div');
+    wrap.className = 'ticker';
+    wrap.setAttribute('aria-live', 'polite');
+    wrap.setAttribute('role', 'status');
+    document.body.appendChild(wrap);
+  }
+
+  function showNext() {
+    if (!pool.length) { cycling = false; return; }
+    cycling = true;
+    if (document.hidden) { setTimeout(showNext, SHOW_MS); return; }
+    if (idx >= pool.length) idx = 0;
+    var ev = pool[idx++];
+    ensureWrap();
     var el = document.createElement('div');
     el.className = 'ticker-item';
     el.innerHTML = '<span class="tk-ic">' + (ICON[ev.type] || '⚡') + '</span>' +
@@ -1077,29 +1108,33 @@ document.addEventListener('DOMContentLoaded', function () {
     requestAnimationFrame(function () { el.classList.add('show'); });
     setTimeout(function () {
       el.classList.remove('show');
-      setTimeout(function () { el.remove(); showing--; pump(); }, 400);
-    }, 6000);
+      setTimeout(function () { el.remove(); setTimeout(showNext, GAP_MS); }, 400);
+    }, SHOW_MS);
   }
-  function pump() {
-    while (queue.length && showing < MAX_VISIBLE) show(queue.shift());
-  }
+
   function poll() {
-    if (document.hidden) return;
-    apiGet('/api/public/activity/recent?limit=10').then(function (res) {
+    apiGet('/api/public/activity/recent?limit=20').then(function (res) {
       var evs = (res && res.events) || [];
-      evs.forEach(function (ev) {
-        if (seen[ev.id]) return;
-        seen[ev.id] = 1; queue.push(ev);
-      });
-      if (queue.length > 6) queue = queue.slice(-6); // never flood
-      pump();
+      var cutoff = Date.now() - MAX_AGE;
+      evs = evs.filter(function (e) { return new Date(e.at).getTime() > cutoff; });
+      if (!evs.length) return;
+      // rebuild the pool newest-first, keep cycle position stable-ish
+      var currentId = pool[idx - 1] && pool[idx - 1].id;
+      pool = evs;
+      if (currentId) {
+        for (var i = 0; i < pool.length; i++) {
+          if (pool[i].id === currentId) { idx = i + 1; break; }
+        }
+      }
+      if (!cycling) showNext();
     }).catch(function () { /* silent — social proof must never error visibly */ });
   }
+
   setTimeout(function () {
     // pages opt in by setting data-ticker="on" on <body> in their script
-    if (!document.body || document.body.getAttribute('data-ticker') !== 'on') { wrap.remove(); return; }
+    if (!document.body || document.body.getAttribute('data-ticker') !== 'on') return;
     poll();
-    setInterval(poll, 30000);
+    setInterval(poll, POLL_MS);
   }, 4000); // let the page breathe first
 })();
 
@@ -1314,21 +1349,44 @@ document.body.setAttribute('data-ticker', 'on');
 })();
 
 /* ================================================================
-   THE ARENA — hero 3D.
-   A globe of golden knowledge-particles with icons of every subject
-   in orbit. Every few seconds one icon ignites and flies to the
-   viewer; the headline's gold word pulses as it lands. The globe
-   turns as you scroll. Contained entirely in the hero, lazy-loaded,
-   and every failure path leaves the designed CSS fallback in place.
+   THE ARENA v2 — a futuristic knowledge Earth.
+   A crystal planet wrapped in a hexagonal geodesic mesh, its real
+   continents drawn in flowing golden energy, wrapped in haze and
+   orbited by the symbols of every field of human knowledge. Every
+   few seconds a continent dissolves a spark of itself into a symbol
+   that rises to orbit; symbols occasionally dive at the viewer and
+   land as a pulse on the headline. Tap a symbol and the planet
+   turns to its home region and lights it up.
+   Fully contained in the hero; sized to ~75% of its panel and held
+   there (only a 1.5% breathing oscillation); every failure path
+   leaves the designed CSS fallback in place.
    ================================================================ */
 (function () {
   var canvas = document.getElementById('arena');
   var holder = canvas && canvas.parentElement;
+  var tip = document.getElementById('arenaTip');
   if (!canvas || !holder) return;
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var saveData = navigator.connection && navigator.connection.saveData;
   var lowMem = navigator.deviceMemory && navigator.deviceMemory <= 2;
   if (reduce || saveData || lowMem) return; // fallback globe stays
+
+  // Land mask: 192×96 equirectangular bitmask baked from Natural
+  // Earth (world-atlas 110m) at build time. ~3KB. Real continents.
+  var LAND_B64 = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+AMAAAAAAAAAAAAAAAAAAAAAAACA/4///+8BAAAAAAAAAAAAAAAAAAAAAADg/+H//z8AQDsAAAAAHAAAAAAAAAAAABAgPvz//z8AABsAAAAAAAAAAAAAAAAAAKzOAAD//x8AAAAAAAcA/B8ADgAAAAAAwANgAAD8/x8AAAAAYADA/wcAAAAAAAAA4L4s/wD4/wcAAAAAMGD+//8f/AAAAPwBAPBj/g/4/wMAAPAAAHD//////x8A/v///////////////wFgL5AAAAAAAAAA4P//////////////fwDEAEAAAAAAAAAAiP//////zR/wA/AAwOf3////////////AP////9/AAzgAQAA+Pv/////////////AH////8/gAfAAQAA+Pn//////////6cPADzA//8/wCcAAAAA2PP/////////D2IAABgA/v//gH8AAABg4On/////////A3gAAAIA/P//x/8AAABgUPj/////////ATgAAAAA+v//z/8DAADY+P//////////BxgAAAAA8P//3/8DAADg/f//////////BwgAAAAA0P///w8CAAAA////////////FwAAAAAAgP///x8PAADA////////////AwAAAAAAwP///78AAACA///08///////AQAAAAAAwP///ycAAACAb3/g+f//////OAAAAAAAwP///wMAAAD4w3zA8/////8fAAAAAAAAwP///wEAAAD4EN//9/////8eCAAAAAAAwP///wAAAAD4ANn/4////38YBAAAAAAAgP///wAAAAAgPoD6//////8ZBgAAAAAAAP//fwAAAADgPwD6///////IAwAAAAAAAP7/HwAAAAD4fwj4//////8hAAAAAAAAAPT/HwAAAAD4/3n///////8BAAAAAAAAAPAfEAAAAAD8///5+/////8BAAAAAAAAAOgPEAAAAAD+///78/////8AAAAAAAAAANAPAAAAAAD////zL/////8AAAAAAAAAAKAPAAAAAID////nf+D//z8BAAAAAAAAAAAPQAAAAID////v/+B//g8AAAAAAAAAAAAfAQIAAID////Pf4A//AQAAAAAAAAAAAD8AQAAAID////fP4AP/AEBAAAAAAAAAADQAQAAAID///+fD4AH9AMBAAAAAAAAAACADwAAAID///+/AwAH8AMDAAAAAAAAAAAABAAAAID///9/AAAHgAMEAAAAAAAAAAAADN8AAAD/////BwACAIEAAAAAAAAAAAAA2P8AAAD+////BwACEAAEAAAAAAAAAAAAgP8BAAD8////AwAIIEAEAAAAAAAAAAAAgP8PAAAI6P//AwAASGAAAAAAAAAAAAAAwP8fAAAA4P//AQAAUHAAAAAAAAAAAAAAwP8fAAAA4P9/AAAAYHwVAAAAAAAAAAAA4P9/AAAA4P8/AAAAYHxCAAAAAAAAAAAA4P//AwAA4P8fAAAAwLjABwEAAAAAAAAA4P//DwAAwP8fAAAAgAACPgIAAAAAAAAA4P//HwAAgP8fAAAAAAMAfAAAAAAAAAAAwP//HwAAgP8fAAAAACAJSAAAAAAAAAAAwP//HwAAgP8fAAAAAAAAAAAAAAAAAAAAgP//DwAAgP8/AAAAAACAAQAAAAAAAAAAgP//BwAAgP8/BAAAAADoEAAAAAAAAAAAAP//BwAAwP8fBwAAAAD8OQAAAAAAAAAAAPz/BwAAwP+PAwAAAAD+PwAAAAAAAAAAAPj/BwAAgP8HAwAAAAD/fwAAAAAAAAAAAPj/AwAAgP+HAwAAAOD//wABAAAAAAAAAPz/AAAAAP+HAQAAAOD//wAAAAAAAAAAAPw/AAAAAP8DAQAAAOD//wMAAAAAAAAAAPw/AAAAAP8BAAAAAOD//wMAAAAAAAAAAPw/AAAAAP4BAAAAAOD//wMAAAAAAAAAAPwfAAAAAP4AAAAAAMD//wMAAAAAAAAAAPwPAAAAAHwAAAAAAMAH/wEAAAAAAAAAAP4FAAAAAAQAAAAAAEAA/wAAAAAAAAAAAP4DAAAAAAAAAAAAAAAA+AAAAAAAAAAAAP4BAAAAAAAAAAAAAAAAMABgAAAAAAAAAH4AAAAAAAAAAAAAAAAAAAAgAAAAAAAAAB8AAAAAAAAAAAAAAAAAQAAYAAAAAAAAAB4AAAAAAAAAAAAAAAAAAAAMAAAAAAAAAA8AAAAAAAAAAAAAAAAAAAAGAAAAAAAAAB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAeAAAwBjiAQAAAAAAAAAAABAAAAAAAACA/x/8/////wAAAAAAAAAAAHQAAAAAkI///4///////z8AAAAAAAAcAHUAAAD8/////9////////8HAAAAAAj+/38AAAD///////////////8BAAD8/////w8AAOD//////////////38AAPD//////wEAwP////////////////8AAAD+////fwDgAf///////////////z8AAOD//////x8A/P///////////////z8AAMD///////////////////////////8DAAgDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  var LW = 192, LH = 96;
+  var LAND = (function () {
+    var bin = atob(LAND_B64), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return function (lat, lon) { // degrees → is land?
+      var r = Math.floor((90 - lat) / 180 * LH);
+      var c = Math.floor((lon + 180) / 360 * LW);
+      if (r < 0) r = 0; if (r >= LH) r = LH - 1;
+      if (c < 0) c = 0; if (c >= LW) c = LW - 1;
+      var idx = r * LW + c;
+      return (bytes[idx >> 3] >> (idx & 7)) & 1;
+    };
+  })();
 
   function boot() {
     var s = document.createElement('script');
@@ -1343,141 +1401,766 @@ document.body.setAttribute('data-ticker', 'on');
     addEventListener('load', function () { setTimeout(boot, 700); });
   }
 
-  function glyphTexture(glyph, color) {
+  /* ---------- sprite texture painters ---------- */
+  function makeCanvas() {
     var c = document.createElement('canvas'); c.width = c.height = 128;
-    var x = c.getContext('2d');
-    x.font = '700 84px "Instrument Sans", system-ui, sans-serif';
-    x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.shadowColor = color; x.shadowBlur = 18;
-    x.fillStyle = color;
-    x.fillText(glyph, 64, 70);
+    return [c, c.getContext('2d')];
+  }
+  function finish(c, blurPx) {
+    if (blurPx) { // pre-blurred copy = fake depth-of-field for far rings
+      var b = document.createElement('canvas'); b.width = b.height = 128;
+      var bx = b.getContext('2d');
+      bx.filter = 'blur(' + blurPx + 'px)';
+      bx.drawImage(c, 0, 0);
+      c = b;
+    }
     var t = new THREE.CanvasTexture(c);
     t.minFilter = THREE.LinearFilter;
     return t;
   }
+  function glyphTex(glyph, color, blurPx) {
+    var cc = makeCanvas(), c = cc[0], x = cc[1];
+    x.font = '700 78px "Instrument Sans", system-ui, sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.shadowColor = color; x.shadowBlur = 16;
+    x.fillStyle = color;
+    x.fillText(glyph, 64, 70);
+    return finish(c, blurPx);
+  }
+  function textTex(txt, color, blurPx) {
+    var cc = makeCanvas(), c = cc[0], x = cc[1];
+    var size = txt.length > 5 ? 26 : 34;
+    x.font = '700 ' + size + 'px "JetBrains Mono", monospace';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.shadowColor = color; x.shadowBlur = 12;
+    x.fillStyle = color;
+    // letter-spaced uppercase
+    var sp = txt.split('').join(' ');
+    x.fillText(sp, 64, 66);
+    return finish(c, blurPx);
+  }
+  // Hand-drawn landmark & heritage painters — the symbols that have
+  // no emoji: Eiffel, pyramids, Big Ben, Sydney Opera, the Redeemer,
+  // Burj Khalifa, the Great Wall, Olympic rings, Benin bronze head,
+  // adinkra, talking drum, calabash, African mask.
+  var PAINTERS = {
+    eiffel: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(64, 14); x.quadraticCurveTo(58, 66, 30, 112);
+      x.moveTo(64, 14); x.quadraticCurveTo(70, 66, 98, 112);
+      x.moveTo(40, 78); x.quadraticCurveTo(64, 70, 88, 78);
+      x.moveTo(48, 52); x.quadraticCurveTo(64, 47, 80, 52);
+      x.moveTo(30, 112); x.quadraticCurveTo(64, 96, 98, 112);
+      x.stroke();
+    },
+    pyramids: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineJoin = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(12, 104); x.lineTo(52, 34); x.lineTo(92, 104); x.closePath();
+      x.moveTo(70, 104); x.lineTo(98, 62); x.lineTo(122, 104);
+      x.moveTo(52, 34); x.lineTo(60, 104);
+      x.stroke();
+    },
+    bigben: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4;
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.strokeRect(48, 34, 32, 74);
+      x.beginPath(); x.moveTo(48, 34); x.lineTo(64, 12); x.lineTo(80, 34); x.stroke();
+      x.beginPath(); x.arc(64, 58, 11, 0, 7); x.stroke();
+      x.beginPath(); x.moveTo(64, 58); x.lineTo(64, 50); x.moveTo(64, 58); x.lineTo(70, 60); x.stroke();
+    },
+    opera: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(14, 100); x.quadraticCurveTo(34, 46, 58, 100);
+      x.moveTo(42, 100); x.quadraticCurveTo(64, 34, 92, 100);
+      x.moveTo(74, 100); x.quadraticCurveTo(98, 52, 116, 100);
+      x.moveTo(10, 104); x.lineTo(118, 104);
+      x.stroke();
+    },
+    redeemer: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 5; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(64, 22); x.lineTo(64, 84);
+      x.moveTo(20, 44); x.lineTo(108, 44);
+      x.moveTo(64, 84); x.lineTo(50, 108); x.moveTo(64, 84); x.lineTo(78, 108);
+      x.stroke();
+      x.beginPath(); x.arc(64, 14, 7, 0, 7); x.stroke();
+    },
+    burj: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(64, 8); x.lineTo(64, 110);
+      x.moveTo(52, 110); x.lineTo(52, 44); x.lineTo(64, 24);
+      x.moveTo(76, 110); x.lineTo(76, 44); x.lineTo(64, 24);
+      x.moveTo(40, 110); x.lineTo(40, 70); x.lineTo(52, 56);
+      x.moveTo(88, 110); x.lineTo(88, 70); x.lineTo(76, 56);
+      x.stroke();
+    },
+    wall: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineJoin = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(10, 96); x.quadraticCurveTo(40, 60, 70, 76); x.quadraticCurveTo(100, 90, 120, 58);
+      x.moveTo(10, 78); x.quadraticCurveTo(40, 44, 70, 60); x.quadraticCurveTo(100, 74, 120, 40);
+      x.stroke();
+      // watchtower
+      x.strokeRect(58, 46, 20, 26);
+      x.beginPath(); x.moveTo(55, 46); x.lineTo(81, 46); x.stroke();
+    },
+    olympics: function (x) {
+      var cols = ['#5FC5F2', '#F0C84B', '#111111', '#5EE79A', '#FF6B6B'];
+      x.lineWidth = 5; x.shadowBlur = 8;
+      var xs = [34, 64, 94, 49, 79], ys = [52, 52, 52, 74, 74];
+      for (var i = 0; i < 5; i++) {
+        x.strokeStyle = cols[i] === '#111111' ? '#E8ECF4' : cols[i];
+        x.shadowColor = x.strokeStyle;
+        x.beginPath(); x.arc(xs[i], ys[i], 15, 0, 7); x.stroke();
+      }
+    },
+    bronzehead: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      // Benin bronze: high collar, beaded crown
+      x.beginPath(); x.ellipse(64, 58, 22, 27, 0, 0, 7); x.stroke();
+      for (var i = 0; i < 4; i++) { x.beginPath(); x.moveTo(38, 92 + i * 6); x.lineTo(90, 92 + i * 6); x.stroke(); }
+      x.beginPath(); x.moveTo(42, 40); x.quadraticCurveTo(64, 22, 86, 40); x.stroke();
+      x.beginPath(); x.moveTo(54, 56); x.lineTo(60, 56); x.moveTo(68, 56); x.lineTo(74, 56); x.stroke();
+      x.beginPath(); x.moveTo(58, 74); x.lineTo(70, 74); x.stroke();
+    },
+    adinkra: function (x, col) {
+      // Gye Nyame-inspired swirl
+      x.strokeStyle = col; x.lineWidth = 5; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(64, 16); x.quadraticCurveTo(96, 28, 92, 60);
+      x.quadraticCurveTo(88, 92, 56, 96);
+      x.quadraticCurveTo(30, 98, 32, 72);
+      x.quadraticCurveTo(34, 52, 56, 52);
+      x.quadraticCurveTo(72, 52, 70, 68);
+      x.stroke();
+      x.beginPath(); x.arc(60, 70, 4, 0, 7); x.stroke();
+    },
+    drum: function (x, col) {
+      // talking drum with tension cords
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath(); x.ellipse(64, 30, 24, 9, 0, 0, 7); x.stroke();
+      x.beginPath(); x.ellipse(64, 98, 24, 9, 0, 0, 7); x.stroke();
+      x.beginPath();
+      x.moveTo(40, 30); x.quadraticCurveTo(56, 64, 40, 98);
+      x.moveTo(88, 30); x.quadraticCurveTo(72, 64, 88, 98);
+      x.moveTo(52, 32); x.lineTo(76, 96); x.moveTo(76, 32); x.lineTo(52, 96);
+      x.stroke();
+    },
+    calabash: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4;
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath(); x.arc(64, 74, 30, 0, 7); x.stroke();
+      x.beginPath();
+      x.moveTo(56, 46); x.quadraticCurveTo(56, 28, 50, 20);
+      x.moveTo(72, 46); x.quadraticCurveTo(72, 28, 78, 20);
+      x.stroke();
+      x.beginPath(); x.moveTo(44, 70); x.quadraticCurveTo(64, 82, 84, 70); x.stroke();
+    },
+    mask: function (x, col) {
+      x.strokeStyle = col; x.lineWidth = 4; x.lineCap = 'round';
+      x.shadowColor = col; x.shadowBlur = 10;
+      x.beginPath();
+      x.moveTo(64, 12); x.quadraticCurveTo(96, 26, 90, 70);
+      x.quadraticCurveTo(86, 104, 64, 114);
+      x.quadraticCurveTo(42, 104, 38, 70);
+      x.quadraticCurveTo(32, 26, 64, 12);
+      x.stroke();
+      x.beginPath(); x.moveTo(48, 54); x.lineTo(58, 58); x.moveTo(80, 54); x.lineTo(70, 58); x.stroke();
+      x.beginPath(); x.moveTo(64, 62); x.lineTo(64, 82); x.moveTo(56, 94); x.quadraticCurveTo(64, 99, 72, 94); x.stroke();
+    }
+  };
+  function paintTex(name, color, blurPx) {
+    var cc = makeCanvas(), c = cc[0], x = cc[1];
+    PAINTERS[name](x, color);
+    return finish(c, blurPx);
+  }
+
+  /* ---------- the knowledge catalogue ----------
+     [kind, source, category, color, lat, lon]
+     kind: g = emoji/glyph, t = text sprite, p = custom painter.
+     Every symbol carries a home region — tap it and the planet
+     turns there. */
+  var CATALOG = [
+    // Geography & world
+    ['g','❓','World Trivia','#F0C84B', 9.08, 8.68],          // ? — Nigeria, home
+    ['g','🌍','World Geography','#5FC5F2', 9, 20],
+    ['g','🧭','Geography','#5FC5F2', 64, -20],
+    ['g','⛰️','Geography','#E8ECF4', 28, 84],
+    ['g','🗺️','Geography','#5EE79A', 48, 68],
+    ['g','📍','Cities','#FF8A5C', 6.5, 3.4],
+    ['g','🌋','Earth Science','#FF8A5C', -7.5, 110],
+    // Landmarks
+    ['p','eiffel','Landmarks','#F0C84B', 48.86, 2.35],
+    ['g','🗽','Landmarks','#5FC5F2', 40.7, -74],
+    ['p','pyramids','Ancient World','#F0C84B', 29.98, 31.13],
+    ['p','bigben','Landmarks','#B79BFF', 51.5, -0.12],
+    ['p','opera','Landmarks','#5FC5F2', -33.86, 151.2],
+    ['p','redeemer','Landmarks','#5EE79A', -22.95, -43.21],
+    ['p','burj','Landmarks','#E8ECF4', 25.2, 55.27],
+    ['p','wall','Ancient World','#F0C84B', 40.4, 116.6],
+    ['g','🏛️','Ancient World','#E8ECF4', 37.97, 23.73],
+    ['g','🗿','Ancient World','#B79BFF', -27.1, -109.35],
+    ['g','⛩️','Landmarks','#FF6B6B', 34.97, 135.78],
+    // African heritage
+    ['p','bronzehead','African Heritage','#F0C84B', 6.34, 5.62],   // Benin City
+    ['p','adinkra','African Heritage','#5EE79A', 6.7, -1.62],      // Kumasi
+    ['p','drum','African Heritage','#FF8A5C', 8.5, 4.55],
+    ['p','calabash','African Heritage','#F0C84B', 11.85, 13.16],
+    ['p','mask','African Heritage','#B79BFF', 6.45, 2.35],
+    ['g','🦁','African Wildlife','#F0C84B', -2.33, 34.83],
+    // Cities (text)
+    ['t','LAGOS','Cities','#F0C84B', 6.52, 3.38],
+    ['t','ABUJA','Cities','#5EE79A', 9.07, 7.5],
+    ['t','PARIS','Cities','#B79BFF', 48.86, 2.35],
+    ['t','TOKYO','Cities','#5FC5F2', 35.68, 139.69],
+    ['t','CAIRO','Cities','#F0C84B', 30.04, 31.24],
+    ['t','NAIROBI','Cities','#5EE79A', -1.29, 36.82],
+    ['t','LONDON','Cities','#E8ECF4', 51.5, -0.12],
+    ['t','RIO','Cities','#5EE79A', -22.9, -43.2],
+    // Flags
+    ['g','🇳🇬','Countries & Flags','#5EE79A', 9.08, 8.68],
+    ['g','🇬🇭','Countries & Flags','#F0C84B', 7.95, -1.03],
+    ['g','🇰🇪','Countries & Flags','#FF6B6B', 0.02, 37.9],
+    ['g','🇿🇦','Countries & Flags','#5EE79A', -30.56, 22.94],
+    ['g','🇪🇬','Countries & Flags','#F0C84B', 26.82, 30.8],
+    ['g','🇫🇷','Countries & Flags','#5FC5F2', 46.23, 2.21],
+    ['g','🇬🇧','Countries & Flags','#B79BFF', 55.38, -3.44],
+    ['g','🇺🇸','Countries & Flags','#5FC5F2', 37.09, -95.71],
+    ['g','🇧🇷','Countries & Flags','#5EE79A', -14.24, -51.93],
+    ['g','🇯🇵','Countries & Flags','#FF6B6B', 36.2, 138.25],
+    ['g','🇮🇳','Countries & Flags','#FF8A5C', 20.59, 78.96],
+    ['g','🇨🇳','Countries & Flags','#FF6B6B', 35.86, 104.2],
+    // Sports
+    ['g','⚽','Football','#5EE79A', -14.24, -51.93],
+    ['g','🏀','Basketball','#FF8A5C', 39.8, -98.6],
+    ['g','🎾','Tennis','#5EE79A', 51.43, -0.21],
+    ['g','🏉','Rugby','#E8ECF4', -40.9, 174.89],
+    ['g','🏏','Cricket','#5FC5F2', 20.59, 78.96],
+    ['g','🏇','Polo','#F0C84B', -34.6, -58.38],
+    ['g','🏃','Athletics','#5EE79A', 0.02, 37.9],
+    ['p','olympics','Olympics','#E8ECF4', 37.97, 23.73],
+    ['g','🏆','World Cup','#F0C84B', 25.35, 51.18],
+    ['g','♛','Chess','#B79BFF', 55.76, 37.62],
+    // Science
+    ['g','🧬','Science','#5EE79A', 52.2, 0.12],
+    ['g','⚛️','Science','#5FC5F2', 46.23, 6.05],
+    ['g','🧪','Science','#B79BFF', 52.52, 13.4],
+    ['g','🔬','Science','#5FC5F2', 52.37, 4.9],
+    ['g','🔭','Astronomy','#B79BFF', -24.63, -70.4],
+    ['g','🪐','Astronomy','#F0C84B', 28.5, -80.6],
+    ['g','🚀','Space','#E8ECF4', 45.62, 63.31],
+    // Chemistry elements
+    ['t','Au','Chemistry','#F0C84B', -26.2, 28.05],
+    ['t','Fe','Chemistry','#FF8A5C', 61.5, 105.3],
+    ['t','Na','Chemistry','#B79BFF', 23.42, 25.66],
+    ['t','O₂','Chemistry','#5FC5F2', -3.47, -62.21],
+    ['t','H₂O','Chemistry','#5FC5F2', 0, -160],
+    // Mathematics
+    ['t','π','Mathematics','#F0C84B', 37.97, 23.73],
+    ['t','√','Mathematics','#5FC5F2', 30.04, 31.24],
+    ['t','∑','Mathematics','#B79BFF', 47.37, 8.54],
+    ['t','∞','Mathematics','#5EE79A', 52.2, 0.12],
+    // Music
+    ['g','🎵','Afrobeats','#F0C84B', 6.52, 3.38],
+    ['g','🎹','Music','#B79BFF', 48.21, 16.37],
+    ['g','🎸','Music','#FF8A5C', 36.16, -86.78],
+    ['g','🎤','Music','#5EE79A', 6.52, 3.38],
+    ['g','🎧','Music','#5FC5F2', 37.57, 126.98],
+    // Literature & media
+    ['g','📚','Literature','#5EE79A', 31.2, 29.92],
+    ['g','🖋️','Literature','#E8ECF4', 51.5, -0.12],
+    ['g','📜','History','#F0C84B', 16.77, -3.01],       // Timbuktu
+    ['g','📰','Current Affairs','#E8ECF4', 40.7, -74],
+    // Technology
+    ['g','💻','Technology','#5FC5F2', 37.77, -122.42],
+    ['g','🤖','Technology','#B79BFF', 35.68, 139.69],
+    ['g','☁️','Technology','#E8ECF4', 47.6, -122.33],
+    ['t','1010','Technology','#5EE79A', 37.77, -122.42],
+    ['t','CPU','Technology','#5FC5F2', 24.77, 121],
+    // Finance
+    ['t','₦','Finance','#F0C84B', 9.08, 8.68],
+    ['t','$','Finance','#5EE79A', 40.7, -74],
+    ['t','€','Finance','#5FC5F2', 50.11, 8.68],
+    ['t','¥','Finance','#FF6B6B', 35.68, 139.69],
+    ['t','£','Finance','#B79BFF', 51.5, -0.12],
+    ['t','₿','Finance','#FF8A5C', 37.77, -122.42],
+    ['g','💳','Finance','#5FC5F2', 40.7, -74],
+    // Entertainment & history
+    ['g','🎬','Entertainment','#F0C84B', 34.09, -118.33],
+    ['g','🎭','Entertainment','#B79BFF', 51.51, -0.13],
+    ['g','📷','Entertainment','#E8ECF4', 48.86, 2.35],
+    ['g','👑','History','#F0C84B', 51.5, -0.12],
+    ['g','⚔️','History','#E8ECF4', 41.9, 12.5],
+    ['g','🏯','History','#FF6B6B', 34.97, 135.78]
+  ];
+
+  function latLonToVec(lat, lon, r) {
+    var phi = (90 - lat) * Math.PI / 180;
+    var theta = (lon + 180) * Math.PI / 180;
+    return new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+      r * Math.cos(phi),
+      r * Math.sin(phi) * Math.sin(theta)
+    );
+  }
 
   function init() {
+    function randDir() {
+      var u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2;
+      var s = Math.sqrt(1 - u * u);
+      return new THREE.Vector3(s * Math.cos(a), s * Math.sin(a), u);
+    }
     var isMobile = innerWidth < 768;
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, isMobile ? 1.5 : 2));
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: !isMobile, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, isMobile ? 1.6 : 2));
 
     var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(46, 1, 0.1, 600);
-    camera.position.set(0, 0, 175);
+    var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1200);
 
-    var world = new THREE.Group();
-    scene.add(world);
-    var R = 58;
+    var R = 60;
+    var planet = new THREE.Group();   // glass + hex + continents + atmosphere: rotates as one world
+    var orbits = new THREE.Group();   // icon rings + halo: independent satellites
+    scene.add(planet); scene.add(orbits);
 
-    /* --- the globe: ~1500 knowledge particles, gold --- */
-    var PN = isMobile ? 850 : 1500;
-    var pos = new Float32Array(PN * 3);
-    for (var i = 0; i < PN; i++) {
-      // fibonacci sphere = even, worldly distribution
-      var k = i + 0.5;
-      var phi = Math.acos(1 - 2 * k / PN);
-      var theta = Math.PI * (1 + Math.sqrt(5)) * k;
-      var r = R * (0.985 + Math.random() * 0.05);
-      pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.cos(phi);
-      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    world.add(new THREE.Points(geo, new THREE.PointsMaterial({
-      color: 0xE8C55A, size: isMobile ? 1.15 : 1.35, transparent: true, opacity: 0.75, sizeAttenuation: true
-    })));
-    // faint inner structure — the mind beneath the surface
-    world.add(new THREE.Mesh(
-      new THREE.IcosahedronGeometry(R * 0.62, 1),
-      new THREE.MeshBasicMaterial({ color: 0x6D28D9, wireframe: true, transparent: true, opacity: 0.14 })
+    /* --- lighting (for the crystal sphere) --- */
+    scene.add(new THREE.AmbientLight(0x223355, 0.9));
+    var key = new THREE.DirectionalLight(0xF0C84B, 0.55); key.position.set(-120, 90, 140); scene.add(key);
+    var fill = new THREE.DirectionalLight(0x6D28D9, 0.7); fill.position.set(140, -60, 60); scene.add(fill);
+    var rim = new THREE.DirectionalLight(0x3b82f6, 0.5); rim.position.set(0, 40, -160); scene.add(rim);
+
+    /* --- starfield --- */
+    (function () {
+      var N = isMobile ? 700 : 1300;
+      var pos = new Float32Array(N * 3);
+      for (var i = 0; i < N; i++) {
+        var v = randDir().multiplyScalar(340 + Math.random() * 260);
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      }
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+        color: 0x9FB4D8, size: 1.1, transparent: true, opacity: 0.5, sizeAttenuation: true
+      })));
+    })();
+
+    /* --- crystal core --- */
+    planet.add(new THREE.Mesh(
+      new THREE.SphereGeometry(R * 0.985, isMobile ? 40 : 56, isMobile ? 28 : 40),
+      new THREE.MeshPhongMaterial({
+        color: 0x14264a, transparent: true, opacity: 0.42,
+        specular: 0x88aaff, shininess: 60, emissive: 0x0a1430
+      })
     ));
 
-    /* --- orbiting subjects: every kind of knowledge --- */
-    var SUBJECTS = [
-      ['?', '#F0C84B'], ['\u20A6', '#F0C84B'], ['\u266A', '#B79BFF'], ['\u26BD', '#5EE79A'],
-      ['\u03C0', '#5FC5F2'], ['A', '#FFFFFF'], ['H\u2082O', '#5FC5F2'], ['\u265B', '#F0C84B'],
-      ['\u2211', '#B79BFF'], ['\u{1F3C6}', '#F0C84B'], ['\u{1F4DA}', '#5EE79A'], ['\u{1F30D}', '#5FC5F2'],
-      ['7', '#FFFFFF'], ['\u26A1', '#F0C84B'], ['\u{1F3B5}', '#B79BFF'], ['\u2695', '#5EE79A'],
-      ['\u00BF', '#FFFFFF'], ['\u221A', '#5FC5F2']
-    ];
+    /* --- atmospheric fresnel rim (haze) --- */
+    planet.add(new THREE.Mesh(
+      new THREE.SphereGeometry(R * 1.055, 48, 32),
+      new THREE.ShaderMaterial({
+        transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
+        uniforms: { c1: { value: new THREE.Color(0x6D28D9) }, c2: { value: new THREE.Color(0xF0C84B) } },
+        vertexShader:
+          'varying float vI;\n' +
+          'void main(){ vec3 n = normalize(normalMatrix * normal);' +
+          ' vec4 mv = modelViewMatrix * vec4(position,1.0);' +
+          ' vI = pow(0.72 + dot(n, normalize(mv.xyz)), 2.2);' +
+          ' gl_Position = projectionMatrix * mv; }',
+        fragmentShader:
+          'uniform vec3 c1; uniform vec3 c2; varying float vI;\n' +
+          'void main(){ gl_FragColor = vec4(mix(c1, c2, vI*0.35), vI * 0.55); }'
+      })
+    ));
+
+    /* --- geodesic wireframe lattice: gold + blue strands --- */
+    (function () {
+      var wf1 = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(R * 1.002, 2)),
+        new THREE.LineBasicMaterial({ color: 0xD4AF37, transparent: true, opacity: 0.22, depthWrite: false })
+      );
+      planet.add(wf1);
+      var wf2 = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(R * 1.014, 2)),
+        new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.20, depthWrite: false })
+      );
+      wf2.rotation.set(0.22, 0.38, 0.15); // offset so gold and blue interweave
+      planet.add(wf2);
+    })();
+
+    /* --- hexagonal geodesic shell (instanced — 1 draw call) --- */
+    (function () {
+      var ico = new THREE.IcosahedronGeometry(R * 1.005, 3);
+      var verts = ico.attributes.position;
+      var seen = {}, centers = [];
+      for (var i = 0; i < verts.count; i++) {
+        var v = new THREE.Vector3().fromBufferAttribute(verts, i);
+        var k = v.x.toFixed(1) + ',' + v.y.toFixed(1) + ',' + v.z.toFixed(1);
+        if (!seen[k]) { seen[k] = 1; centers.push(v); }
+      }
+      var hex = new THREE.RingGeometry(4.4, 5.1, 6, 1);
+      var mat = new THREE.MeshBasicMaterial({
+        color: 0x4b6fd6, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false
+      });
+      var inst = new THREE.InstancedMesh(hex, mat, centers.length);
+      var m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 0, 1);
+      centers.forEach(function (v, i) {
+        q.setFromUnitVectors(up, v.clone().normalize());
+        m.compose(v, q, new THREE.Vector3(1, 1, 1));
+        inst.setMatrixAt(i, m);
+      });
+      planet.add(inst);
+    })();
+
+    /* --- the continents: real land, flowing golden energy --- */
+    var landUniforms = {
+      uTime: { value: 0 },
+      uHi: { value: new THREE.Vector3(0, 1, 0) },   // highlight direction (planet-local)
+      uHiT: { value: 0 },                            // highlight intensity 0..1
+      uDis: { value: new THREE.Vector3(0, 1, 0) },   // dissolve (emergence) direction
+      uDisT: { value: 0 }
+    };
+    var landPoints = [];   // planet-local positions, reused for emergence
+    (function () {
+      var TRY = isMobile ? 16000 : 26000;
+      var pos = [], phase = [], size = [];
+      for (var i = 0; i < TRY; i++) {
+        var k = i + 0.5;
+        var phi = Math.acos(1 - 2 * k / TRY);
+        var theta = Math.PI * (1 + Math.sqrt(5)) * k;
+        var lat = 90 - phi * 180 / Math.PI;
+        var lon = ((theta * 180 / Math.PI) % 360) - 180;
+        if (!LAND(lat, lon)) continue;
+        var v = latLonToVec(lat, lon, R * 1.01);
+        pos.push(v.x, v.y, v.z);
+        phase.push(Math.random() * Math.PI * 2);
+        size.push(2.6 + Math.random() * 1.6);
+        landPoints.push(v);
+      }
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('aPhase', new THREE.Float32BufferAttribute(phase, 1));
+      g.setAttribute('aSize', new THREE.Float32BufferAttribute(size, 1));
+      var mat = new THREE.ShaderMaterial({
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+        uniforms: landUniforms,
+        vertexShader:
+          'attribute float aPhase; attribute float aSize;\n' +
+          'uniform float uTime; uniform vec3 uHi; uniform float uHiT; uniform vec3 uDis; uniform float uDisT;\n' +
+          'varying float vGlow; varying float vHi; varying float vDis;\n' +
+          'void main(){\n' +
+          '  vec3 n = normalize(position);\n' +
+          // flowing energy: two drifting waves across the surface + per-point shimmer
+          '  float flow = sin(dot(n, vec3(0.9,0.2,0.4)) * 5.0 - uTime * 0.9)\n' +
+          '             + sin(dot(n, vec3(-0.3,0.8,0.5)) * 7.0 + uTime * 0.6);\n' +
+          '  vGlow = 0.72 + 0.18 * sin(uTime * 1.6 + aPhase) + 0.16 * flow * 0.5;\n' +
+          '  vHi  = uHiT  * smoothstep(0.86, 0.985, dot(n, normalize(uHi)));\n' +
+          '  vDis = uDisT * smoothstep(0.965, 0.998, dot(n, normalize(uDis)));\n' +
+          '  vec4 mv = modelViewMatrix * vec4(position, 1.0);\n' +
+          '  gl_PointSize = aSize * (1.0 + vHi * 0.9 + vDis * 1.6) * (150.0 / -mv.z);\n' +
+          '  gl_Position = projectionMatrix * mv;\n' +
+          '}',
+        fragmentShader:
+          'varying float vGlow; varying float vHi; varying float vDis;\n' +
+          'void main(){\n' +
+          '  float d = length(gl_PointCoord - vec2(0.5));\n' +
+          '  if (d > 0.5) discard;\n' +
+          '  float a = smoothstep(0.5, 0.08, d);\n' +
+          '  vec3 gold = vec3(0.94, 0.78, 0.30);\n' +
+          '  vec3 blue = vec3(0.37, 0.77, 0.95);\n' +
+          '  vec3 col = gold * (0.75 + vGlow * 0.7);\n' +
+          '  col = mix(col, blue * 1.5, clamp(vHi, 0.0, 1.0));\n' +   // tapped region: electric blue
+          '  col += vec3(1.0, 0.95, 0.75) * vDis;\n' +                // emergence: white-hot spark
+          '  gl_FragColor = vec4(col, a * (0.9 + vHi * 0.1));\n' +
+          '}'
+      });
+      planet.add(new THREE.Points(g, mat));
+    })();
+
+    /* --- halo: thousands of tiny particles drifting around the planet --- */
+    var halo = null;
+    (function () {
+      var N = isMobile ? 500 : 1000;
+      var pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+      var palette = [new THREE.Color(0xF0C84B), new THREE.Color(0x8B5CF6), new THREE.Color(0x3b82f6)];
+      for (var i = 0; i < N; i++) {
+        var v = randDir().multiplyScalar(R * (1.08 + Math.random() * 0.85));
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        var c = palette[Math.floor(Math.random() * 3)];
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      }
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      halo = new THREE.Points(g, new THREE.PointsMaterial({
+        vertexColors: true, size: 0.9, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
+      }));
+      orbits.add(halo);
+    })();
+
+    /* --- the satellites: symbols of every field of knowledge --- */
     var RINGS = [
-      { r: R * 1.32, tilt: 0.45, speed: 0.16 },
-      { r: R * 1.5,  tilt: -0.6, speed: -0.11 },
-      { r: R * 1.68, tilt: 1.15, speed: 0.085 }
+      { r: R * 1.24, tilt: 0.42, speed: 0.075, scale: 1.0, op: 1.0, blur: 0 },
+      { r: R * 1.40, tilt: -0.55, speed: -0.055, scale: 0.92, op: 0.95, blur: 0 },
+      { r: R * 1.57, tilt: 1.05, speed: 0.045, scale: 0.85, op: 0.85, blur: 0 },
+      { r: R * 1.74, tilt: -1.35, speed: -0.034, speed2: 0, scale: 0.72, op: 0.6, blur: 1.5 },
+      { r: R * 1.92, tilt: 0.22, speed: 0.026, scale: 0.6, op: 0.42, blur: 2.5 }  // far ring: fake DoF
     ];
+    var catalog = CATALOG.slice();
+    if (isMobile) catalog = catalog.filter(function (_, i) { return i % 5 !== 4 && i % 5 !== 2; });
     var icons = [];
-    SUBJECTS.forEach(function (sj, idx) {
-      if (isMobile && idx % 3 === 2) return; // fewer on mobile
+    catalog.forEach(function (row, idx) {
+      var kind = row[0], src = row[1], label = row[2], color = row[3], lat = row[4], lon = row[5];
       var ring = RINGS[idx % RINGS.length];
-      var mat = new THREE.SpriteMaterial({ map: glyphTexture(sj[0], sj[1]), transparent: true, opacity: 0.95, depthWrite: false });
-      var sp = new THREE.Sprite(mat);
-      var baseScale = isMobile ? 8.5 : 10;
+      var tex = kind === 'g' ? glyphTex(src, color, ring.blur)
+              : kind === 't' ? textTex(src, color, ring.blur)
+              : paintTex(src, color, ring.blur);
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, transparent: true, opacity: ring.op, depthWrite: false
+      }));
+      var baseScale = (isMobile ? 8.6 : 10.5) * ring.scale;
       sp.scale.set(baseScale, baseScale, 1);
-      var icon = { sp: sp, ring: ring, angle: (idx / SUBJECTS.length) * Math.PI * 2, baseScale: baseScale, launch: null };
+      var icon = {
+        sp: sp, ring: ring, baseScale: baseScale, baseOp: ring.op,
+        angle: (idx * 2.399963), // golden angle — even, non-random spacing
+        label: label, region: latLonToVec(lat, lon, 1).normalize(),
+        state: 'orbit', anim: null
+      };
       icons.push(icon);
-      world.add(sp);
+      orbits.add(sp);
     });
-    function placeOnRing(ic, t) {
-      var a = ic.angle + t * ic.ring.speed;
+    function ringPos(ic, t) {
+      var a = ic.angle + t * ic.ring.speed * Math.PI * 2;
       var x = Math.cos(a) * ic.ring.r, z = Math.sin(a) * ic.ring.r;
-      var y = Math.sin(a) * Math.sin(ic.ring.tilt) * ic.ring.r * 0.55;
-      ic.sp.position.set(x, y, z);
+      var y = Math.sin(a) * Math.sin(ic.ring.tilt) * ic.ring.r * 0.5;
+      return new THREE.Vector3(x, y, z);
     }
 
-    /* --- the launch: an idea ignites and flies at you --- */
-    var heroGold = document.getElementById('heroGold');
-    var launchTimer = null;
-    function scheduleLaunch() {
-      launchTimer = setTimeout(function () {
-        var free = icons.filter(function (i) { return !i.launch; });
-        if (free.length) {
-          var ic = free[Math.floor(Math.random() * free.length)];
-          ic.launch = { t: 0, from: ic.sp.position.clone() };
+    /* --- emergence burst particles (pooled, 1 draw call) --- */
+    var burst = (function () {
+      var N = 90;
+      var pos = new Float32Array(N * 3), life = new Float32Array(N).fill(0), vel = [];
+      for (var i = 0; i < N; i++) vel.push(new THREE.Vector3());
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      var pts = new THREE.Points(g, new THREE.PointsMaterial({
+        color: 0xFFE9A8, size: 1.7, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      }));
+      pts.frustumCulled = false;
+      scene.add(pts);
+      var cursor = 0;
+      return {
+        fire: function (worldPos, dir) {
+          for (var k = 0; k < 14; k++) {
+            var i = cursor = (cursor + 1) % N;
+            pos[i * 3] = worldPos.x; pos[i * 3 + 1] = worldPos.y; pos[i * 3 + 2] = worldPos.z;
+            vel[i].copy(dir).multiplyScalar(14 + Math.random() * 18)
+              .add(randDir().multiplyScalar(9));
+            life[i] = 1;
+          }
+        },
+        step: function (dt) {
+          var dirty = false;
+          for (var i = 0; i < N; i++) {
+            if (life[i] <= 0) continue;
+            dirty = true;
+            life[i] -= dt * 1.25;
+            pos[i * 3] += vel[i].x * dt; pos[i * 3 + 1] += vel[i].y * dt; pos[i * 3 + 2] += vel[i].z * dt;
+            vel[i].multiplyScalar(0.94);
+            if (life[i] <= 0) { pos[i * 3] = 9999; }
+          }
+          if (dirty) g.attributes.position.needsUpdate = true;
         }
-        scheduleLaunch();
-      }, 3200 + Math.random() * 1600);
-    }
-    scheduleLaunch();
+      };
+    })();
 
-    var target = new THREE.Vector3(0, 6, 150); // just in front of the camera
-    function stepLaunch(ic, dt, t) {
-      var L = ic.launch;
-      L.t += dt / 1.15; // ~1.15s flight
-      var e = L.t < 1 ? 1 - Math.pow(1 - L.t, 3) : 1; // easeOutCubic
-      ic.sp.position.lerpVectors(L.from, target, e);
-      var s = ic.baseScale * (1 + e * 2.6);
-      ic.sp.scale.set(s, s, 1);
-      ic.sp.material.opacity = L.t < 0.72 ? 1 : Math.max(0, 1 - (L.t - 0.72) / 0.28);
-      if (L.t >= 1) {
-        ic.launch = null;
-        ic.sp.material.opacity = 0.95;
-        ic.sp.scale.set(ic.baseScale, ic.baseScale, 1);
-        placeOnRing(ic, t);
-        if (heroGold) {
-          heroGold.classList.add('zap');
-          setTimeout(function () { heroGold.classList.remove('zap'); }, 260);
+    var diveTarget = new THREE.Vector3(0, 4, 200); // z set precisely in size()
+
+    /* --- purposeful motion: the knowledge cycle ---
+       orbit → (occasionally) dive at the viewer, zapping the
+       headline → hidden → re-emerge from a continent in a burst of
+       sparks → return to orbit. Every symbol has a job. */
+    var heroGold = document.getElementById('heroGold');
+    var hidden = [];
+
+    function scheduleDive() {
+      setTimeout(function () {
+        var free = icons.filter(function (i) { return i.state === 'orbit'; });
+        if (free.length > icons.length * 0.7) { // keep most in orbit
+          var ic = free[Math.floor(Math.random() * free.length)];
+          ic.state = 'dive';
+          ic.anim = { t: 0, from: ic.sp.position.clone() };
+        }
+        scheduleDive();
+      }, 6200 + Math.random() * 2600);
+    }
+    scheduleDive();
+
+    function scheduleEmerge() {
+      setTimeout(function () {
+        var ic = hidden.shift();
+        if (ic && landPoints.length) {
+          var lp = landPoints[Math.floor(Math.random() * landPoints.length)];
+          var local = lp.clone();
+          landUniforms.uDis.value.copy(local).normalize();
+          landUniforms.uDisT.value = 1;
+          var world = planet.localToWorld(local.clone());
+          burst.fire(world, world.clone().normalize());
+          ic.state = 'emerge';
+          ic.anim = { t: 0, fromLocal: local };
+          ic.sp.visible = true;
+        }
+        scheduleEmerge();
+      }, 4600 + Math.random() * 2200);
+    }
+    scheduleEmerge();
+
+    function stepIcon(ic, dt, t) {
+      if (ic.state === 'orbit') {
+        ic.sp.position.copy(ringPos(ic, t));
+        return;
+      }
+      if (ic.state === 'dive') {
+        var A = ic.anim; A.t += dt / 1.2;
+        var e = A.t < 1 ? 1 - Math.pow(1 - A.t, 3) : 1;
+        ic.sp.position.lerpVectors(A.from, diveTarget, e);
+        var s = ic.baseScale * (1 + e * 2.4);
+        ic.sp.scale.set(s, s, 1);
+        ic.sp.material.opacity = A.t < 0.7 ? ic.baseOp : Math.max(0, ic.baseOp * (1 - (A.t - 0.7) / 0.3));
+        if (A.t >= 1) {
+          ic.state = 'hidden'; ic.sp.visible = false;
+          ic.sp.scale.set(ic.baseScale, ic.baseScale, 1);
+          hidden.push(ic);
+          if (heroGold) {
+            heroGold.classList.add('zap');
+            setTimeout(function () { heroGold.classList.remove('zap'); }, 260);
+          }
+        }
+        return;
+      }
+      if (ic.state === 'emerge') {
+        var A = ic.anim; A.t += dt / 1.5;
+        var e = A.t < 1 ? (A.t < 0.5 ? 2 * A.t * A.t : 1 - Math.pow(-2 * A.t + 2, 2) / 2) : 1;
+        var surface = planet.localToWorld(A.fromLocal.clone());
+        var slot = ringPos(ic, t);
+        ic.sp.position.lerpVectors(surface, slot, e);
+        var s = ic.baseScale * (0.25 + e * 0.75);
+        ic.sp.scale.set(s, s, 1);
+        ic.sp.material.opacity = ic.baseOp * Math.min(1, A.t * 2.2);
+        if (A.t >= 1) {
+          ic.state = 'orbit';
+          ic.sp.scale.set(ic.baseScale, ic.baseScale, 1);
+          ic.sp.material.opacity = ic.baseOp;
         }
       }
     }
 
-    /* --- sizing, parallax, scroll rotation --- */
+    /* --- tap-to-travel: the globe turns to a symbol's home region --- */
+    var focusQ = null, focusT = 0, spinHold = 0;
+    var VIEW = new THREE.Vector3(0, 0.12, 1).normalize();
+    function focusRegion(ic) {
+      var target = new THREE.Quaternion().setFromUnitVectors(ic.region, VIEW);
+      focusQ = { from: planet.quaternion.clone(), to: target, t: 0 };
+      spinHold = 4.2;
+      landUniforms.uHi.value.copy(ic.region);
+      landUniforms.uHiT.value = 1;
+      if (tip) { tip.textContent = ic.label; tip.classList.add('on'); }
+    }
+
+    /* --- pointer: parallax, hover tooltips, click focus --- */
+    var raycaster = new THREE.Raycaster();
+    var mouse = new THREE.Vector2();
+    var px = 0, py = 0, hovered = null;
+    var rectCache = null;
+    function rect() { return rectCache || (rectCache = canvas.getBoundingClientRect()); }
+    addEventListener('scroll', function () { rectCache = null; }, { passive: true });
+
+    function pick(cx, cy) {
+      var r = rect();
+      mouse.x = ((cx - r.left) / r.width) * 2 - 1;
+      mouse.y = -((cy - r.top) / r.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      var hits = raycaster.intersectObjects(
+        icons.filter(function (i) { return i.state === 'orbit'; }).map(function (i) { return i.sp; })
+      );
+      if (!hits.length) return null;
+      var sp = hits[0].object;
+      for (var i = 0; i < icons.length; i++) if (icons[i].sp === sp) return icons[i];
+      return null;
+    }
+    canvas.addEventListener('pointermove', function (e) {
+      px = (e.clientX / innerWidth - 0.5) * 6;
+      py = (e.clientY / innerHeight - 0.5) * 4;
+      var ic = pick(e.clientX, e.clientY);
+      if (ic !== hovered) {
+        hovered = ic;
+        canvas.classList.toggle('hot', !!ic);
+        if (ic && tip) {
+          tip.textContent = ic.label;
+          tip.classList.add('on');
+        } else if (tip && !focusQ) {
+          tip.classList.remove('on');
+        }
+      }
+      if (hovered && tip) {
+        var r = rect();
+        tip.style.left = (e.clientX - r.left) + 'px';
+        tip.style.top = (e.clientY - r.top) + 'px';
+      }
+    }, { passive: true });
+    canvas.addEventListener('pointerleave', function () {
+      hovered = null; canvas.classList.remove('hot');
+      if (tip && !focusQ) tip.classList.remove('on');
+    });
+    canvas.addEventListener('click', function (e) {
+      var ic = pick(e.clientX, e.clientY);
+      if (ic) {
+        focusRegion(ic);
+        if (tip) {
+          var r = rect();
+          tip.style.left = Math.min(Math.max(e.clientX - r.left, 50), r.width - 50) + 'px';
+          tip.style.top = Math.max(e.clientY - r.top, 34) + 'px';
+        }
+      }
+    });
+    // phone tilt (Android fires without permission; iOS simply won't, and
+    // touch parallax below covers it)
+    addEventListener('deviceorientation', function (e) {
+      if (e.gamma == null) return;
+      px = Math.max(-1, Math.min(1, e.gamma / 32)) * 5;
+      py = Math.max(-1, Math.min(1, (e.beta - 42) / 32)) * 3.5;
+    }, { passive: true });
+
+    /* --- sizing: the planet FILLS the panel and stays there.
+       ~76% of width, capped at 86% of height. No load-time shrink:
+       this is computed from the container before first render. --- */
     function size() {
+      rectCache = null;
       var w = holder.clientWidth, h = holder.clientHeight;
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
-      // keep the globe fully in frame whatever the panel shape
-      camera.position.z = 175 * Math.max(1, 1.25 / camera.aspect);
+      var tanF = Math.tan(camera.fov * Math.PI / 360);
+      // globe diameter = fraction × visible dimension  ⇒  z = R / (f · tan(fov/2) · aspect)
+      var zW = R / (0.74 * tanF * camera.aspect);  // globe = 74% of panel width
+      var zH = R / (0.82 * tanF);                  // globe ≤ 82% of panel height
+      camera.position.z = Math.max(zW, zH);        // max z = the tighter constraint
+      diveTarget.z = camera.position.z * 0.8;      // dive lands just before the lens
       camera.updateProjectionMatrix();
     }
     size();
     var rsT; addEventListener('resize', function () { clearTimeout(rsT); rsT = setTimeout(size, 150); });
-
-    var px = 0, py = 0;
-    addEventListener('pointermove', function (e) {
-      px = (e.clientX / innerWidth - 0.5) * 6;
-      py = (e.clientY / innerHeight - 0.5) * 4;
-    }, { passive: true });
 
     var running = true, inView = true;
     document.addEventListener('visibilitychange', function () { running = !document.hidden; });
@@ -1486,15 +2169,47 @@ document.body.setAttribute('data-ticker', 'on');
         .observe(holder);
     }
 
+    /* --- frame loop --- */
     var clock = new THREE.Clock();
+    var spinSpeed = 0.055;
+    var Y = new THREE.Vector3(0, 1, 0);
+    var lastScroll = window.scrollY || 0;
     function frame() {
       requestAnimationFrame(frame);
       if (!running || !inView) return;
       var dt = Math.min(clock.getDelta(), 0.05);
       var t = clock.elapsedTime;
-      world.rotation.y = t * 0.11 + (window.scrollY || 0) * 0.0011; // the world turns as you scroll
-      world.rotation.x = Math.sin(t * 0.07) * 0.06;
-      icons.forEach(function (ic) { ic.launch ? stepLaunch(ic, dt, t) : placeOnRing(ic, t); });
+
+      // breathing: 1.5%, slow — presence, not animation
+      var breathe = 1 + 0.015 * Math.sin(t * 0.45);
+      planet.scale.set(breathe, breathe, breathe);
+
+      // the world turns — steadily, plus with your scroll
+      var sc = window.scrollY || 0;
+      var spin = spinHold > 0 ? spinSpeed * 0.12 : spinSpeed;
+      if (spinHold > 0) spinHold -= dt;
+      planet.rotateOnWorldAxis(Y, spin * dt + (sc - lastScroll) * 0.0012);
+      lastScroll = sc;
+
+      // focus tween (tap-to-travel)
+      if (focusQ) {
+        focusQ.t += dt / 1.15;
+        var e = focusQ.t < 1 ? 1 - Math.pow(1 - focusQ.t, 3) : 1;
+        planet.quaternion.copy(focusQ.from).slerp(focusQ.to, e);
+        if (focusQ.t >= 1) focusQ = null;
+      }
+      landUniforms.uHiT.value = Math.max(0, landUniforms.uHiT.value - dt * 0.3);
+      landUniforms.uDisT.value = Math.max(0, landUniforms.uDisT.value - dt * 1.4);
+      if (landUniforms.uHiT.value <= 0 && !hovered && tip) tip.classList.remove('on');
+      landUniforms.uTime.value = t;
+
+      // satellites
+      orbits.rotation.y = t * 0.012;
+      if (halo) halo.rotation.y = t * 0.03;
+      icons.forEach(function (ic) { stepIcon(ic, dt, t); });
+      burst.step(dt);
+
+      // parallax — you are connected to it
       camera.position.x += (px - camera.position.x) * 0.04;
       camera.position.y += (-py - camera.position.y) * 0.04;
       camera.lookAt(0, 0, 0);
@@ -1503,7 +2218,7 @@ document.body.setAttribute('data-ticker', 'on');
     frame();
     canvas.classList.add('ready');
     var fb = document.getElementById('arenaFallback');
-    if (fb) fb.style.opacity = '0.25'; // fallback dims beneath the live scene
+    if (fb) fb.style.display = 'none'; // the live planet fully replaces the fallback
   }
 })();
 

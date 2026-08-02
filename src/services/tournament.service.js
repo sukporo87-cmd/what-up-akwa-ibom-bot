@@ -174,7 +174,7 @@ class TournamentService {
             logger.info(`User ${userId} (${platform}) joined free tournament ${tournamentId}`);
 
             // Social proof event — fire-and-forget, username only
-            activityService.record('tournament_join', userId, { tournamentId });
+            activityService.record('tournament_join', userId, { tournamentId, paid: false });
 
             return { success: true, participant: result.rows[0], tokensRemaining };
         } catch (error) {
@@ -324,7 +324,7 @@ class TournamentService {
             logger.info(`Tournament payment verified via ${gateway.getName()} (${platform}): ${reference} - User ${payment.user_id} can now play`);
 
             // Social proof event — fire-and-forget, username only
-            activityService.record('tournament_join', payment.user_id, { tournamentId: payment.tournament_id });
+            activityService.record('tournament_join', payment.user_id, { tournamentId: payment.tournament_id, paid: true });
 
             return { success: true, payment, tokensRemaining, platform, gateway: gateway.getName() };
         } catch (error) {

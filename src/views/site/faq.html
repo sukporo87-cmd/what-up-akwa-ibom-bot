@@ -630,7 +630,7 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
   // ACTIVITY_API: flip to true when /api/public/activity/recent
   //   ships. Until then the social-proof ticker stays dormant —
   //   it never invents events.
-  C.FEATURES = { REVIEWS_API: true, CONTENT_API: true, ACTIVITY_API: true };
+  C.FEATURES = { REVIEWS_API: false, CONTENT_API: false, ACTIVITY_API: false };
 })(window.WUT_CONFIG);
 
 /* ---------- tiny helpers ---------- */
@@ -778,10 +778,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
 /* ============================================================
    LIVE ACTIVITY TICKER — social proof, real events only.
-   Reads /api/public/activity/recent (see API-SPEC.md §3) and
-   shows small toasts: credit purchases, tournament joins,
-   completed climbs, rewards claimed. Names arrive pre-masked
-   by the server. Dormant until FEATURES.ACTIVITY_API is true.
+   Reads /api/public/activity/recent (see API-SPEC.md §3): events
+   from the last 72 hours, actor = the player's public username.
+   Behaviour: ONE toast at a time — fade in, hold ~4s, fade out,
+   short gap, next event — cycling through the pool continuously
+   and refreshing it every 60s. Dormant until FEATURES.ACTIVITY_API
+   is true; it never invents events.
    ============================================================ */
 (function () {
   var C = window.WUT_CONFIG;
@@ -789,11 +791,12 @@ document.addEventListener('DOMContentLoaded', function () {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
   var ICON = { purchase: '💳', tournament_join: '🏆', game_complete: '🎯', reward_claim: '💰' };
-  var wrap = document.createElement('div');
-  wrap.className = 'ticker'; wrap.setAttribute('aria-live', 'polite'); wrap.setAttribute('role', 'status');
-  document.body.appendChild(wrap);
+  var SHOW_MS = 4000;   // visible time per event
+  var GAP_MS = 1100;    // quiet gap between events
+  var POLL_MS = 60000;  // pool refresh
+  var MAX_AGE = 72 * 3600 * 1000;
 
-  var seen = {}, queue = [], showing = 0, MAX_VISIBLE = 2;
+  var wrap = null, pool = [], idx = 0, cycling = false;
 
   function ago(iso) {
     var s = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
@@ -801,8 +804,23 @@ document.addEventListener('DOMContentLoaded', function () {
     var m = Math.round(s / 60); if (m < 60) return m + 'm ago';
     var h = Math.round(m / 60); return h + 'h ago';
   }
-  function show(ev) {
-    showing++;
+
+  function ensureWrap() {
+    if (wrap) return;
+    wrap = document.createElement('div');
+    wrap.className = 'ticker';
+    wrap.setAttribute('aria-live', 'polite');
+    wrap.setAttribute('role', 'status');
+    document.body.appendChild(wrap);
+  }
+
+  function showNext() {
+    if (!pool.length) { cycling = false; return; }
+    cycling = true;
+    if (document.hidden) { setTimeout(showNext, SHOW_MS); return; }
+    if (idx >= pool.length) idx = 0;
+    var ev = pool[idx++];
+    ensureWrap();
     var el = document.createElement('div');
     el.className = 'ticker-item';
     el.innerHTML = '<span class="tk-ic">' + (ICON[ev.type] || '⚡') + '</span>' +
@@ -812,29 +830,33 @@ document.addEventListener('DOMContentLoaded', function () {
     requestAnimationFrame(function () { el.classList.add('show'); });
     setTimeout(function () {
       el.classList.remove('show');
-      setTimeout(function () { el.remove(); showing--; pump(); }, 400);
-    }, 6000);
+      setTimeout(function () { el.remove(); setTimeout(showNext, GAP_MS); }, 400);
+    }, SHOW_MS);
   }
-  function pump() {
-    while (queue.length && showing < MAX_VISIBLE) show(queue.shift());
-  }
+
   function poll() {
-    if (document.hidden) return;
-    apiGet('/api/public/activity/recent?limit=10').then(function (res) {
+    apiGet('/api/public/activity/recent?limit=20').then(function (res) {
       var evs = (res && res.events) || [];
-      evs.forEach(function (ev) {
-        if (seen[ev.id]) return;
-        seen[ev.id] = 1; queue.push(ev);
-      });
-      if (queue.length > 6) queue = queue.slice(-6); // never flood
-      pump();
+      var cutoff = Date.now() - MAX_AGE;
+      evs = evs.filter(function (e) { return new Date(e.at).getTime() > cutoff; });
+      if (!evs.length) return;
+      // rebuild the pool newest-first, keep cycle position stable-ish
+      var currentId = pool[idx - 1] && pool[idx - 1].id;
+      pool = evs;
+      if (currentId) {
+        for (var i = 0; i < pool.length; i++) {
+          if (pool[i].id === currentId) { idx = i + 1; break; }
+        }
+      }
+      if (!cycling) showNext();
     }).catch(function () { /* silent — social proof must never error visibly */ });
   }
+
   setTimeout(function () {
     // pages opt in by setting data-ticker="on" on <body> in their script
-    if (!document.body || document.body.getAttribute('data-ticker') !== 'on') { wrap.remove(); return; }
+    if (!document.body || document.body.getAttribute('data-ticker') !== 'on') return;
     poll();
-    setInterval(poll, 30000);
+    setInterval(poll, POLL_MS);
   }, 4000); // let the page breathe first
 })();
 

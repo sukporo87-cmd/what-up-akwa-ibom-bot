@@ -32,8 +32,8 @@ const CACHE_KEY = 'activity:recent';
 const CACHE_TTL = 20;          // seconds — spec says 15–30s
 const MAX_EVENTS_KEPT = 200;   // pruned opportunistically on write
 
-// games_purchased → public package name (matches the site's pricing section)
-const PACKAGE_NAMES = { 3: 'a Starter Pack', 7: 'a Value Pack', 15: 'a Pro Pack' };
+// Ticker shows events from a rolling window, cycling continuously
+const WINDOW_HOURS = 72;
 
 class ActivityService {
   constructor() {
@@ -110,30 +110,33 @@ class ActivityService {
   async _composeText(type, extra) {
     switch (type) {
       case 'purchase': {
-        const pkg = PACKAGE_NAMES[extra.games] ||
-          (extra.games ? `${extra.games} access credits` : 'access credits');
-        return `grabbed ${pkg}`;
+        // "username purchased 3 tokens / 7 tokens / 15 tokens"
+        return extra.games ? `purchased ${extra.games} tokens` : 'purchased tokens';
       }
       case 'tournament_join': {
+        // paid: "username purchased 'Name' tournament entry"
+        // free: "username joined 'Name' tournament"
+        let name = null;
         if (extra.tournamentId) {
           try {
             const t = await pool.query(
               'SELECT tournament_name FROM tournaments WHERE id = $1',
               [extra.tournamentId]
             );
-            if (t.rows[0]?.tournament_name) {
-              return `joined ${t.rows[0].tournament_name}`;
-            }
+            name = t.rows[0]?.tournament_name || null;
           } catch (e) { /* fall through to generic */ }
         }
-        return 'joined a tournament';
+        if (extra.paid) {
+          return name ? `purchased '${name}' tournament entry` : 'purchased a tournament entry';
+        }
+        return name ? `joined '${name}' tournament` : 'joined a tournament';
       }
       case 'game_complete': {
-        if (extra.grandPrize) return 'conquered all 15 questions 🏆';
-        if (extra.tournamentGame) return 'logged a tournament run';
-        if (extra.questionNumber >= 10) return 'passed the Q10 milestone';
-        if (extra.questionNumber >= 5) return 'passed the Q5 milestone';
-        return 'completed a Classic climb';
+        // "username completed a Classic game · Level: Q<n>"
+        const q = Math.min(Math.max(parseInt(extra.questionNumber) || 1, 1), 15);
+        const kind = extra.tournamentGame ? 'a tournament game' : 'a Classic game';
+        const trophy = extra.grandPrize ? ' 🏆' : '';
+        return `completed ${kind} · Level: Q${extra.grandPrize ? 15 : q}${trophy}`;
       }
       case 'reward_claim':
         return 'claimed a leaderboard reward';
@@ -159,9 +162,12 @@ class ActivityService {
     } catch (e) { /* cache miss path below */ }
 
     await this.ensureSchema();
+    // Rolling 72h window — the site ticker cycles through this pool
+    // continuously, so old-but-recent activity keeps the feed alive.
     const result = await pool.query(`
       SELECT id, event_type, actor, event_text, created_at
       FROM activity_events
+      WHERE created_at > NOW() - INTERVAL '${WINDOW_HOURS} hours'
       ORDER BY created_at DESC
       LIMIT 20
     `);
