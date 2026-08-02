@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Contact — What's Up Trivia</title>
+<meta name="description" content="Contact What's Up Trivia support — email hello@whatsuptrivia.com.ng or call +234 916 097 5128 (calls & text only), 9am–3pm WAT weekdays.">
+<meta name="theme-color" content="#081425">
+<meta property="og:title" content="Contact — What's Up Trivia">
+<meta property="og:description" content="Contact What's Up Trivia support — email hello@whatsuptrivia.com.ng or call +234 916 097 5128 (calls & text only), 9am–3pm WAT weekdays.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   What's Up Trivia — site design system  (v1.0)
+   Navy/gold brand, platform trio: WhatsApp green, Telegram blue,
+   Web violet (#6D28D9 — same accent the backend already uses).
+   Mobile-first. Poppins is retired in favour of Bricolage Grotesque
+   for display; Inter stays for body; JetBrains Mono for data.
+   ============================================================ */
+:root{
+  --navy:#1E3A5F; --navy-deep:#081425; --navy-mid:#0F2440; --navy-soft:#16304F;
+  --gold:#D4AF37; --gold-bright:#F0C84B; --gold-dim:#8a7220;
+  --whatsapp:#25D366; --whatsapp-dark:#128C7E;
+  --telegram:#0088CC; --telegram-bright:#2AABEE;
+  --web:#6D28D9; --web-bright:#8B5CF6;
+  --success:#2E7D32; --danger:#C62828; --warning:#F57C00;
+  --ink:#12233B; --ink-soft:#3E5470; --ink-faint:#68809E;
+  --paper:#F6F8FC; --paper-2:#EDF1F8; --line:#DCE4EF;
+  --d-text:#EAF1FA; --d-muted:#93A9C7; --d-line:rgba(212,175,55,.16);
+  --d-card:rgba(17,36,63,.55);
+  --font-display:'Bricolage Grotesque','Inter',system-ui,sans-serif;
+  --font-body:'Inter',system-ui,-apple-system,sans-serif;
+  --font-data:'JetBrains Mono',ui-monospace,monospace;
+  --radius:14px; --radius-lg:22px;
+  --shadow:0 10px 30px rgba(14,30,54,.10);
+  --maxw:1140px;
+  --header-h:62px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+}
+body{font-family:var(--font-body);color:var(--ink);background:var(--paper);line-height:1.65;overflow-x:hidden}
+body.theme-dark{background:var(--navy-deep);color:var(--d-text)}
+img,svg{max-width:100%;display:block}
+a{color:var(--navy)}
+body.theme-dark a{color:var(--gold-bright)}
+h1,h2,h3,h4{font-family:var(--font-display);line-height:1.12;letter-spacing:-.01em;color:var(--navy)}
+body.theme-dark h1,body.theme-dark h2,body.theme-dark h3,body.theme-dark h4{color:#fff}
+.mono{font-family:var(--font-data)}
+.container{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+.skip-link{position:absolute;left:-9999px;top:0;background:var(--gold);color:var(--navy-deep);padding:10px 18px;border-radius:0 0 10px 0;font-weight:700;z-index:1000}
+.skip-link:focus{left:0}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px;border-radius:4px}
+.visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- header ---------- */
+.site-header{position:fixed;top:0;left:0;right:0;z-index:200;height:var(--header-h);display:flex;align-items:center;transition:background .25s,box-shadow .25s;background:rgba(8,20,37,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.06)}
+body.theme-light .site-header{background:rgba(255,255,255,.92);border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(14,30,54,.03)}
+.header-inner{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 20px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.logo{display:flex;align-items:center;gap:9px;text-decoration:none;font-family:var(--font-display);font-weight:800;font-size:17px;letter-spacing:-.02em;white-space:nowrap}
+.logo .logo-badge{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep);font-family:var(--font-data);font-weight:800;font-size:13px;box-shadow:0 2px 8px rgba(212,175,55,.35)}
+.logo .logo-word{color:#fff}
+.logo .logo-word em{font-style:normal;color:var(--gold-bright)}
+body.theme-light .logo .logo-word{color:var(--navy)}
+body.theme-light .logo .logo-word em{color:var(--gold-dim)}
+.main-nav{display:none}
+.main-nav ul{display:flex;gap:24px;list-style:none;align-items:center}
+.main-nav a{color:var(--d-muted);text-decoration:none;font-size:14px;font-weight:500;transition:color .2s}
+body.theme-light .main-nav a{color:var(--ink-soft)}
+.main-nav a:hover,.main-nav a[aria-current="page"]{color:var(--gold-bright)}
+body.theme-light .main-nav a:hover,body.theme-light .main-nav a[aria-current="page"]{color:var(--navy)}
+.header-cta{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep)!important;font-family:var(--font-display);font-weight:800;font-size:13px;padding:9px 16px;border-radius:11px;text-decoration:none;border:0;cursor:pointer;box-shadow:0 3px 12px rgba(212,175,55,.35);transition:transform .15s}
+.header-cta:hover{transform:translateY(-1px)}
+.hamburger{display:inline-flex;flex-direction:column;justify-content:center;gap:5px;width:42px;height:42px;padding:10px;background:none;border:0;cursor:pointer}
+.hamburger span{display:block;height:2px;border-radius:2px;background:#fff;transition:transform .25s,opacity .2s}
+body.theme-light .hamburger span{background:var(--navy)}
+.hamburger[aria-expanded="true"] span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hamburger[aria-expanded="true"] span:nth-child(2){opacity:0}
+.hamburger[aria-expanded="true"] span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.mobile-nav{position:fixed;top:var(--header-h);left:0;right:0;z-index:190;background:rgba(8,20,37,.98);backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.08);padding:10px 20px 22px;display:none}
+body.theme-light .mobile-nav{background:rgba(255,255,255,.98);border-bottom:1px solid var(--line)}
+.mobile-nav.open{display:block}
+.mobile-nav ul{list-style:none}
+.mobile-nav a{display:block;padding:13px 4px;font-size:16px;font-weight:600;color:var(--d-text);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.06)}
+body.theme-light .mobile-nav a{color:var(--navy);border-bottom-color:var(--line)}
+.mobile-nav a[aria-current="page"]{color:var(--gold-bright)}
+body.theme-light .mobile-nav a[aria-current="page"]{color:var(--gold-dim)}
+@media(min-width:920px){.main-nav{display:block}.hamburger{display:none}}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:var(--font-display);font-weight:700;font-size:15px;padding:13px 22px;border-radius:13px;text-decoration:none;border:0;cursor:pointer;transition:transform .15s,box-shadow .2s,background .2s;line-height:1.2;text-align:center}
+.btn:active{transform:scale(.98)}
+.btn-lg{font-size:16px;padding:15px 26px}
+.btn-sm{font-size:13px;padding:9px 15px;border-radius:10px}
+.btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep);box-shadow:0 5px 18px rgba(212,175,55,.35)}
+.btn-gold:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(212,175,55,.45)}
+.btn-whatsapp{background:var(--whatsapp);color:#fff;box-shadow:0 5px 18px rgba(37,211,102,.3)}
+.btn-whatsapp:hover{background:#1fc65c;transform:translateY(-2px)}
+.btn-telegram{background:var(--telegram);color:#fff;box-shadow:0 5px 18px rgba(0,136,204,.3)}
+.btn-telegram:hover{background:#0a95dd;transform:translateY(-2px)}
+.btn-web{background:linear-gradient(135deg,var(--web),var(--web-bright));color:#fff;box-shadow:0 5px 18px rgba(109,40,217,.35)}
+.btn-web:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(109,40,217,.45)}
+.btn-ghost{background:transparent;color:var(--d-text);border:1.5px solid rgba(255,255,255,.28)}
+.btn-ghost:hover{border-color:var(--gold-bright);color:var(--gold-bright)}
+body.theme-light .btn-ghost{color:var(--navy);border-color:#B9C6D8}
+body.theme-light .btn-ghost:hover{border-color:var(--navy);color:var(--navy)}
+.btn-navy{background:var(--navy);color:#fff}
+.btn-navy:hover{background:var(--navy-soft);transform:translateY(-2px)}
+
+/* ---------- sections & cards ---------- */
+.section{padding:72px 0;position:relative}
+.section-tight{padding:48px 0}
+.eyebrow{font-family:var(--font-data);font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:12px}
+body.theme-dark .eyebrow{color:var(--gold-bright)}
+.section-title{font-size:clamp(26px,4.4vw,40px);font-weight:800;margin-bottom:12px}
+.section-lede{font-size:16px;color:var(--ink-soft);max-width:640px}
+body.theme-dark .section-lede{color:var(--d-muted)}
+.section-head{margin-bottom:34px}
+.section-head.center{text-align:center}
+.section-head.center .section-lede{margin:0 auto}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius-lg);padding:26px;box-shadow:var(--shadow)}
+body.theme-dark .card{background:var(--d-card);border-color:var(--d-line);box-shadow:none}
+.grid{display:grid;gap:18px}
+@media(min-width:700px){.grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1000px){.grid-4{grid-template-columns:repeat(4,1fr)}}
+
+/* platform chips (used in leaderboards, reviews, cards) */
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-data);font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 10px;border-radius:999px;text-transform:uppercase}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip-whatsapp{color:#0d7a3c;background:rgba(37,211,102,.14)}
+.chip-telegram{color:#03679a;background:rgba(0,136,204,.13)}
+.chip-web{color:#5b21b6;background:rgba(139,92,246,.14)}
+body.theme-dark .chip-whatsapp{color:#5ee79a;background:rgba(37,211,102,.12)}
+body.theme-dark .chip-telegram{color:#5fc5f2;background:rgba(42,171,238,.12)}
+body.theme-dark .chip-web{color:#b79bff;background:rgba(139,92,246,.16)}
+
+/* alerts */
+.alert{border-radius:var(--radius);padding:16px 18px;font-size:14px;border:1px solid;margin:18px 0}
+.alert-info{background:#EAF4FB;border-color:#BBDDF2;color:#0B4A6F}
+.alert-success{background:#EDF7EE;border-color:#C4E3C6;color:#1D5A21}
+.alert-warning{background:#FEF3E6;border-color:#F5D4A8;color:#8A4B03}
+.alert-danger{background:#FBEAEA;border-color:#EFC1C1;color:#7A1D1D}
+body.theme-dark .alert-info{background:rgba(2,136,209,.1);border-color:rgba(2,136,209,.35);color:#9AD4F5}
+body.theme-dark .alert-success{background:rgba(76,175,80,.1);border-color:rgba(76,175,80,.35);color:#A9E2AC}
+body.theme-dark .alert-warning{background:rgba(245,124,0,.1);border-color:rgba(245,124,0,.35);color:#F5C48F}
+
+/* tables */
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius-lg);border:1px solid var(--line);background:#fff;box-shadow:var(--shadow)}
+body.theme-dark .table-wrap{background:var(--d-card);border-color:var(--d-line);box-shadow:none}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:520px}
+th{font-family:var(--font-display);font-size:12px;letter-spacing:.08em;text-transform:uppercase;text-align:left;padding:14px 16px;color:var(--ink-faint);border-bottom:1.5px solid var(--line)}
+body.theme-dark th{color:var(--d-muted);border-bottom-color:var(--d-line)}
+td{padding:13px 16px;border-bottom:1px solid var(--line)}
+body.theme-dark td{border-bottom-color:rgba(255,255,255,.06)}
+tr:last-child td{border-bottom:0}
+.num{font-family:var(--font-data);font-variant-numeric:tabular-nums}
+
+/* page header band (light inner pages) */
+.page-band{padding:calc(var(--header-h) + 46px) 0 46px;background:radial-gradient(1200px 420px at 85% -10%,rgba(212,175,55,.16),transparent 60%),linear-gradient(160deg,var(--navy-deep),var(--navy-mid) 60%,var(--navy))}
+.page-band h1{color:#fff;font-size:clamp(30px,5vw,46px);font-weight:800;margin-bottom:8px}
+.page-band p{color:var(--d-muted);font-size:16px;max-width:640px}
+.page-band .eyebrow{color:var(--gold-bright)}
+
+/* prose (legal / long-form) */
+.prose{max-width:760px;margin:0 auto}
+.prose h2{font-size:22px;margin:38px 0 12px}
+.prose h3{font-size:17px;margin:26px 0 10px}
+.prose p{margin:0 0 14px;color:var(--ink-soft)}
+.prose ul,.prose ol{margin:0 0 16px 22px;color:var(--ink-soft)}
+.prose li{margin-bottom:6px}
+.prose table{min-width:0;margin:16px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.prose strong{color:var(--ink)}
+.prose .doc-meta{font-family:var(--font-data);font-size:12px;color:var(--ink-faint);letter-spacing:.04em;margin-bottom:26px}
+
+/* footer */
+.site-footer{background:var(--navy-deep);color:var(--d-muted);padding:56px 0 30px;border-top:1px solid rgba(212,175,55,.14)}
+.footer-grid{display:grid;gap:34px;margin-bottom:38px}
+@media(min-width:760px){.footer-grid{grid-template-columns:1.4fr 1fr 1fr 1.2fr}}
+.site-footer h4{color:#fff;font-size:13px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:14px;font-family:var(--font-data);font-weight:700}
+.site-footer ul{list-style:none}
+.site-footer li{margin-bottom:9px}
+.site-footer a{color:var(--d-muted);text-decoration:none;font-size:14px;transition:color .2s}
+.site-footer a:hover{color:var(--gold-bright)}
+.footer-brand p{font-size:14px;margin-top:14px;max-width:300px}
+.footer-tagline{font-family:var(--font-display);font-weight:800;color:var(--gold-bright);margin-top:10px}
+.footer-bottom{border-top:1px solid rgba(255,255,255,.08);padding-top:22px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;font-size:13px}
+.footer-flags{display:flex;gap:16px;font-family:var(--font-data);font-size:12px}
+.footer-play-links{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
+
+/* platform picker (modal / bottom sheet) */
+.picker-backdrop{position:fixed;inset:0;z-index:400;background:rgba(4,10,20,.62);backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .25s}
+.picker-backdrop.open{opacity:1;pointer-events:auto}
+.picker{position:fixed;z-index:401;left:0;right:0;bottom:0;background:#0D1F38;border:1px solid var(--d-line);border-bottom:0;border-radius:22px 22px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .3s cubic-bezier(.2,.9,.3,1)}
+.picker.open{transform:translateY(0)}
+@media(min-width:640px){.picker{left:50%;right:auto;bottom:auto;top:50%;width:440px;border-radius:22px;border-bottom:1px solid var(--d-line);transform:translate(-50%,-46%);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s}.picker.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%)}}
+.picker h2{font-size:20px;color:#fff;margin-bottom:4px}
+.picker .picker-sub{font-size:13px;color:var(--d-muted);margin-bottom:18px}
+.picker-close{position:absolute;top:14px;right:14px;width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.07);border:0;color:#fff;font-size:17px;cursor:pointer}
+.picker-opt{display:flex;align-items:center;gap:14px;width:100%;text-align:left;text-decoration:none;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);border-radius:15px;padding:14px;margin-bottom:10px;transition:border-color .2s,background .2s;cursor:pointer}
+.picker-opt:hover{border-color:var(--gold-bright);background:rgba(255,255,255,.08)}
+.picker-opt .p-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex-shrink:0}
+.picker-opt .p-ic svg{width:22px;height:22px}
+.picker-opt .p-name{font-family:var(--font-display);font-weight:700;color:#fff;font-size:15px}
+.picker-opt .p-desc{font-size:12.5px;color:var(--d-muted)}
+.picker-opt .p-tag{margin-left:auto;flex-shrink:0;font-family:var(--font-data);font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 8px;border-radius:999px;background:rgba(212,175,55,.16);color:var(--gold-bright);text-transform:uppercase}
+.p-ic-web{background:linear-gradient(135deg,var(--web),var(--web-bright));color:#fff}
+.p-ic-wa{background:var(--whatsapp);color:#fff}
+.p-ic-tg{background:var(--telegram);color:#fff}
+
+/* reveal on scroll */
+.rv{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none}}
+
+/* loading spinner + skeletons */
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(212,175,55,.25);border-top-color:var(--gold);animation:spin 1s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.skeleton{background:linear-gradient(90deg,rgba(150,170,200,.12) 25%,rgba(150,170,200,.24) 50%,rgba(150,170,200,.12) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:8px}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+/* star rating */
+.stars{display:inline-flex;gap:2px;color:var(--gold)}
+.stars .off{color:#C9D4E2}
+body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
+
+/* short-viewport + fold guarantees */
+@media (max-height:720px){
+  .section{padding:52px 0}
+  .page-band{padding:calc(var(--header-h) + 28px) 0 30px}
+}
+
+</style>
+</head>
+<body class="theme-light ">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="logo" href="/" aria-label="What's Up Trivia — home">
+      <span class="logo-badge" aria-hidden="true">₦</span>
+      <span class="logo-word">What's Up <em>Trivia</em></span>
+    </a>
+    <nav class="main-nav" aria-label="Primary">
+      <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/how-to-play">How to Play</a></li>
+        <li><a href="/leaderboards">Leaderboards</a></li>
+        <li><a href="/reviews">Reviews</a></li>
+        <li><a href="/about">About</a></li>
+        <li><a href="/contact">Contact</a></li>
+      </ul>
+    </nav>
+    <button class="header-cta" data-open-picker type="button">Play now</button>
+    <button class="hamburger" type="button" aria-expanded="false" aria-controls="mobileNav" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</header>
+<nav class="mobile-nav" id="mobileNav" aria-label="Mobile">
+  <ul>
+    <li><a href="/">Home</a></li>
+    <li><a href="/how-to-play">How to Play</a></li>
+    <li><a href="/leaderboards">Leaderboards</a></li>
+    <li><a href="/reviews">Reviews</a></li>
+    <li><a href="/about">About</a></li>
+    <li><a href="/contact">Contact</a></li>
+    <li><a href="/faq">FAQ</a></li>
+    <li><a href="/rules">Game Rules</a></li>
+  </ul>
+</nav>
+
+<main id="main">
+
+<section class="page-band">
+  <div class="container">
+    <div class="eyebrow" data-ck="contact.band.eyebrow">Support</div>
+    <h1 data-ck="contact.band.title">Contact us</h1>
+    <p data-ck="contact.band.lede">We're here to help. For in-game actions — playing, credits, redemption — use the game itself; this page is for everything else.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="max-width:860px">
+    <div class="grid grid-2">
+      <div class="card" style="text-align:center">
+        <div style="font-size:30px;margin-bottom:10px">📧</div>
+        <h3 style="font-size:17px;margin-bottom:6px">Email</h3>
+        <p style="font-size:14px;color:var(--ink-soft);margin-bottom:16px">For inquiries, support, partnerships, or documentation requests. We typically reply within 24 hours.</p>
+        <a class="btn btn-navy btn-sm" href="mailto:hello@whatsuptrivia.com.ng">hello@whatsuptrivia.com.ng</a>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:30px;margin-bottom:10px">📞</div>
+        <h3 style="font-size:17px;margin-bottom:6px">Phone</h3>
+        <p style="font-size:14px;color:var(--ink-soft);margin-bottom:16px">Calls and text messages only, during support hours: 9am – 3pm WAT, Monday – Friday.</p>
+        <a class="btn btn-navy btn-sm" href="tel:+2349160975128">+234 916 097 5128</a>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:22px">
+      <h3 style="font-size:16px;margin-bottom:12px">At a glance</h3>
+      <ul style="list-style:none;font-size:14.5px;color:var(--ink-soft);display:grid;gap:8px">
+        <li><strong>📧 Email:</strong> <a href="mailto:hello@whatsuptrivia.com.ng">hello@whatsuptrivia.com.ng</a></li>
+        <li><strong>📞 Phone:</strong> <a href="tel:+2349160975128">+234 916 097 5128</a> <em>(calls &amp; text only)</em></li>
+        <li><strong>📍 Location:</strong> Abuja, Nigeria</li>
+        <li><strong>🕐 Support hours:</strong> 9am – 3pm WAT, Monday – Friday</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:22px">
+      <h3 style="font-size:16px;margin-bottom:12px">Common support topics</h3>
+      <ul style="margin-left:20px;font-size:14.5px;color:var(--ink-soft);display:grid;gap:8px">
+        <li><strong>Payment issues:</strong> include your payment reference number</li>
+        <li><strong>Reward redemption:</strong> type REDEEM in the bot (or open Redeem on the web) to initiate</li>
+        <li><strong>Technical problems:</strong> describe the issue and include screenshots if possible</li>
+        <li><strong>Account issues:</strong> provide your registered phone number</li>
+        <li><strong>Question disputes:</strong> include the question and your round session details (within 7 days)</li>
+      </ul>
+    </div>
+
+    <div class="alert alert-warning">
+      <strong>Note:</strong> for round-related actions — starting a round, getting access credits, redeeming rewards — use the game directly on WhatsApp, Telegram or web play. This page is for customer support only.
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:22px">
+      <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Open web play</a>
+      <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp bot</a>
+      <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">Telegram bot</a>
+    </div>
+  </div>
+</section>
+
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="logo" href="/" aria-label="What's Up Trivia — home">
+          <span class="logo-badge" aria-hidden="true">₦</span>
+          <span class="logo-word" style="color:#fff">What's Up <em>Trivia</em></span>
+        </a>
+        <p data-ck="footer.brand.blurb">Nigeria's #1 knowledge competition platform. One game engine, one leaderboard, one prize pool — on WhatsApp, Telegram and the web. Sponsored rewards up to ₦50,000.</p>
+        <p class="footer-tagline" data-ck="footer.brand.tagline">Play. Learn. Earn.</p>
+        <div class="footer-play-links">
+          <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Play on the web</a>
+          <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
+          <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">Telegram</a>
+        </div>
+      </div>
+      <div>
+        <h4>Play</h4>
+        <ul>
+          <li><a href="/how-to-play">How to Play</a></li>
+          <li><a href="/leaderboards">Leaderboards</a></li>
+          <li><a href="/rules">Game Rules</a></li>
+          <li><a href="/faq">FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="/about">About Us</a></li>
+          <li><a href="/reviews">Player Reviews</a></li>
+          <li><a href="/contact">Contact</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal &amp; Safety</h4>
+        <ul>
+          <li><a href="/terms">Terms of Service</a></li>
+          <li><a href="/privacy">Privacy Policy</a></li>
+          <li><a href="/responsible-gaming">Responsible Play</a></li>
+        </ul>
+        <h4 style="margin-top:22px">Contact</h4>
+        <ul>
+          <li><a href="mailto:hello@whatsuptrivia.com.ng">hello@whatsuptrivia.com.ng</a></li>
+          <li><a href="tel:+2349160975128">+234 916 097 5128</a> <span style="font-size:12px">(calls &amp; text only)</span></li>
+          <li>Abuja, Nigeria</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; <span id="fyear">2026</span> What's Up Trivia · A product of SummerIsland Systems. All rights reserved.</p>
+      <div class="footer-flags">
+        <span>🔞 Reward modes 18+</span>
+        <span>🇳🇬 Made in Nigeria</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- Platform picker: one "Play now", three honest doors -->
+<div class="picker-backdrop" id="pickerBackdrop"></div>
+<div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="pickerTitle" hidden>
+  <button class="picker-close" type="button" aria-label="Close">✕</button>
+  <h2 id="pickerTitle">Choose where to play</h2>
+  <p class="picker-sub">Same game, same leaderboard, same prize pool — your account works everywhere.</p>
+  <a class="picker-opt" id="pickWeb" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">
+    <span class="p-ic p-ic-web" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
+    <span><span class="p-name">Web play</span><br><span class="p-desc">Full browser game — nothing to install</span></span>
+    <span class="p-tag">Newest</span>
+  </a>
+  <a class="picker-opt" id="pickWhatsapp" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">
+    <span class="p-ic p-ic-wa" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5 13.9c-.2.6-1.2 1.2-1.7 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.2.1.3 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.8 2.1 1.2 1.1 2.2 1.4 2.6 1.6.3.1.5.1.7-.1l.9-1c.2-.3.4-.2.7-.1l2 1c.3.1.5.2.6.3.1.2.1.8-.1 1.4Z"/></svg></span>
+    <span><span class="p-name">WhatsApp</span><br><span class="p-desc">Chat the bot — where most players live</span></span>
+  </a>
+  <a class="picker-opt" id="pickTelegram" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">
+    <span class="p-ic p-ic-tg" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.9 4.6 18.6 19.9c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.2-8.3c.4-.4-.1-.6-.6-.2L6.1 13.5 1.2 12c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.7.2 1.4 1.6Z"/></svg></span>
+    <span><span class="p-name">Telegram</span><br><span class="p-desc">Press START on @WhatsUpTriviaBot</span></span>
+  </a>
+</div>
+
+<script>
+/* ============================================================
+   What's Up Trivia — shared site runtime
+   Everything an editor might change lives in WUT_CONFIG or in
+   the PAGE_CONTENT object declared at the top of each page.
+   ============================================================ */
+window.WUT_CONFIG = window.WUT_CONFIG || {};
+(function (C) {
+  // --- Single source of truth for endpoints & destinations ---
+  // Served by the same Express app on any *.whatsuptrivia.com.ng
+  // host, so same-origin relative calls need no CORS at all.
+  // API_BASE is only used when the page is opened from elsewhere
+  // (e.g. a local file during review).
+  var onProd = /whatsuptrivia\.com\.ng$/.test(location.hostname);
+  C.API_BASE = onProd ? '' : 'https://api.whatsuptrivia.com.ng';
+  C.LINKS = {
+    web: 'https://play.whatsuptrivia.com.ng',
+    whatsapp: 'https://wa.me/2349160363909?text=' +
+      encodeURIComponent("Hi! I want to compete on What's Up Trivia"),
+    telegram: 'https://t.me/WhatsUpTriviaBot'
+  };
+  C.CONTACT = {
+    email: 'hello@whatsuptrivia.com.ng',
+    phone: '+2349160975128',
+    location: 'Abuja, Nigeria',
+    hours: '9am - 3pm WAT, Monday - Friday'
+  };
+  // --- Feature flags -----------------------------------------
+  // REVIEWS_API: flip to true the day /api/public/reviews ships.
+  //   Until then the reviews UI shows its designed empty state
+  //   and the form is visibly disabled with an honest message.
+  // CONTENT_API: flip to true when /api/public/site-content
+  //   ships. Until then pages render their baked-in copy only.
+  C.FEATURES = { REVIEWS_API: false, CONTENT_API: false };
+})(window.WUT_CONFIG);
+
+/* ---------- tiny helpers ---------- */
+function $(s, r) { return (r || document).querySelector(s); }
+function $all(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function fmtNaira(n) {
+  n = Number(n) || 0;
+  return '\u20A6' + n.toLocaleString('en-NG');
+}
+function apiGet(path, timeoutMs) {
+  var ctrl = ('AbortController' in window) ? new AbortController() : null;
+  var t = ctrl && setTimeout(function () { ctrl.abort(); }, timeoutMs || 9000);
+  return fetch(window.WUT_CONFIG.API_BASE + path, ctrl ? { signal: ctrl.signal } : {})
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .finally(function () { if (t) clearTimeout(t); });
+}
+
+/* ---------- content hydration ----------
+   Markup carries the real copy (first paint never waits on JS
+   or on any fetch). Elements that should be editable later are
+   tagged data-ck="dot.notation.key" and mirrored in the page's
+   PAGE_CONTENT object. When CONTENT_API ships, fetched values
+   are merged over PAGE_CONTENT and re-applied — and any fetch
+   failure simply leaves the baked copy in place. */
+function applyContent(map) {
+  if (!map) return;
+  $all('[data-ck]').forEach(function (el) {
+    var k = el.getAttribute('data-ck');
+    if (Object.prototype.hasOwnProperty.call(map, k) && typeof map[k] === 'string') {
+      el.textContent = map[k];
+    }
+  });
+}
+function initContent() {
+  var C = window.WUT_CONFIG;
+  if (!C.FEATURES.CONTENT_API || !window.PAGE_CONTENT) return;
+  apiGet('/api/public/site-content?prefix=' + encodeURIComponent(window.PAGE_CONTENT_PREFIX || ''))
+    .then(function (res) {
+      if (res && res.success && res.content) applyContent(res.content);
+    })
+    .catch(function () { /* baked-in copy stays — by design */ });
+}
+
+/* ---------- header / nav ---------- */
+function initNav() {
+  var burger = $('.hamburger'), menu = $('.mobile-nav');
+  if (burger && menu) {
+    burger.addEventListener('click', function () {
+      var open = menu.classList.toggle('open');
+      burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      document.body.style.overflow = open ? 'hidden' : '';
+    });
+    $all('a', menu).forEach(function (a) {
+      a.addEventListener('click', function () {
+        menu.classList.remove('open');
+        burger.setAttribute('aria-expanded', 'false');
+        document.body.style.overflow = '';
+      });
+    });
+  }
+  // mark current page
+  var here = location.pathname.replace(/\/+$/, '') || '/';
+  $all('.main-nav a, .mobile-nav a').forEach(function (a) {
+    var p = a.getAttribute('href');
+    if (!p) return;
+    p = p.replace(/\/+$/, '') || '/';
+    if (p === here || (p !== '/' && here.indexOf(p) === 0)) a.setAttribute('aria-current', 'page');
+  });
+}
+
+/* ---------- platform picker ----------
+   One "Play now" action, three honest destinations. Web play is
+   listed first (no install, no login friction) but WhatsApp and
+   Telegram are full equals — that's where most players live.
+   On phones the order flips WhatsApp-first, since the app is
+   almost certainly installed and one tap away. */
+function initPicker() {
+  var backdrop = $('#pickerBackdrop'), sheet = $('#picker');
+  if (!backdrop || !sheet) return;
+  var lastFocus = null;
+  function open() {
+    lastFocus = document.activeElement;
+    backdrop.classList.add('open');
+    sheet.classList.add('open');
+    sheet.removeAttribute('hidden');
+    document.body.style.overflow = 'hidden';
+    var f = $('.picker-opt', sheet); if (f) f.focus();
+  }
+  function close() {
+    backdrop.classList.remove('open');
+    sheet.classList.remove('open');
+    document.body.style.overflow = '';
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  $all('[data-open-picker]').forEach(function (b) { b.addEventListener('click', function (e) { e.preventDefault(); open(); }); });
+  backdrop.addEventListener('click', close);
+  var x = $('.picker-close', sheet); if (x) x.addEventListener('click', close);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  // Device-aware ordering: mobile → WhatsApp first
+  var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isMobile) {
+    var wa = $('#pickWhatsapp'), web = $('#pickWeb');
+    if (wa && web && wa.parentNode) wa.parentNode.insertBefore(wa, web);
+  }
+}
+
+/* ---------- reveal on scroll ---------- */
+function initReveal() {
+  var els = $all('.rv');
+  if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -6% 0px' });
+  els.forEach(function (e) { io.observe(e); });
+}
+
+/* ---------- shared leaderboard rendering ---------- */
+var PLATFORM_META = {
+  whatsapp: { label: 'WhatsApp', cls: 'chip-whatsapp' },
+  telegram: { label: 'Telegram', cls: 'chip-telegram' },
+  web: { label: 'Web', cls: 'chip-web' }
+};
+function platformChip(p) {
+  var m = PLATFORM_META[p] || { label: p ? p : '—', cls: '' };
+  return '<span class="chip ' + m.cls + '"><span class="dot"></span>' + esc(m.label) + '</span>';
+}
+function tierMedal(rank) {
+  return rank === 1 ? '\uD83E\uDD47' : rank === 2 ? '\uD83E\uDD48' : rank === 3 ? '\uD83E\uDD49' : '';
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  initNav(); initPicker(); initReveal(); initContent();
+});
+
+document.getElementById('fyear').textContent = new Date().getFullYear();
+window.PAGE_CONTENT_PREFIX='contact.';window.PAGE_CONTENT={"contact.band.title":"Contact us"};
+</script>
+</body>
+</html>

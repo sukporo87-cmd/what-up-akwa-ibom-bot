@@ -41,6 +41,30 @@ app.get('/', (req, res, next) => {
   next();
 });
 
+// ============================================
+// demo.<domain> serves the marketing site from views/site with clean URLs.
+// Mirrors the play.<domain> pattern above.
+// To promote to the apex later, widen isSiteHost — nothing else changes.
+// ============================================
+const isSiteHost = (hostname) =>
+  String(hostname || '').startsWith('demo.');
+
+const siteStatic = express.static(path.join(__dirname, 'views', 'site'), {
+  extensions: ['html'],            // /how-to-play  ->  how-to-play.html
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+});
+
+app.use((req, res, next) => {
+  if (!isSiteHost(req.hostname)) return next();
+  siteStatic(req, res, next);
+});
+
 // Serve static files from views directory (for admin dashboard)
 // HTML is never cached: the game UI ships as one file, and a browser holding
 // yesterday's copy looks exactly like a bug in today's code.
@@ -73,6 +97,17 @@ app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
 app.use('/web/payment', webPaymentRoutes);
+
+// Anything unmatched on the demo host gets the site's own 404 page.
+// Sits after the API routes so /api/public/* still works on that hostname.
+app.use((req, res, next) => {
+  if (isSiteHost(req.hostname) && req.method === 'GET' && !req.path.startsWith('/api')) {
+    return res.status(404).sendFile('404.html', {
+      root: path.join(__dirname, 'views', 'site')
+    });
+  }
+  next();
+});
 
 // Error handler
 app.use((err, req, res, next) => {
