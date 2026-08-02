@@ -3,63 +3,92 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>What's Up Trivia — Play. Learn. Earn. | Nigeria's Knowledge Competition</title>
-<meta name="description" content="Nigeria's skill-based trivia competition. 15 questions, sponsored leaderboard rewards up to ₦50,000 — one game, one prize pool, on WhatsApp, Telegram and the web.">
+<title>What's Up Trivia — Your Knowledge Pays | Skill-Based Trivia Competition in Nigeria</title>
+<meta name="description" content="Answer 15 questions, beat the 12-second clock, and earn sponsored leaderboard rewards up to ₦50,000. Play on Web-play, WhatsApp or Telegram — one game, one leaderboard, one prize pool.">
 <meta name="theme-color" content="#081425">
-<meta property="og:title" content="What's Up Trivia — Play. Learn. Earn. | Nigeria's Knowledge Competition">
-<meta property="og:description" content="Nigeria's skill-based trivia competition. 15 questions, sponsored leaderboard rewards up to ₦50,000 — one game, one prize pool, on WhatsApp, Telegram and the web.">
+<meta property="og:title" content="What's Up Trivia — Your Knowledge Pays | Skill-Based Trivia Competition in Nigeria">
+<meta property="og:description" content="Answer 15 questions, beat the 12-second clock, and earn sponsored leaderboard rewards up to ₦50,000. Play on Web-play, WhatsApp or Telegram — one game, one leaderboard, one prize pool.">
 <meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 
 <style>
-/* ---------- landing-only styles ---------- */
 body.home{background:var(--navy-deep)}
-#bg3d{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity 1.2s ease}
-#bg3d.ready{opacity:1}
-.scene-fallback{position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(900px 600px at 18% 12%, rgba(37,211,102,.10), transparent 55%),
-    radial-gradient(900px 600px at 82% 10%, rgba(42,171,238,.10), transparent 55%),
-    radial-gradient(1000px 700px at 50% 110%, rgba(139,92,246,.12), transparent 60%),
-    radial-gradient(700px 500px at 50% 42%, rgba(212,175,55,.10), transparent 62%),
-    linear-gradient(180deg, #081425 0%, #0B1B33 55%, #081425 100%);}
-.scene-fallback::after{content:"";position:absolute;inset:0;opacity:.5;
-  background-image:radial-gradient(rgba(240,200,75,.28) 1px, transparent 1.6px);
-  background-size:110px 110px}
 .content{position:relative;z-index:2}
 
-/* hero — everything that matters fits above the fold */
-.hero{min-height:100dvh;display:flex;flex-direction:column;justify-content:center;
-  padding:calc(var(--header-h) + 22px) 20px 30px;text-align:center}
-.hero-inner{max-width:880px;margin:0 auto;width:100%}
-.hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(212,175,55,.09);
-  border:1px solid rgba(212,175,55,.24);border-radius:40px;padding:7px 16px;margin-bottom:20px;
-  font-family:var(--font-data);font-size:11px;font-weight:700;color:var(--gold-bright);
-  letter-spacing:.14em;text-transform:uppercase}
-.hero-badge .live{width:7px;height:7px;border-radius:50%;background:var(--whatsapp);box-shadow:0 0 10px var(--whatsapp);animation:blink 1.7s ease-in-out infinite}
+/* ================= HERO — The Arena ================= */
+.hero{position:relative;min-height:100dvh;display:flex;align-items:center;overflow:hidden;
+  padding:calc(var(--header-h) + 18px) 0 26px;
+  background:
+    radial-gradient(1100px 700px at 78% 30%, rgba(109,40,217,.16), transparent 60%),
+    radial-gradient(900px 600px at 15% 85%, rgba(212,175,55,.08), transparent 55%),
+    linear-gradient(175deg,#070F1D 0%,#0A1830 55%,#081425 100%)}
+.hero-grid{position:relative;z-index:2;width:100%;max-width:1180px;margin:0 auto;padding:0 20px;
+  display:grid;gap:26px;align-items:center}
+.hero-copy{text-align:center;max-width:640px;margin:0 auto}
+/* the arena visual */
+.hero-visual{position:relative;height:min(38dvh,340px);order:-1}
+#arena{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity 1s ease}
+#arena.ready{opacity:1}
+.arena-fallback{position:absolute;inset:0;display:grid;place-items:center}
+.af-globe{position:relative;width:min(78%,300px);aspect-ratio:1;border-radius:50%;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(240,200,75,.28), transparent 42%),
+    radial-gradient(circle at 50% 50%, rgba(212,175,55,.10), rgba(109,40,217,.10) 62%, transparent 72%);
+  box-shadow:inset 0 0 60px rgba(212,175,55,.12), inset 0 0 120px rgba(109,40,217,.15)}
+.af-globe::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background-image:radial-gradient(rgba(240,200,75,.5) 1px, transparent 1.5px);
+  background-size:17px 17px;
+  -webkit-mask-image:radial-gradient(circle at 42% 38%, #000 30%, transparent 74%);
+          mask-image:radial-gradient(circle at 42% 38%, #000 30%, transparent 74%)}
+.af-globe::after{content:"";position:absolute;inset:-9%;border-radius:50%;border:1px dashed rgba(212,175,55,.28);
+  transform:rotateX(68deg)}
+.af-ic{position:absolute;font-size:clamp(16px,3vw,22px);opacity:.9;animation:afFloat 5.2s ease-in-out infinite}
+.af-ic:nth-child(2){top:4%;left:16%;animation-delay:-.6s}
+.af-ic:nth-child(3){top:16%;right:8%;animation-delay:-1.7s}
+.af-ic:nth-child(4){bottom:20%;left:5%;animation-delay:-2.8s}
+.af-ic:nth-child(5){bottom:6%;right:18%;animation-delay:-3.6s}
+.af-ic:nth-child(6){top:44%;left:-3%;animation-delay:-4.4s}
+.af-ic:nth-child(7){top:38%;right:-3%;animation-delay:-1.1s}
+@keyframes afFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+@media(prefers-reduced-motion:reduce){.af-ic{animation:none}}
+
+/* desktop: copy left, arena right, both larger */
+@media(min-width:980px){
+  .hero-grid{grid-template-columns:1.05fr .95fr;gap:24px}
+  .hero-copy{text-align:left;margin:0;max-width:none}
+  .hero-visual{order:2;height:min(72dvh,600px)}
+  .hero-ctas,.hero-plat-row{justify-content:flex-start}
+  .hero-trust{justify-content:flex-start}
+}
+
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(212,175,55,.08);
+  border:1px solid rgba(212,175,55,.22);border-radius:40px;padding:7px 15px;margin-bottom:18px;
+  font-family:var(--font-data);font-size:10.5px;font-weight:700;color:var(--gold-bright);
+  letter-spacing:.13em;text-transform:uppercase}
+.hero-badge .live{width:7px;height:7px;border-radius:50%;background:var(--whatsapp);animation:blink 1.7s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
-.hero h1{font-size:clamp(42px,9vw,84px);font-weight:800;color:#fff;letter-spacing:-.025em;margin-bottom:14px}
-.hero h1 .gold{background:linear-gradient(100deg,var(--gold) 10%,var(--gold-bright) 45%,#fff8dd 55%,var(--gold-bright) 65%,var(--gold) 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
-.hero-sub{font-size:clamp(15px,2.4vw,18px);color:var(--d-muted);max-width:620px;margin:0 auto 26px;line-height:1.6}
+.hero h1{font-size:clamp(44px,8.2vw,86px);color:#fff;line-height:.98;margin-bottom:16px}
+.hero h1 .gold{color:var(--gold-bright);display:inline-block;transition:filter .18s ease,transform .18s ease}
+.hero h1 .gold.zap{filter:brightness(1.45);transform:scale(1.03)}
+.hero-sub{font-size:clamp(15px,2.3vw,17.5px);color:#A9BAD2;max-width:560px;margin:0 auto 24px;line-height:1.65}
+@media(min-width:980px){.hero-sub{margin:0 0 24px}}
 .hero-sub strong{color:var(--gold-bright);font-weight:700}
 .hero-sub .p-wa{color:#5ee79a}.hero-sub .p-tg{color:#5fc5f2}.hero-sub .p-web{color:#b79bff}
-.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:26px}
-.hero-plat-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-.hero-trust{display:flex;justify-content:center;gap:clamp(18px,5vw,54px);margin-top:28px;flex-wrap:wrap}
-.hero-trust .t{text-align:center}
-.hero-trust .t b{display:block;font-family:var(--font-data);font-weight:800;font-size:clamp(18px,3.4vw,26px);color:var(--gold-bright)}
-.hero-trust .t span{font-size:11.5px;color:var(--d-muted);letter-spacing:.06em;text-transform:uppercase}
-.scroll-hint{margin-top:26px;color:var(--d-muted);font-size:20px;animation:bob 1.9s ease-in-out infinite}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(7px)}}
+.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:18px}
+.hero-plat-row{display:flex;gap:9px;justify-content:center;flex-wrap:wrap}
+.hero-trust{display:flex;justify-content:center;gap:clamp(18px,4.5vw,46px);margin-top:24px;flex-wrap:wrap}
+.hero-trust .t b{display:block;font-family:var(--font-data);font-weight:800;font-size:clamp(17px,3vw,24px);color:var(--gold-bright)}
+.hero-trust .t span{font-size:11px;color:#7E93B0;letter-spacing:.06em;text-transform:uppercase}
 @media(max-height:720px){
-  .hero{padding-top:calc(var(--header-h) + 10px)}
-  .hero-badge{margin-bottom:12px}
-  .hero h1{font-size:clamp(34px,7.5vw,58px);margin-bottom:10px}
-  .hero-sub{margin-bottom:16px}
-  .hero-trust{margin-top:16px}
-  .scroll-hint{display:none}
+  .hero{padding-top:calc(var(--header-h) + 8px)}
+  .hero-visual{height:min(24dvh,180px)}
+  .hero-badge{margin-bottom:10px}
+  .hero h1{font-size:clamp(36px,7vw,56px);margin-bottom:10px}
+  .hero-sub{margin-bottom:14px}
+  .hero-trust{margin-top:14px}
 }
 
 /* platform trio */
@@ -70,7 +99,7 @@ body.home{background:var(--navy-deep)}
 .plat-card.web::before{background:linear-gradient(90deg,var(--web),var(--web-bright))}
 .plat-ic{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;margin-bottom:14px}
 .plat-ic svg{width:24px;height:24px}
-.plat-card h3{font-size:19px;margin-bottom:6px}
+.plat-card h3{font-size:18px;margin-bottom:6px}
 .plat-card p{font-size:14px;color:var(--d-muted);margin-bottom:16px;min-height:3.4em}
 .converge-line{display:flex;align-items:center;justify-content:center;gap:10px;margin:26px auto 0;
   font-family:var(--font-data);font-size:12px;color:var(--d-muted);letter-spacing:.08em;flex-wrap:wrap;text-align:center}
@@ -85,7 +114,7 @@ body.home{background:var(--navy-deep)}
 .demo-timerbar{height:6px;border-radius:6px;background:rgba(255,255,255,.09);overflow:hidden;margin-bottom:18px}
 .demo-timerbar i{display:block;height:100%;width:100%;background:linear-gradient(90deg,var(--gold),var(--gold-bright));transition:width .1s linear;border-radius:6px}
 .demo-timerbar i.hot{background:linear-gradient(90deg,#e05252,#ff8a5c)}
-.demo-q{font-family:var(--font-display);font-weight:700;font-size:clamp(17px,3vw,20px);color:#fff;min-height:3.1em;margin-bottom:16px}
+.demo-q{font-weight:700;font-size:clamp(17px,3vw,20px);color:#fff;min-height:3.1em;margin-bottom:16px}
 .demo-opts{display:grid;gap:10px}
 .demo-opt{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:rgba(255,255,255,.05);
   border:1px solid rgba(255,255,255,.11);border-radius:13px;padding:12px 14px;color:var(--d-text);
@@ -103,7 +132,7 @@ body.home{background:var(--navy-deep)}
 .demo-5050:disabled{opacity:.3;cursor:default}
 .demo-progress{font-family:var(--font-data);font-size:12px;color:var(--d-muted)}
 .demo-end{text-align:center;padding:14px 0 4px}
-.demo-end .big{font-family:var(--font-display);font-weight:800;font-size:24px;color:var(--gold-bright);margin-bottom:8px}
+.demo-end .big{font-weight:800;font-size:22px;color:var(--gold-bright);margin-bottom:8px}
 .demo-end p{color:var(--d-muted);font-size:14px;margin-bottom:18px}
 .demo-note{text-align:center;font-size:12.5px;color:var(--d-muted);margin-top:14px}
 
@@ -131,7 +160,7 @@ body.home{background:var(--navy-deep)}
 /* modes + packages */
 .mode-card{text-align:left}
 .mode-card .m-ic{font-size:26px;margin-bottom:10px}
-.mode-card h3{font-size:18px;margin-bottom:8px}
+.mode-card h3{font-size:17px;margin-bottom:8px}
 .mode-card p{font-size:14px;color:var(--d-muted)}
 .mode-card .m-meta{margin-top:12px;font-family:var(--font-data);font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--gold-bright);text-transform:uppercase}
 .mode-card.featured{border-color:rgba(212,175,55,.5);background:linear-gradient(165deg,rgba(212,175,55,.10),rgba(17,36,63,.55))}
@@ -148,14 +177,18 @@ body.home{background:var(--navy-deep)}
 .pulse-grid{display:grid;gap:18px}
 @media(min-width:860px){.pulse-grid{grid-template-columns:1.1fr .9fr}}
 .pulse-card h3{font-size:16px;display:flex;align-items:center;gap:9px;margin-bottom:14px}
-.pulse-card h3 .live{width:8px;height:8px;border-radius:50%;background:var(--whatsapp);box-shadow:0 0 9px var(--whatsapp);animation:blink 1.7s infinite}
+.pulse-card h3 .live{width:8px;height:8px;border-radius:50%;background:var(--whatsapp);animation:blink 1.7s infinite}
 .pulse-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px}
 .pulse-row:last-child{border-bottom:0}
 .pulse-row .r{font-family:var(--font-data);font-weight:800;width:30px;color:var(--gold-bright)}
 .pulse-row .u{color:var(--d-text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pulse-row .s{margin-left:auto;font-family:var(--font-data);color:var(--d-muted);font-size:13px}
 .pulse-empty{color:var(--d-muted);font-size:14px;padding:14px 0}
-.pulse-tour .t-name{font-family:var(--font-display);font-weight:800;font-size:20px;color:#fff;margin-bottom:6px}
+.pulse-empty a{color:var(--gold-bright)}
+.pulse-social{display:flex;gap:9px;margin-top:12px}
+.pulse-social a{font-size:12.5px;font-weight:700;color:var(--gold-bright);border:1px solid rgba(212,175,55,.35);border-radius:999px;padding:6px 13px;text-decoration:none}
+.pulse-social a:hover{background:rgba(212,175,55,.1)}
+.pulse-tour .t-name{font-weight:800;font-size:20px;color:#fff;margin-bottom:6px}
 .pulse-tour .t-pool{font-family:var(--font-data);font-weight:800;font-size:30px;color:var(--gold-bright);margin-bottom:6px}
 .pulse-tour .t-meta{font-size:13px;color:var(--d-muted);margin-bottom:16px}
 
@@ -167,8 +200,18 @@ body.home{background:var(--navy-deep)}
 .compliance-note{max-width:760px;margin:26px auto 0;text-align:center;font-size:13px;color:var(--d-muted);line-height:1.7}
 .compliance-note strong{color:var(--d-text)}
 
-/* reviews teaser + cta */
+/* home reviews */
+.hr-agg{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:22px;font-size:14px;color:var(--d-muted)}
+.hr-agg .n{font-family:var(--font-data);font-weight:800;font-size:26px;color:var(--gold-bright)}
+.hr-card{text-align:left}
+.hr-card .stars{font-size:14px;margin-bottom:8px}
+.hr-card .hr-body{font-size:14px;color:var(--d-text);margin-bottom:12px}
+.hr-card .hr-who{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--d-muted);flex-wrap:wrap}
+.hr-card .hr-who b{color:#fff}
+.hr-verified{font-size:10.5px;font-weight:700;color:#5ee79a;border:1px solid rgba(37,211,102,.4);border-radius:999px;padding:2px 8px}
 .reviews-teaser{max-width:640px;margin:0 auto;text-align:center}
+
+/* cta */
 .cta-band{background:linear-gradient(140deg,rgba(212,175,55,.14),rgba(17,36,63,.4));border:1px solid rgba(212,175,55,.3);
   border-radius:28px;padding:clamp(32px,6vw,60px);text-align:center}
 .cta-band h2{font-size:clamp(26px,4.6vw,40px);margin-bottom:12px}
@@ -193,8 +236,8 @@ body.home{background:var(--navy-deep)}
   --paper:#F6F8FC; --paper-2:#EDF1F8; --line:#DCE4EF;
   --d-text:#EAF1FA; --d-muted:#93A9C7; --d-line:rgba(212,175,55,.16);
   --d-card:rgba(17,36,63,.55);
-  --font-display:'Bricolage Grotesque','Inter',system-ui,sans-serif;
-  --font-body:'Inter',system-ui,-apple-system,sans-serif;
+  --font-display:'Anton','Inter',system-ui,sans-serif;
+  --font-body:'Instrument Sans',system-ui,-apple-system,sans-serif;
   --font-data:'JetBrains Mono',ui-monospace,monospace;
   --radius:14px; --radius-lg:22px;
   --shadow:0 10px 30px rgba(14,30,54,.10);
@@ -212,7 +255,8 @@ body.theme-dark{background:var(--navy-deep);color:var(--d-text)}
 img,svg{max-width:100%;display:block}
 a{color:var(--navy)}
 body.theme-dark a{color:var(--gold-bright)}
-h1,h2,h3,h4{font-family:var(--font-display);line-height:1.12;letter-spacing:-.01em;color:var(--navy)}
+h1,h2{font-family:var(--font-display);font-weight:400;line-height:1.08;letter-spacing:.012em;text-transform:uppercase;color:var(--navy)}
+h3,h4{font-family:var(--font-body);font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--navy)}
 body.theme-dark h1,body.theme-dark h2,body.theme-dark h3,body.theme-dark h4{color:#fff}
 .mono{font-family:var(--font-data)}
 .container{max-width:var(--maxw);margin:0 auto;padding:0 20px}
@@ -225,7 +269,8 @@ body.theme-dark h1,body.theme-dark h2,body.theme-dark h3,body.theme-dark h4{colo
 .site-header{position:fixed;top:0;left:0;right:0;z-index:200;height:var(--header-h);display:flex;align-items:center;transition:background .25s,box-shadow .25s;background:rgba(8,20,37,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.06)}
 body.theme-light .site-header{background:rgba(255,255,255,.92);border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(14,30,54,.03)}
 .header-inner{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 20px;display:flex;align-items:center;justify-content:space-between;gap:14px}
-.logo{display:flex;align-items:center;gap:9px;text-decoration:none;font-family:var(--font-display);font-weight:800;font-size:17px;letter-spacing:-.02em;white-space:nowrap}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none;font-family:var(--font-body);font-weight:800;font-size:16.5px;letter-spacing:-.01em;white-space:nowrap}
+.logo img{width:30px;height:32px;display:block}
 .logo .logo-badge{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep);font-family:var(--font-data);font-weight:800;font-size:13px;box-shadow:0 2px 8px rgba(212,175,55,.35)}
 .logo .logo-word{color:#fff}
 .logo .logo-word em{font-style:normal;color:var(--gold-bright)}
@@ -237,11 +282,11 @@ body.theme-light .logo .logo-word em{color:var(--gold-dim)}
 body.theme-light .main-nav a{color:var(--ink-soft)}
 .main-nav a:hover,.main-nav a[aria-current="page"]{color:var(--gold-bright)}
 body.theme-light .main-nav a:hover,body.theme-light .main-nav a[aria-current="page"]{color:var(--navy)}
-.header-cta{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep)!important;font-family:var(--font-display);font-weight:800;font-size:13px;padding:9px 16px;border-radius:11px;text-decoration:none;border:0;cursor:pointer;box-shadow:0 3px 12px rgba(212,175,55,.35);transition:transform .15s}
+.header-cta{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--gold),var(--gold-bright));color:var(--navy-deep)!important;font-family:var(--font-body);font-weight:800;font-size:13px;padding:9px 16px;border-radius:11px;text-decoration:none;border:0;cursor:pointer;box-shadow:0 3px 12px rgba(212,175,55,.35);transition:transform .15s}
 .header-cta:hover{transform:translateY(-1px)}
-.hamburger{display:inline-flex;flex-direction:column;justify-content:center;gap:5px;width:42px;height:42px;padding:10px;background:none;border:0;cursor:pointer}
-.hamburger span{display:block;height:2px;border-radius:2px;background:#fff;transition:transform .25s,opacity .2s}
-body.theme-light .hamburger span{background:var(--navy)}
+.hamburger{display:none;flex-direction:column;justify-content:center;align-items:center;gap:5px;width:44px;height:44px;padding:0;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:11px;cursor:pointer;flex-shrink:0}
+.hamburger span{display:block;width:20px;height:2.5px;border-radius:2px;background:#fff;transition:transform .25s,opacity .2s}
+body.theme-light .hamburger{background:rgba(30,58,95,.06);border-color:rgba(30,58,95,.18)}body.theme-light .hamburger span{background:var(--navy)}
 .hamburger[aria-expanded="true"] span:nth-child(1){transform:translateY(7px) rotate(45deg)}
 .hamburger[aria-expanded="true"] span:nth-child(2){opacity:0}
 .hamburger[aria-expanded="true"] span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
@@ -254,9 +299,11 @@ body.theme-light .mobile-nav a{color:var(--navy);border-bottom-color:var(--line)
 .mobile-nav a[aria-current="page"]{color:var(--gold-bright)}
 body.theme-light .mobile-nav a[aria-current="page"]{color:var(--gold-dim)}
 @media(min-width:920px){.main-nav{display:block}.hamburger{display:none}}
+@media(max-width:919px){.hamburger{display:inline-flex}}
+@media(max-width:479px){.header-cta{display:none}}
 
 /* ---------- buttons ---------- */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:var(--font-display);font-weight:700;font-size:15px;padding:13px 22px;border-radius:13px;text-decoration:none;border:0;cursor:pointer;transition:transform .15s,box-shadow .2s,background .2s;line-height:1.2;text-align:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:var(--font-body);font-weight:700;font-size:15px;padding:13px 22px;border-radius:13px;text-decoration:none;border:0;cursor:pointer;transition:transform .15s,box-shadow .2s,background .2s;line-height:1.2;text-align:center}
 .btn:active{transform:scale(.98)}
 .btn-lg{font-size:16px;padding:15px 26px}
 .btn-sm{font-size:13px;padding:9px 15px;border-radius:10px}
@@ -280,7 +327,7 @@ body.theme-light .btn-ghost:hover{border-color:var(--navy);color:var(--navy)}
 .section-tight{padding:48px 0}
 .eyebrow{font-family:var(--font-data);font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:12px}
 body.theme-dark .eyebrow{color:var(--gold-bright)}
-.section-title{font-size:clamp(26px,4.4vw,40px);font-weight:800;margin-bottom:12px}
+.section-title{font-size:clamp(25px,4.2vw,38px);font-weight:400;margin-bottom:12px}
 .section-lede{font-size:16px;color:var(--ink-soft);max-width:640px}
 body.theme-dark .section-lede{color:var(--d-muted)}
 .section-head{margin-bottom:34px}
@@ -316,7 +363,7 @@ body.theme-dark .alert-warning{background:rgba(245,124,0,.1);border-color:rgba(2
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius-lg);border:1px solid var(--line);background:#fff;box-shadow:var(--shadow)}
 body.theme-dark .table-wrap{background:var(--d-card);border-color:var(--d-line);box-shadow:none}
 table{width:100%;border-collapse:collapse;font-size:14px;min-width:520px}
-th{font-family:var(--font-display);font-size:12px;letter-spacing:.08em;text-transform:uppercase;text-align:left;padding:14px 16px;color:var(--ink-faint);border-bottom:1.5px solid var(--line)}
+th{font-family:var(--font-data);font-size:12px;letter-spacing:.08em;text-transform:uppercase;text-align:left;padding:14px 16px;color:var(--ink-faint);border-bottom:1.5px solid var(--line)}
 body.theme-dark th{color:var(--d-muted);border-bottom-color:var(--d-line)}
 td{padding:13px 16px;border-bottom:1px solid var(--line)}
 body.theme-dark td{border-bottom-color:rgba(255,255,255,.06)}
@@ -325,13 +372,13 @@ tr:last-child td{border-bottom:0}
 
 /* page header band (light inner pages) */
 .page-band{padding:calc(var(--header-h) + 46px) 0 46px;background:radial-gradient(1200px 420px at 85% -10%,rgba(212,175,55,.16),transparent 60%),linear-gradient(160deg,var(--navy-deep),var(--navy-mid) 60%,var(--navy))}
-.page-band h1{color:#fff;font-size:clamp(30px,5vw,46px);font-weight:800;margin-bottom:8px}
+.page-band h1{color:#fff;font-size:clamp(29px,4.6vw,44px);font-weight:400;margin-bottom:8px}
 .page-band p{color:var(--d-muted);font-size:16px;max-width:640px}
 .page-band .eyebrow{color:var(--gold-bright)}
 
 /* prose (legal / long-form) */
 .prose{max-width:760px;margin:0 auto}
-.prose h2{font-size:22px;margin:38px 0 12px}
+.prose h2{font-size:21px;letter-spacing:.02em;margin:38px 0 12px}
 .prose h3{font-size:17px;margin:26px 0 10px}
 .prose p{margin:0 0 14px;color:var(--ink-soft)}
 .prose ul,.prose ol{margin:0 0 16px 22px;color:var(--ink-soft)}
@@ -341,7 +388,7 @@ tr:last-child td{border-bottom:0}
 .prose .doc-meta{font-family:var(--font-data);font-size:12px;color:var(--ink-faint);letter-spacing:.04em;margin-bottom:26px}
 
 /* footer */
-.site-footer{background:var(--navy-deep);color:var(--d-muted);padding:56px 0 30px;border-top:1px solid rgba(212,175,55,.14)}
+.site-footer{position:relative;z-index:2;background:var(--navy-deep);color:var(--d-muted);padding:56px 0 30px;border-top:1px solid rgba(212,175,55,.14)}
 .footer-grid{display:grid;gap:34px;margin-bottom:38px}
 @media(min-width:760px){.footer-grid{grid-template-columns:1.4fr 1fr 1fr 1.2fr}}
 .site-footer h4{color:#fff;font-size:13px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:14px;font-family:var(--font-data);font-weight:700}
@@ -350,7 +397,7 @@ tr:last-child td{border-bottom:0}
 .site-footer a{color:var(--d-muted);text-decoration:none;font-size:14px;transition:color .2s}
 .site-footer a:hover{color:var(--gold-bright)}
 .footer-brand p{font-size:14px;margin-top:14px;max-width:300px}
-.footer-tagline{font-family:var(--font-display);font-weight:800;color:var(--gold-bright);margin-top:10px}
+.footer-tagline{font-family:var(--font-display);font-weight:400;text-transform:uppercase;letter-spacing:.03em;color:var(--gold-bright);margin-top:10px}
 .footer-bottom{border-top:1px solid rgba(255,255,255,.08);padding-top:22px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;font-size:13px}
 .footer-flags{display:flex;gap:16px;font-family:var(--font-data);font-size:12px}
 .footer-play-links{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
@@ -368,7 +415,7 @@ tr:last-child td{border-bottom:0}
 .picker-opt:hover{border-color:var(--gold-bright);background:rgba(255,255,255,.08)}
 .picker-opt .p-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex-shrink:0}
 .picker-opt .p-ic svg{width:22px;height:22px}
-.picker-opt .p-name{font-family:var(--font-display);font-weight:700;color:#fff;font-size:15px}
+.picker-opt .p-name{font-family:var(--font-body);font-weight:700;color:#fff;font-size:15px}
 .picker-opt .p-desc{font-size:12.5px;color:var(--d-muted)}
 .picker-opt .p-tag{margin-left:auto;flex-shrink:0;font-family:var(--font-data);font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 8px;border-radius:999px;background:rgba(212,175,55,.16);color:var(--gold-bright);text-transform:uppercase}
 .p-ic-web{background:linear-gradient(135deg,var(--web),var(--web-bright));color:#fff}
@@ -397,6 +444,26 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
   .page-band{padding:calc(var(--header-h) + 28px) 0 30px}
 }
 
+/* ---------- live activity ticker (social proof) ---------- */
+.ticker{position:fixed;left:14px;bottom:14px;z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(320px,78vw)}
+.ticker-item{display:flex;align-items:center;gap:10px;background:rgba(10,22,40,.92);border:1px solid rgba(212,175,55,.3);
+  color:#EAF0F8;border-radius:13px;padding:10px 14px;font-size:12.5px;line-height:1.4;box-shadow:0 10px 28px rgba(0,0,0,.35);
+  backdrop-filter:blur(6px);transform:translateY(8px);opacity:0;transition:transform .35s ease,opacity .35s ease}
+.ticker-item.show{transform:translateY(0);opacity:1}
+.ticker-item .tk-ic{font-size:16px;flex-shrink:0}
+.ticker-item b{color:var(--gold-bright);font-weight:700}
+.ticker-item .tk-time{color:#8CA2BE;font-size:11px;margin-left:2px;white-space:nowrap}
+body.theme-light .ticker-item{background:rgba(255,255,255,.96);color:var(--ink);border-color:rgba(30,58,95,.18)}
+body.theme-light .ticker-item b{color:#8a6d1f}
+body.theme-light .ticker-item .tk-time{color:var(--ink-faint)}
+@media(max-width:640px){.ticker{bottom:10px;left:10px}}
+/* social row */
+.social-row{display:flex;gap:10px;margin-top:14px}
+.social-row a{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;border:1px solid rgba(255,255,255,.16);color:#B9C7DB;transition:color .15s,border-color .15s,transform .15s}
+.social-row a:hover{color:var(--gold-bright);border-color:var(--gold);transform:translateY(-2px)}
+.social-row svg{width:17px;height:17px}
+body.theme-light .social-row a{border-color:rgba(30,58,95,.2);color:var(--ink-soft)}
+
 </style>
 </head>
 <body class="theme-dark home">
@@ -404,16 +471,16 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
 <header class="site-header">
   <div class="header-inner">
     <a class="logo" href="/" aria-label="What's Up Trivia — home">
-      <span class="logo-badge" aria-hidden="true">₦</span>
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAABACAYAAABGHBTIAAAV60lEQVR42t17e5ScZZnn7/e8X1X1JencEwIJgQDBREAwXo5zZk8nZ9ZRvKyiVnDwtqtsEFRUzojO6Ex3OzOON4QRkXUc1BVdxu7VM8sojrdJMmpWXFBECAoECCEhNzrppC9V9X3v89s/vqrqW3W6o85xz37n1OlTXfV97/s873P5Pb/nKWKWq6enx/r6nk1gSwSAQhH4xJ89esH+X9c2jp5Y8HxPw/LE0lUxYoFHFdwtyM0AkSaYUQIACSApd5BQ4/kkKYgklX8FgCAwRFrBgUzBcFzQIYAHSvNGH+5YUv3pq7YWf/a8550z1HhOuawwMMA4mzw82YcTH3Ljhx46/8ld8y+vDCUvq1X9Iotd7aZ2UIKU7xHKdzv+dIIklIsMAnAJJPOFCRCE4OP3Nf6QAPJ7SYB0CIAYEO0EQqn2RNu84ztWnN72tQ/euuo7JB2Q9fT0oq+vz09JYOXLEaDf8cWfn3X310//0PBQckVBi9uVARFVEJmTQR6NIsD6dvL7PT+pCcuQaAreWHbSd6SGBuqXo6k+BdU/yFXLGIASzBI4Kgjtx//PsjMHP/Y3X17/dc+Acrk/DAxsiXMSWMrNyxLgz9+4+60HHl/0UdQWLbOYAVTmVjMoEDTm2xGAOP44Wd16Q/4ZM4ACYXAnjMqtoXmH1d/l/ycMUAAEGB1ibjkk4Z4rgQQEiqALKQ2dpuQE2hYc+0b3q/ju125d/dRMJs7pwgLSvcl1r53/2ZEjq66M1RJoIxmUBJNRnKB5TDHhFrbSPGEkdRvIcoEad1PjR+2qW4o3/Lu5RsM4JrpI0xYYnTIZO0MsPf3k2Rcfee2Hbrronu7ubcmOHZuzGQQWAVDabu96+Rn9tWPnXRY9yxQGg8VOUm0gRyEEzOUSIwSCKiKXKQWQIaLQdNZ884AxI1EAvJj7s1UBCUSSG42mK3VccEEGwEsgK5mjkLD0zNFzL0xf8YGbz9o59aStGaAwYKFg/s5XLrmt9sy5lwFjKW0ksXRRXViHVJw5+k12WkgluEoQJNEjEDJ5ScHbmHiJiYr5CyXS2wC3CKYRdMHbgPzeSSc7xRrHrUe5z8OTxJRGG1uxaPd9nd+8qedXFw0MMPb0yCYJXC73hwFsiX+65dfvrg1ueDNQy+QsEAZaCjAFrALMHvXHDYdjMI7GPN62BbEtiSFljQdiVjg8FJPBQ7FwZDC1A2M1DkMhCWIp5ClqNDJU66foc1gvAsjgNAghENWIsaWLdv2w6xt39T+8rK+vFz09PQYASU+PrK+P8TMffvDZ936/+LdJDFEcC1SSu2Dd7CQCKgKszeCrnOAh0U1FBraHGg8JbYd2ts+rbluwyHZ2Lhl5as264on5S2IlHVbhwGPWduBgtuz40cEXjRxLXpqNtG0KOi2R1yRkIMlZsifoRYiCGOs5IgsMlYyjK8+580uP3Uzre/2uXf2hGVZDgX7lH/36Lh1bd6khjc40NECANJ4zIYPQ6pQtj8ZeAqziRNGipygtGhw47+LhG67/1LPvTmuzn1MoAJ96/8OXPHxv4brq0cVvDOqAmDlAc3oerU9yyoLVP1ce4cWopBBOX7/vVX2fX3tnuaxAAPirdzyy6bFfLNyWZJ1ucBMsv5neMmBM07ACxBRCwWnBUDz8+Kq1Y+/q/fI531I9RnZ3b0uWL9+kDRvy0N3bC/X29hLoxa5dAzx0aBl37NgUAYoB+Iu33V3e99CKz1p2xlJx1KnE4AlAn8HCNOk9VQCYRllbUMf+n33+e6tfQMJJA97+kj1fyY6d+QZyJIOHBPQGEpyDwIQJkFXdtdDYfuS+F28ZfMWWq8/fB/SHnp6y+vroc3R+5C4GAow39ey96P5/Ld1l2eIzTDWHYKI1hVMdtU0UuOn3ucAQ6WJiqy58bHPf59Zvt2/99yOrasdLLxVqcGeAihAiSM0qbGMxMQreRRQPHHz+y/a9ZsvV5+/r6VYCbImnIiwA5N9n3LrxnsJ7+lbf/6zn1srRhkYFAxDUCNaSYMYp+b4RvQkwBQkEmCcq4tCTHX8CArbz+8/8x+BdSwyZg2BkFSIgJbNuzl25YsyEQpWnrT103db3Xfx4T4+Svh3MWmXnclmhu3tb0t29Lenp3pZMTBkTr7+/93npxo33FK7/u1X/e8Hpe/4qUibSp4KScXAyfgjNgxAB0SBHbSx58UO7fjSf73753lsrgyvfLtSi4KHu8nWIN3saIhWJzqDOJ378ue+d9R+2EDYAOOrZcbKptj7tHsj6Wjhnjul7+dDh13d+7HXJL4uVtWtgNVcePVsguvF8XS/R6pk3wJOjfuYFw5uSLCusc3fAnGzgELFZnZzcj+s4N6li8dLSfyOp7u5txI7NaoHPXeqxv7767ZuOHKi9MK2NLOxa1L7n3Iv1rSvfxz25cJOVRFBl9Nv6ZetPXPvKx75SrfCDyh3UZkR4jb3KAApOB908QZeNDo1eYLVqbQXr4Vya7rczCVvXpKRCiPbMifO7D24DgE2btnurYuTmDz904TUvufJHT97f8YPqwTM/Eo+uv/7YE2fe8rO75v28522PvoagWpp3uQxAXLHGvh3tKASGVvh93JSnpEsApEuxiLFK9RKTM6lXXpx4w2wBq16ty1iAhfDoW97+yIE86PRpInlAAt/84gOn3b9j4T+nx1e9SEKMPJFlnmaZ0jSrLFu079HOL33mEw+u6eujTxV6w4ZeAdR5zx/eC0uPEUWC0yWeut9m9FajdDVUK2F+IkFyATaHfDuxmK8XuCQA86c2bVrG8oYHioeWHW6e8N1fPSP0AOn37wpXa2zFGthwCpQKQgZYBiFFpKdJdtr8x3biPwG4GdthzXIJQG9vr/r6+nDGaVlFtEpLaScI3dijlNXDSFLPOvl3EgAws/oKmvEhrQRvLM0QR3b8YHOLqIzseyXgvzzz2GWIFBECDHkVhBTuJZAiCa9V40oA2I7tkx7Q25t725MPFxfSvEuIk4rSGWMMJ/IKdV7F04Y5z8QNTBa28eCmJgFGz4BK5wvf/yePvjsbmx/djkOhICMMaTuA2vKjBzrWFSylBDocpgiiCJrD5XRWrGvR8H0AsHz5pkm737VrgACw55HScsRiBxhzSNQ8ydYxJwehSV7w0OqBGEzyElzNMD7d8WcIWPlzTaggpIWzjz9xzk0uQGFJzkUhgirAIxBsFEAVQKH+NwFcANKMmp+wY/d9V3/l6Ts//lVxYMCm5MIyAODY4c4XJFoIRzVKSE5OPNR5QDWIGQEGJCHI8uOensCncU4tHjhuUgVFr0Tn8egZosexqAyRGo7G0WhMARXr2i/mVZd5JDoSlPYPnf+c8NazubnS0wNOwcTcMABJCoMH0yvkgJDZnA6kucdxctDlMG8cLqcLOFOgnmxGhDOlh9HgsCDGIHoALLhCkJKQp4cIMoJugNUyRyFkhWMHz7hw8NV/+qmzf94KmHR3bw99oH/gDQ++ySuLNkqpQ2atCIFpRIQmCFDnhRWF3Lilaa48lyppvB5NYF5EkCFISNwAVhDpOUz1IqScjjXGKBUTte+/78Lupzf33XLh9nJZYaqw5bLCjh2bszu+8NTqw/sXfQSxpLzQ57T9tfLlJtuHyYInQMBUQ5pe2M9aySJXWawzlQFgVifp0pyLVAAVXKZQXHTgH951Q8d169evOdGKXcxpVkZpX8c7Xpr9YzK2eqU46i6z6UlJIG2CIiaHaVOD+wbYKDiUUxotTINzPOJsHLc2lOdJ/hIAuQS6M1rXisPX3/rd1f91/fplJ3p6ZNOFVRgY2BJ37ty5+JqXZd9Ij5/+B9BIBNxyrECc+qUmTE5A0MwgEO4nD1QzJ3ub/j8YyCznkxHEYNa14kjvDd9Y+wlgWyJtinm3YHqn4/M33Hvu7b2n9Wcnll+CmEayFIBqvUNhv4G4DT2JibtPaP3MXUgzmxClWwWOCKgAshZNHQGl/ffd8PWz/2YvFfqFSE4uFBrCfvID92/8yTeX/hNHV64ihyNZCLIRAAUwduRkIjTXblFT4sZqZrA6Lm5Nh54MYrYMFtOKZgNDis6F6W0ks0Pd2zlV2IZp/+3777vkVztP+xcbXrmKrGROhhgqcLVDnoAcm4YGW2HoaTIwxx4k8jJpnCaZYPOnEKVbK6XeSlApRAz6ouXHfgyIy5cfblknf+njB8959CdLv8XqsqUIw1FMEygBmkREThQ2cmgzl4JTeK0JL+awilBOW0tMgFgPfJoQlXXKvjxVpTnbGcAQAUuPL15bfRqg+vvlE2gakr2Q7ilc9ZITt1n1nJW0kSzzQkKmMMR6QyQCjBCSZrxonOJUTmtSuqp7fWhIJXrSKLrnRtjNFLTQIlUAQAVR7XCWql3zlnh397bkqqvuZXf3NgHApZc+EoDe7M+vfKQcR9Z0k7UM8sSQ1LOG/waW1ShsxpFUs9AIRBI9p8dyEppzJO5mAyZsRkG5gcySN1299/ibr9mc7dgxuZpCAAaffGKreSJojGQBQG3GJl2r9UlMAiQN5nJSbELexEzyACJAjZDP2Qv/k/SUxs/YAQWQgtfaFr7nFWs/ed0r9x/MTAkZo4ICU68lpWL70X2lF5hGCUaDirn7WVYnEjVruTrOX8246UbznY0eJnK+1yYEAMNsFcmMyIyq94kTKozAVArVwUXvwKQ4EwEPSAkkPgaxCnkx7/wCgBdn7GXNiY2ZFKIbXu6yYqn4NOQgghyhvuWT8mStcg8Ah+TIDcYnN7royJRlqUZTjzXE1JHFDO6ONFYkucOT3DTpEAyoV4knE278pNW6+G9OH+RIMilwLCm1Z/eNDcfNwrCA+XVAEqayrLNqky3mOSiHvAggSMwSV4rQPvijtq6Ru0NBI6PHw7PS4cUvt2xJJ8OwBxRNqNXTD2e1sMkjFBOnCggxghA0geIptc3fl7Qvrtw7fDgDUDAq5BpuIKUW/jwT5dPKvGkR8IJkkofD6bKzDl9zY/9zb2s21gy46S/uvegX/zb0VausuUCoOL1gao5J8DeK0OOMpQFKIEaTVZBY8oCdf7H9OLVjQ1QXJ4/SaE6N7xmDFiNcAWAUkpotWxWv+/hXnntbWpOVoVCGQrcreU/fxvu7L42vVmHoGaJEhuMyElDhtwM/Co1upxTb6DxSWXn28V/Yle9b+0Rx3omdpIk2lrcylNTT9annwIYCHIQYnEkwhaHHPnrHmr8voz/09AADYBwA4w4w27rxnsJ/vn7d7q7Fo180I+GdUSLI6pxgbisTb+RhmoOWOkNQKGS/vPYjH/y1xUw4bWXbl8WUUKQpqZNfPqvPthK08bmpAFMiEEiKvJ9kNoDpncSjaze6ILZ3YnvmNUBJPgYEzWBRar4awdKVK9iJ+kuIzAABiQcFAzsX+J3kQDQAfN1Hh/7Zw8HdZDsd0cXKKZlTq0KCrIA2BLlB3lnKAe0AW8OU3nq1HoEwDMEg7xgHD7OsNT3WNNJqKiENqQ9VnrXR7wAAK5dlF6+8eGTp6srHIgpEY1QQnJMPz/x5gLxkykxpdewF3/mfP14ObIlbt6ogiZLY0yPDgw8GoM9HhvHSoHmAtwuW1UcrOEdXatWkN4h0sItti4Zuv+ov1+0G+gMbU3cSkqtevPffNLr6ha6xSFkgsiZYn3x6nK3nlIN+ZQAKLitYsmBv/2e/XXszua469Z4bP3D/i375wzO+G9TeybzFSbECojiNu5rqSpJyi6gXvTmGdkDRoS548cjQH15+7Dlvfce5T/X01HXTKNE++aEHL3lwx7wfsnZ6uzEFIRsv8DWHVDAxSue8MOgA5VK7sWPvT1esrNx4/gXLf9S5sjC258EDy/c/gZcNHij9GatrligcE2lk7ARQAWlzcq2JAufvo8xDtITJgrP2vO0TX13/hcY4IicTZ1vi+9+w+42Hnlh+uwlONxhhQoa8qgwwTWz9sD4pMEP94EXQKqASSHBaYmCGyBPHYWlFWXFhoqXFfBhtTPICaVmeJVQDGaZZlsMnDNrURxoRANbAentbsGiWJO0LH7/p5u+c997XvWacKORkjl9hgIzvufyB9w7tPeNTwdtBR6R5iBCkAgJ8AiiZGaBMKtWapieHJXlXPp+theDR4JYHD02L9pMsiIDnAyU5ioMjIKnPZ6WgUofmIxTdSgv23HLLv6x7Z0xlE0meSYB5AIxl9YebvnbBjcvPOfKWmBwaFUtBCpkpU0BaP12bgKE55/wI0NwzAzMJNQmZAAVp3DGnRuBJJi2CsQATYTJYbjmwSCWeZMgWGpIxW7hmd89n7sqF1URbn3m3OUT66PW//IPdP1twK8ZOvwhRMKSZMzN4oU4NZdCUImM2IsHZasqLzYb8yWvghpIzCEFEEBAV1BZgQlY4eOD089JrP/yFtQP1jQnTpgpmuBos4kFtm/fx16++7uj+ee8M6bJlUA1QQRZSF6uQimR9MLVVV2CS/0n1ieqJ6ctzlTWLBTb4GDQ2KwBGKPfdBI4q5MVAFMEARHt6aMHS7Iubr3jmk6/ccsm+MvJRypl6ophZ6PFB67u+/vCq7/8PXHXiUOflns47L6ALZo0mlUDW4MqmkGqTKyghF5iNWSu5Ux1mYt4iaFX81C3IGuMnJmSoIvORWqm9cv+CZdV/es4LkzvecN2ax6bu+ZQFbkzSbMGANTQmqfMvr37gD4eeWrC5OlrYCGRnR2kxK/MXGIoWKcgDjNV8OGzKapGN9kfmRGJKThxlyEYJJQJobFT9BMkouQsaMXLQQhhK2uPu9q7Rn688p3j3tb1rftUg88voD/0q+1QK+JQFnjivsauvlwMTaAhLgJ/+5J4Fg4Ps/OYNZ/xDOrTi0hhGojwE5lF5ClhgPbd6BrUn7Nyz44+veOYtGy5sHz56rBja210eXR0dLqALne3Rff6gzjrrWCUpbq64T5+kKpcVNmzAnKf9TpmMlcQtWwYMA2VMnMe65sX7/lHDp18eMRYlD8zr0EkCkwKFDOhMrOvpf33vZ4YvW7du3fE5rkwALAM81L2dmzZt8r6+6UFptis5VYHrJhMnabi/Vwf/GAU2UY83q63xXAzIQyZrS8L8J3/Qe/uJV69YccFwf1mh3D8LH8vmGLgGAGAHMIX9nPNl+C2vgYEB9IU+b/52g2kOoyeNAwKQZQyFJCzc/d1bv1N81YoVFwz39Mi2DDAyn2yZ+XWKp/jvKvC00S0YjA0iMMlREZkhtCVJ15PfvvWuY5eRK0dONor473n9DgQu1zFgA+A2esKslyaWSR1JafGTd97y7T2vIZ83+vsS9jfy4ZM3YVH/jYLygoFphlBI2pbs/dqn71zzJvKs9Pcp7O/ohAcIARYsmzjLDCqz0J60L3369k/fufoKkmn+O8bfn7C/uxMmkGVeCoQb6Z4FMISkuGTPbX/3v760lexVY6IWv+frtz7hMsqAgPbO7KEIWJYVCgiFUFr2+Kc/e9fZV+bCNtPZ/w9XDggOHtS8a1/98Oe2/tH+B67b8nhfSACgxyTx/6Xd/l+CdJCa4e+n+QAAAABJRU5ErkJggg==" alt="" width="30" height="32">
       <span class="logo-word">What's Up <em>Trivia</em></span>
     </a>
     <nav class="main-nav" aria-label="Primary">
       <ul>
         <li><a href="/">Home</a></li>
+        <li><a href="/about">About</a></li>
         <li><a href="/how-to-play">How to Play</a></li>
         <li><a href="/leaderboards">Leaderboards</a></li>
         <li><a href="/reviews">Reviews</a></li>
-        <li><a href="/about">About</a></li>
         <li><a href="/contact">Contact</a></li>
       </ul>
     </nav>
@@ -426,10 +493,10 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
 <nav class="mobile-nav" id="mobileNav" aria-label="Mobile">
   <ul>
     <li><a href="/">Home</a></li>
+    <li><a href="/about">About</a></li>
     <li><a href="/how-to-play">How to Play</a></li>
     <li><a href="/leaderboards">Leaderboards</a></li>
     <li><a href="/reviews">Reviews</a></li>
-    <li><a href="/about">About</a></li>
     <li><a href="/contact">Contact</a></li>
     <li><a href="/faq">FAQ</a></li>
     <li><a href="/rules">Game Rules</a></li>
@@ -438,31 +505,38 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
 
 <main id="main">
 
-<div class="scene-fallback" aria-hidden="true"></div>
-<canvas id="bg3d" aria-hidden="true"></canvas>
 <div class="content">
 
-<!-- ================= HERO ================= -->
+<!-- ================= HERO — THE ARENA ================= -->
 <section class="hero">
-  <div class="hero-inner">
-    <div class="hero-badge rv in"><span class="live"></span><span data-ck="home.hero.badge">Skill-based · Live in Nigeria · 18+ reward modes</span></div>
-    <h1 class="rv in"><span data-ck="home.hero.title.line1">Your knowledge</span> <span class="gold" data-ck="home.hero.title.line2">pays.</span></h1>
-    <p class="hero-sub rv in" data-ck-html="home.hero.subtitle">15 questions. 12 seconds each. Sponsored leaderboard rewards up to <strong>₦50,000</strong> — one game engine, one prize pool, on <span class="p-wa">WhatsApp</span>, <span class="p-tg">Telegram</span> and the <span class="p-web">web</span>.</p>
-    <div class="hero-ctas rv in">
-      <button class="btn btn-gold btn-lg" data-open-picker type="button">Play now</button>
-      <a class="btn btn-ghost btn-lg" href="#demo">Try a question first</a>
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <div class="hero-badge"><span class="live"></span><span data-ck="home.hero.badge">Skill-based · Live in Nigeria · Free practice mode</span></div>
+      <h1><span data-ck="home.hero.title.line1">Your knowledge</span> <span class="gold" id="heroGold" data-ck="home.hero.title.line2">pays.</span></h1>
+      <p class="hero-sub" data-ck-html="home.hero.subtitle">15 questions. 12 seconds each. Sponsored leaderboard rewards up to <strong>₦50,000</strong> — one game engine, one prize pool, on <span class="p-web">Web-play</span>, <span class="p-wa">WhatsApp</span> and <span class="p-tg">Telegram</span>.</p>
+      <div class="hero-ctas">
+        <button class="btn btn-gold btn-lg" data-open-picker type="button">Play now</button>
+        <a class="btn btn-ghost btn-lg" href="#demo">Try a question first</a>
+      </div>
+      <div class="hero-plat-row">
+        <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Web-play</a>
+        <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
+        <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">Telegram</a>
+      </div>
+      <div class="hero-trust" aria-label="Platform track record">
+        <div class="t"><b data-ck="home.hero.stat1.value">₦500K+</b><span data-ck="home.hero.stat1.label">Rewards distributed</span></div>
+        <div class="t"><b data-ck="home.hero.stat2.value">1,000+</b><span data-ck="home.hero.stat2.label">Active competitors</span></div>
+        <div class="t"><b data-ck="home.hero.stat3.value">12–24h</b><span data-ck="home.hero.stat3.label">Reward processing</span></div>
+      </div>
     </div>
-    <div class="hero-plat-row rv in">
-      <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Web — no install</a>
-      <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
-      <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">Telegram</a>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="arena-fallback" id="arenaFallback">
+        <div class="af-globe"></div>
+        <span class="af-ic">❓</span><span class="af-ic">⚽</span><span class="af-ic">🎵</span>
+        <span class="af-ic">₦</span><span class="af-ic">🧪</span><span class="af-ic">📚</span>
+      </div>
+      <canvas id="arena"></canvas>
     </div>
-    <div class="hero-trust rv in" aria-label="Platform track record">
-      <div class="t"><b data-ck="home.hero.stat1.value">₦500K+</b><span data-ck="home.hero.stat1.label">Rewards distributed</span></div>
-      <div class="t"><b data-ck="home.hero.stat2.value">1,000+</b><span data-ck="home.hero.stat2.label">Active competitors</span></div>
-      <div class="t"><b data-ck="home.hero.stat3.value">12–24h</b><span data-ck="home.hero.stat3.label">Reward processing</span></div>
-    </div>
-    <div class="scroll-hint" aria-hidden="true">▾</div>
   </div>
 </section>
 
@@ -472,14 +546,14 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
     <div class="section-head center rv">
       <div class="eyebrow" data-ck="home.platforms.eyebrow">One game · three doors</div>
       <h2 class="section-title" data-ck="home.platforms.title">Play it wherever you already are</h2>
-      <p class="section-lede" data-ck="home.platforms.lede">WhatsApp, Telegram and the web all run the same engine, the same question bank, the same leaderboard and the same prize pool. Your account, credits and rewards follow you across all three.</p>
+      <p class="section-lede" data-ck="home.platforms.lede">Web-play, WhatsApp and Telegram all run the same engine, the same questions, the same leaderboard and the same prize pool. Your account, credits and rewards follow you across all three.</p>
     </div>
     <div class="grid grid-3">
       <div class="card plat-card web rv">
         <div class="plat-ic p-ic-web"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div>
-        <h3 data-ck="home.platforms.web.title">Web play</h3>
+        <h3 data-ck="home.platforms.web.title">Web-play</h3>
         <p data-ck="home.platforms.web.desc">The full game in your browser at play.whatsuptrivia.com.ng. Nothing to install, works on any phone or laptop — the fastest way to try it.</p>
-        <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Open web play</a>
+        <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Open Web-play</a>
       </div>
       <div class="card plat-card wa rv">
         <div class="plat-ic p-ic-wa"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5 13.9c-.2.6-1.2 1.2-1.7 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.2.1.3 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.8 2.1 1.2 1.1 2.2 1.4 2.6 1.6.3.1.5.1.7-.1l.9-1c.2-.3.4-.2.7-.1l2 1c.3.1.5.2.6.3.1.2.1.8-.1 1.4Z"/></svg></div>
@@ -490,12 +564,12 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
       <div class="card plat-card tg rv">
         <div class="plat-ic p-ic-tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.9 4.6 18.6 19.9c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.2-8.3c.4-.4-.1-.6-.6-.2L6.1 13.5 1.2 12c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.7.2 1.4 1.6Z"/></svg></div>
         <h3 data-ck="home.platforms.telegram.title">Telegram</h3>
-        <p data-ck="home.platforms.telegram.desc">Press START on @WhatsUpTriviaBot and you're in. Same account, same balance, same leaderboard as everywhere else.</p>
-        <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">Open Telegram</a>
+        <p data-ck="home.platforms.telegram.desc">Press START on @WhatsUpTrivia_bot and you're in. Same account, same balance, same leaderboard as everywhere else.</p>
+        <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">Open Telegram</a>
       </div>
     </div>
     <div class="converge-line rv">
-      <span>WHATSAPP</span><span>+</span><span>TELEGRAM</span><span>+</span><span>WEB</span><span>→</span>
+      <span>WEB-PLAY</span><span>+</span><span>WHATSAPP</span><span>+</span><span>TELEGRAM</span><span>→</span>
       <span class="core">⚡ one engine · one leaderboard · one prize pool</span>
     </div>
   </div>
@@ -522,7 +596,7 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
         <span class="demo-progress mono" id="demoClock" aria-live="off">12.0s</span>
       </div>
     </div>
-    <p class="demo-note" data-ck="home.demo.note">Demo questions only — the real game draws from a bank of 1,000+ across history, science, geography, sports, entertainment and more.</p>
+    <p class="demo-note" data-ck="home.demo.note">Demo questions only — the real game draws from a deep bank spanning history, science, geography, sports, entertainment and more.</p>
   </div>
 </section>
 
@@ -575,19 +649,19 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
         <div class="m-ic">🎮</div>
         <h3 data-ck="home.modes.practice.title">Practice Mode</h3>
         <p data-ck="home.modes.practice.desc">Free, unlimited rounds with no rewards attached. Sharpen your knowledge and learn the pace before entering the main competition.</p>
-        <div class="m-meta" data-ck="home.modes.practice.meta">Free · ages 13+</div>
+        <div class="m-meta" data-ck="home.modes.practice.meta">Free · unlimited rounds</div>
       </div>
       <div class="card mode-card featured rv">
         <div class="m-ic">⭐</div>
         <h3 data-ck="home.modes.classic.title">Classic Mode</h3>
         <p data-ck="home.modes.classic.desc">One access credit, fifteen questions, and sponsored leaderboard rewards up to ₦50,000 on the line. This is the main event.</p>
-        <div class="m-meta" data-ck="home.modes.classic.meta">1 credit per round · 18+ only</div>
+        <div class="m-meta" data-ck="home.modes.classic.meta">1 credit per round</div>
       </div>
       <div class="card mode-card rv">
         <div class="m-ic">🏆</div>
         <h3 data-ck="home.modes.tournaments.title">Tournaments</h3>
         <p data-ck="home.modes.tournaments.desc">Special sponsored events with enhanced reward pools, ranked leaderboards across all three platforms, and only your best game counting.</p>
-        <div class="m-meta" data-ck="home.modes.tournaments.meta">Sponsored events · 18+ only</div>
+        <div class="m-meta" data-ck="home.modes.tournaments.meta">Sponsored events · best game counts</div>
       </div>
     </div>
   </div>
@@ -656,20 +730,25 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
     <div class="grid grid-4">
       <div class="card trust-card rv"><div class="t-ic">🎯</div><div><h3 data-ck="home.trust.c1.title">Skill, not chance</h3><p data-ck="home.trust.c1.desc">Outcomes are decided by knowledge and speed. This is a competitive quiz platform — not betting, not gambling.</p></div></div>
       <div class="card trust-card rv"><div class="t-ic">🛡️</div><div><h3 data-ck="home.trust.c2.title">Anti-cheat that works</h3><p data-ck="home.trust.c2.desc">CAPTCHA, device fingerprinting, behavioral analysis and response-time monitoring keep every climb honest.</p></div></div>
-      <div class="card trust-card rv"><div class="t-ic">⚡</div><div><h3 data-ck="home.trust.c3.title">Fast redemption</h3><p data-ck="home.trust.c3.desc">Type REDEEM, add your bank details, and reward processing completes within 12–24 hours.</p></div></div>
-      <div class="card trust-card rv"><div class="t-ic">🤝</div><div><h3 data-ck="home.trust.c4.title">Guardrails by design</h3><p data-ck="home.trust.c4.desc">₦30,000 daily reward cap, a 5-day cooldown after the top tier, 18+ verification and self-exclusion on request.</p></div></div>
+      <div class="card trust-card rv"><div class="t-ic">⚡</div><div><h3 data-ck="home.trust.c3.title">Fast reward claims</h3><p data-ck="home.trust.c3.desc">Type CLAIM, add your bank details, and reward processing completes within 12–24 hours.</p></div></div>
+      <div class="card trust-card rv"><div class="t-ic">🤝</div><div><h3 data-ck="home.trust.c4.title">Guardrails by design</h3><p data-ck="home.trust.c4.desc">₦30,000 daily reward cap, a 5-day cooldown after the top tier, and self-exclusion on request.</p></div></div>
     </div>
-    <p class="compliance-note rv" data-ck="home.trust.note"><strong>What's Up Trivia is a skill-based knowledge competition</strong> operated by SummerIsland Systems, Abuja. Access credits grant participation only — they are not stored value and cannot be cashed out. Rewards are sponsored recognition for skill-based achievement. Reward modes are strictly 18+.</p>
+    <p class="compliance-note rv" data-ck="home.trust.note"><strong>What's Up Trivia is a skill-based knowledge competition</strong> operated by SummerIsland Systems, Abuja — open to players aged 13 and above. Access credits grant participation only — they are not stored value and cannot be cashed out. Rewards are sponsored recognition for skill-based achievement.</p>
   </div>
 </section>
 
-<!-- ================= REVIEWS TEASER ================= -->
-<section class="section-tight" id="reviews-teaser">
+<!-- ================= REVIEWS (approved, live) ================= -->
+<section class="section" id="home-reviews">
   <div class="container">
-    <div class="reviews-teaser card rv" id="reviewsTeaserCard">
-      <h3 style="font-size:19px;margin-bottom:8px" data-ck="home.reviews.title">What players say</h3>
-      <p style="color:var(--d-muted);font-size:14px;margin-bottom:16px" id="reviewsTeaserBody" data-ck="home.reviews.empty">Player reviews are coming to this page — and yours could be the first. Played a round on any platform? Tell everyone how it went.</p>
-      <a class="btn btn-ghost btn-sm" href="/reviews">Read &amp; write reviews</a>
+    <div class="section-head center rv">
+      <div class="eyebrow" data-ck="home.reviews.eyebrow">Straight from the players</div>
+      <h2 class="section-title" data-ck="home.reviews.title">What players say</h2>
+    </div>
+    <div id="homeReviews">
+      <div class="reviews-teaser card rv" id="reviewsTeaserCard">
+        <p style="color:var(--d-muted);font-size:14px;margin-bottom:16px" data-ck="home.reviews.empty">Player reviews are coming to this page — and yours could be the first. Played a round on any platform? Tell everyone how it went.</p>
+        <a class="btn btn-ghost btn-sm" href="/reviews">Read &amp; write reviews</a>
+      </div>
     </div>
   </div>
 </section>
@@ -679,8 +758,8 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
   <div class="container">
     <div class="cta-band rv">
       <h2 data-ck="home.cta.title">The ladder is waiting.</h2>
-      <p data-ck="home.cta.lede">Practice free, then put your knowledge where the rewards are. WhatsApp, Telegram or straight in the browser — same game, your call.</p>
-      <div class="hero-ctas">
+      <p data-ck="home.cta.lede">Practice free, then put your knowledge where the rewards are. Web-play, WhatsApp or Telegram — same game, your call.</p>
+      <div class="hero-ctas" style="justify-content:center">
         <button class="btn btn-gold btn-lg" data-open-picker type="button">Play now</button>
         <a class="btn btn-ghost btn-lg" href="/how-to-play">How it works</a>
       </div>
@@ -696,15 +775,20 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
     <div class="footer-grid">
       <div class="footer-brand">
         <a class="logo" href="/" aria-label="What's Up Trivia — home">
-          <span class="logo-badge" aria-hidden="true">₦</span>
+          <img src="data:image/png;base64,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" alt="" width="30" height="32">
           <span class="logo-word" style="color:#fff">What's Up <em>Trivia</em></span>
         </a>
         <p data-ck="footer.brand.blurb">Nigeria's #1 knowledge competition platform. One game engine, one leaderboard, one prize pool — on WhatsApp, Telegram and the web. Sponsored rewards up to ₦50,000.</p>
         <p class="footer-tagline" data-ck="footer.brand.tagline">Play. Learn. Earn.</p>
+        <div class="social-row" aria-label="Follow What's Up Trivia">
+          <a href="https://instagram.com/whatsuptrivia" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none"/></svg></a>
+          <a href="https://facebook.com/whatsuptrivia" target="_blank" rel="noopener" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 21v-7h2.4l.4-3h-2.8V9.1c0-.9.3-1.5 1.6-1.5h1.3V4.9c-.3 0-1.1-.1-2-.1-2 0-3.4 1.2-3.4 3.5V11H8.5v3H11v7h2.5Z"/></svg></a>
+          <a href="https://x.com/whatsuptrivia" target="_blank" rel="noopener" aria-label="X (Twitter)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 3h3l-6.7 7.7L21.8 21h-6.2l-4.8-6.3L5.2 21h-3l7.2-8.2L2.5 3h6.3l4.4 5.8L17.6 3Zm-1.1 16.2h1.7L7.9 4.7H6.1l10.4 14.5Z"/></svg></a>
+        </div>
         <div class="footer-play-links">
-          <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Play on the web</a>
+          <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Web-play</a>
           <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
-          <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">Telegram</a>
+          <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">Telegram</a>
         </div>
       </div>
       <div>
@@ -740,9 +824,9 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
       </div>
     </div>
     <div class="footer-bottom">
-      <p>&copy; <span id="fyear">2026</span> What's Up Trivia · A product of SummerIsland Systems. All rights reserved.</p>
+      <p>&copy; <span id="fyear">2026</span> What's Up Trivia · A product of <a href="https://sisystems.ng" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">SummerIsland Systems</a>. All rights reserved.</p>
       <div class="footer-flags">
-        <span>🔞 Reward modes 18+</span>
+        <span>🧠 100% skill-based</span>
         <span>🇳🇬 Made in Nigeria</span>
       </div>
     </div>
@@ -757,16 +841,16 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
   <p class="picker-sub">Same game, same leaderboard, same prize pool — your account works everywhere.</p>
   <a class="picker-opt" id="pickWeb" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">
     <span class="p-ic p-ic-web" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
-    <span><span class="p-name">Web play</span><br><span class="p-desc">Full browser game — nothing to install</span></span>
+    <span><span class="p-name">Web-play</span><br><span class="p-desc">Full browser game — nothing to install</span></span>
     <span class="p-tag">Newest</span>
   </a>
   <a class="picker-opt" id="pickWhatsapp" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">
     <span class="p-ic p-ic-wa" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5 13.9c-.2.6-1.2 1.2-1.7 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.2.1.3 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.8 2.1 1.2 1.1 2.2 1.4 2.6 1.6.3.1.5.1.7-.1l.9-1c.2-.3.4-.2.7-.1l2 1c.3.1.5.2.6.3.1.2.1.8-.1 1.4Z"/></svg></span>
     <span><span class="p-name">WhatsApp</span><br><span class="p-desc">Chat the bot — where most players live</span></span>
   </a>
-  <a class="picker-opt" id="pickTelegram" href="https://t.me/WhatsUpTriviaBot" target="_blank" rel="noopener">
+  <a class="picker-opt" id="pickTelegram" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">
     <span class="p-ic p-ic-tg" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.9 4.6 18.6 19.9c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.2-8.3c.4-.4-.1-.6-.6-.2L6.1 13.5 1.2 12c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.7.2 1.4 1.6Z"/></svg></span>
-    <span><span class="p-name">Telegram</span><br><span class="p-desc">Press START on @WhatsUpTriviaBot</span></span>
+    <span><span class="p-name">Telegram</span><br><span class="p-desc">Press START on @WhatsUpTrivia_bot</span></span>
   </a>
 </div>
 
@@ -789,7 +873,12 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
     web: 'https://play.whatsuptrivia.com.ng',
     whatsapp: 'https://wa.me/2349160363909?text=' +
       encodeURIComponent("Hi! I want to compete on What's Up Trivia"),
-    telegram: 'https://t.me/WhatsUpTriviaBot'
+    telegram: 'https://t.me/WhatsUpTrivia_bot'
+  };
+  C.SOCIAL = {
+    instagram: 'https://instagram.com/whatsuptrivia',
+    facebook:  'https://facebook.com/whatsuptrivia',
+    x:         'https://x.com/whatsuptrivia'
   };
   C.CONTACT = {
     email: 'hello@whatsuptrivia.com.ng',
@@ -803,7 +892,10 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
   //   and the form is visibly disabled with an honest message.
   // CONTENT_API: flip to true when /api/public/site-content
   //   ships. Until then pages render their baked-in copy only.
-  C.FEATURES = { REVIEWS_API: false, CONTENT_API: false };
+  // ACTIVITY_API: flip to true when /api/public/activity/recent
+  //   ships. Until then the social-proof ticker stays dormant —
+  //   it never invents events.
+  C.FEATURES = { REVIEWS_API: false, CONTENT_API: false, ACTIVITY_API: false };
 })(window.WUT_CONFIG);
 
 /* ---------- tiny helpers ---------- */
@@ -948,17 +1040,74 @@ document.addEventListener('DOMContentLoaded', function () {
   initNav(); initPicker(); initReveal(); initContent();
 });
 
-document.getElementById('fyear').textContent = new Date().getFullYear();
 
 /* ============================================================
-   PAGE CONTENT — every editable string on this page, keyed.
-   When /api/public/site-content ships, fetched values merge
-   over these; until then this object IS the source of truth
-   and mirrors the markup exactly.
+   LIVE ACTIVITY TICKER — social proof, real events only.
+   Reads /api/public/activity/recent (see API-SPEC.md §3) and
+   shows small toasts: credit purchases, tournament joins,
+   completed climbs, rewards claimed. Names arrive pre-masked
+   by the server. Dormant until FEATURES.ACTIVITY_API is true.
    ============================================================ */
+(function () {
+  var C = window.WUT_CONFIG;
+  if (!C.FEATURES.ACTIVITY_API) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var ICON = { purchase: '💳', tournament_join: '🏆', game_complete: '🎯', reward_claim: '💰' };
+  var wrap = document.createElement('div');
+  wrap.className = 'ticker'; wrap.setAttribute('aria-live', 'polite'); wrap.setAttribute('role', 'status');
+  document.body.appendChild(wrap);
+
+  var seen = {}, queue = [], showing = 0, MAX_VISIBLE = 2;
+
+  function ago(iso) {
+    var s = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return 'just now';
+    var m = Math.round(s / 60); if (m < 60) return m + 'm ago';
+    var h = Math.round(m / 60); return h + 'h ago';
+  }
+  function show(ev) {
+    showing++;
+    var el = document.createElement('div');
+    el.className = 'ticker-item';
+    el.innerHTML = '<span class="tk-ic">' + (ICON[ev.type] || '⚡') + '</span>' +
+      '<span><b>' + esc(ev.actor) + '</b> ' + esc(ev.text) +
+      ' <span class="tk-time">' + ago(ev.at) + '</span></span>';
+    wrap.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('show'); });
+    setTimeout(function () {
+      el.classList.remove('show');
+      setTimeout(function () { el.remove(); showing--; pump(); }, 400);
+    }, 6000);
+  }
+  function pump() {
+    while (queue.length && showing < MAX_VISIBLE) show(queue.shift());
+  }
+  function poll() {
+    if (document.hidden) return;
+    apiGet('/api/public/activity/recent?limit=10').then(function (res) {
+      var evs = (res && res.events) || [];
+      evs.forEach(function (ev) {
+        if (seen[ev.id]) return;
+        seen[ev.id] = 1; queue.push(ev);
+      });
+      if (queue.length > 6) queue = queue.slice(-6); // never flood
+      pump();
+    }).catch(function () { /* silent — social proof must never error visibly */ });
+  }
+  setTimeout(function () {
+    // pages opt in by setting data-ticker="on" on <body> in their script
+    if (!document.body || document.body.getAttribute('data-ticker') !== 'on') { wrap.remove(); return; }
+    poll();
+    setInterval(poll, 30000);
+  }, 4000); // let the page breathe first
+})();
+
+document.getElementById('fyear').textContent = new Date().getFullYear();
+
 window.PAGE_CONTENT_PREFIX = 'home.';
 window.PAGE_CONTENT = {
-  "home.hero.badge": "Skill-based · Live in Nigeria · 18+ reward modes",
+  "home.hero.badge": "Skill-based · Live in Nigeria · Free practice mode",
   "home.hero.title.line1": "Your knowledge",
   "home.hero.title.line2": "pays.",
   "home.hero.stat1.value": "₦500K+", "home.hero.stat1.label": "Rewards distributed",
@@ -971,6 +1120,8 @@ window.PAGE_CONTENT = {
   /* …full key list shipped in CONTENT-KEYS.md; abbreviated here
      because the markup itself carries every default string. */
 };
+
+document.body.setAttribute('data-ticker', 'on');
 
 /* ---------------- DEMO GAME ---------------- */
 (function () {
@@ -1045,7 +1196,7 @@ window.PAGE_CONTENT = {
     shell.innerHTML = '<div class="demo-end">' +
       '<div class="big">' + headline + '</div>' +
       '<p>' + line + '</p>' +
-      '<div class="hero-ctas" style="margin-bottom:6px">' +
+      '<div class="hero-ctas" style="justify-content:center;margin-bottom:6px">' +
       '<button class="btn btn-gold" data-open-picker type="button">Play the real thing</button>' +
       '<button class="btn btn-ghost" id="demoAgain" type="button">Try again</button>' +
       '</div></div>';
@@ -1065,7 +1216,6 @@ window.PAGE_CONTENT = {
       if (idx !== q.a && removed < 2) { b.disabled = true; removed++; }
     });
   });
-  // start only when the demo scrolls into view (saves timers on load)
   var started = false;
   function maybeStart() {
     if (started) return;
@@ -1085,10 +1235,9 @@ window.PAGE_CONTENT = {
     var r = section.getBoundingClientRect();
     var total = r.height + innerHeight * 0.2;
     var passed = Math.min(Math.max(innerHeight * 0.75 - r.top, 0), total);
-    var p = passed / total; // 0..1 through the section
+    var p = passed / total;
     var active = Math.min(15, Math.max(0, Math.round(p * 17)));
     items.forEach(function (li, idx) { li.classList.toggle('active', idx + 1 === active); });
-    if (window.__wutSetLadderStep) window.__wutSetLadderStep(active);
   }
   addEventListener('scroll', onScroll, { passive: true });
   onScroll();
@@ -1098,6 +1247,11 @@ window.PAGE_CONTENT = {
 (function () {
   var wk = $('#pulseWeekly'), tour = $('#pulseTournament');
   if (!wk) return;
+  var S = window.WUT_CONFIG.SOCIAL;
+  var socialRow = '<div class="pulse-social">' +
+    '<a href="' + S.instagram + '" target="_blank" rel="noopener">Instagram</a>' +
+    '<a href="' + S.facebook + '" target="_blank" rel="noopener">Facebook</a>' +
+    '<a href="' + S.x + '" target="_blank" rel="noopener">X</a></div>';
   apiGet('/api/public/leaderboard/weekly?limit=5').then(function (res) {
     var rows = (res && res.leaderboard) || [];
     if (!rows.length) {
@@ -1115,7 +1269,7 @@ window.PAGE_CONTENT = {
   apiGet('/api/public/tournaments/active').then(function (res) {
     var t = res && res.tournament;
     if (!t) {
-      tour.innerHTML = '<p class="pulse-empty">No tournament running right now. Follow the bot on WhatsApp or Telegram \u2014 announcements land there first.</p>';
+      tour.innerHTML = '<p class="pulse-empty">No tournament running right now. Follow us on Instagram, Facebook &amp; X \u2014 announcements land there first.</p>' + socialRow;
       return;
     }
     var ends = t.end_date ? new Date(t.end_date) : null;
@@ -1126,22 +1280,55 @@ window.PAGE_CONTENT = {
       (ends ? ' \u00b7 ends ' + ends.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '') + '</div>' +
       '<a class="btn btn-gold btn-sm" href="/leaderboards?tournament=' + t.id + '">See the leaderboard</a>';
   }).catch(function () {
-    tour.innerHTML = '<p class="pulse-empty">Tournament info is unavailable at the moment \u2014 check the <a href="/leaderboards">leaderboards</a>.</p>';
+    tour.innerHTML = '<p class="pulse-empty">Tournament info is unavailable at the moment \u2014 check the <a href="/leaderboards">leaderboards</a>.</p>' + socialRow;
   });
 })();
 
-/* ---------------- 3D SCENE (lazy, optional, degradable) ----------------
-   Loads Three.js r128 only after first paint, and only when the
-   device plausibly benefits. Every path out of this function leaves
-   a fully working page: the CSS fallback scene stays put and the
-   canvas simply never fades in. */
+/* ---------------- HOME REVIEWS (approved only, flag-gated) ---------------- */
 (function () {
-  var canvas = document.getElementById('bg3d');
-  if (!canvas) return;
+  if (!window.WUT_CONFIG.FEATURES.REVIEWS_API) return; // designed teaser stays
+  var box = $('#homeReviews'); if (!box) return;
+  function starRow(n) {
+    var s = '';
+    for (var i = 1; i <= 5; i++) s += '<span class="' + (i <= n ? '' : 'off') + '">★</span>';
+    return '<span class="stars">' + s + '</span>';
+  }
+  apiGet('/api/public/reviews?limit=3&sort=top').then(function (res) {
+    var reviews = (res && res.reviews) || [];
+    if (!reviews.length) return; // teaser remains until real reviews exist
+    var a = res.aggregate || {};
+    box.innerHTML =
+      '<div class="hr-agg rv in"><span class="n">' + Number(a.average_rating || 0).toFixed(1) + '</span>' +
+      starRow(Math.round(a.average_rating || 0)) +
+      '<span>from ' + Number(a.total_reviews || 0) + ' player reviews</span></div>' +
+      '<div class="grid grid-3">' +
+      reviews.map(function (r) {
+        return '<div class="card hr-card rv in">' + starRow(r.rating) +
+          '<p class="hr-body">\u201C' + esc(r.body.length > 150 ? r.body.slice(0, 147) + '\u2026' : r.body) + '\u201D</p>' +
+          '<div class="hr-who"><b>' + esc(r.display_name) + '</b>' + platformChip(r.platform) +
+          (r.verified ? '<span class="hr-verified">\u2713 Verified</span>' : '') + '</div></div>';
+      }).join('') +
+      '</div>' +
+      '<div style="text-align:center;margin-top:22px"><a class="btn btn-ghost btn-sm" href="/reviews">All reviews \u2192</a></div>';
+  }).catch(function () { /* teaser stays */ });
+})();
+
+/* ================================================================
+   THE ARENA — hero 3D.
+   A globe of golden knowledge-particles with icons of every subject
+   in orbit. Every few seconds one icon ignites and flies to the
+   viewer; the headline's gold word pulses as it lands. The globe
+   turns as you scroll. Contained entirely in the hero, lazy-loaded,
+   and every failure path leaves the designed CSS fallback in place.
+   ================================================================ */
+(function () {
+  var canvas = document.getElementById('arena');
+  var holder = canvas && canvas.parentElement;
+  if (!canvas || !holder) return;
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var saveData = navigator.connection && navigator.connection.saveData;
   var lowMem = navigator.deviceMemory && navigator.deviceMemory <= 2;
-  if (reduce || saveData || lowMem) return;
+  if (reduce || saveData || lowMem) return; // fallback globe stays
 
   function boot() {
     var s = document.createElement('script');
@@ -1151,192 +1338,172 @@ window.PAGE_CONTENT = {
     document.head.appendChild(s);
   }
   if ('requestIdleCallback' in window) {
-    addEventListener('load', function () { requestIdleCallback(boot, { timeout: 2500 }); });
+    addEventListener('load', function () { requestIdleCallback(boot, { timeout: 2200 }); });
   } else {
-    addEventListener('load', function () { setTimeout(boot, 800); });
+    addEventListener('load', function () { setTimeout(boot, 700); });
+  }
+
+  function glyphTexture(glyph, color) {
+    var c = document.createElement('canvas'); c.width = c.height = 128;
+    var x = c.getContext('2d');
+    x.font = '700 84px "Instrument Sans", system-ui, sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.shadowColor = color; x.shadowBlur = 18;
+    x.fillStyle = color;
+    x.fillText(glyph, 64, 70);
+    var t = new THREE.CanvasTexture(c);
+    t.minFilter = THREE.LinearFilter;
+    return t;
   }
 
   function init() {
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
     var isMobile = innerWidth < 768;
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false, alpha: true, powerPreference: 'low-power' });
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, isMobile ? 1.5 : 2));
-    renderer.setSize(innerWidth, innerHeight);
 
     var scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x081425, 0.0016);
-    var camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 900);
+    var camera = new THREE.PerspectiveCamera(46, 1, 0.1, 600);
+    camera.position.set(0, 0, 175);
 
-    scene.add(new THREE.AmbientLight(0x33507a, 0.9));
-    var key = new THREE.PointLight(0xf0c84b, 1.2, 260);
-    key.position.set(0, 30, 40); scene.add(key);
+    var world = new THREE.Group();
+    scene.add(world);
+    var R = 58;
 
-    /* --- the core: one engine, gold --- */
-    var coreGroup = new THREE.Group();
-    coreGroup.add(new THREE.Mesh(
-      new THREE.IcosahedronGeometry(7.5, 1),
-      new THREE.MeshBasicMaterial({ color: 0xd4af37, wireframe: true, transparent: true, opacity: 0.85 })
+    /* --- the globe: ~1500 knowledge particles, gold --- */
+    var PN = isMobile ? 850 : 1500;
+    var pos = new Float32Array(PN * 3);
+    for (var i = 0; i < PN; i++) {
+      // fibonacci sphere = even, worldly distribution
+      var k = i + 0.5;
+      var phi = Math.acos(1 - 2 * k / PN);
+      var theta = Math.PI * (1 + Math.sqrt(5)) * k;
+      var r = R * (0.985 + Math.random() * 0.05);
+      pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.cos(phi);
+      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    world.add(new THREE.Points(geo, new THREE.PointsMaterial({
+      color: 0xE8C55A, size: isMobile ? 1.15 : 1.35, transparent: true, opacity: 0.75, sizeAttenuation: true
+    })));
+    // faint inner structure — the mind beneath the surface
+    world.add(new THREE.Mesh(
+      new THREE.IcosahedronGeometry(R * 0.62, 1),
+      new THREE.MeshBasicMaterial({ color: 0x6D28D9, wireframe: true, transparent: true, opacity: 0.14 })
     ));
-    coreGroup.add(new THREE.Mesh(
-      new THREE.IcosahedronGeometry(4.6, 1),
-      new THREE.MeshBasicMaterial({ color: 0xf0c84b, transparent: true, opacity: 0.22 })
-    ));
-    coreGroup.position.set(0, 2, -30);
-    scene.add(coreGroup);
 
-    /* --- three platform streams converging on the core --- */
-    var STREAMS = [
-      { color: 0x25d366, from: new THREE.Vector3(-95, 42, -120) },
-      { color: 0x2aabee, from: new THREE.Vector3(95, 46, -120) },
-      { color: 0x8b5cf6, from: new THREE.Vector3(0, -78, -110) }
+    /* --- orbiting subjects: every kind of knowledge --- */
+    var SUBJECTS = [
+      ['?', '#F0C84B'], ['\u20A6', '#F0C84B'], ['\u266A', '#B79BFF'], ['\u26BD', '#5EE79A'],
+      ['\u03C0', '#5FC5F2'], ['A', '#FFFFFF'], ['H\u2082O', '#5FC5F2'], ['\u265B', '#F0C84B'],
+      ['\u2211', '#B79BFF'], ['\u{1F3C6}', '#F0C84B'], ['\u{1F4DA}', '#5EE79A'], ['\u{1F30D}', '#5FC5F2'],
+      ['7', '#FFFFFF'], ['\u26A1', '#F0C84B'], ['\u{1F3B5}', '#B79BFF'], ['\u2695', '#5EE79A'],
+      ['\u00BF', '#FFFFFF'], ['\u221A', '#5FC5F2']
     ];
-    var N = isMobile ? 110 : 220;
-    var streams = STREAMS.map(function (cfg) {
-      var curve = new THREE.CatmullRomCurve3([
-        cfg.from,
-        cfg.from.clone().multiplyScalar(0.5).add(new THREE.Vector3(0, 6, -60)),
-        coreGroup.position.clone()
-      ]);
-      var pos = new Float32Array(N * 3);
-      var phase = new Float32Array(N);
-      for (var i = 0; i < N; i++) phase[i] = Math.random();
-      var geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      var mat = new THREE.PointsMaterial({ color: cfg.color, size: isMobile ? 1.3 : 1.6, transparent: true, opacity: 0.9, sizeAttenuation: true });
-      var pts = new THREE.Points(geo, mat);
-      scene.add(pts);
-      return { curve: curve, pos: pos, phase: phase, geo: geo };
+    var RINGS = [
+      { r: R * 1.32, tilt: 0.45, speed: 0.16 },
+      { r: R * 1.5,  tilt: -0.6, speed: -0.11 },
+      { r: R * 1.68, tilt: 1.15, speed: 0.085 }
+    ];
+    var icons = [];
+    SUBJECTS.forEach(function (sj, idx) {
+      if (isMobile && idx % 3 === 2) return; // fewer on mobile
+      var ring = RINGS[idx % RINGS.length];
+      var mat = new THREE.SpriteMaterial({ map: glyphTexture(sj[0], sj[1]), transparent: true, opacity: 0.95, depthWrite: false });
+      var sp = new THREE.Sprite(mat);
+      var baseScale = isMobile ? 8.5 : 10;
+      sp.scale.set(baseScale, baseScale, 1);
+      var icon = { sp: sp, ring: ring, angle: (idx / SUBJECTS.length) * Math.PI * 2, baseScale: baseScale, launch: null };
+      icons.push(icon);
+      world.add(sp);
     });
+    function placeOnRing(ic, t) {
+      var a = ic.angle + t * ic.ring.speed;
+      var x = Math.cos(a) * ic.ring.r, z = Math.sin(a) * ic.ring.r;
+      var y = Math.sin(a) * Math.sin(ic.ring.tilt) * ic.ring.r * 0.55;
+      ic.sp.position.set(x, y, z);
+    }
 
-    /* --- the signature: the prize ladder as a climbable object --- */
-    var LADDER_Y0 = -160;                    // world-space base of ladder zone
-    var ladderGroup = new THREE.Group();
-    var stepMats = [];
-    var AMTS = [200,250,300,500,1000,2000,3000,5000,8000,10000,20000,25000,30000,40000,50000];
-    for (var i = 0; i < 15; i++) {
-      var milestone = (i === 4 || i === 9), grand = (i === 14);
-      var mat = new THREE.MeshStandardMaterial({
-        color: grand ? 0xf0c84b : milestone ? 0xd4af37 : 0x2a4d7a,
-        emissive: grand ? 0x8a6d1a : milestone ? 0x5a4813 : 0x0d1e38,
-        metalness: 0.55, roughness: 0.4
-      });
-      stepMats.push(mat);
-      var w = 16 + i * 0.55;
-      var step = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, 7), mat);
-      var angle = i * 0.42;
-      step.position.set(Math.sin(angle) * 13, LADDER_Y0 + i * 7.5, -34 + Math.cos(angle) * 6);
-      step.rotation.y = angle * 0.5;
-      ladderGroup.add(step);
-      if (milestone || grand) {
-        var ring = new THREE.Mesh(
-          new THREE.TorusGeometry(grand ? 6.4 : 5.2, 0.22, 8, 40),
-          new THREE.MeshBasicMaterial({ color: 0xf0c84b, transparent: true, opacity: 0.75 })
-        );
-        ring.position.copy(step.position); ring.position.y += 2.6;
-        ring.rotation.x = Math.PI / 2;
-        ladderGroup.add(ring);
+    /* --- the launch: an idea ignites and flies at you --- */
+    var heroGold = document.getElementById('heroGold');
+    var launchTimer = null;
+    function scheduleLaunch() {
+      launchTimer = setTimeout(function () {
+        var free = icons.filter(function (i) { return !i.launch; });
+        if (free.length) {
+          var ic = free[Math.floor(Math.random() * free.length)];
+          ic.launch = { t: 0, from: ic.sp.position.clone() };
+        }
+        scheduleLaunch();
+      }, 3200 + Math.random() * 1600);
+    }
+    scheduleLaunch();
+
+    var target = new THREE.Vector3(0, 6, 150); // just in front of the camera
+    function stepLaunch(ic, dt, t) {
+      var L = ic.launch;
+      L.t += dt / 1.15; // ~1.15s flight
+      var e = L.t < 1 ? 1 - Math.pow(1 - L.t, 3) : 1; // easeOutCubic
+      ic.sp.position.lerpVectors(L.from, target, e);
+      var s = ic.baseScale * (1 + e * 2.6);
+      ic.sp.scale.set(s, s, 1);
+      ic.sp.material.opacity = L.t < 0.72 ? 1 : Math.max(0, 1 - (L.t - 0.72) / 0.28);
+      if (L.t >= 1) {
+        ic.launch = null;
+        ic.sp.material.opacity = 0.95;
+        ic.sp.scale.set(ic.baseScale, ic.baseScale, 1);
+        placeOnRing(ic, t);
+        if (heroGold) {
+          heroGold.classList.add('zap');
+          setTimeout(function () { heroGold.classList.remove('zap'); }, 260);
+        }
       }
     }
-    scene.add(ladderGroup);
-    var summit = new THREE.PointLight(0xf0c84b, 0, 90);
-    summit.position.set(Math.sin(14 * 0.42) * 13, LADDER_Y0 + 14 * 7.5 + 6, -30);
-    scene.add(summit);
 
-    /* --- naira coins: real physicality, no clip art --- */
-    var coinGeo = new THREE.CylinderGeometry(2.1, 2.1, 0.42, 26);
-    var coinMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, emissive: 0x4a3c10, metalness: 0.85, roughness: 0.3 });
-    var coins = [];
-    var COINS = isMobile ? 10 : 18;
-    for (var c = 0; c < COINS; c++) {
-      var coin = new THREE.Mesh(coinGeo, coinMat);
-      coin.position.set((Math.random() - 0.5) * 150, -20 - Math.random() * 170, -55 - Math.random() * 70);
-      coin.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-      coin.userData.spin = 0.002 + Math.random() * 0.004;
-      scene.add(coin); coins.push(coin);
+    /* --- sizing, parallax, scroll rotation --- */
+    function size() {
+      var w = holder.clientWidth, h = holder.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      // keep the globe fully in frame whatever the panel shape
+      camera.position.z = 175 * Math.max(1, 1.25 / camera.aspect);
+      camera.updateProjectionMatrix();
     }
+    size();
+    var rsT; addEventListener('resize', function () { clearTimeout(rsT); rsT = setTimeout(size, 150); });
 
-    /* --- scroll → camera keyframes --- */
-    var mouseX = 0, mouseY = 0;
+    var px = 0, py = 0;
     addEventListener('pointermove', function (e) {
-      mouseX = (e.clientX / innerWidth - 0.5); mouseY = (e.clientY / innerHeight - 0.5);
+      px = (e.clientX / innerWidth - 0.5) * 6;
+      py = (e.clientY / innerHeight - 0.5) * 4;
     }, { passive: true });
 
-    var KEYS = [ // [scrollProgress, camPos, lookAt]
-      [0.00, new THREE.Vector3(0, 6, 42),  coreGroup.position],
-      [0.22, new THREE.Vector3(14, -8, 30), coreGroup.position],
-      [0.38, new THREE.Vector3(10, LADDER_Y0 + 4, 26), new THREE.Vector3(0, LADDER_Y0 + 14, -34)],
-      [0.62, new THREE.Vector3(-12, LADDER_Y0 + 118, 30), new THREE.Vector3(0, LADDER_Y0 + 112, -34)],
-      [0.80, new THREE.Vector3(0, LADDER_Y0 + 132, 44), new THREE.Vector3(summit.position.x, summit.position.y, -30)],
-      [1.00, new THREE.Vector3(0, 4, 46), coreGroup.position]
-    ];
-    var camPos = KEYS[0][1].clone(), lookAt = KEYS[0][2].clone();
-    function sampleKeys(p) {
-      for (var k = 0; k < KEYS.length - 1; k++) {
-        if (p >= KEYS[k][0] && p <= KEYS[k + 1][0]) {
-          var t = (p - KEYS[k][0]) / (KEYS[k + 1][0] - KEYS[k][0]);
-          t = t * t * (3 - 2 * t); // smoothstep
-          return [
-            KEYS[k][1].clone().lerp(KEYS[k + 1][1], t),
-            KEYS[k][2].clone().lerp(KEYS[k + 1][2], t)
-          ];
-        }
-      }
-      return [KEYS[KEYS.length - 1][1].clone(), KEYS[KEYS.length - 1][2].clone()];
+    var running = true, inView = true;
+    document.addEventListener('visibilitychange', function () { running = !document.hidden; });
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (en) { inView = en[0].isIntersecting; }, { threshold: 0.02 })
+        .observe(holder);
     }
 
-    /* DOM ladder drives 3D highlight */
-    var activeStep = 0;
-    window.__wutSetLadderStep = function (n) { activeStep = n; };
-
-    var t0 = 0, visible = true;
-    document.addEventListener('visibilitychange', function () { visible = !document.hidden; });
-
-    function frame(ts) {
+    var clock = new THREE.Clock();
+    function frame() {
       requestAnimationFrame(frame);
-      if (!visible) return;
-      var dt = Math.min((ts - t0) / 1000, 0.05); t0 = ts;
-      var doc = document.documentElement;
-      var p = doc.scrollHeight > innerHeight ? scrollY / (doc.scrollHeight - innerHeight) : 0;
-
-      coreGroup.rotation.y += dt * 0.35;
-      coreGroup.rotation.x += dt * 0.12;
-
-      streams.forEach(function (st) {
-        for (var i = 0; i < N; i++) {
-          st.phase[i] = (st.phase[i] + dt * 0.11) % 1;
-          var v = st.curve.getPoint(st.phase[i]);
-          st.pos[i * 3] = v.x; st.pos[i * 3 + 1] = v.y; st.pos[i * 3 + 2] = v.z;
-        }
-        st.geo.attributes.position.needsUpdate = true;
-      });
-
-      stepMats.forEach(function (m, idx) {
-        var lit = idx + 1 <= activeStep;
-        var base = (idx === 14) ? 0x8a6d1a : (idx === 4 || idx === 9) ? 0x5a4813 : 0x0d1e38;
-        m.emissive.setHex(lit ? 0xb8962e : base);
-      });
-      summit.intensity = activeStep >= 15 ? 2.2 : 0;
-
-      coins.forEach(function (c) { c.rotation.y += c.userData.spin; c.rotation.x += c.userData.spin * 0.6; });
-
-      var s = sampleKeys(p);
-      camPos.lerp(s[0], 0.06); lookAt.lerp(s[1], 0.06);
-      camera.position.set(camPos.x + mouseX * 4, camPos.y - mouseY * 3, camPos.z);
-      camera.lookAt(lookAt);
-
+      if (!running || !inView) return;
+      var dt = Math.min(clock.getDelta(), 0.05);
+      var t = clock.elapsedTime;
+      world.rotation.y = t * 0.11 + (window.scrollY || 0) * 0.0011; // the world turns as you scroll
+      world.rotation.x = Math.sin(t * 0.07) * 0.06;
+      icons.forEach(function (ic) { ic.launch ? stepLaunch(ic, dt, t) : placeOnRing(ic, t); });
+      camera.position.x += (px - camera.position.x) * 0.04;
+      camera.position.y += (-py - camera.position.y) * 0.04;
+      camera.lookAt(0, 0, 0);
       renderer.render(scene, camera);
     }
-    requestAnimationFrame(frame);
+    frame();
     canvas.classList.add('ready');
-
-    var rT;
-    addEventListener('resize', function () {
-      clearTimeout(rT);
-      rT = setTimeout(function () {
-        camera.aspect = innerWidth / innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(innerWidth, innerHeight);
-      }, 150);
-    });
+    var fb = document.getElementById('arenaFallback');
+    if (fb) fb.style.opacity = '0.25'; // fallback dims beneath the live scene
   }
 })();
 
