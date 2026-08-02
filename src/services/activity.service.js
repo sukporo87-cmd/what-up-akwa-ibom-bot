@@ -1,0 +1,182 @@
+// ============================================
+// FILE: src/services/activity.service.js
+// LIVE ACTIVITY FEED — social proof for the marketing site
+//
+// Records small, privacy-safe events (purchase, tournament join,
+// game completion, reward claim) and serves the most recent ones
+// to GET /api/public/activity/recent, which powers the toast
+// ticker on the website.
+//
+// PRIVACY MODEL (founder decision, 2 Aug 2026):
+//   actor = the player's USERNAME — the same public handle already
+//   shown on every leaderboard. Never full_name, never phone,
+//   never email. Event text never contains an amount of money a
+//   specific person spent.
+//
+// EXPORT SHAPE: this module exports an INSTANCE (like
+// game-events.service.js), not a class. It is an event sink used
+// from many services; one shared instance is the point.
+//   const activityService = require('./activity.service');
+//
+// FAILURE MODEL: record() can never throw and is fire-and-forget.
+// A broken activity feed must never break a payment, a game
+// completion, or a claim. Call it without await:
+//   activityService.record('purchase', userId, { games: 7 });
+// ============================================
+
+const pool = require('../config/database');
+const redis = require('../config/redis');
+const { logger } = require('../utils/logger');
+
+const CACHE_KEY = 'activity:recent';
+const CACHE_TTL = 20;          // seconds — spec says 15–30s
+const MAX_EVENTS_KEPT = 200;   // pruned opportunistically on write
+
+// games_purchased → public package name (matches the site's pricing section)
+const PACKAGE_NAMES = { 3: 'a Starter Pack', 7: 'a Value Pack', 15: 'a Pro Pack' };
+
+class ActivityService {
+  constructor() {
+    this._schemaReady = false;
+  }
+
+  // Idempotent — safe to call on every write; runs the DDL once per process.
+  // Mirrored as a proper migration in src/migrations/003-activity-events.sql.
+  async ensureSchema() {
+    if (this._schemaReady) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS activity_events (
+        id BIGSERIAL PRIMARY KEY,
+        event_type TEXT NOT NULL CHECK (event_type IN
+          ('purchase','tournament_join','game_complete','reward_claim')),
+        actor TEXT NOT NULL,
+        event_text TEXT NOT NULL,
+        user_id BIGINT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_activity_events_created
+      ON activity_events (created_at DESC)
+    `);
+    this._schemaReady = true;
+  }
+
+  // --------------------------------------------
+  // WRITE — fire and forget, never throws
+  // --------------------------------------------
+  // type: purchase | tournament_join | game_complete | reward_claim
+  // userId: resolved to a username here (one small SELECT), so call
+  //         sites stay one line and never join anything themselves.
+  // extra: { games, tournamentId, questionNumber, grandPrize, tournamentGame }
+  async record(type, userId, extra = {}) {
+    try {
+      await this.ensureSchema();
+
+      const userResult = await pool.query(
+        'SELECT username FROM users WHERE id = $1', [userId]
+      );
+      // No username, no event. We never fall back to real names.
+      const username = userResult.rows[0]?.username;
+      if (!username) return;
+
+      const text = await this._composeText(type, extra);
+      if (!text) return;
+
+      await pool.query(
+        `INSERT INTO activity_events (event_type, actor, event_text, user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [type, username, text, userId]
+      );
+
+      // Invalidate the read cache so the next poll sees this event
+      await redis.del(CACHE_KEY).catch(() => {});
+
+      // Opportunistic prune — keeps the table tiny without a cron
+      if (Math.random() < 0.02) {
+        await pool.query(`
+          DELETE FROM activity_events
+          WHERE id NOT IN (
+            SELECT id FROM activity_events ORDER BY created_at DESC LIMIT ${MAX_EVENTS_KEPT}
+          )
+        `);
+      }
+    } catch (error) {
+      // Never let social proof break real functionality
+      logger.warn(`Activity event dropped (${type}): ${error.message}`);
+    }
+  }
+
+  async _composeText(type, extra) {
+    switch (type) {
+      case 'purchase': {
+        const pkg = PACKAGE_NAMES[extra.games] ||
+          (extra.games ? `${extra.games} access credits` : 'access credits');
+        return `grabbed ${pkg}`;
+      }
+      case 'tournament_join': {
+        if (extra.tournamentId) {
+          try {
+            const t = await pool.query(
+              'SELECT tournament_name FROM tournaments WHERE id = $1',
+              [extra.tournamentId]
+            );
+            if (t.rows[0]?.tournament_name) {
+              return `joined ${t.rows[0].tournament_name}`;
+            }
+          } catch (e) { /* fall through to generic */ }
+        }
+        return 'joined a tournament';
+      }
+      case 'game_complete': {
+        if (extra.grandPrize) return 'conquered all 15 questions 🏆';
+        if (extra.tournamentGame) return 'logged a tournament run';
+        if (extra.questionNumber >= 10) return 'passed the Q10 milestone';
+        if (extra.questionNumber >= 5) return 'passed the Q5 milestone';
+        return 'completed a Classic climb';
+      }
+      case 'reward_claim':
+        return 'claimed a leaderboard reward';
+      default:
+        return null;
+    }
+  }
+
+  // --------------------------------------------
+  // READ — powers GET /api/public/activity/recent
+  // --------------------------------------------
+  async recent(limit = 10) {
+    limit = Math.min(Math.max(parseInt(limit) || 10, 1), 20);
+
+    // 20s cache: this will be the hottest public endpoint once the
+    // ticker ships, and 20s staleness is invisible in a toast feed.
+    try {
+      const cached = await redis.get(CACHE_KEY);
+      if (cached) {
+        const events = JSON.parse(cached);
+        return events.slice(0, limit);
+      }
+    } catch (e) { /* cache miss path below */ }
+
+    await this.ensureSchema();
+    const result = await pool.query(`
+      SELECT id, event_type, actor, event_text, created_at
+      FROM activity_events
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+
+    const events = result.rows.map(r => ({
+      id: `ev_${r.id}`,
+      type: r.event_type,
+      actor: r.actor,
+      text: r.event_text,
+      at: new Date(r.created_at).toISOString()
+    }));
+
+    await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(events)).catch(() => {});
+    return events.slice(0, limit);
+  }
+}
+
+module.exports = new ActivityService();

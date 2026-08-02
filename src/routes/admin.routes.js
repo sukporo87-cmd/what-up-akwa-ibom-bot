@@ -101,6 +101,16 @@ router.get('/watchlist', (req, res) => {
   res.sendFile('admin-watchlist.html', { root: './src/views' });
 });
 
+// Review moderation dashboard
+router.get('/reviews', (req, res) => {
+  res.sendFile('admin-reviews.html', { root: './src/views' });
+});
+
+// Site content editor
+router.get('/content', (req, res) => {
+  res.sendFile('admin-content.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -8478,6 +8488,176 @@ router.get('/api/acquisition-sources/:source/users', authenticateAdmin, async (r
         logger.error('Error getting users by acquisition source:', error);
         res.status(500).json({ error: 'Failed to load users' });
     }
+});
+
+
+// ============================================
+// REVIEW MODERATION (see BACKEND-REVIEWS-BRIEF.md / API-SPEC.md §1)
+// Queue → approve / reject / edit-then-approve / feature.
+// Nothing reaches the public endpoint without explicit approval here.
+// ============================================
+const ReviewsService = require('../services/reviews.service');
+const reviewsService = new ReviewsService();
+
+// GET /admin/api/reviews?status=pending|approved|rejected&limit=&offset=
+router.get('/api/reviews', authenticateAdmin, async (req, res) => {
+  try {
+    const data = await reviewsService.adminList({
+      status: req.query.status || 'pending',
+      limit: req.query.limit,
+      offset: req.query.offset
+    });
+    res.json({ success: true, ...data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading review queue: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load reviews' });
+  }
+});
+
+// POST /admin/api/reviews/:id/approve  { body?, title? } — optional light edits.
+// Edits keep the original text on the row (original_body / original_title):
+// typo fixes are fine, rewriting what someone said is not, and the record
+// makes the difference visible.
+router.post('/api/reviews/:id/approve', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const edits = {};
+    if (typeof req.body?.body === 'string') edits.body = req.body.body;
+    if (typeof req.body?.title === 'string') edits.title = req.body.title;
+
+    const ok = await reviewsService.approve(id, req.adminSession.admin_id, edits);
+    if (!ok) return res.status(404).json({ success: false, error: 'Review not found' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'review_approved',
+      { review_id: id, edited: Object.keys(edits).length > 0 },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error approving review: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to approve review' });
+  }
+});
+
+// POST /admin/api/reviews/:id/reject  { reason }
+router.post('/api/reviews/:id/reject', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const reason = (req.body && req.body.reason ? String(req.body.reason) : '').trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'A rejection reason is required' });
+    }
+
+    const ok = await reviewsService.reject(id, req.adminSession.admin_id, reason);
+    if (!ok) return res.status(404).json({ success: false, error: 'Review not found' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'review_rejected',
+      { review_id: id, reason },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error rejecting review: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to reject review' });
+  }
+});
+
+// POST /admin/api/reviews/:id/feature  { featured: true|false }
+// Featured reviews pin to the top of the public list (approved only).
+router.post('/api/reviews/:id/feature', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const featured = req.body && req.body.featured === true;
+
+    const ok = await reviewsService.setFeatured(id, req.adminSession.admin_id, featured);
+    if (!ok) {
+      return res.status(404).json({ success: false, error: 'Review not found or not approved' });
+    }
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      featured ? 'review_featured' : 'review_unfeatured',
+      { review_id: id },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error featuring review: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update review' });
+  }
+});
+
+// ============================================
+// SITE CONTENT EDITOR (API-SPEC.md §2)
+// Key-value copy editing for the marketing site. Deliberately not a
+// page builder: keys and plain-text values only.
+// ============================================
+const SiteContentService = require('../services/site-content.service');
+const siteContentService = new SiteContentService();
+
+// GET /admin/api/site-content — every stored key with metadata
+router.get('/api/site-content', authenticateAdmin, async (req, res) => {
+  try {
+    const entries = await siteContentService.adminList();
+    res.json({ success: true, entries, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading site content: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load content' });
+  }
+});
+
+// PUT /admin/api/site-content  { key, value } — create or update
+router.put('/api/site-content', authenticateAdmin, async (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    const result = await siteContentService.upsert(
+      key, value, req.adminSession.username
+    );
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error });
+    }
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'site_content_updated',
+      { key },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error updating site content: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update content' });
+  }
+});
+
+// DELETE /admin/api/site-content/:key — remove override; the site
+// falls back to its baked-in default for that key.
+router.delete('/api/site-content/:key', authenticateAdmin, async (req, res) => {
+  try {
+    const key = req.params.key;
+    const removed = await siteContentService.remove(key, req.adminSession.username);
+    if (!removed) return res.status(404).json({ success: false, error: 'Key not found' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'site_content_deleted',
+      { key },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error deleting site content: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to delete content' });
+  }
 });
 
 module.exports = router;

@@ -4,6 +4,7 @@
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const activityService = require('./activity.service');
 const BankService = require('./bank.service');
 
 class PayoutService {
@@ -191,6 +192,11 @@ class PayoutService {
       );
 
       logger.info(`💾 Saved payout details for transaction ${transactionId} - Verified: ${verified}`);
+
+      // Social proof event (site ticker) — the player has actively
+      // claimed. Username only; the text never carries the amount.
+      activityService.record('reward_claim', userId, {});
+
       return result.rows[0];
     } catch (error) {
       logger.error('❌ Error saving payout details:', error);

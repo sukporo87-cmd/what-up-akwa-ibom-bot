@@ -15,9 +15,13 @@ const { logger } = require('../utils/logger');
 // ============================================
 router.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type');
-    res.header('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
+    if (req.method === 'GET') {
+        res.header('Cache-Control', 'public, max-age=60'); // Cache for 1 minute
+    } else {
+        res.header('Cache-Control', 'no-store');
+    }
     
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
@@ -433,6 +437,142 @@ router.get('/tournaments/active', async (req, res) => {
     } catch (error) {
         logger.error('Error fetching active tournament:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch tournament' });
+    }
+});
+
+
+// ============================================
+// REVIEWS — public surface (API-SPEC.md §1)
+// Approved reviews only. Emails, IPs and user agents never leave
+// the moderation view. Pending/rejected reviews do not exist here.
+// ============================================
+const ReviewsService = require('../services/reviews.service');
+const reviewsService = new ReviewsService();
+
+// Same convention the rest of the codebase uses for client IPs
+function clientIp(req) {
+    const fwd = req.headers['x-forwarded-for'];
+    return (fwd ? String(fwd).split(',')[0].trim() : req.socket.remoteAddress) || null;
+}
+
+// GET /api/public/reviews?limit=&offset=&sort=recent|top
+router.get('/reviews', async (req, res) => {
+    try {
+        const { reviews, aggregate, pagination } = await reviewsService.listApproved({
+            limit: req.query.limit,
+            offset: req.query.offset,
+            sort: req.query.sort === 'top' ? 'top' : 'recent'
+        });
+        res.json({
+            success: true,
+            reviews,
+            aggregate,
+            pagination,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        logger.error(`Error fetching public reviews: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to fetch reviews' });
+    }
+});
+
+// GET /api/public/reviews/summary — aggregate only, for the homepage teaser
+router.get('/reviews/summary', async (req, res) => {
+    try {
+        const aggregate = await reviewsService.aggregate();
+        res.json({ success: true, aggregate, timestamp: new Date().toISOString() });
+    } catch (error) {
+        logger.error(`Error fetching reviews summary: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to fetch reviews' });
+    }
+});
+
+// POST /api/public/reviews — submit for moderation.
+// Nothing appears publicly until approved in the admin dashboard.
+router.post('/reviews', async (req, res) => {
+    try {
+        const ip = clientIp(req);
+
+        const rate = await reviewsService.checkRateLimit(ip);
+        if (rate.limited) {
+            return res.status(429).json({
+                success: false, error: 'rate_limited', retry_after: rate.retryAfter
+            });
+        }
+
+        const result = await reviewsService.submit(
+            req.body || {}, ip, req.headers['user-agent']
+        );
+
+        if (!result.ok && result.code === 400) {
+            return res.status(400).json({
+                success: false, error: 'Validation failed', fields: result.fields
+            });
+        }
+        if (!result.ok && result.code === 409) {
+            return res.status(409).json({ success: false, error: 'duplicate_review' });
+        }
+
+        res.status(201).json({
+            success: true,
+            status: 'pending_review',
+            id: result.id,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        logger.error(`Error submitting review: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to submit review' });
+    }
+});
+
+// ============================================
+// SITE CONTENT — public surface (API-SPEC.md §2)
+// Flat map of dot-notation keys → plain-text values. The site merges
+// these over its baked-in defaults; a missing key can never blank
+// anything, so this endpoint can ship gradually.
+// ============================================
+const SiteContentService = require('../services/site-content.service');
+const siteContentService = new SiteContentService();
+
+// GET /api/public/site-content?prefix=home.&keys=a,b,c
+router.get('/site-content', async (req, res) => {
+    try {
+        const { content, version, updated_at } = await siteContentService.getContent({
+            prefix: req.query.prefix || null,
+            keys: req.query.keys || null
+        });
+        res.header('Cache-Control', 'public, max-age=300');
+        res.json({
+            success: true,
+            version,
+            updated_at,
+            content,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        logger.error(`Error fetching site content: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to fetch content' });
+    }
+});
+
+// ============================================
+// LIVE ACTIVITY — public surface (API-SPEC.md §3)
+// Social proof for the website ticker. actor = the player's public
+// USERNAME (the same handle shown on every leaderboard) — never a
+// real name, and never an amount a specific person spent. Only real
+// events; an empty array simply means the ticker doesn't appear.
+// ============================================
+const activityService = require('../services/activity.service');
+
+// GET /api/public/activity/recent?limit=10
+router.get('/activity/recent', async (req, res) => {
+    try {
+        const events = await activityService.recent(req.query.limit);
+        res.header('Cache-Control', 'public, max-age=15');
+        res.json({ success: true, events, timestamp: new Date().toISOString() });
+    } catch (error) {
+        logger.error(`Error fetching activity feed: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to fetch activity' });
     }
 });
 

@@ -6,6 +6,7 @@
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const activityService = require('./activity.service');
 const { platformOf } = require('../utils/platform');
 
 class TournamentService {
@@ -171,6 +172,10 @@ class TournamentService {
             `, [tournamentId, userId, tokensRemaining, platform]);
             
             logger.info(`User ${userId} (${platform}) joined free tournament ${tournamentId}`);
+
+            // Social proof event — fire-and-forget, username only
+            activityService.record('tournament_join', userId, { tournamentId });
+
             return { success: true, participant: result.rows[0], tokensRemaining };
         } catch (error) {
             logger.error('Error joining free tournament:', error);
@@ -317,6 +322,10 @@ class TournamentService {
             `, [payment.tournament_id, payment.user_id, payment.amount, tokensRemaining, platform]);
             
             logger.info(`Tournament payment verified via ${gateway.getName()} (${platform}): ${reference} - User ${payment.user_id} can now play`);
+
+            // Social proof event — fire-and-forget, username only
+            activityService.record('tournament_join', payment.user_id, { tournamentId: payment.tournament_id });
+
             return { success: true, payment, tokensRemaining, platform, gateway: gateway.getName() };
         } catch (error) {
             logger.error('Error verifying tournament payment:', error);

@@ -7,6 +7,7 @@
 const Paystack = require('paystack-api');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const activityService = require('../services/activity.service');
 const gatewayManager = require('./payment-gateway-manager');
 const { platformOf } = require('../utils/platform');
 
@@ -205,6 +206,12 @@ class PaymentService {
           logger.warn(`♻️ Recovered payment previously marked failed: ${reference}`);
         }
         logger.info(`✅ Payment verified via ${gateway.getName()} (${transaction.platform}): ${reference} - ${transaction.games_purchased} games credited to user ${transaction.user_id}`);
+
+        // Social proof event (site ticker). Fire-and-forget by contract:
+        // record() never throws and is not awaited — a broken activity
+        // feed must never break a payment. Actor is the public username;
+        // the event text names the package, never the amount paid.
+        activityService.record('purchase', transaction.user_id, { games: transaction.games_purchased });
       } else {
         logger.info(`Payment ${reference} already credited by another path — not crediting twice`);
       }

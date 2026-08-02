@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>✏️ Site Content | What's Up Trivia</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a23;
+    --surface2: #22222f;
+    --border: #2d2d3d;
+    --text: #e4e4ef;
+    --text-dim: #8888a0;
+    --accent: #3b82f6;
+    --green: #00d68f;
+    --red: #ff3b5c;
+    --yellow: #ffc233;
+  }
+
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar h1 { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--accent); }
+  .topbar .links a { color: var(--text-dim); text-decoration: none; font-size: 13px; margin-left: 18px; }
+  .topbar .links a:hover { color: var(--text); }
+
+  .container { max-width: 980px; margin: 0 auto; padding: 28px 24px 100px; }
+
+  .explain {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; font-size: 13.5px; color: var(--text-dim); line-height: 1.65; margin-bottom: 24px;
+  }
+  .explain b { color: var(--text); }
+  .explain code { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--yellow); }
+
+  .toolrow { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .toolrow input {
+    flex: 1; min-width: 200px; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 14px;
+  }
+  .toolrow input:focus { outline: none; border-color: var(--accent); }
+
+  .btn {
+    border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    border-radius: 9px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: 'DM Sans', sans-serif; transition: all .15s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-save { background: rgba(0,214,143,.14); border-color: rgba(0,214,143,.5); color: var(--green); }
+  .btn-add { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.5); color: var(--accent); }
+  .btn-del { background: rgba(255,59,92,.1); border-color: rgba(255,59,92,.4); color: var(--red); }
+
+  .group { margin-bottom: 26px; }
+  .group h2 {
+    font-family: 'JetBrains Mono', monospace; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--text-dim); margin-bottom: 12px;
+    border-bottom: 1px solid var(--border); padding-bottom: 8px;
+  }
+
+  .kv {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .kv.dirty { border-color: rgba(255,194,51,.55); }
+  .kv-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .kv-key { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--yellow); }
+  .kv-where { font-size: 11.5px; color: var(--text-dim); }
+  .kv-meta { margin-left: auto; font-size: 11px; color: #5c5c72; font-family: 'JetBrains Mono', monospace; }
+  .kv textarea {
+    width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 9px; padding: 10px 12px; font-size: 14px; font-family: 'DM Sans', sans-serif;
+    min-height: 44px; resize: vertical; line-height: 1.55;
+  }
+  .kv textarea:focus { outline: none; border-color: var(--accent); }
+  .kv-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+
+  /* add form */
+  .addbox {
+    background: var(--surface); border: 1px dashed var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 26px; display: none;
+  }
+  .addbox.open { display: block; }
+  .addbox label { display: block; font-size: 12px; color: var(--text-dim); margin: 8px 0 4px; }
+  .addbox input, .addbox textarea {
+    width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 9px; padding: 10px 12px; font-size: 14px; font-family: 'DM Sans', sans-serif;
+  }
+  .addbox .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+
+  .empty { text-align: center; color: var(--text-dim); padding: 60px 0; font-size: 14.5px; line-height: 1.8; }
+  .loading { text-align: center; color: var(--text-dim); padding: 48px 0; }
+  .toast {
+    position: fixed; bottom: 22px; right: 22px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13.5px;
+    opacity: 0; transform: translateY(8px); transition: all .3s; pointer-events: none; z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: rgba(0,214,143,.5); }
+  .toast.err { border-color: rgba(255,59,92,.5); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>✏️ Site Content</h1>
+  <div class="links">
+    <a href="/admin/dashboard">Dashboard</a>
+    <a href="/admin/reviews">Reviews</a>
+    <a href="/admin/watchlist">Watchlist</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="explain">
+    Every text on the marketing site has a <b>key</b> like <code>home.hero.badge</code> —
+    page&nbsp;·&nbsp;section&nbsp;·&nbsp;field, so the key itself says where the text appears
+    (the full list is in <code>CONTENT-KEYS.md</code> in the site build).
+    Values saved here override the site's built-in copy within ~5 minutes (cache).
+    <b>Deleting a key is always safe</b> — the site simply falls back to its built-in default.
+    Plain text only: any HTML typed here will appear literally on the page.
+  </div>
+
+  <div class="toolrow">
+    <input id="filter" placeholder="Filter keys… e.g. home.hero or contact">
+    <button class="btn btn-add" onclick="toggleAdd()">+ Add key</button>
+  </div>
+
+  <div class="addbox" id="addbox">
+    <label for="newKey">Key (dot-notation)</label>
+    <input id="newKey" placeholder="home.hero.badge" maxlength="120">
+    <div class="hint">Copy the exact key from CONTENT-KEYS.md — a key the site doesn't know is ignored harmlessly.</div>
+    <label for="newVal">Value</label>
+    <textarea id="newVal" rows="2" maxlength="4000" placeholder="The text to show on the site"></textarea>
+    <div class="kv-actions">
+      <button class="btn" onclick="toggleAdd()">Cancel</button>
+      <button class="btn btn-save" onclick="addKey()">Save new key</button>
+    </div>
+  </div>
+
+  <div id="list"><div class="loading">Loading content…</div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = '/admin/api';
+let sessionToken = localStorage.getItem('adminSessionToken');
+if (!sessionToken) window.location.href = '/admin';
+
+let entries = [];
+
+async function apiCall(endpoint, options = {}) {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${sessionToken}`,
+      'Content-Type': 'application/json',
+      ...options.headers
+    }
+  });
+  if (response.status === 401) {
+    localStorage.removeItem('adminSessionToken');
+    window.location.href = '/admin';
+    return;
+  }
+  return response.json();
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+const PAGE_NAMES = {
+  home: 'Homepage', htp: 'How to Play', lb: 'Leaderboards', reviews: 'Reviews page',
+  about: 'About page', contact: 'Contact page', footer: 'Footer (all pages)'
+};
+
+function whereText(e) {
+  const page = PAGE_NAMES[e.page] || e.page;
+  return `${page}${e.section ? ' → ' + e.section : ''}${e.field ? ' → ' + e.field : ''}`;
+}
+
+function render() {
+  const q = document.getElementById('filter').value.trim().toLowerCase();
+  const shown = entries.filter(e =>
+    !q || e.key.toLowerCase().includes(q) || e.value.toLowerCase().includes(q));
+
+  if (!entries.length) {
+    document.getElementById('list').innerHTML = `<div class="empty">
+      No content overrides yet — the site is running entirely on its built-in copy.<br>
+      Use <b>+ Add key</b> with any key from CONTENT-KEYS.md to override your first string.
+    </div>`;
+    return;
+  }
+  if (!shown.length) {
+    document.getElementById('list').innerHTML = `<div class="empty">Nothing matches that filter.</div>`;
+    return;
+  }
+
+  const groups = {};
+  shown.forEach(e => { (groups[e.page] = groups[e.page] || []).push(e); });
+
+  document.getElementById('list').innerHTML = Object.keys(groups).sort().map(page => `
+    <div class="group">
+      <h2>${esc(PAGE_NAMES[page] || page)}</h2>
+      ${groups[page].map(e => `
+        <div class="kv" id="kv-${esc(e.key).replace(/\./g,'-')}">
+          <div class="kv-head">
+            <span class="kv-key">${esc(e.key)}</span>
+            <span class="kv-where">${esc(whereText(e))}</span>
+            <span class="kv-meta">${e.updated_by ? 'by ' + esc(e.updated_by) + ' · ' : ''}${new Date(e.updated_at).toLocaleString('en-NG')}</span>
+          </div>
+          <textarea data-key="${esc(e.key)}" maxlength="4000"
+            oninput="this.closest('.kv').classList.add('dirty')">${esc(e.value)}</textarea>
+          <div class="kv-actions">
+            <button class="btn btn-del" onclick="delKey('${esc(e.key)}')">Delete (use site default)</button>
+            <button class="btn btn-save" onclick="saveKey('${esc(e.key)}')">Save</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+async function load() {
+  const data = await apiCall('/site-content');
+  if (!data || !data.success) {
+    document.getElementById('list').innerHTML = '<div class="empty">Could not load content. Refresh to retry.</div>';
+    return;
+  }
+  entries = data.entries;
+  render();
+}
+
+async function saveKey(key) {
+  const ta = document.querySelector(`textarea[data-key="${CSS.escape(key)}"]`);
+  const value = ta.value;
+  if (!value.trim()) { toast('Value cannot be empty — delete the key instead to use the site default', false); return; }
+  const r = await apiCall('/site-content', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  if (r && r.success) { toast(`Saved ${key} — live on the site within ~5 minutes`); load(); }
+  else toast((r && r.error) || 'Save failed', false);
+}
+
+async function delKey(key) {
+  if (!confirm(`Delete "${key}"?\n\nThe site will fall back to its built-in default text for this key. This is always safe.`)) return;
+  const r = await apiCall(`/site-content/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (r && r.success) { toast(`Deleted ${key} — site default restored`); load(); }
+  else toast((r && r.error) || 'Delete failed', false);
+}
+
+function toggleAdd() {
+  document.getElementById('addbox').classList.toggle('open');
+}
+
+async function addKey() {
+  const key = document.getElementById('newKey').value.trim();
+  const value = document.getElementById('newVal').value;
+  if (!key || !value.trim()) { toast('Both key and value are required', false); return; }
+  const r = await apiCall('/site-content', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  if (r && r.success) {
+    toast(`Added ${key}`);
+    document.getElementById('newKey').value = '';
+    document.getElementById('newVal').value = '';
+    toggleAdd();
+    load();
+  } else toast((r && r.error) || 'Add failed', false);
+}
+
+document.getElementById('filter').addEventListener('input', render);
+load();
+</script>
+</body>
+</html>
