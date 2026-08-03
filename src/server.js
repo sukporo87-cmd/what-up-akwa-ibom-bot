@@ -42,12 +42,73 @@ app.get('/', (req, res, next) => {
 });
 
 // ============================================
-// demo.<domain> serves the marketing site from views/site with clean URLs.
-// Mirrors the play.<domain> pattern above.
-// To promote to the apex later, widen isSiteHost — nothing else changes.
+// The marketing site (views/site) is served on the APEX domain and on
+// demo.<domain>, with clean URLs. play.<domain> keeps the game and every
+// API/webhook/admin path keeps working on all hosts, because this
+// middleware only serves files that actually exist in views/site and
+// otherwise falls through.
 // ============================================
-const isSiteHost = (hostname) =>
-  String(hostname || '').startsWith('demo.');
+// Only the APEX needs a paid custom-domain slot on Render. www is handled
+// as a redirect at the DNS layer (see APEX-GO-LIVE.md) and never reaches
+// this app — but the redirect below stays as a safety net in case www is
+// ever pointed here directly.
+const SITE_HOSTS = new Set([
+  'whatsuptrivia.com.ng',
+  'www.whatsuptrivia.com.ng'
+]);
+const isSiteHost = (hostname) => {
+  const h = String(hostname || '').toLowerCase();
+  return SITE_HOSTS.has(h)
+      || h.startsWith('demo.');   // harmless if demo. is retired; costs nothing
+};
+
+// Any preview host must never compete with the apex in search results.
+const isPreviewHost = (hostname) =>
+  String(hostname || '').toLowerCase().startsWith('demo.');
+
+// Canonical host: send www → apex with a permanent redirect so search
+// engines and shared links settle on one address.
+app.use((req, res, next) => {
+  if (String(req.hostname || '').toLowerCase() === 'www.whatsuptrivia.com.ng') {
+    return res.redirect(301, 'https://whatsuptrivia.com.ng' + req.originalUrl);
+  }
+  next();
+});
+
+// ============================================
+// SEO MIGRATION — the WordPress site that lived on this domain used
+// trailing-slash URLs (/faq/, /terms/) and a singular /leaderboard/.
+// Google has those indexed. Every one gets a permanent redirect to its
+// new address so no ranking or backlink is lost on launch day.
+// ============================================
+const LEGACY_PATHS = {
+  '/leaderboard': '/leaderboards',       // slug changed: singular -> plural
+  '/home': '/',
+  '/index.php': '/',
+  '/index.html': '/'
+};
+
+app.use((req, res, next) => {
+  if (!isSiteHost(req.hostname) || req.method !== 'GET') return next();
+
+  const [rawPath] = req.originalUrl.split('?');
+  const query = req.originalUrl.slice(rawPath.length);   // '' or '?...'
+
+  // 1. Old WordPress URLs carried a trailing slash; the new site does not.
+  //    /faq/ -> /faq   (never touch the root itself)
+  let clean = rawPath;
+  if (clean.length > 1 && clean.endsWith('/')) {
+    clean = clean.replace(/\/+$/, '') || '/';
+  }
+
+  // 2. Renamed pages.
+  if (LEGACY_PATHS[clean]) clean = LEGACY_PATHS[clean];
+
+  if (clean !== rawPath) {
+    return res.redirect(301, clean + query);
+  }
+  next();
+});
 
 const siteStatic = express.static(path.join(__dirname, 'views', 'site'), {
   extensions: ['html'],            // /how-to-play  ->  how-to-play.html
@@ -62,6 +123,10 @@ const siteStatic = express.static(path.join(__dirname, 'views', 'site'), {
 
 app.use((req, res, next) => {
   if (!isSiteHost(req.hostname)) return next();
+  // Preview hosts stay live but must never compete with the apex in search
+  if (isPreviewHost(req.hostname)) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  }
   siteStatic(req, res, next);
 });
 

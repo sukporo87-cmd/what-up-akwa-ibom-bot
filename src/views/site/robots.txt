@@ -1,0 +1,12 @@
+# What's Up Trivia — https://whatsuptrivia.com.ng
+User-agent: *
+Allow: /
+
+# Nothing behind these is public content
+Disallow: /admin
+Disallow: /api/
+Disallow: /web/
+Disallow: /payment
+Disallow: /webhook
+
+Sitemap: https://whatsuptrivia.com.ng/sitemap.xml
