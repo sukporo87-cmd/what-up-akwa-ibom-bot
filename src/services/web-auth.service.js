@@ -13,6 +13,7 @@ const pool = require('../config/database');
 const redis = require('../config/redis');
 const emailService = require('./email.service');
 const { logger } = require('../utils/logger');
+const activityService = require('./activity.service');
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
@@ -424,6 +425,10 @@ class WebAuthService {
 
             await client.query('COMMIT');
             logger.info(`✅ New WEB user: @${username} (${fullName}) from ${city}, age ${age}. Ref code: ${referralCode}`);
+
+            // Social proof event (site ticker) — fire-and-forget, never awaited
+            activityService.record('user_join', user.id, { city });
+
             return user;
 
         } catch (error) {

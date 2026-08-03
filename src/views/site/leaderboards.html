@@ -288,6 +288,11 @@ body.theme-dark .stars .off{color:rgba(255,255,255,.18)}
 .ticker-item .tk-ic{font-size:16px;flex-shrink:0}
 .ticker-item b{color:var(--gold-bright);font-weight:700}
 .ticker-item .tk-time{color:#8CA2BE;font-size:11px;margin-left:2px;white-space:nowrap}
+.ticker-item .tk-badge{display:inline-block;margin:0 3px;padding:2px 9px;border-radius:999px;
+  background:rgba(212,175,55,.16);border:1px solid rgba(212,175,55,.42);color:var(--gold-bright);
+  font-family:var(--font-data);font-weight:700;font-size:11px;letter-spacing:.04em;white-space:nowrap;
+  vertical-align:baseline}
+body.theme-light .ticker-item .tk-badge{background:rgba(212,175,55,.14);color:#7a5f14;border-color:rgba(212,175,55,.5)}
 body.theme-light .ticker-item{background:rgba(255,255,255,.96);color:var(--ink);border-color:rgba(30,58,95,.18)}
 body.theme-light .ticker-item b{color:#8a6d1f}
 body.theme-light .ticker-item .tk-time{color:var(--ink-faint)}
@@ -734,7 +739,8 @@ document.addEventListener('DOMContentLoaded', function () {
   if (!C.FEATURES.ACTIVITY_API) return;
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  var ICON = { purchase: '💳', tournament_join: '🏆', game_complete: '🎯', reward_claim: '💰' };
+  var ICON = { purchase: '💳', tournament_join: '🏆', game_complete: '🎯',
+               reward_claim: '💰', user_join: '👋' };
   var SHOW_MS = 4000;   // visible time per event
   var GAP_MS = 1100;    // quiet gap between events
   var POLL_MS = 25000;  // pool refresh
@@ -777,6 +783,7 @@ document.addEventListener('DOMContentLoaded', function () {
     el.className = 'ticker-item';
     el.innerHTML = '<span class="tk-ic">' + (ICON[ev.type] || '⚡') + '</span>' +
       '<span><b>' + esc(ev.actor) + '</b> ' + esc(ev.text) +
+      (ev.badge ? '<span class="tk-badge">' + esc(ev.badge) + '</span>' : '') +
       ' <span class="tk-time">' + ago(ev.at) + '</span></span>';
     wrap.appendChild(el);
     requestAnimationFrame(function () { el.classList.add('show'); });

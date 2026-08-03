@@ -7,6 +7,7 @@
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
+const activityService = require('./activity.service');
 
 class UserService {
   async getUserByPhone(phoneNumber) {
@@ -97,7 +98,11 @@ class UserService {
       await client.query('COMMIT');
       
       logger.info(`✅ New user created: @${username} (${fullName}) from ${city}, age ${age}, platform: ${platform}. Referral code: ${referralCode}`);
-      
+
+      // Social proof event (site ticker) — fire-and-forget, never awaited.
+      // Username + city only; no name, no phone.
+      activityService.record('user_join', user.id, { city });
+
       return user;
     } catch (error) {
       await client.query('ROLLBACK');

@@ -48,9 +48,10 @@ class ActivityService {
       CREATE TABLE IF NOT EXISTS activity_events (
         id BIGSERIAL PRIMARY KEY,
         event_type TEXT NOT NULL CHECK (event_type IN
-          ('purchase','tournament_join','game_complete','reward_claim')),
+          ('purchase','tournament_join','game_complete','reward_claim','user_join')),
         actor TEXT NOT NULL,
         event_text TEXT NOT NULL,
+        badge TEXT,
         user_id BIGINT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
@@ -59,6 +60,24 @@ class ActivityService {
       CREATE INDEX IF NOT EXISTS idx_activity_events_created
       ON activity_events (created_at DESC)
     `);
+
+    // --- upgrades for tables created by an earlier version ---
+    // A short, bold highlight rendered as a chip beside the text
+    // (e.g. "Question 12"). Nullable: most events don't have one.
+    await pool.query(`
+      ALTER TABLE activity_events ADD COLUMN IF NOT EXISTS badge TEXT
+    `);
+    // 'user_join' was added after the first release, so the original
+    // CHECK constraint would reject it. Rebuild the constraint.
+    await pool.query(`
+      ALTER TABLE activity_events DROP CONSTRAINT IF EXISTS activity_events_event_type_check
+    `);
+    await pool.query(`
+      ALTER TABLE activity_events ADD CONSTRAINT activity_events_event_type_check
+      CHECK (event_type IN
+        ('purchase','tournament_join','game_complete','reward_claim','user_join'))
+    `);
+
     this._schemaReady = true;
   }
 
@@ -74,19 +93,21 @@ class ActivityService {
       await this.ensureSchema();
 
       const userResult = await pool.query(
-        'SELECT username FROM users WHERE id = $1', [userId]
+        'SELECT username, city FROM users WHERE id = $1', [userId]
       );
       // No username, no event. We never fall back to real names.
       const username = userResult.rows[0]?.username;
       if (!username) return;
 
-      const text = await this._composeText(type, extra);
-      if (!text) return;
+      const composed = await this._composeText(type, {
+        ...extra, city: extra.city || userResult.rows[0]?.city || null
+      });
+      if (!composed || !composed.text) return;
 
       await pool.query(
-        `INSERT INTO activity_events (event_type, actor, event_text, user_id)
-         VALUES ($1, $2, $3, $4)`,
-        [type, username, text, userId]
+        `INSERT INTO activity_events (event_type, actor, event_text, badge, user_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [type, username, composed.text, composed.badge || null, userId]
       );
 
       // Invalidate the read cache so the next poll sees this event
@@ -107,15 +128,24 @@ class ActivityService {
     }
   }
 
+  // Returns { text, badge } — `badge` is an optional short highlight the
+  // ticker renders as a bold chip (e.g. "Question 12").
   async _composeText(type, extra) {
     switch (type) {
+      case 'user_join': {
+        // "<username> from Abuja just joined What's Up Trivia"
+        const city = (extra.city || '').trim();
+        return { text: city
+          ? `from ${city} just joined What\u2019s Up Trivia`
+          : `just joined What\u2019s Up Trivia` };
+      }
       case 'purchase': {
-        // "username purchased 3 tokens / 7 tokens / 15 tokens"
-        return extra.games ? `purchased ${extra.games} tokens` : 'purchased tokens';
+        // "<username> purchased 3 tokens"
+        return { text: extra.games ? `purchased ${extra.games} tokens` : 'purchased tokens' };
       }
       case 'tournament_join': {
-        // paid: "username purchased 'Name' tournament entry"
-        // free: "username joined 'Name' tournament"
+        // paid: "purchased '<name>' tournament entry"
+        // free: "joined '<name>' tournament"
         let name = null;
         if (extra.tournamentId) {
           try {
@@ -127,19 +157,21 @@ class ActivityService {
           } catch (e) { /* fall through to generic */ }
         }
         if (extra.paid) {
-          return name ? `purchased '${name}' tournament entry` : 'purchased a tournament entry';
+          return { text: name ? `purchased '${name}' tournament entry` : 'purchased a tournament entry' };
         }
-        return name ? `joined '${name}' tournament` : 'joined a tournament';
+        return { text: name ? `joined '${name}' tournament` : 'joined a tournament' };
       }
       case 'game_complete': {
-        // "username completed a Classic game · Level: Q<n>"
+        // "<username> completed a Classic game" + chip "Question 12"
         const q = Math.min(Math.max(parseInt(extra.questionNumber) || 1, 1), 15);
         const kind = extra.tournamentGame ? 'a tournament game' : 'a Classic game';
-        const trophy = extra.grandPrize ? ' 🏆' : '';
-        return `completed ${kind} · Level: Q${extra.grandPrize ? 15 : q}${trophy}`;
+        if (extra.grandPrize) {
+          return { text: `completed ${kind}`, badge: 'All 15 questions \uD83C\uDFC6' };
+        }
+        return { text: `completed ${kind}`, badge: `Question ${q}` };
       }
       case 'reward_claim':
-        return 'claimed a leaderboard reward';
+        return { text: 'claimed a leaderboard reward' };
       default:
         return null;
     }
@@ -165,7 +197,7 @@ class ActivityService {
     // Rolling 72h window — the site ticker cycles through this pool
     // continuously, so old-but-recent activity keeps the feed alive.
     const result = await pool.query(`
-      SELECT id, event_type, actor, event_text, created_at
+      SELECT id, event_type, actor, event_text, badge, created_at
       FROM activity_events
       WHERE created_at > NOW() - INTERVAL '${WINDOW_HOURS} hours'
       ORDER BY created_at DESC
@@ -177,6 +209,7 @@ class ActivityService {
       type: r.event_type,
       actor: r.actor,
       text: r.event_text,
+      badge: r.badge || null,
       at: new Date(r.created_at).toISOString()
     }));
 
