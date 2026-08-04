@@ -278,6 +278,27 @@ body.theme-light .ticker-item .tk-time{color:var(--ink-faint)}
 .social-row svg{width:17px;height:17px}
 body.theme-light .social-row a{border-color:rgba(30,58,95,.2);color:var(--ink-soft)}
 
+/* ---------- analytics consent bar ---------- */
+.consent-bar{position:fixed;left:50%;bottom:16px;transform:translate(-50%,140%);z-index:70;
+  width:min(660px,calc(100vw - 24px));display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  background:rgba(10,22,40,.96);border:1px solid rgba(212,175,55,.32);border-radius:16px;
+  padding:14px 18px;box-shadow:0 18px 44px rgba(0,0,0,.45);backdrop-filter:blur(8px);
+  transition:transform .35s cubic-bezier(.2,.8,.3,1)}
+.consent-bar.in{transform:translate(-50%,0)}
+.consent-bar p{margin:0;flex:1 1 300px;font-size:13px;line-height:1.55;color:#C3D2E6}
+.consent-bar a{color:var(--gold-bright)}
+.consent-actions{display:flex;gap:9px;flex-shrink:0}
+body.theme-light .consent-bar{background:rgba(255,255,255,.98);border-color:rgba(30,58,95,.18)}
+body.theme-light .consent-bar p{color:var(--ink-soft)}
+@media(max-width:560px){
+  .consent-bar{padding:13px 15px;gap:11px}
+  .consent-bar p{font-size:12.5px;flex-basis:100%}
+  .consent-actions{width:100%}
+  .consent-actions .btn{flex:1}
+}
+/* keep the activity ticker clear of the consent bar on small screens */
+@media(max-width:560px){.ticker{bottom:96px}}
+
 </style>
 <script type="application/ld+json">
 {
@@ -655,6 +676,17 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
   //   ships. Until then the social-proof ticker stays dormant —
   //   it never invents events.
   C.FEATURES = { REVIEWS_API: true, CONTENT_API: true, ACTIVITY_API: true };
+
+  // --- Analytics ---------------------------------------------------
+  // Paste your IDs here and they apply site-wide. Empty string = that
+  // tool is simply never loaded (no script, no cookie, no request).
+  // See ANALYTICS.md for where to find each ID.
+  C.ANALYTICS = {
+    GA4_ID: 'G-TPP3PPZP15',// What's Up Trivia — Main site (GA4)
+    META_PIXEL_ID: '',     // e.g. '1234567890'
+    REQUIRE_CONSENT: true, // false = track immediately, no banner (see ANALYTICS.md)
+    DEBUG: false           // true = log every event to the console instead of sending
+  };
 })(window.WUT_CONFIG);
 
 /* ---------- tiny helpers ---------- */
@@ -902,6 +934,201 @@ document.addEventListener('DOMContentLoaded', function () {
     poll();
     setInterval(poll, POLL_MS);
   }, 4000); // let the page breathe first
+})();
+
+
+/* ============================================================
+   ANALYTICS — measurement for the marketing site.
+
+   Design rules, in order of importance:
+   1. Nothing loads until there's an ID to load it with, and — by
+      default — until the visitor has consented. No ID, no consent,
+      no third-party request at all.
+   2. Never on preview hosts. Data from demo./onrender would poison
+      the numbers you make decisions with.
+   3. Never block paint. Scripts load after `load`, async.
+   4. Track *decisions*, not vanity. The events below are the ones
+      you can optimise ad spend against.
+
+   Public helper: wutTrack('event_name', { key: value })
+   ============================================================ */
+(function () {
+  var C = window.WUT_CONFIG;
+  var A = C.ANALYTICS || {};
+  var host = location.hostname;
+  var isProdHost = /(^|\.)whatsuptrivia\.com\.ng$/.test(host) &&
+                   !/^demo\./.test(host);
+  var queue = [];
+  var loaded = false;
+
+  // Do Not Track is honoured unconditionally — it costs us little and
+  // it is the difference between measuring people and tracking them.
+  var dnt = navigator.doNotTrack === '1' || window.doNotTrack === '1' ||
+            navigator.msDoNotTrack === '1';
+
+  function haveAnyId() { return !!(A.GA4_ID || A.META_PIXEL_ID); }
+
+  function consentGiven() {
+    if (!A.REQUIRE_CONSENT) return true;
+    try { return localStorage.getItem('wut_analytics_consent') === 'yes'; }
+    catch (e) { return false; }
+  }
+  function consentDeclined() {
+    try { return localStorage.getItem('wut_analytics_consent') === 'no'; }
+    catch (e) { return false; }
+  }
+
+  function loadScripts() {
+    if (loaded) return;
+    loaded = true;
+
+    if (A.GA4_ID) {
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function () { window.dataLayer.push(arguments); };
+      gtag('js', new Date());
+      // send_page_view is on by default; we add the platform dimension
+      gtag('config', A.GA4_ID, { anonymize_ip: true });
+      var g = document.createElement('script');
+      g.async = true;
+      g.src = 'https://www.googletagmanager.com/gtag/js?id=' + A.GA4_ID;
+      document.head.appendChild(g);
+    }
+
+    if (A.META_PIXEL_ID) {
+      /* eslint-disable */
+      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+      n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+      t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+      (window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+      /* eslint-enable */
+      fbq('init', A.META_PIXEL_ID);
+      fbq('track', 'PageView');
+    }
+
+    // flush anything that happened before consent/load
+    queue.forEach(function (ev) { send(ev[0], ev[1]); });
+    queue = [];
+  }
+
+  // Meta has a fixed vocabulary for its standard events; anything else
+  // goes through trackCustom so it still appears in Events Manager.
+  var META_STANDARD = { Lead: 1, CompleteRegistration: 1, Contact: 1, ViewContent: 1 };
+  var META_MAP = {
+    play_click: 'Lead',
+    review_submitted: 'Contact',
+    demo_completed: 'ViewContent'
+  };
+
+  function send(name, params) {
+    if (A.DEBUG) { console.log('[analytics]', name, params || {}); return; }
+    if (window.gtag) gtag('event', name, params || {});
+    if (window.fbq) {
+      var mapped = META_MAP[name];
+      if (mapped && META_STANDARD[mapped]) fbq('track', mapped, params || {});
+      else fbq('trackCustom', name, params || {});
+    }
+  }
+
+  // The one public entry point. Safe to call any time, from any page —
+  // before consent it queues, without IDs it no-ops.
+  window.wutTrack = function (name, params) {
+    if (A.DEBUG) { console.log('[analytics]', name, params || {}); return; }
+    if (!isProdHost || dnt || !haveAnyId()) return;
+    if (!loaded) { queue.push([name, params]); return; }
+    send(name, params);
+  };
+
+  /* ---------- consent banner ---------- */
+  function showConsent() {
+    var bar = document.createElement('div');
+    bar.className = 'consent-bar';
+    bar.setAttribute('role', 'dialog');
+    bar.setAttribute('aria-label', 'Analytics consent');
+    bar.innerHTML =
+      '<p>We use anonymous analytics to understand how people use this site. ' +
+      'No personal data is sold or shared. ' +
+      '<a href="/privacy">Privacy Policy</a></p>' +
+      '<div class="consent-actions">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-consent="no">Decline</button>' +
+      '<button type="button" class="btn btn-gold btn-sm" data-consent="yes">Accept</button>' +
+      '</div>';
+    document.body.appendChild(bar);
+    requestAnimationFrame(function () { bar.classList.add('in'); });
+    $all('[data-consent]', bar).forEach(function (b) {
+      b.addEventListener('click', function () {
+        var answer = b.getAttribute('data-consent');
+        try { localStorage.setItem('wut_analytics_consent', answer); } catch (e) {}
+        bar.classList.remove('in');
+        setTimeout(function () { bar.remove(); }, 300);
+        if (answer === 'yes') { loadScripts(); trackPageContext(); }
+        else { queue = []; }
+      });
+    });
+  }
+
+  function trackPageContext() {
+    // one enriched page_view so you can segment by page without regex
+    var page = document.body.getAttribute('data-page') ||
+               (location.pathname === '/' ? 'home' : location.pathname.replace(/^\//, ''));
+    window.wutTrack('page_context', { page: page });
+  }
+
+  /* ---------- automatic instrumentation ----------
+     Delegated, so it covers buttons rendered later by page scripts
+     (demo end screen, review cards, tournament card, and so on). */
+  function instrument() {
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a, button');
+      if (!a) return;
+
+      // Platform destinations = the conversion that matters most
+      var href = a.getAttribute('href') || '';
+      if (/play\.whatsuptrivia\.com\.ng/.test(href)) {
+        window.wutTrack('play_click', { platform: 'web' });
+      } else if (/wa\.me\//.test(href)) {
+        window.wutTrack('play_click', { platform: 'whatsapp' });
+      } else if (/t\.me\//.test(href)) {
+        window.wutTrack('play_click', { platform: 'telegram' });
+      } else if (/instagram\.com|facebook\.com|x\.com|twitter\.com/.test(href)) {
+        window.wutTrack('social_click', { network: href.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] });
+      } else if (/sisystems\.ng/.test(href)) {
+        window.wutTrack('outbound_click', { to: 'summerisland' });
+      }
+
+      // Intent signals
+      if (a.hasAttribute('data-open-picker')) {
+        window.wutTrack('picker_opened', {
+          location: a.closest('.site-header') ? 'header'
+                  : a.closest('.hero') ? 'hero'
+                  : a.closest('#cta') ? 'footer_cta' : 'page'
+        });
+      }
+    }, true);
+
+    // Scroll depth: did they actually read the page?
+    var marks = [25, 50, 75, 100], hit = {};
+    addEventListener('scroll', function () {
+      var h = document.documentElement;
+      var pct = Math.round(((h.scrollTop + innerHeight) / h.scrollHeight) * 100);
+      marks.forEach(function (m) {
+        if (pct >= m && !hit[m]) { hit[m] = 1; window.wutTrack('scroll_depth', { percent: m }); }
+      });
+    }, { passive: true });
+  }
+
+  // ---- boot ----
+  if (!isProdHost || dnt || !haveAnyId()) {
+    // Still expose wutTrack (it no-ops) so page code can call it freely.
+    if (A.DEBUG) instrument();
+    return;
+  }
+  addEventListener('load', function () {
+    instrument();
+    if (consentGiven()) { loadScripts(); trackPageContext(); }
+    else if (!consentDeclined() && A.REQUIRE_CONSENT) { setTimeout(showConsent, 1200); }
+    else if (!A.REQUIRE_CONSENT) { loadScripts(); trackPageContext(); }
+  });
 })();
 
 document.getElementById('fyear').textContent = new Date().getFullYear();
