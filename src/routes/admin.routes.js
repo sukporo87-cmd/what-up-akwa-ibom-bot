@@ -4019,24 +4019,48 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         // The old query looked for transaction_type = 'purchase' inside
         // `transactions`, a value nothing ever writes, so Total Purchases
         // always rendered as ₦0.
+        // Winnings = prizes AWARDED (rows are inserted 'pending' and marked
+        // paid later), split the same way spend is, so the profile tells a
+        // complete story on both sides of the ledger.
         const financialResult = await pool.query(`
             SELECT
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')), 0) as total_winnings,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'prize'), 0) as classic_winnings,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'tournament_prize'), 0) as tournament_winnings,
                 COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as prize_count,
+                COUNT(*) FILTER (WHERE transaction_type = 'prize') as classic_prize_count,
+                COUNT(*) FILTER (WHERE transaction_type = 'tournament_prize') as tournament_prize_count,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize','tournament_prize') AND payout_status IN ('paid','confirmed')), 0) as winnings_paid,
                 MAX(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as highest_win
             FROM transactions
             WHERE user_id = $1
         `, [userId]);
 
-        // Only 'success' rows are money — pending and failed attempts are not.
+        // Everything the player has actually SPENT, from both places money
+        // enters the platform: credit packages and tournament entries
+        // (including rebuys). Only 'success' rows count — pending and failed
+        // attempts are not money. Note the column names differ between the
+        // two tables: `status` vs `payment_status`.
         const purchaseResult = await pool.query(`
             SELECT
-                COALESCE(SUM(amount), 0) as total_purchases,
-                COUNT(*) as purchase_count,
-                COALESCE(SUM(games_purchased), 0) as credits_bought,
-                MAX(paid_at) as last_purchase_at
-            FROM payment_transactions
-            WHERE user_id = $1 AND status = 'success'
+                COALESCE(c.spend, 0) + COALESCE(t.spend, 0) as total_purchases,
+                COALESCE(c.spend, 0) as credit_spend,
+                COALESCE(t.spend, 0) as tournament_spend,
+                COALESCE(c.cnt, 0) + COALESCE(t.cnt, 0) as purchase_count,
+                COALESCE(c.cnt, 0) as credit_payment_count,
+                COALESCE(t.cnt, 0) as tournament_entry_count,
+                COALESCE(c.credits, 0) as credits_bought,
+                GREATEST(COALESCE(c.last_at, 'epoch'::timestamptz),
+                         COALESCE(t.last_at, 'epoch'::timestamptz)) as last_purchase_at
+            FROM
+                (SELECT SUM(amount) as spend, COUNT(*) as cnt,
+                        SUM(games_purchased) as credits, MAX(paid_at) as last_at
+                 FROM payment_transactions
+                 WHERE user_id = $1 AND status = 'success') c
+            CROSS JOIN
+                (SELECT SUM(amount) as spend, COUNT(*) as cnt, MAX(paid_at) as last_at
+                 FROM tournament_entry_payments
+                 WHERE user_id = $1 AND payment_status = 'success') t
         `, [userId]);
         
         // Get referral stats
