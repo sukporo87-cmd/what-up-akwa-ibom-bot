@@ -4012,15 +4012,31 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
             WHERE user_id = $1
         `, [userId]);
         
-        // Get financial stats
+        // Get financial stats.
+        // NOTE: winnings and purchases live in DIFFERENT tables.
+        //   transactions         -> prizes owed/paid to the player
+        //   payment_transactions -> credit purchases made by the player
+        // The old query looked for transaction_type = 'purchase' inside
+        // `transactions`, a value nothing ever writes, so Total Purchases
+        // always rendered as ₦0.
         const financialResult = await pool.query(`
-            SELECT 
+            SELECT
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')), 0) as total_winnings,
-                COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'purchase'), 0) as total_purchases,
                 COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as prize_count,
                 MAX(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as highest_win
             FROM transactions
             WHERE user_id = $1
+        `, [userId]);
+
+        // Only 'success' rows are money — pending and failed attempts are not.
+        const purchaseResult = await pool.query(`
+            SELECT
+                COALESCE(SUM(amount), 0) as total_purchases,
+                COUNT(*) as purchase_count,
+                COALESCE(SUM(games_purchased), 0) as credits_bought,
+                MAX(paid_at) as last_purchase_at
+            FROM payment_transactions
+            WHERE user_id = $1 AND status = 'success'
         `, [userId]);
         
         // Get referral stats
@@ -4061,7 +4077,7 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
             success: true,
             user,
             stats: statsResult.rows[0],
-            financial: financialResult.rows[0],
+            financial: { ...financialResult.rows[0], ...purchaseResult.rows[0] },
             referrals: referralResult.rows[0],
             recentGames: recentGamesResult.rows,
             recentTransactions: recentTransactionsResult.rows,

@@ -3682,7 +3682,7 @@ function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
           <h4 style="margin-bottom: 15px;">💰 Financial</h4>
           <div class="detail-row"><span class="detail-label">Total Winnings</span><span class="detail-value" style="color: #059669; font-weight: bold;">₦${parseFloat(financial.total_winnings || 0).toLocaleString()}</span></div>
           <div class="detail-row"><span class="detail-label">Highest Win</span><span class="detail-value">₦${parseFloat(financial.highest_win || 0).toLocaleString()}</span></div>
-          <div class="detail-row"><span class="detail-label">Total Purchases</span><span class="detail-value">₦${parseFloat(financial.total_purchases || 0).toLocaleString()}</span></div>
+          <div class="detail-row"><span class="detail-label">Total Purchases</span><span class="detail-value">₦${parseFloat(financial.total_purchases || 0).toLocaleString()}${Number(financial.purchase_count) ? ` <span style="opacity:.65;font-weight:400">(${financial.purchase_count} payment${Number(financial.purchase_count) === 1 ? '' : 's'}, ${financial.credits_bought} credits)</span>` : ''}</span></div>
           <div class="detail-row"><span class="detail-label">Games Remaining</span><span class="detail-value">${user.games_remaining || 0}</span></div>
           <div class="detail-row"><span class="detail-label">Referrals</span><span class="detail-value">${referrals.referral_count || 0}</span></div>
         </div>
@@ -6162,5 +6162,6 @@ function wutBadge(o){
        + wutIcon(p)+' '+wutLabel(p)+'</span>';
 }
 </script>
+  <script src="/admin-nav.js"></script>
 </body>
 </html>

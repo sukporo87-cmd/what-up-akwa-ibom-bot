@@ -1467,16 +1467,16 @@ class GameService {
                 WHERE id = $3
             `, [winningsToAdd, session.current_question, user.id]);
 
-            // Social proof event (site ticker) — Classic and tournament
-            // games only; practice completions would just be noise.
+            // Social proof event (site ticker). Every completed game counts,
+            // practice included — a busy practice mode is still evidence the
+            // platform is alive, which is the whole point of social proof.
             // Fire-and-forget: never awaited, can never throw.
-            if (session.game_type !== 'practice') {
-                activityService.record('game_complete', user.id, {
-                    questionNumber: questionNumber,
-                    grandPrize: !!wonGrandPrize,
-                    tournamentGame: !!session.is_tournament_game
-                });
-            }
+            activityService.record('game_complete', user.id, {
+                questionNumber: questionNumber,
+                grandPrize: !!wonGrandPrize,
+                tournamentGame: !!session.is_tournament_game,
+                practice: session.game_type === 'practice'
+            });
 
             // Create payout transaction for classic mode wins
             // Duplicate prevention: Redis lock + session status guard + DB unique index

@@ -164,7 +164,9 @@ class ActivityService {
       case 'game_complete': {
         // "<username> completed a Classic game" + chip "Question 12"
         const q = Math.min(Math.max(parseInt(extra.questionNumber) || 1, 1), 15);
-        const kind = extra.tournamentGame ? 'a tournament game' : 'a Classic game';
+        const kind = extra.practice ? 'a practice round'
+                   : extra.tournamentGame ? 'a tournament game'
+                   : 'a Classic game';
         if (extra.grandPrize) {
           return { text: `completed ${kind}`, badge: 'All 15 questions \uD83C\uDFC6' };
         }
