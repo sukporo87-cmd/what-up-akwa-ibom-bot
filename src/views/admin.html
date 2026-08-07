@@ -428,6 +428,24 @@
       border-bottom: 1px solid #f0f0f0;
     }
     .detail-row:last-child { border-bottom: none; }
+    /* ---- profile financial card ---- */
+    .fin-card { background:#fffbeb; border:1px solid #fde68a; padding:18px 20px;
+      border-radius:12px; margin-bottom:20px; }
+    .fin-title { margin:0 0 14px; font-size:15px; font-weight:700; color:#78350f; }
+    .fin-row { padding:9px 0; border-bottom:1px solid rgba(180,140,20,.16); }
+    .fin-row:last-child { border-bottom:none; padding-bottom:0; }
+    .fin-head { display:flex; align-items:baseline; justify-content:space-between; gap:14px; }
+    .fin-label { font-size:13px; font-weight:500; color:#92722a; white-space:nowrap; }
+    .fin-value { font-size:15px; font-weight:700; color:#1f2937; text-align:right;
+      font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .fin-row.is-positive .fin-value { color:#047857; }
+    .fin-row.is-negative .fin-value { color:#b91c1c; }
+    .fin-sub { margin-top:3px; font-size:11.5px; color:#a1804a; line-height:1.5; text-align:right; }
+    .fin-warn { color:#b45309; font-weight:600; }
+    @media (max-width:520px) {
+      .fin-head { flex-direction:column; align-items:flex-start; gap:2px; }
+      .fin-value, .fin-sub { text-align:left; }
+    }
     .detail-label { font-weight: 500; color: var(--text-gray); }
     .detail-value { color: var(--text-dark); font-weight: 500; }
 
@@ -3678,31 +3696,50 @@ function renderUserProfile(data, deviceData = { devices: [], ips: [] }) {
       
       <!-- Right Column -->
       <div>
-        <div style="background: #fef3c7; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-          <h4 style="margin-bottom: 15px;">💰 Financial</h4>
-          <div class="detail-row"><span class="detail-label">Total Winnings</span><span class="detail-value" style="color: #059669; font-weight: bold;">₦${parseFloat(financial.total_winnings || 0).toLocaleString()}${(() => {
-            // Split by source, mirroring the spend breakdown below.
-            const bits = [];
+        <div class="fin-card">
+          <h4 class="fin-title">💰 Financial</h4>
+          ${(() => {
+            // Rendered as its own small layout rather than generic detail-rows:
+            // these figures carry breakdowns, and a two-column row forces the
+            // label and the numbers to wrap into each other.
+            const n = v => '\u20A6' + parseFloat(v || 0).toLocaleString();
+            const won = parseFloat(financial.total_winnings || 0);
+            const paid = parseFloat(financial.winnings_paid || 0);
+            const owed = won - paid;
             const cw = parseFloat(financial.classic_winnings || 0);
             const tw = parseFloat(financial.tournament_winnings || 0);
-            if (cw) bits.push(`₦${cw.toLocaleString()} classic`);
-            if (tw) bits.push(`₦${tw.toLocaleString()} tournaments`);
-            return bits.length > 1 ? ` <span style="opacity:.65;font-weight:400">(${bits.join(' · ')})</span>` : '';
-          })()}</span></div>
-          <div class="detail-row"><span class="detail-label">— of which paid out</span><span class="detail-value">₦${parseFloat(financial.winnings_paid || 0).toLocaleString()}${parseFloat(financial.total_winnings || 0) > parseFloat(financial.winnings_paid || 0) ? ` <span style="opacity:.65;font-weight:400">(₦${(parseFloat(financial.total_winnings || 0) - parseFloat(financial.winnings_paid || 0)).toLocaleString()} outstanding)</span>` : ''}</span></div>
-          <div class="detail-row"><span class="detail-label">Highest Win</span><span class="detail-value">₦${parseFloat(financial.highest_win || 0).toLocaleString()}</span></div>
-          <div class="detail-row"><span class="detail-label">Total Spend</span><span class="detail-value">₦${parseFloat(financial.total_purchases || 0).toLocaleString()}${(() => {
-            // Break the figure down so it is obvious what the player bought:
-            // credit packages and/or tournament entries.
-            const bits = [];
             const payments = Number(financial.credit_payment_count) || 0;
             const entries = Number(financial.tournament_entry_count) || 0;
-            if (payments) bits.push(`${payments} payment${payments === 1 ? '' : 's'}, ${financial.credits_bought} credits`);
-            if (entries) bits.push(`${entries} tournament entr${entries === 1 ? 'y' : 'ies'} ₦${parseFloat(financial.tournament_spend || 0).toLocaleString()}`);
-            return bits.length ? ` <span style="opacity:.65;font-weight:400">(${bits.join(' · ')})</span>` : '';
-          })()}</span></div>
-          <div class="detail-row"><span class="detail-label">Games Remaining</span><span class="detail-value">${user.games_remaining || 0}</span></div>
-          <div class="detail-row"><span class="detail-label">Referrals</span><span class="detail-value">${referrals.referral_count || 0}</span></div>
+            const spend = parseFloat(financial.total_purchases || 0);
+
+            const winParts = [];
+            if (cw) winParts.push(n(cw) + ' classic');
+            if (tw) winParts.push(n(tw) + ' tournaments');
+
+            const spendParts = [];
+            if (payments) spendParts.push(payments + ' payment' + (payments === 1 ? '' : 's') + ' \u00b7 ' + (financial.credits_bought || 0) + ' credits');
+            if (entries) spendParts.push(entries + ' tournament entr' + (entries === 1 ? 'y' : 'ies') + ' \u00b7 ' + n(financial.tournament_spend));
+
+            const row = (label, value, sub, cls) =>
+              '<div class="fin-row' + (cls ? ' ' + cls : '') + '">' +
+                '<div class="fin-head"><span class="fin-label">' + label + '</span>' +
+                '<span class="fin-value">' + value + '</span></div>' +
+                (sub ? '<div class="fin-sub">' + sub + '</div>' : '') +
+              '</div>';
+
+            return [
+              row('Total winnings', n(won), winParts.length > 1 ? winParts.join('&nbsp;&nbsp;\u00b7&nbsp;&nbsp;') : '', 'is-positive'),
+              row('Paid out', n(paid),
+                  owed > 0 ? '<span class="fin-warn">' + n(owed) + ' still outstanding</span>' : 'fully settled'),
+              row('Highest single win', n(financial.highest_win)),
+              row('Total spend', n(spend), spendParts.join('&nbsp;&nbsp;\u00b7&nbsp;&nbsp;')),
+              row('Net position', (won - spend >= 0 ? '+' : '\u2212') + n(Math.abs(won - spend)),
+                  'winnings minus spend', (won - spend >= 0 ? 'is-positive' : 'is-negative')),
+              row('Credits remaining', (user.games_remaining || 0)),
+              row('Referrals', (referrals.referral_count || 0))
+            ].join('');
+          })()}
+        </div>
         </div>
         
         ${achievements.length > 0 ? `

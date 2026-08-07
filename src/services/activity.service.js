@@ -48,7 +48,7 @@ class ActivityService {
       CREATE TABLE IF NOT EXISTS activity_events (
         id BIGSERIAL PRIMARY KEY,
         event_type TEXT NOT NULL CHECK (event_type IN
-          ('purchase','tournament_join','game_complete','reward_claim','user_join')),
+          ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy')),
         actor TEXT NOT NULL,
         event_text TEXT NOT NULL,
         badge TEXT,
@@ -75,7 +75,7 @@ class ActivityService {
     await pool.query(`
       ALTER TABLE activity_events ADD CONSTRAINT activity_events_event_type_check
       CHECK (event_type IN
-        ('purchase','tournament_join','game_complete','reward_claim','user_join'))
+        ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy'))
     `);
 
     this._schemaReady = true;
@@ -171,6 +171,24 @@ class ActivityService {
           return { text: `completed ${kind}`, badge: 'All 15 questions \uD83C\uDFC6' };
         }
         return { text: `completed ${kind}`, badge: `Question ${q}` };
+      }
+      case 'tournament_rebuy': {
+        // A rebuy is the strongest signal in the feed: someone liked it
+        // enough to go again. Phrase it so it reads as appetite, not spend.
+        let name = null;
+        if (extra.tournamentId) {
+          try {
+            const t = await pool.query(
+              'SELECT tournament_name FROM tournaments WHERE id = $1',
+              [extra.tournamentId]
+            );
+            name = t.rows[0]?.tournament_name || null;
+          } catch (e) { /* generic fallback below */ }
+        }
+        return {
+          text: name ? `went again in '${name}'` : 'went again in a tournament',
+          badge: 'Rebuy \uD83D\uDD01'
+        };
       }
       case 'reward_claim':
         return { text: 'claimed a leaderboard reward' };

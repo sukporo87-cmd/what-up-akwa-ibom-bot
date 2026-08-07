@@ -6,6 +6,7 @@
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 const { platformOf } = require('../utils/platform');
+const activityService = require('./activity.service');
 
 class PromoCodeService {
 
@@ -180,6 +181,10 @@ class PromoCodeService {
             
             logger.info(`🎟️ Promo code ${codeUpper} redeemed by user ${userId} for tournament ${tournamentId}`);
 
+            // Social proof event (site ticker). A code entry is still a join —
+            // it just didn't come through a payment gateway. Fire-and-forget.
+            activityService.record('tournament_join', userId, { tournamentId, paid: false });
+
             return {
                 success: true,
                 tokensRemaining,
@@ -311,6 +316,9 @@ class PromoCodeService {
             await client.query('COMMIT');
 
             logger.info(`🎟️ Promo code ${codeUpper} used for REBUY by user ${userId} in tournament ${tournamentId} (+${tokensToAdd} tokens)`);
+
+            // Social proof: a rebuy is a rebuy, gateway or code
+            activityService.record('tournament_rebuy', userId, { tournamentId });
 
             return {
                 success: true,

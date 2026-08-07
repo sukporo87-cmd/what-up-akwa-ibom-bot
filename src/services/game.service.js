@@ -30,6 +30,7 @@ const kycService = require('./kyc.service');
 const behavioralAnalysisService = require('./behavioral-analysis.service');
 const { logger } = require('../utils/logger');
 const activityService = require('./activity.service');
+const reviewInvites = require('./review-invite.service');
 const WhatsAppService = require('./whatsapp.service');
 const cloudinaryService = require('./cloudinary.service');
 const watchlistService = require('./watchlist.service');
@@ -1504,6 +1505,24 @@ class GameService {
                     VALUES ($1, $2, $3, $4, $5, $6, true, $7)
                 `, [session.tournament_id, user.id, session.id, finalScore, questionsAnswered, timeTaken, session.token_deducted]);
                 await ts.updateParticipantScore(user.id, session.tournament_id, finalScore, questionsAnswered, timeTaken);
+
+                // Ask for a review at the natural pause: the end of a
+                // completed entry (every 3rd tournament game). The service
+                // owns the policy — already reviewed, asked too recently, or
+                // asked twice already and it stays quiet. Never awaited.
+                try {
+                    const played = await pool.query(
+                        `SELECT games_played_in_tournament AS n
+                         FROM tournament_participants
+                         WHERE user_id = $1 AND tournament_id = $2`,
+                        [user.id, session.tournament_id]
+                    );
+                    reviewInvites.maybePrompt(user, messagingService, {
+                        gamesPlayed: parseInt(played.rows[0]?.n) || 0,
+                        tournamentName: (await ts.getTournamentById(session.tournament_id))?.tournament_name,
+                        trigger: 'tournament_entry_complete'
+                    });
+                } catch (e) { /* a review prompt must never affect the game */ }
             }
 
             // Cleanup Redis

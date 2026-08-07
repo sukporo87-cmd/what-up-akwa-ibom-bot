@@ -301,6 +301,9 @@ class TournamentService {
                 const rebuyResult = await this.processRebuyTokens(payment.tournament_id, payment.user_id, tokensToAdd);
                 
                 logger.info(`Tournament rebuy verified via ${gateway.getName()} (${platform}): ${reference} - User ${payment.user_id} got ${tokensToAdd} tokens`);
+
+                // Social proof: a rebuy is a repeat purchase of intent
+                activityService.record('tournament_rebuy', payment.user_id, { tournamentId: payment.tournament_id });
                 
                 return {
                     success: true, payment, tokensRemaining: rebuyResult.tokensRemaining,

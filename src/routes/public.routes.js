@@ -447,6 +447,7 @@ router.get('/tournaments/active', async (req, res) => {
 // the moderation view. Pending/rejected reviews do not exist here.
 // ============================================
 const ReviewsService = require('../services/reviews.service');
+const reviewInvites = require('../services/review-invite.service');
 const reviewsService = new ReviewsService();
 
 // Same convention the rest of the codebase uses for client IPs
@@ -500,9 +501,20 @@ router.post('/reviews', async (req, res) => {
             });
         }
 
-        const result = await reviewsService.submit(
-            req.body || {}, ip, req.headers['user-agent']
+        // An invite token (from the prompt we send players after a
+        // tournament entry) verifies the reviewer directly — no email
+        // needed, which is how WhatsApp/Telegram players get a badge.
+        const invitePlayer = await reviewInvites.resolveToken(
+            (req.body && req.body.invite_token) || null
         );
+
+        const result = await reviewsService.submit(
+            req.body || {}, ip, req.headers['user-agent'], invitePlayer
+        );
+
+        if (result.ok && invitePlayer) {
+            await reviewInvites.markUsed(invitePlayer.inviteId, result.id);
+        }
 
         if (!result.ok && result.code === 400) {
             return res.status(400).json({

@@ -345,6 +345,13 @@ body.theme-light .consent-bar p{color:var(--ink-soft)}
 /* keep the activity ticker clear of the consent bar on small screens */
 @media(max-width:560px){.ticker{bottom:96px}}
 
+/* ---------- invited-reviewer note ---------- */
+.invite-note{background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.42);
+  border-radius:13px;padding:13px 16px;margin-bottom:18px;font-size:14px;color:#8FE7B4;line-height:1.6}
+.invite-note b{color:#B6F2CE}
+body.theme-light .invite-note{background:rgba(37,211,102,.09);color:#166534;border-color:rgba(22,101,52,.3)}
+body.theme-light .invite-note b{color:#14532d}
+
 </style>
 <script type="application/ld+json">
 {
@@ -1134,6 +1141,19 @@ window.PAGE_CONTENT = {
    ============================================================ */
 (function () {
   var LIVE = window.WUT_CONFIG.FEATURES.REVIEWS_API;
+
+  // Players invited from the bot arrive with ?r=<token>. The token
+  // identifies them, so their review is verified without an email —
+  // which is the only way WhatsApp and Telegram players can earn the
+  // badge. Strip it from the address bar so it isn't shared onward.
+  var INVITE = (function () {
+    var m = /[?&]r=([A-Za-z0-9_-]{8,64})/.exec(location.search);
+    if (!m) return null;
+    try {
+      history.replaceState({}, '', location.pathname + location.hash);
+    } catch (e) {}
+    return m[1];
+  })();
   var list = $('#reviewList'), empty = $('#revEmpty'),
       agg = $('#aggCard'), form = $('#reviewForm'),
       offNote = $('#formOffNote'), submitBtn = $('#rSubmit');
@@ -1176,6 +1196,15 @@ window.PAGE_CONTENT = {
         (v && r.verified_badge.achievement ? '<div class="review-ach">🏅 ' + esc(r.verified_badge.achievement) + '</div>' : '') +
       '</article>';
     }).join('');
+  }
+
+  if (INVITE) {
+    var note = document.createElement('div');
+    note.className = 'invite-note';
+    note.innerHTML = '✓ <b>You’re verified.</b> We recognise you from the game, ' +
+      'so your review will carry a verified-player badge — no email needed.';
+    var formCard = $('#reviewForm');
+    if (formCard && formCard.parentNode) formCard.parentNode.insertBefore(note, formCard);
   }
 
   if (LIVE) {
@@ -1236,7 +1265,8 @@ window.PAGE_CONTENT = {
         rating: rating,
         title: $('#rTitle').value.trim() || undefined,
         body: text,
-        contact_email: email || undefined
+        contact_email: email || undefined,
+        invite_token: INVITE || undefined
       })
     }).then(function (r) {
       if (r.status === 201) {

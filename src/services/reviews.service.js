@@ -164,19 +164,34 @@ class ReviewsService {
   // SUBMIT — stores as pending; verification runs inline (it's one
   // indexed SELECT, not worth a queue).
   // --------------------------------------------
-  async submit(input, ip, userAgent) {
+  async submit(input, ip, userAgent, invitePlayer = null) {
     await this.ensureSchema();
 
     const v = this.validate(input);
     if (!v.valid) return { ok: false, code: 400, fields: v.fields };
 
-    if (await this.isDuplicate(v.clean.contact_email, ip)) {
+    // Invited players are identified individually, and the token is
+    // single-use, so the shared-IP duplicate rule must not block them —
+    // two friends in one house both getting invites is a good outcome,
+    // not a duplicate.
+    if (!invitePlayer && await this.isDuplicate(v.clean.contact_email, ip)) {
       return { ok: false, code: 409 };
     }
 
-    const match = v.clean.contact_email
-      ? await this.matchPlayer(v.clean.contact_email)
-      : null;
+    // Two routes to a verified badge:
+    //   1. an invite token (chat players — no email needed), or
+    //   2. an email that matches a player account (web players).
+    // The token wins when both are present: it is direct evidence.
+    let match = null;
+    if (invitePlayer) {
+      match = {
+        userId: invitePlayer.userId,
+        platform: invitePlayer.platform || v.clean.platform,
+        achievement: this.achievementFor(invitePlayer.bestQ)
+      };
+    } else if (v.clean.contact_email) {
+      match = await this.matchPlayer(v.clean.contact_email);
+    }
 
     const result = await pool.query(
       `INSERT INTO reviews
@@ -210,6 +225,15 @@ class ReviewsService {
   // If several accounts share an email (legacy chat emails), prefer
   // the web account, then most recently active.
   // --------------------------------------------
+  // One human-readable line, ≤ 60 chars, from the player's best result.
+  achievementFor(bestQuestion) {
+    const bestQ = parseInt(bestQuestion) || 0;
+    const line = bestQ >= 1
+      ? `Reached Q${bestQ} \u00b7 \u20A6${(PRIZE_LADDER[Math.min(bestQ, 15)] || 0).toLocaleString()} tier`
+      : 'Verified player';
+    return line.slice(0, 60);
+  }
+
   async matchPlayer(email) {
     const result = await pool.query(
       `SELECT id, username, platform,
@@ -223,15 +247,10 @@ class ReviewsService {
     if (!result.rows.length) return null;
 
     const u = result.rows[0];
-    const bestQ = parseInt(u.best_q) || 0;
-    const achievement = bestQ >= 1
-      ? `Reached Q${bestQ} \u00b7 \u20A6${(PRIZE_LADDER[Math.min(bestQ, 15)] || 0).toLocaleString()} tier`
-      : 'Verified player';
-
     return {
       userId: u.id,
       platform: u.platform || 'whatsapp',
-      achievement: achievement.slice(0, 60)
+      achievement: this.achievementFor(u.best_q)
     };
   }
 
