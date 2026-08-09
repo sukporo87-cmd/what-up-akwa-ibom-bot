@@ -613,6 +613,330 @@ class FinancialService {
     }
   }
 
+
+  // ============================================
+  // OPERATIONS — the views you check daily.
+  // These answer questions the old dashboard could not:
+  // what do we owe, how fast are we paying, which gateway is
+  // losing us money, and did that tournament actually earn?
+  // ============================================
+
+  // --- 1. Outstanding prize liability, bucketed by age ---
+  // A prize pending 9 days is a support ticket waiting to happen and a
+  // reputational risk. Nothing surfaced this before.
+  async getPayoutAging() {
+    try {
+      const result = await pool.query(`
+        SELECT
+          CASE
+            WHEN NOW() - t.created_at < INTERVAL '24 hours'  THEN '0-24h'
+            WHEN NOW() - t.created_at < INTERVAL '48 hours'  THEN '24-48h'
+            WHEN NOW() - t.created_at < INTERVAL '72 hours'  THEN '48-72h'
+            WHEN NOW() - t.created_at < INTERVAL '7 days'    THEN '3-7d'
+            ELSE '7d+'
+          END AS bucket,
+          COUNT(*) AS count,
+          COALESCE(SUM(t.amount), 0) AS amount
+        FROM transactions t
+        WHERE t.transaction_type IN ('prize','tournament_prize')
+          AND t.payout_status NOT IN ('paid','confirmed')
+        GROUP BY 1
+      `);
+
+      const order = ['0-24h', '24-48h', '48-72h', '3-7d', '7d+'];
+      const byBucket = {};
+      order.forEach(b => { byBucket[b] = { count: 0, amount: 0 }; });
+      result.rows.forEach(r => {
+        byBucket[r.bucket] = { count: parseInt(r.count), amount: parseFloat(r.amount) };
+      });
+
+      const oldest = await pool.query(`
+        SELECT MIN(created_at) AS oldest
+        FROM transactions
+        WHERE transaction_type IN ('prize','tournament_prize')
+          AND payout_status NOT IN ('paid','confirmed')
+      `);
+
+      const total = order.reduce((a, b) => a + byBucket[b].amount, 0);
+      const count = order.reduce((a, b) => a + byBucket[b].count, 0);
+
+      return {
+        buckets: order.map(b => ({ bucket: b, ...byBucket[b] })),
+        total_outstanding: total,
+        total_count: count,
+        // Anything past 72h has blown the published promise
+        breaching: byBucket['3-7d'].count + byBucket['7d+'].count,
+        oldest_pending_at: oldest.rows[0].oldest
+      };
+    } catch (error) {
+      logger.error(`Error getting payout aging: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 2. Time to payout, against the published 12-24h promise ---
+  async getPayoutSpeed(days = 30) {
+    try {
+      const result = await pool.query(`
+        SELECT
+          COUNT(*) AS paid_count,
+          AVG(EXTRACT(EPOCH FROM (paid_at - created_at)) / 3600) AS avg_hours,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (paid_at - created_at)) / 3600) AS median_hours,
+          PERCENTILE_CONT(0.9) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (paid_at - created_at)) / 3600) AS p90_hours,
+          COUNT(*) FILTER (
+            WHERE paid_at - created_at <= INTERVAL '24 hours') AS within_24h
+        FROM transactions
+        WHERE transaction_type IN ('prize','tournament_prize')
+          AND payout_status IN ('paid','confirmed')
+          AND paid_at IS NOT NULL
+          AND created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+      `);
+
+      const r = result.rows[0];
+      const paid = parseInt(r.paid_count) || 0;
+      return {
+        paid_count: paid,
+        avg_hours: r.avg_hours ? parseFloat(Number(r.avg_hours).toFixed(1)) : null,
+        median_hours: r.median_hours ? parseFloat(Number(r.median_hours).toFixed(1)) : null,
+        p90_hours: r.p90_hours ? parseFloat(Number(r.p90_hours).toFixed(1)) : null,
+        within_24h: parseInt(r.within_24h) || 0,
+        // The number that matters: are we keeping the promise on the page?
+        promise_kept_pct: paid > 0
+          ? parseFloat(((parseInt(r.within_24h) / paid) * 100).toFixed(1)) : null
+      };
+    } catch (error) {
+      logger.error(`Error getting payout speed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 3. Gateway health: every failed payment is someone who tried to pay ---
+  async getGatewayPerformance(days = 30) {
+    try {
+      const result = await pool.query(`
+        SELECT
+          COALESCE(gateway_used, 'unknown') AS gateway,
+          COUNT(*) AS attempts,
+          COUNT(*) FILTER (WHERE status = 'success') AS successes,
+          COALESCE(SUM(amount) FILTER (WHERE status = 'success'), 0) AS revenue,
+          AVG(EXTRACT(EPOCH FROM (paid_at - created_at))) FILTER (
+            WHERE status = 'success' AND paid_at IS NOT NULL) AS avg_settle_seconds
+        FROM payment_transactions
+        WHERE created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+        GROUP BY 1
+        ORDER BY revenue DESC
+      `);
+
+      return result.rows.map(r => {
+        const attempts = parseInt(r.attempts) || 0;
+        const successes = parseInt(r.successes) || 0;
+        return {
+          gateway: r.gateway,
+          attempts,
+          successes,
+          failures: attempts - successes,
+          success_rate: attempts > 0
+            ? parseFloat(((successes / attempts) * 100).toFixed(1)) : 0,
+          revenue: parseFloat(r.revenue) || 0,
+          avg_settle_seconds: r.avg_settle_seconds
+            ? Math.round(Number(r.avg_settle_seconds)) : null
+        };
+      });
+    } catch (error) {
+      logger.error(`Error getting gateway performance: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 4. Revenue by platform: WhatsApp vs Telegram vs Web ---
+  // The sharpest strategic signal in the dataset, and it was never surfaced.
+  async getRevenueByPlatform(startDate = null, endDate = null) {
+    try {
+      const f = this.buildDateFilter(startDate, endDate, 'created_at');
+      const result = await pool.query(`
+        SELECT platform, SUM(amount) AS revenue, COUNT(*) AS payments,
+               COUNT(DISTINCT user_id) AS payers
+        FROM (
+          SELECT COALESCE(platform,'unknown') AS platform, amount, user_id, created_at
+          FROM payment_transactions WHERE status = 'success'
+          UNION ALL
+          SELECT COALESCE(platform,'unknown'), amount, user_id, created_at
+          FROM tournament_entry_payments WHERE payment_status = 'success'
+        ) all_pay
+        ${f ? `WHERE ${f}` : ''}
+        GROUP BY platform
+        ORDER BY revenue DESC
+      `);
+      return result.rows.map(r => ({
+        platform: r.platform,
+        revenue: parseFloat(r.revenue) || 0,
+        payments: parseInt(r.payments) || 0,
+        payers: parseInt(r.payers) || 0
+      }));
+    } catch (error) {
+      logger.error(`Error getting revenue by platform: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 5. Tournament P&L: did that event make or lose money? ---
+  async getTournamentPnL(limit = 20) {
+    try {
+      const result = await pool.query(`
+        SELECT
+          t.id, t.tournament_name, t.status, t.start_date, t.end_date,
+          t.prize_pool AS advertised_pool,
+          COALESCE(e.entry_revenue, 0)  AS entry_revenue,
+          COALESCE(e.entry_count, 0)    AS entries,
+          COALESCE(e.rebuy_revenue, 0)  AS rebuy_revenue,
+          COALESCE(p.prizes_awarded, 0) AS prizes_awarded,
+          COALESCE(pt.participants, 0)  AS participants
+        FROM tournaments t
+        LEFT JOIN LATERAL (
+          SELECT SUM(amount) AS entry_revenue,
+                 COUNT(*) AS entry_count,
+                 SUM(amount) FILTER (WHERE reference LIKE 'TRNR-%') AS rebuy_revenue
+          FROM tournament_entry_payments
+          WHERE tournament_id = t.id AND payment_status = 'success'
+        ) e ON true
+        LEFT JOIN LATERAL (
+          SELECT SUM(amount) AS prizes_awarded
+          FROM transactions
+          WHERE tournament_id = t.id AND transaction_type = 'tournament_prize'
+        ) p ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS participants
+          FROM tournament_participants WHERE tournament_id = t.id
+        ) pt ON true
+        ORDER BY t.start_date DESC NULLS LAST
+        LIMIT ${parseInt(limit)}
+      `);
+
+      return result.rows.map(r => {
+        const revenue = parseFloat(r.entry_revenue) || 0;
+        const prizes = parseFloat(r.prizes_awarded) || 0;
+        const participants = parseInt(r.participants) || 0;
+        return {
+          id: r.id,
+          name: r.tournament_name,
+          status: r.status,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          participants,
+          entries: parseInt(r.entries) || 0,
+          entry_revenue: revenue,
+          rebuy_revenue: parseFloat(r.rebuy_revenue) || 0,
+          prizes_awarded: prizes,
+          advertised_pool: parseFloat(r.advertised_pool) || 0,
+          contribution: revenue - prizes,
+          margin_pct: revenue > 0
+            ? parseFloat((((revenue - prizes) / revenue) * 100).toFixed(1)) : null,
+          revenue_per_participant: participants > 0
+            ? parseFloat((revenue / participants).toFixed(2)) : 0
+        };
+      });
+    } catch (error) {
+      logger.error(`Error getting tournament P&L: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 6. Credit burn: bought vs actually played ---
+  // Unplayed credits are deferred revenue and an early churn signal.
+  async getCreditBurn() {
+    try {
+      const result = await pool.query(`
+        SELECT
+          COALESCE((SELECT SUM(games_purchased) FROM payment_transactions
+                    WHERE status = 'success'), 0) AS credits_bought,
+          COALESCE((SELECT COUNT(*) FROM game_sessions
+                    WHERE status = 'completed'
+                      AND COALESCE(game_type,'') <> 'practice'), 0) AS games_played,
+          COALESCE((SELECT SUM(games_remaining) FROM users), 0) AS credits_outstanding
+      `);
+      const r = result.rows[0];
+      const bought = parseInt(r.credits_bought) || 0;
+      const played = parseInt(r.games_played) || 0;
+      return {
+        credits_bought: bought,
+        games_played: played,
+        credits_outstanding: parseInt(r.credits_outstanding) || 0,
+        burn_rate_pct: bought > 0
+          ? parseFloat(((played / bought) * 100).toFixed(1)) : 0
+      };
+    } catch (error) {
+      logger.error(`Error getting credit burn: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- 7. Overview: the one screen to check each morning ---
+  async getOverview() {
+    try {
+      const periodRevenue = async (interval) => {
+        const q = await pool.query(`
+          SELECT COALESCE(SUM(amount), 0) AS total FROM (
+            SELECT amount, created_at FROM payment_transactions WHERE status = 'success'
+            UNION ALL
+            SELECT amount, created_at FROM tournament_entry_payments WHERE payment_status = 'success'
+          ) x WHERE created_at >= ${interval}
+        `);
+        return parseFloat(q.rows[0].total) || 0;
+      };
+
+      const [today, yesterday, wtd, mtd, prevMonthToDate] = await Promise.all([
+        periodRevenue("DATE_TRUNC('day', NOW())"),
+        periodRevenue("DATE_TRUNC('day', NOW()) - INTERVAL '1 day'"),
+        periodRevenue("DATE_TRUNC('week', NOW())"),
+        periodRevenue("DATE_TRUNC('month', NOW())"),
+        periodRevenue("DATE_TRUNC('month', NOW()) - INTERVAL '1 month'")
+      ]);
+
+      // yesterday's figure above includes today; subtract to isolate it
+      const yesterdayOnly = Math.max(0, yesterday - today);
+
+      const [aging, speed, burn] = await Promise.all([
+        this.getPayoutAging(),
+        this.getPayoutSpeed(30),
+        this.getCreditBurn()
+      ]);
+
+      const paidAllTime = await pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+        WHERE transaction_type IN ('prize','tournament_prize')
+          AND payout_status IN ('paid','confirmed')
+      `);
+      const revenueAllTime = await periodRevenue("'epoch'::timestamptz");
+
+      return {
+        revenue: {
+          today,
+          yesterday: yesterdayOnly,
+          day_change_pct: yesterdayOnly > 0
+            ? parseFloat((((today - yesterdayOnly) / yesterdayOnly) * 100).toFixed(1)) : null,
+          week_to_date: wtd,
+          month_to_date: mtd,
+          prev_month_to_date: Math.max(0, prevMonthToDate - mtd),
+          all_time: revenueAllTime
+        },
+        liability: {
+          outstanding: aging.total_outstanding,
+          count: aging.total_count,
+          breaching_72h: aging.breaching,
+          oldest_pending_at: aging.oldest_pending_at
+        },
+        payouts: speed,
+        credits: burn,
+        cash_position: revenueAllTime - parseFloat(paidAllTime.rows[0].total)
+      };
+    } catch (error) {
+      logger.error(`Error getting overview: ${error.message}`);
+      throw error;
+    }
+  }
+
   // ============================================
   // REVENUE TRENDS (For Charts)
   // ============================================

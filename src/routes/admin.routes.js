@@ -5458,6 +5458,102 @@ router.get('/api/financials/top-winners', authenticateAdmin, requireFinancialAcc
   }
 });
 
+// ============================================
+// FINANCIALS v2 — operational views
+// Each mirrors the existing pattern: admin auth, financial-access
+// permission, activity logged, { success, data }.
+// ============================================
+
+// One-screen morning check: revenue vs yesterday, liability, payout speed
+router.get('/api/financials/overview', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_financial_overview', {}, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getOverview();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading financial overview: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load overview' });
+  }
+});
+
+// Outstanding prize liability by age — anything past 72h breaches the promise
+router.get('/api/financials/payout-aging', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getPayoutAging();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading payout aging: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load payout aging' });
+  }
+});
+
+// How fast we actually pay, against the published 12-24h promise
+router.get('/api/financials/payout-speed', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getPayoutSpeed(parseInt(req.query.days) || 30);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading payout speed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load payout speed' });
+  }
+});
+
+// Payment success rate and settlement time per gateway
+router.get('/api/financials/gateways', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getGatewayPerformance(parseInt(req.query.days) || 30);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading gateway performance: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load gateway performance' });
+  }
+});
+
+// Revenue split by WhatsApp / Telegram / Web
+router.get('/api/financials/by-platform', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    const data = await financialService.getRevenueByPlatform(start_date, end_date);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading revenue by platform: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load platform revenue' });
+  }
+});
+
+// Per-tournament contribution: entries collected minus prizes awarded
+router.get('/api/financials/tournament-pnl', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getTournamentPnL(parseInt(req.query.limit) || 20);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading tournament P&L: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load tournament P&L' });
+  }
+});
+
+// Credits bought vs played — unplayed credits are deferred revenue
+router.get('/api/financials/credit-burn', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getCreditBurn();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading credit burn: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load credit burn' });
+  }
+});
+
+// Real cohort LTV — revenue per player grouped by registration month
+router.get('/api/financials/cohorts', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const data = await financialService.getCohortLTV(parseInt(req.query.months) || 6);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error(`Error loading cohorts: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load cohorts' });
+  }
+});
+
 // Financial KPIs
 router.get('/api/financials/kpis', authenticateAdmin, requireFinancialAccess, async (req, res) => {
   try {
