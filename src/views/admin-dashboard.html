@@ -1682,11 +1682,21 @@
         if (statCards.length >= 4) {
             statCards[0].querySelector('.stat-card-value').textContent = stats.pending_payouts || 0;
             statCards[1].querySelector('.stat-card-value').textContent = stats.active_games || 0;
-            statCards[2].querySelector('.stat-card-value').textContent = (stats.uptime_percentage || 99.2) + '%';
+            // Never fabricate a reliability figure. If the backend didn't supply
+            // uptime, show that it's unavailable rather than inventing 99.2%.
+            statCards[2].querySelector('.stat-card-value').textContent =
+                (stats.uptime_percentage != null ? stats.uptime_percentage + '%' : '—');
             statCards[3].querySelector('.stat-card-value').textContent = stats.cross_platform_users || 0;
             
             const change1 = statCards[0].querySelector('.stat-card-change');
-            if (change1) change1.textContent = '↓ ' + (stats.pending_payouts_change || 0) + ' from yesterday';
+            if (change1) {
+                // The arrow used to be hardcoded to ↓ regardless of direction.
+                const delta = Number(stats.pending_payouts_change || 0);
+                change1.textContent = delta === 0
+                    ? 'no change from yesterday'
+                    : (delta > 0 ? '↑ ' : '↓ ') + Math.abs(delta) + ' from yesterday';
+                change1.classList.toggle('negative', delta > 0);   // more pending is worse
+            }
             
             const change2 = statCards[1].querySelector('.stat-card-change');
             if (change2) change2.textContent = '↑ Active now';
@@ -1776,8 +1786,15 @@
         });
         
         // Show selected tab
-        document.getElementById(tabName + '-tab').style.display = 'block';
-        event.target.classList.add('active');
+        const panel = document.getElementById(tabName + '-tab');
+        if (panel) panel.style.display = 'block';
+        // Mark the button active by its own onclick target rather than the
+        // implicit global `event`, so this also works when called in code.
+        document.querySelectorAll('.analytics-tab-btn').forEach(btn => {
+            if ((btn.getAttribute('onclick') || '').indexOf("'" + tabName + "'") !== -1) {
+                btn.classList.add('active');
+            }
+        });
         
         // Load data for the tab
         loadTabData(tabName);
@@ -1794,6 +1811,17 @@
             switch(tabName) {
                 case 'user-growth':
                     await loadUserGrowth('daily');
+                    break;
+                // These three tabs had loader functions but no case, so they
+                // rendered empty tables forever. Wired up 9 Aug 2026.
+                case 'leaderboards':
+                    await loadLeaderboard('global');
+                    break;
+                case 'streaks':
+                    await loadStreakData();
+                    break;
+                case 'settings':
+                    await loadSettings();
                     break;
                 case 'referrals':
                     const [refStatsRes, topRefsRes] = await Promise.all([

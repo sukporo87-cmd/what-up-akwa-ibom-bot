@@ -456,76 +456,163 @@ class FinancialService {
   
   async getFinancialKPIs(startDate = null, endDate = null) {
     try {
-      const dateFilter = this.buildDateFilter(startDate, endDate, 'created_at');
-      
-      // Total users
-      const totalUsers = await pool.query(`
-        SELECT COUNT(*) as count FROM users
-        ${dateFilter ? `WHERE ${dateFilter}` : ''}
-      `);
-      
-      // Paying users (users who made at least one purchase)
+      // IMPORTANT — two different date questions live in this method, and
+      // conflating them was a real bug:
+      //   * "how much money moved in this period?"     -> filter transactions
+      //   * "how many players do we have?"             -> do NOT filter by
+      //     registration date, or a player who signed up last month and paid
+      //     this month vanishes from the denominator and conversion is
+      //     understated.
+      // So: revenue and payouts use the date range; population figures are
+      // as-of-now. Cohort analysis (revenue by registration month) is a
+      // separate report, not a filter on this one.
+      const txFilter = this.buildDateFilter(startDate, endDate, 'created_at');
+      const isRanged = !!txFilter;
+
+      // Population as of now — never filtered by registration date
+      const totalUsers = await pool.query(`SELECT COUNT(*) as count FROM users`);
+
+      // Players who paid *within the period* (or ever, if no range given)
       const payingUsers = await pool.query(`
-        SELECT COUNT(DISTINCT user_id) as count 
-        FROM payment_transactions 
-        WHERE status = 'success'
-        ${dateFilter ? `AND ${dateFilter}` : ''}
+        SELECT COUNT(DISTINCT user_id) as count FROM (
+          SELECT user_id FROM payment_transactions
+          WHERE status = 'success' ${txFilter ? `AND ${txFilter}` : ''}
+          UNION
+          SELECT user_id FROM tournament_entry_payments
+          WHERE payment_status = 'success' ${txFilter ? `AND ${txFilter}` : ''}
+        ) paid
       `);
-      
-      // Total token revenue
+
       const totalTokenRevenue = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as token_revenue
         FROM payment_transactions
         WHERE status = 'success'
-        ${dateFilter ? `AND ${dateFilter}` : ''}
+        ${txFilter ? `AND ${txFilter}` : ''}
       `);
-      
-      // Total tournament revenue
+
       const tournamentRevenue = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as tournament_revenue
         FROM tournament_entry_payments
         WHERE payment_status = 'success'
-        ${dateFilter ? `AND ${dateFilter}` : ''}
+        ${txFilter ? `AND ${txFilter}` : ''}
       `);
-      
-      // Total payouts
+
       const totalPayouts = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as total
         FROM transactions
         WHERE transaction_type IN ('prize', 'tournament_prize')
         AND payout_status IN ('paid', 'confirmed')
-        ${dateFilter ? `AND ${dateFilter}` : ''}
+        ${txFilter ? `AND ${txFilter}` : ''}
       `);
-      
-      // Calculate LTV (simple: total revenue / total users)
-      const totalRev = parseFloat(totalTokenRevenue.rows[0].token_revenue) + parseFloat(tournamentRevenue.rows[0].tournament_revenue);
+
+      // Prizes awarded but not yet paid — a liability, not an expense yet.
+      // Missing from the old KPIs entirely, which flattered net revenue.
+      const outstanding = await pool.query(`
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM transactions
+        WHERE transaction_type IN ('prize', 'tournament_prize')
+        AND payout_status NOT IN ('paid', 'confirmed')
+      `);
+
+      const totalRev = parseFloat(totalTokenRevenue.rows[0].token_revenue) +
+                       parseFloat(tournamentRevenue.rows[0].tournament_revenue);
       const users = parseInt(totalUsers.rows[0].count);
       const payers = parseInt(payingUsers.rows[0].count);
       const payoutTotal = parseFloat(totalPayouts.rows[0].total);
-      
+      const liability = parseFloat(outstanding.rows[0].total);
+
       const arpu = users > 0 ? (totalRev / users).toFixed(2) : 0;
       const arppu = payers > 0 ? (totalRev / payers).toFixed(2) : 0;
-      const ltv = users > 0 ? ((totalRev - payoutTotal) / users).toFixed(2) : 0;
       const conversionRate = users > 0 ? ((payers / users) * 100).toFixed(2) : 0;
-      
+
+      // NOT lifetime value. This is net revenue per registered user for the
+      // selected period — a snapshot. True LTV needs cohort retention and
+      // lives in getCohortLTV(). The old field was named `ltv` and read as
+      // if it were the real thing; it is kept below only for backward
+      // compatibility with any dashboard still reading it.
+      const netPerUser = users > 0 ? ((totalRev - payoutTotal) / users).toFixed(2) : 0;
+
+      // Gross margin: what proportion of revenue we keep after prizes.
+      // Previously called "house_edge" — a gambling term, and this is a
+      // skill-based competition platform. Same arithmetic, correct name.
+      const grossMargin = totalRev > 0
+        ? (((totalRev - payoutTotal) / totalRev) * 100).toFixed(2) : 0;
+
       return {
-        total_users: users,
-        paying_users: payers,
+        period: isRanged ? { start: startDate, end: endDate } : { start: null, end: null },
+        total_users: users,                     // as of now, not period-filtered
+        paying_users: payers,                   // paid within the period
         total_revenue: totalRev,
         total_payouts: payoutTotal,
+        outstanding_liability: liability,
         net_revenue: totalRev - payoutTotal,
         arpu: parseFloat(arpu),
         arppu: parseFloat(arppu),
-        ltv: parseFloat(ltv),
         conversion_rate: parseFloat(conversionRate),
-        house_edge: totalRev > 0 ? (((totalRev - payoutTotal) / totalRev) * 100).toFixed(2) : 0
+        net_revenue_per_user: parseFloat(netPerUser),
+        gross_margin: parseFloat(grossMargin),
+
+        // --- deprecated aliases, kept so nothing breaks mid-rebuild ---
+        ltv: parseFloat(netPerUser),            // @deprecated -> net_revenue_per_user
+        house_edge: parseFloat(grossMargin)     // @deprecated -> gross_margin
       };
     } catch (error) {
-      logger.error('Error getting financial KPIs:', error);
+      logger.error(`Error getting financial KPIs: ${error.message}`);
       throw error;
     }
   }
-  
+
+  // ============================================
+  // COHORT LTV — the real thing.
+  // Groups players by the month they registered and tracks cumulative
+  // revenue per member of that cohort. This is what tells you whether a
+  // player acquired in March is worth more than one acquired in June,
+  // which is the question "LTV" was pretending to answer.
+  // ============================================
+  async getCohortLTV(months = 6) {
+    try {
+      const result = await pool.query(`
+        WITH cohorts AS (
+          SELECT id AS user_id, DATE_TRUNC('month', created_at) AS cohort_month
+          FROM users
+          WHERE created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${parseInt(months)} months'
+        ),
+        spend AS (
+          SELECT user_id, amount, created_at FROM payment_transactions WHERE status = 'success'
+          UNION ALL
+          SELECT user_id, amount, created_at FROM tournament_entry_payments WHERE payment_status = 'success'
+        )
+        SELECT
+          TO_CHAR(c.cohort_month, 'YYYY-MM') AS cohort,
+          COUNT(DISTINCT c.user_id) AS cohort_size,
+          COUNT(DISTINCT s.user_id) AS payers,
+          COALESCE(SUM(s.amount), 0) AS revenue
+        FROM cohorts c
+        LEFT JOIN spend s ON s.user_id = c.user_id
+        GROUP BY c.cohort_month
+        ORDER BY c.cohort_month DESC
+      `);
+
+      return result.rows.map(r => {
+        const size = parseInt(r.cohort_size) || 0;
+        const payers = parseInt(r.payers) || 0;
+        const revenue = parseFloat(r.revenue) || 0;
+        return {
+          cohort: r.cohort,
+          cohort_size: size,
+          payers,
+          revenue,
+          revenue_per_user: size > 0 ? parseFloat((revenue / size).toFixed(2)) : 0,
+          revenue_per_payer: payers > 0 ? parseFloat((revenue / payers).toFixed(2)) : 0,
+          conversion_rate: size > 0 ? parseFloat(((payers / size) * 100).toFixed(2)) : 0
+        };
+      });
+    } catch (error) {
+      logger.error(`Error getting cohort LTV: ${error.message}`);
+      throw error;
+    }
+  }
+
   // ============================================
   // REVENUE TRENDS (For Charts)
   // ============================================
