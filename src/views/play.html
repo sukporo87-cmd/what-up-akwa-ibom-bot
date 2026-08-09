@@ -1223,9 +1223,24 @@ function relay(text){
   // "5 Main Menu" now appears on every post-game screen, and on web the chat
   // main menu is the wrong artefact entirely — the lobby IS the main menu.
   // Return there instead of printing a numbered list the player can't use.
-  if(/^\s*🏠?\s*MAIN MENU/.test(t) || (t.includes('MAIN MENU')&&t.includes('PLAY NOW'))){
-    closeAsk(); $('over').classList.remove('on');
-    if(!onDedicatedScreen()){ view('vLobby'); refresh(); }
+  // Any chat "menu listing" — the main menu, or the reset confirmation, both
+  // of which enumerate 1️⃣ Play Now / 2️⃣ How to Play / 4️⃣ Buy Games — is the
+  // wrong artefact on web: the lobby IS that menu. Detect the shape rather
+  // than one phrase, because matching "BUY GAMES" alone sent the player to
+  // the till whenever a menu happened to mention it.
+  const isMenuListing = t.includes('PLAY NOW') && /[1-5]️⃣/.test(text) &&
+                        (t.includes('MAIN MENU') || t.includes('GAME RESET') ||
+                         t.includes('START FRESH') || t.includes('WHAT WOULD YOU LIKE TO DO'));
+  if(isMenuListing){
+    // Navigate even when a dedicated screen is showing. The player asked to
+    // leave; staying on the last question until they refresh is the bug this
+    // guard exists to prevent. Verification screens are the one exception —
+    // those must not be yanked out from under a photo or CAPTCHA.
+    if(photoMode||capMode) return;
+    closeAsk();
+    $('over').classList.remove('on');
+    view('vLobby');
+    refresh();
     return;
   }
 
@@ -1308,7 +1323,7 @@ function relay(text){
 
   // "4️⃣ Buy Games" is a line in the MAIN MENU too — matching on it alone
   // turned "show me the menu" into "open the till".
-  if((t.includes('BUY GAMES')&&!t.includes('MAIN MENU'))||t.includes('SELECT PAYMENT PROCESSOR')){
+  if((t.includes('BUY GAMES')&&!isMenuListing)||t.includes('SELECT PAYMENT PROCESSOR')){
     // The chat buy flow leaked through — web has its own screen for this.
     openBuy(); return;
   }
