@@ -836,15 +836,36 @@ Type the code, or type SKIP to continue:`
   
   async handleEmailCollection(phone, message, user) {
     const input = message.trim();
-    
+
+    // When the prompt was raised by the pre-game email gate, the game the
+    // player asked for is carried in the state data. Whatever they answer,
+    // that game starts immediately — they never have to ask twice.
+    const stateData = await userService.getUserState(phone);
+    const pendingGame = stateData?.data?.pendingGame || null;
+
+    const resume = async () => {
+      if (!pendingGame) return;
+      const fresh = await userService.getUserByPhone(phone);
+      await gameService.startNewGame(
+        fresh || user,
+        pendingGame.gameMode || 'classic',
+        pendingGame.tournamentId || null
+      );
+    };
+
     if (input.toUpperCase() === 'SKIP' || input.toUpperCase() === 'NO') {
       await userService.clearUserState(phone);
-      await messagingService.sendMessage(phone, 
-        `👍 No problem! You can add your email anytime by typing *EMAIL*.\n\nType MENU to continue.`
-      );
+      if (pendingGame) {
+        // Straight into the game — no acknowledgement, no extra step.
+        await resume();
+      } else {
+        await messagingService.sendMessage(phone,
+          `👍 No problem! You can add your email anytime by typing *EMAIL*.\n\nType MENU to continue.`
+        );
+      }
       return;
     }
-    
+
     // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(input)) {
@@ -853,22 +874,30 @@ Type the code, or type SKIP to continue:`
       );
       return;
     }
-    
+
     // Save email
     try {
       await pool.query(
         'UPDATE users SET email = $1 WHERE id = $2',
         [input.toLowerCase(), user.id]
       );
-      
+
       await userService.clearUserState(phone);
-      await messagingService.sendMessage(phone,
-        `✅ Email saved! You'll receive updates about tournaments and events.\n\nType MENU to continue.`
-      );
+
+      if (pendingGame) {
+        await messagingService.sendMessage(phone, `✅ Saved, thank you! Starting your game…`);
+        await resume();
+      } else {
+        await messagingService.sendMessage(phone,
+          `✅ Email saved! You'll receive updates about tournaments and events.\n\nType MENU to continue.`
+        );
+      }
     } catch (error) {
-      logger.error('Error saving email:', error);
+      logger.error(`Error saving email: ${error.message}`);
       await userService.clearUserState(phone);
       await messagingService.sendMessage(phone, `❌ Error saving email. You can try again later by typing *EMAIL*.\n\nType MENU to continue.`);
+      // The game was still requested — don't strand the player.
+      await resume();
     }
   }
 
@@ -1971,23 +2000,33 @@ Type the code, or type SKIP to continue:`
       } else if (input === '2' || input.includes('LEADERBOARD')) {
         await this.sendLeaderboardMenu(user.phone_number);
         return;
-      } else if (input === '3') {
+      } else if (input === '5' || input === 'MENU' || input.includes('MAIN MENU')) {
+        // 5 always means Main Menu, on every screen, in every mode.
         await redis.del(`post_game:${user.id}`);
-        // Check if user has actual winnings to claim - check DB directly as backup
+        await this.sendMainMenu(user.phone_number);
+        return;
+      } else if (input === '3') {
+        // 3 always means Claim Prize. It used to double as Main Menu when
+        // there was nothing to claim, so a player who had learned "3 gets me
+        // my money" landed somewhere else entirely after a losing round.
+        await redis.del(`post_game:${user.id}`);
         let hasWinnings = postGameData && postGameData.finalScore > 0 && postGameData.gameType !== 'practice';
-        
+
         // Double-check with database in case postGameData is stale
         if (!hasWinnings) {
           const pendingTx = await payoutService.getPendingTransaction(user.id);
           hasWinnings = pendingTx && parseFloat(pendingTx.amount) > 0;
         }
-        
+
         if (hasWinnings) {
-          // Classic/Tournament mode with winnings: Option 3 = Claim Prize
           await this.handleClaimPrize(user);
         } else {
-          // Practice mode OR no winnings: Option 3 = Main Menu
-          await this.sendMainMenu(user.phone_number);
+          // Say so plainly rather than silently doing something else.
+          await messagingService.sendMessage(
+            user.phone_number,
+            `💰 You have no reward waiting to be claimed right now.\n\n` +
+            `1️⃣ Play Again\n2️⃣ View Leaderboard\n5️⃣ Main Menu`
+          );
         }
         return;
       } else if (input.includes('CLAIM')) {
@@ -1995,7 +2034,9 @@ Type the code, or type SKIP to continue:`
         await redis.del(`post_game:${user.id}`);
         await this.handleClaimPrize(user);
         return;
-      } else if (input === '4' || input.includes('SHARE') || input.includes('VICTORY') || input.includes('CARD')) {
+      } else if (input === '4' || input === 'YES' || input === 'Y' ||
+                 input.includes('SHARE') || input.includes('VICTORY') || input.includes('CARD')) {
+        // 4 and YES are the same action — the post-game message offers both.
         if (winSharePending) {
           await this.handleWinShare(user, JSON.parse(winSharePending));
           await redis.del(`win_share_pending:${user.id}`);

@@ -23,6 +23,11 @@ const streakService = require('./streak.service');
 const restrictionsService = require('./restrictions.service');
 const antiFraudService = require('./anti-fraud.service');
 const achievementsService = require('./achievements.service');
+// userService was referenced in the tournament-rebuy branch below but never
+// imported — a latent ReferenceError for any player who ran out of tournament
+// tokens. Imported here alongside its first legitimate use (the email gate).
+const UserService = require('./user.service');
+const userService = new UserService();
 const victoryCardsService = require('./victory-cards.service');
 const captchaService = require('./captcha.service');
 const deviceTrackingService = require('./device-tracking.service');
@@ -445,8 +450,12 @@ class GameService {
                 ? `You reached a safe checkpoint!\n💰 You won: ₦${guaranteedAmount.toLocaleString()} 🎉\n\n`
                 : `💰 You won: ₦0\n\n`) +
             `Better luck next time! 👋\n\n` +
-            `1️⃣ Play Again\n2️⃣ View Leaderboard\n` +
-            (guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`);
+            (guaranteedAmount > 0
+                ? `1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Claim Prize\n` +
+                  `4️⃣ Share Victory Card  (or reply YES) 📸\n5️⃣ Main Menu\n\n` +
+                  `⏳ Claim within 72 hours or the reward is forfeited.\nType CLAIM anytime.`
+                : `🏆 Check the leaderboard to see where you stand.\n\n` +
+                  `1️⃣ Play Again\n2️⃣ View Leaderboard\n5️⃣ Main Menu`);
         
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(currentSession, user, false, 'turbo_go_timeout');
@@ -1124,8 +1133,62 @@ class GameService {
     // GAME LIFECYCLE
     // ============================================
 
+    // ============================================
+    // EMAIL GATE
+    // Runs BEFORE anything irreversible: no token deducted, no session
+    // row, no clock. If the player ignores it they have lost nothing and
+    // can type PLAY again whenever they like.
+    // Conditions: no email on file, at least one game finished in the
+    // last 24h, and the existing 7-day prompt cooldown has lapsed.
+    // Returns true if the game should pause and wait for a reply.
+    // ============================================
+    async promptForEmailIfDue(user, gameMode, tournamentId) {
+        try {
+            if (user.email) return false;
+
+            const recent = await pool.query(
+                `SELECT COUNT(*) AS n FROM game_sessions
+                 WHERE user_id = $1 AND status = 'completed'
+                   AND completed_at > NOW() - INTERVAL '24 hours'`,
+                [user.id]
+            );
+            if ((parseInt(recent.rows[0].n) || 0) < 1) return false;
+
+            // Same cooldown policy the old prompt used — unchanged.
+            if (user.email_prompted_at) {
+                const days = (Date.now() - new Date(user.email_prompted_at).getTime()) / 86400000;
+                if (days < 7) return false;
+            }
+
+            // The pending game rides along in the state data, so the reply
+            // handler can resume exactly what they asked for.
+            await userService.setUserState(user.phone_number, 'EMAIL_COLLECT', {
+                pendingGame: { gameMode, tournamentId }
+            });
+            await pool.query(
+                'UPDATE users SET email_prompted_at = NOW() WHERE id = $1', [user.id]
+            );
+
+            await messagingService.sendMessage(
+                user.phone_number,
+                `📧 One thing before you play\n\n` +
+                `What's your email? We'll use it to alert you when a\n` +
+                `new tournament opens — that's the only thing we send.\n\n` +
+                `Type your email, or SKIP to start playing now.`
+            );
+            return true;
+        } catch (error) {
+            // Never let the prompt block a game
+            logger.warn(`Email gate skipped for user ${user.id}: ${error.message}`);
+            return false;
+        }
+    }
+
     async startNewGame(user, gameMode = 'classic', tournamentId = null) {
         try {
+            // Must come first: everything below this line spends something.
+            if (await this.promptForEmailIfDue(user, gameMode, tournamentId)) return;
+
             const platform = platformOf(user.phone_number);
             const isTournamentGame = tournamentId !== null;
             const isPracticeMode = gameMode === 'practice';
@@ -1266,14 +1329,22 @@ class GameService {
                 logger.error('Error recording device:', deviceError);
             }
 
+            // Notices that used to be sent as separate messages before the
+            // game instructions. Collected here, rendered as a banner block at
+            // the top of the single instructions message below.
+            const startBanners = [];
+
             // Streak tracking
             let streakResult = null;
             if (gameMode === 'classic' || isTournamentGame) {
                 try {
                     streakResult = await streakService.updateStreak(user.id, isTournamentGame ? 'tournament' : 'classic');
                     if (streakResult.reward) {
-                        const rewardMessage = streakService.formatRewardMessage(streakResult.reward);
-                        await messagingService.sendMessage(user.phone_number, rewardMessage);
+                        // Collected, not sent: these used to arrive as separate
+                        // messages before the instructions, so the three most
+                        // account-relevant notices were the easiest to scroll
+                        // past. They now head the single instructions message.
+                        startBanners.push(streakService.formatRewardMessage(streakResult.reward));
                     }
                 } catch (streakError) {
                     logger.error('Error updating streak:', streakError);
@@ -1286,10 +1357,7 @@ class GameService {
             if (!isPracticeMode) {
                 const penalty = await restrictionsService.isUserInPenaltyMode(user.id);
                 if (penalty.inPenalty) {
-                    await messagingService.sendMessage(
-                        user.phone_number,
-                        restrictionsService.getPenaltyModeMessage(penalty.gamesRemaining)
-                    );
+                    startBanners.push(restrictionsService.getPenaltyModeMessage(penalty.gamesRemaining));
                 }
             }
 
@@ -1303,10 +1371,7 @@ class GameService {
                     if (userRecord.rows.length > 0) {
                         const streak = userRecord.rows[0].q1_timeout_streak || 0;
                         if (streak >= 2 && !userRecord.rows[0].q1_timeout_warned) {
-                            await messagingService.sendMessage(
-                                user.phone_number,
-                                restrictionsService.getQ1TimeoutWarningMessage()
-                            );
+                            startBanners.push(restrictionsService.getQ1TimeoutWarningMessage());
                             await pool.query('UPDATE users SET q1_timeout_warned = true WHERE id = $1', [user.id]);
                         }
                     }
@@ -1370,9 +1435,13 @@ class GameService {
                 logger.error('Error checking watchlist for supercool msg:', scErr);
             }
 
+            // Banner block first, then the mode, rules and the single call to
+            // action. One message instead of up to four.
+            const bannerBlock = startBanners.length ? `${startBanners.join('\n\n')}\n\n` : '';
+
             await messagingService.sendMessage(
                 user.phone_number,
-                `${gameModeText}\n\n${instructions}\n\n${branding}${superCoolMsg}\n\nWhen you're ready, reply START to begin! 🚀`
+                `${bannerBlock}${gameModeText}\n\n${instructions}\n\n${branding}${superCoolMsg}\n\nWhen you're ready, reply START to begin! 🚀`
             );
 
             await redis.setex(`game_ready:${user.id}`, 300, sessionKey);
@@ -1417,7 +1486,7 @@ class GameService {
     // GAME COMPLETION
     // ============================================
 
-    async completeGame(session, user, wonGrandPrize, endReason = null) {
+    async completeGame(session, user, wonGrandPrize, endReason = null, funFact = null) {
         try {
             // GUARD: Prevent double completion - check if session is still active
             const sessionCheck = await pool.query(
@@ -1602,7 +1671,7 @@ class GameService {
             } else if (session.is_tournament_game) {
                 const timeTaken = await this.getGameTimeTaken(session.id);
                 if (wonGrandPrize) {
-                    await this.sendGrandPrizeMessage(user, finalScore, session);
+                    await this.sendGrandPrizeMessage(user, finalScore, session, funFact);
                 } else {
                     await this.sendTournamentCompleteMessage(user, questionNumber - 1, timeTaken, session);
                 }
@@ -1635,12 +1704,19 @@ class GameService {
                     const hasWinnings = finalScore > 0 && !isPractice;
                     const sharePending = !!(await redis.get(`win_share_pending:${user.id}`));
 
-                    const menu = [
-                        { k: '1', v: 'Play again' },
-                        { k: '2', v: session.is_tournament_game ? 'Tournament leaderboard' : 'View leaderboard' },
-                        { k: '3', v: hasWinnings ? 'Claim your prize' : 'Main menu' }
-                    ];
-                    if (sharePending) menu.push({ k: '4', v: 'Share victory card' });
+                    // Same fixed digit map web-play uses as the bot, so a
+                    // player switching platforms doesn't relearn the keys:
+                    // 1 Play · 2 Leaderboard · 3 Claim · 4 Share · 5 Menu.
+                    // A key is omitted when it doesn't apply, never reused.
+                    const menu = [{ k: '1', v: 'Play again' }];
+                    if (!session.is_tournament_game) {
+                        menu.push({ k: '2', v: 'View leaderboard' });
+                    }
+                    if (hasWinnings) menu.push({ k: '3', v: 'Claim your prize' });
+                    if (sharePending) {
+                        menu.push({ k: '4', v: session.is_tournament_game ? 'Share tournament card' : 'Share victory card' });
+                    }
+                    menu.push({ k: '5', v: 'Main menu' });
 
                     gameEvents.emit(user.id, 'game.over', {
                         outcome,                                   // grand_prize | wrong_answer | timeout | ...
@@ -1664,21 +1740,12 @@ class GameService {
                 }
             }
 
-            // Trigger email collection prompt (delayed, non-blocking)
-            // Only runs if user hasn't provided email and cooldown expired
-            setTimeout(async () => {
-                try {
-                    const WebhookController = require('../controllers/webhook.controller');
-                    const webhookController = new WebhookController();
-                    // Re-fetch user to get latest email/prompted_at
-                    const freshUser = await pool.query('SELECT * FROM users WHERE id = $1', [user.id]);
-                    if (freshUser.rows[0]) {
-                        await webhookController.maybePromptForEmail(freshUser.rows[0]);
-                    }
-                } catch (e) {
-                    // Silent - email prompt is optional
-                }
-            }, 8000); // 8 second delay after game results
+            // The email prompt used to fire 8 seconds after every game. It
+            // arrived while the player was still deciding what to do with the
+            // post-game menu AND switched their input state to EMAIL_COLLECT,
+            // so a "1" meant to replay was read as an email address.
+            // It now runs at the START of a second game within 24h — before
+            // any token is spent — see promptForEmailIfDue() in startNewGame.
 
         } catch (error) {
             logger.error('Error completing game:', error);
@@ -1688,54 +1755,114 @@ class GameService {
 
     // Message senders (unchanged from original)
     async sendPracticeCompleteMessage(user, score, questionNumber) {
-        let message = `🎓 PRACTICE COMPLETE! 🎓\n\nGreat job, ${user.full_name}!\n\nYou answered ${questionNumber - 1}/15 questions correctly.\nPotential Score: ₦${score.toLocaleString()}\n\n⚠️ This was practice mode - no real prizes.\n\nReady to play for REAL prizes?\n\n1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Main Menu\n\nType PLAY to start Classic Mode and win real money! 💰`;
+        // Digit map is fixed platform-wide: 1 Play · 2 Leaderboard ·
+        // 3 Claim · 4 Share · 5 Main Menu. A digit is omitted when the
+        // action doesn't apply — never reused to mean something else.
+        let message = `🎓 PRACTICE COMPLETE! 🎓\n\n` +
+            `Great job, ${user.full_name}!\n\n` +
+            `You answered ${questionNumber - 1}/15 questions correctly.\n` +
+            `Potential Score: ₦${score.toLocaleString()}\n\n` +
+            `⚠️ This was practice mode — no real prizes.\n\n` +
+            `Ready to play for REAL prizes?\n\n` +
+            `1️⃣ Play Again\n` +
+            `2️⃣ View Leaderboard\n` +
+            `5️⃣ Main Menu\n\n` +
+            `💰 Type PLAY to start Classic Mode and win real money!`;
         await messagingService.sendMessage(user.phone_number, message);
     }
 
-    async sendGrandPrizeMessage(user, finalScore, session = null) {
+    // funFact arrives from the final question: the per-question "CORRECT!"
+    // message is suppressed on Q15 so the win is announced once, not twice.
+    async sendGrandPrizeMessage(user, finalScore, session = null, funFact = null) {
         const isTournament = session?.is_tournament_game;
+        const fact = funFact ? `${funFact}\n\n` : '';
+
         if (isTournament) {
             const timeTaken = await this.getGameTimeTaken(session.id);
-            let message = `🎊 *PERFECT GAME!* 🎊\n🏆 *TOURNAMENT LEGEND!* 🏆\n\n*ALL 15 QUESTIONS CORRECT!*\n\n📊 *Your Performance:*\n• Questions: *15/15* ✨\n• Time: *${timeTaken}s*\n\n${user.full_name.toUpperCase()}, you're at the TOP!\n\n🌐 Check if you're #1 at:\nwhatsuptrivia.com.ng/leaderboards\n\nShare your PERFECT game? Reply YES for tournament card! 📸\n\n1️⃣ Play Again\n2️⃣ View Tournament Leaderboard\n3️⃣ Share Tournament Card`;
+            let message = `🎊 PERFECT GAME! 🎊\n` +
+                `🏆 TOURNAMENT LEGEND! 🏆\n\n` +
+                `ALL 15 QUESTIONS CORRECT!\n\n` +
+                `📊 Your Performance:\n` +
+                `• Questions: 15/15 ✨\n` +
+                `• Time: ${timeTaken}s\n\n` +
+                fact +
+                `${user.full_name.toUpperCase()}, you're at the TOP!\n\n` +
+                `1️⃣ Play Again\n` +
+                `4️⃣ Share Tournament Card  (or reply YES) 📸\n` +
+                `5️⃣ Main Menu\n\n` +
+                `🌐 See if you're #1: whatsuptrivia.com.ng/leaderboards`;
             await messagingService.sendMessage(user.phone_number, message);
         } else {
-            let message = `🎊 INCREDIBLE! 🎊\n🏆 CHAMPION! 🏆\n\nALL 15 QUESTIONS CORRECT!\n\n💰 ₦${finalScore.toLocaleString()} WON! 💰\n\n${user.full_name.toUpperCase()}, you're in the HALL OF FAME!\n\nPrize processed in 24-48 hours.\n\nWould you like to share your win? Reply YES for victory card! 🎉\n\n1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Claim Prize\n4️⃣ Share Victory Card`;
+            let message = `🎊 INCREDIBLE! 🎊\n` +
+                `🏆 CHAMPION! 🏆\n\n` +
+                `ALL 15 QUESTIONS CORRECT!\n\n` +
+                `💰 ₦${finalScore.toLocaleString()} WON! 💰\n\n` +
+                fact +
+                `${user.full_name.toUpperCase()}, you're in the HALL OF FAME!\n\n` +
+                `Rewards are processed within 12-24 hours of claiming.\n\n` +
+                `1️⃣ Play Again\n` +
+                `2️⃣ View Leaderboard\n` +
+                `3️⃣ Claim Prize\n` +
+                `4️⃣ Share Victory Card  (or reply YES) 🎉\n` +
+                `5️⃣ Main Menu\n\n` +
+                `⏳ Claim within 72 hours or the reward is forfeited.\n` +
+                `Type CLAIM anytime.`;
             await messagingService.sendMessage(user.phone_number, message);
         }
     }
 
     async sendWinMessage(user, finalScore, questionNumber) {
-        let message = `Congratulations ${user.full_name}! 🎉\n\nYou won ₦${finalScore.toLocaleString()}!\n\nWould you like to share your win on WhatsApp Status? Reply YES to get your victory card! 📸\n\n1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_`;
+        let message = `Congratulations ${user.full_name}! 🎉\n\n` +
+            `You won ₦${finalScore.toLocaleString()}!\n\n` +
+            `1️⃣ Play Again\n` +
+            `2️⃣ View Leaderboard\n` +
+            `3️⃣ Claim Prize\n` +
+            `4️⃣ Share Victory Card  (or reply YES) 📸\n` +
+            `5️⃣ Main Menu\n\n` +
+            `⏳ Claim within 72 hours or the reward is forfeited.\n` +
+            `Type CLAIM anytime.`;
         await messagingService.sendMessage(user.phone_number, message);
     }
 
     async sendTournamentCompleteMessage(user, questionsAnswered, timeTaken, session) {
         try {
-            let tournamentName = 'Tournament';
-            if (session.tournament_id) {
-                const TournamentService = require('./tournament.service');
-                const ts = new TournamentService();
-                const tournament = await ts.getTournamentById(session.tournament_id);
-                if (tournament) tournamentName = tournament.tournament_name;
-            }
             let rankInfo = '';
             if (session.tournament_id) {
-                const rankResult = await pool.query('SELECT rank FROM tournament_participants WHERE user_id = $1 AND tournament_id = $2', [user.id, session.tournament_id]);
-                if (rankResult.rows.length > 0 && rankResult.rows[0].rank) rankInfo = `\n📍 Current Rank: #${rankResult.rows[0].rank}`;
+                const rankResult = await pool.query(
+                    'SELECT rank FROM tournament_participants WHERE user_id = $1 AND tournament_id = $2',
+                    [user.id, session.tournament_id]
+                );
+                if (rankResult.rows.length > 0 && rankResult.rows[0].rank) {
+                    rankInfo = `\n📍 Current Rank: #${rankResult.rows[0].rank}`;
+                }
             }
-            let perf = questionsAnswered >= 10 ? '🔥 Excellent run!' : questionsAnswered >= 5 ? '👍 Good effort!' : '💪 Don\'t give up!';
-            let message = `🏆 *TOURNAMENT GAME COMPLETE!* 🏆\n\nWell done, ${user.full_name}! 👏\n\n📊 *Your Performance:*\n• Questions Reached: *Q${questionsAnswered}*\n• Time Taken: *${timeTaken}s*${rankInfo}\n\n${perf}\n\n💡 *Remember:* Only your BEST game is ranked.\nKeep playing to climb the leaderboard!\n\n🌐 Check rankings at:\nwhatsuptrivia.com.ng/leaderboards\n\nWould you like to share your record? Reply YES for a tournament card! 📸\n\n1️⃣ Play Again\n2️⃣ View Tournament Leaderboard\n3️⃣ Share Tournament Card`;
+
+            const perf = questionsAnswered >= 10 ? '🔥 Excellent run!'
+                       : questionsAnswered >= 5  ? '👍 Good effort!'
+                       : '💪 Don\'t give up!';
+
+            let message = `🏆 TOURNAMENT GAME COMPLETE! 🏆\n\n` +
+                `Well done, ${user.full_name}! 👏\n\n` +
+                `📊 Your Performance:\n` +
+                `• Questions Reached: Q${questionsAnswered}\n` +
+                `• Time Taken: ${timeTaken}s${rankInfo}\n\n` +
+                `${perf}\n\n` +
+                `💡 Only your BEST game is ranked — keep playing to climb.\n\n` +
+                `1️⃣ Play Again\n` +
+                `4️⃣ Share Tournament Card  (or reply YES) 📸\n` +
+                `5️⃣ Main Menu\n\n` +
+                `🌐 Full rankings: whatsuptrivia.com.ng/leaderboards`;
             await messagingService.sendMessage(user.phone_number, message);
         } catch (error) {
-            logger.error('Error sending tournament complete message:', error);
-            let message = `🏆 Tournament Game Complete!\n\nQuestions: Q${questionsAnswered} | Time: ${timeTaken}s\n\n1️⃣ Play Again\n2️⃣ View Leaderboard`;
+            logger.error(`Error sending tournament complete message: ${error.message}`);
+            let message = `🏆 Tournament Game Complete!\n\n` +
+                `Questions: Q${questionsAnswered} | Time: ${timeTaken}s\n\n` +
+                `1️⃣ Play Again\n` +
+                `5️⃣ Main Menu\n\n` +
+                `🌐 Rankings: whatsuptrivia.com.ng/leaderboards`;
             await messagingService.sendMessage(user.phone_number, message);
         }
     }
-
-    // ============================================
-    // CAPTCHA + PHOTO VERIFICATION ROUTER
-    // ============================================
 
     async sendQuestionOrCaptcha(session, user) {
         const questionNumber = session.current_question;
@@ -2479,12 +2606,15 @@ class GameService {
                     message += `💪 Question: ${questionNumber} of 15\n`;
                     if (SAFE_CHECKPOINTS.includes(questionNumber)) message += `\n🔒 SAFE! ₦${prizeAmount.toLocaleString()} guaranteed!\n`;
                     
-                    // web has this as answer.result already
-                    await messagingService.sendMessage(user.phone_number, message, { webRedundant: true });
-                    
-                    if (questionNumber === 15) {
-                        await this.completeGame(session, user, true);
-                    } else {
+            if (questionNumber === 15) {
+                // On the final question the per-question "CORRECT!" message is
+                // suppressed: the grand-prize message announces the same win a
+                // second later, and two messages for one moment is exactly the
+                // stacking this pass removes. The fun fact travels with it.
+                await this.completeGame(session, user, true, null, question.fun_fact || null);
+            } else {
+                // web has this as answer.result already
+                await messagingService.sendMessage(user.phone_number, message, { webRedundant: true });
                         await this.updateSession(session);
                         
                         // Check turbo triggers (not for practice mode, and not for tournaments where turbo is disabled)
@@ -2535,7 +2665,14 @@ class GameService {
         
         if (isTournament) {
             const timeTaken = await this.getGameTimeTaken(session.id);
-            message += `📊 *Your Performance:*\n• Questions Reached: Q${questionNumber - 1}\n• Time Taken: ${timeTaken}s\n\n🏆 Check the leaderboard!\n💡 _Remember: Only your BEST game counts._\n\n🌐 Visit whatsuptrivia.com.ng/leaderboards\n\nWell played, ${user.full_name}! 👏\n\n1️⃣ Play Again\n2️⃣ View Tournament Leaderboard\n3️⃣ Exit Tournament`;
+            message += `📊 Your Performance:\n` +
+                `• Questions Reached: Q${questionNumber - 1}\n` +
+                `• Time Taken: ${timeTaken}s\n\n` +
+                `💡 Only your BEST game is ranked — keep playing to climb.\n\n` +
+                `Well played, ${user.full_name}! 👏\n\n` +
+                `1️⃣ Play Again\n` +
+                `5️⃣ Main Menu\n\n` +
+                `🌐 Full rankings: whatsuptrivia.com.ng/leaderboards`;
             session.current_score = 0;
         } else {
             if (guaranteedAmount > 0) {
@@ -2545,8 +2682,15 @@ class GameService {
                 message += `💰 You won: ₦0\n\n`;
                 session.current_score = 0;
             }
-            message += `Well played, ${user.full_name}! 👏\n\n1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`;
+            message += `Well played, ${user.full_name}! 👏\n`;
+            if (guaranteedAmount > 0) {
+                message += `\n1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Claim Prize\n` +
+                    `4️⃣ Share Victory Card  (or reply YES) 📸\n5️⃣ Main Menu\n\n` +
+                    `⏳ Claim within 72 hours or the reward is forfeited.\nType CLAIM anytime.`;
+            } else {
+                message += `🏆 Check the leaderboard to see where you stand.\n\n` +
+                    `1️⃣ Play Again\n2️⃣ View Leaderboard\n5️⃣ Main Menu`;
+            }
         }
         
         await messagingService.sendMessage(user.phone_number, message);
@@ -2610,7 +2754,13 @@ class GameService {
         
         if (isTournament) {
             const timeTaken = await this.getGameTimeTaken(session.id);
-            message += `📊 *Your Performance:*\n• Questions Reached: Q${session.current_question - 1}\n• Time Taken: ${timeTaken}s\n\n🏆 Check the leaderboard!\n💡 _Remember: Only your BEST game counts._\n\n🌐 Visit whatsuptrivia.com.ng/leaderboards\n\n1️⃣ Play Again\n2️⃣ View Tournament Leaderboard\n3️⃣ Exit Tournament`;
+            message += `📊 Your Performance:\n` +
+                `• Questions Reached: Q${session.current_question - 1}\n` +
+                `• Time Taken: ${timeTaken}s\n\n` +
+                `💡 Only your BEST game is ranked — keep playing to climb.\n\n` +
+                `1️⃣ Play Again\n` +
+                `5️⃣ Main Menu\n\n` +
+                `🌐 Full rankings: whatsuptrivia.com.ng/leaderboards`;
             session.current_score = 0;
         } else {
             if (guaranteedAmount > 0) {
@@ -2618,8 +2768,15 @@ class GameService {
             } else {
                 message += `💰 You won: ₦0\n\n`;
             }
-            message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n`;
-            message += guaranteedAmount > 0 ? `3️⃣ Claim Prize\n4️⃣ Share Victory Card\n\n💡 _Tip: Type CLAIM anytime to claim your prize_` : `3️⃣ Main Menu\n`;
+            if (guaranteedAmount > 0) {
+                message += `1️⃣ Play Again\n2️⃣ View Leaderboard\n3️⃣ Claim Prize\n` +
+                    `4️⃣ Share Victory Card  (or reply YES) 📸\n5️⃣ Main Menu\n\n` +
+                    `⏳ Claim within 72 hours or the reward is forfeited.\nType CLAIM anytime.`;
+            } else {
+                message += `🏆 Check the leaderboard to see where you stand.\n\n` +
+                    `1️⃣ Play Again\n2️⃣ View Leaderboard\n5️⃣ Main Menu`;
+            }
+
             session.current_score = guaranteedAmount;
         }
         
