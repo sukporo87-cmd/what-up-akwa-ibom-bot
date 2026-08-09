@@ -797,7 +797,7 @@ class FinancialService {
         LEFT JOIN LATERAL (
           SELECT SUM(amount) AS entry_revenue,
                  COUNT(*) AS entry_count,
-                 SUM(amount) FILTER (WHERE reference LIKE 'TRNR-%') AS rebuy_revenue
+                 SUM(amount) FILTER (WHERE payment_reference LIKE 'TRNR-%') AS rebuy_revenue
           FROM tournament_entry_payments
           WHERE tournament_id = t.id AND payment_status = 'success'
         ) e ON true
@@ -873,7 +873,7 @@ class FinancialService {
   }
 
   // --- 7. Overview: the one screen to check each morning ---
-  async getOverview() {
+  async getOperationsOverview() {
     try {
       const periodRevenue = async (interval) => {
         const q = await pool.query(`

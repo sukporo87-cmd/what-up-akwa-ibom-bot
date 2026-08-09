@@ -1220,6 +1220,15 @@ function gameOver(text){
 function relay(text){
   const t=text.toUpperCase();
 
+  // "5 Main Menu" now appears on every post-game screen, and on web the chat
+  // main menu is the wrong artefact entirely — the lobby IS the main menu.
+  // Return there instead of printing a numbered list the player can't use.
+  if(/^\s*🏠?\s*MAIN MENU/.test(t)){
+    closeAsk(); $('over').classList.remove('on');
+    if(!onDedicatedScreen()){ view('vLobby'); refresh(); }
+    return;
+  }
+
   // A dedicated screen owns the viewport. Covering it with a modal is never
   // right — and the verification text matches "send your…", which is exactly
   // how it ended up as a chooser on top of the camera button.

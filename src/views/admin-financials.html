@@ -102,22 +102,14 @@
     .mt-4 { margin-top: 16px; }
     @media print { .header, .filter-bar, .no-print { display: none !important; } body { background: white; } .card { box-shadow: none; border: 1px solid var(--gray-200); } }
   
-    /* ---- operations band (9 Aug 2026) ---- */
-    .ops-band{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:22px}
-    .ops-card{background:#fff;border:1px solid var(--gray-200,#e5e7eb);border-left:4px solid #6366f1;
-      border-radius:10px;padding:15px 17px}
-    .ops-card .label{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:7px}
-    .ops-card .value{font-size:24px;font-weight:700;color:#111827;font-variant-numeric:tabular-nums}
-    .ops-card .sub-value{margin-top:5px;font-size:12px;color:#6b7280}
-    .ops-card.warn{border-left-color:#f59e0b;background:#fffbeb}
-    .ops-card.bad{border-left-color:#ef4444;background:#fef2f2}
-    .ops-card.good{border-left-color:#10b981}
-    .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px;margin-bottom:22px}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
-    .pill.ok{background:#d1fae5;color:#065f46}
-    .pill.warn{background:#fef3c7;color:#92400e}
-    .pill.bad{background:#fee2e2;color:#991b1b}
-    @media(max-width:640px){.ops-band{grid-template-columns:1fr 1fr}.ops-card .value{font-size:20px}}
+    /* ---- operations panels (9 Aug 2026) — reuses .overview-card and .card ---- */
+    .ops-two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 24px; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pill.ok { background: #d1fae5; color: #065f46; }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .pill.bad { background: #fee2e2; color: #991b1b; }
+    .overview-card.alert::before { background: var(--danger); }
+    .row-late { background: #fef2f2; }
 </style>
 </head>
 <body>
@@ -164,40 +156,40 @@
          Deliberately above the revenue cards: liability and broken
          promises matter more before breakfast than gross revenue.
          ============================================ -->
-    <div class="ops-band">
-      <div class="ops-card" id="opsToday">
-        <div class="label">Revenue today</div>
+    <div class="overview-grid">
+      <div class="overview-card revenue">
+        <div class="label">Revenue Today</div>
         <div class="value currency" id="opsRevToday">0</div>
-        <div class="sub-value" id="opsRevDelta">vs yesterday —</div>
+        <div class="change" id="opsRevDelta">vs yesterday &mdash;</div>
       </div>
-      <div class="ops-card" id="opsLiabilityCard">
-        <div class="label">Outstanding prize liability</div>
+      <div class="overview-card pending">
+        <div class="label">Prize Liability</div>
         <div class="value currency" id="opsLiability">0</div>
         <div class="sub-value" id="opsLiabilityCount">0 unpaid</div>
       </div>
-      <div class="ops-card" id="opsBreachCard">
-        <div class="label">Past the 72h promise</div>
+      <div class="overview-card payout" id="opsBreachCard">
+        <div class="label">Past 72h Promise</div>
         <div class="value" id="opsBreach">0</div>
-        <div class="sub-value" id="opsOldest">oldest —</div>
+        <div class="sub-value" id="opsOldest">oldest &mdash;</div>
       </div>
-      <div class="ops-card">
-        <div class="label">Paid within 24h</div>
-        <div class="value" id="opsPromise">—</div>
-        <div class="sub-value" id="opsMedian">median —</div>
+      <div class="overview-card net">
+        <div class="label">Paid Within 24h</div>
+        <div class="value" id="opsPromise">&mdash;</div>
+        <div class="sub-value" id="opsMedian">median &mdash;</div>
       </div>
-      <div class="ops-card">
-        <div class="label">Cash position</div>
+      <div class="overview-card margin">
+        <div class="label">Cash Position</div>
         <div class="value currency" id="opsCash">0</div>
         <div class="sub-value">revenue minus prizes paid</div>
       </div>
-      <div class="ops-card">
-        <div class="label">Credit burn</div>
-        <div class="value" id="opsBurn">—</div>
+      <div class="overview-card net">
+        <div class="label">Credit Burn</div>
+        <div class="value" id="opsBurn">&mdash;</div>
         <div class="sub-value" id="opsBurnSub">bought vs played</div>
       </div>
     </div>
 
-    <div class="ops-grid">
+    <div class="ops-two-col">
       <div class="card">
         <div class="card-header"><h2>⏳ Payout aging</h2></div>
         <div class="table-container">
@@ -416,25 +408,27 @@
     }
 
     async function loadOps() {
-      const r = await apiCall('/overview');
-      if (!r?.success) return;
+      const r = await apiCall('/operations');
+      if (!r?.success || !r.data) return;
       const d = r.data;
 
-      document.getElementById('opsRevToday').textContent = '₦' + fmt(d.revenue.today);
+      document.getElementById('opsRevToday').textContent = fmt(d.revenue.today);
       const dc = d.revenue.day_change_pct;
       document.getElementById('opsRevDelta').textContent =
         dc == null ? 'vs yesterday —' :
         (dc >= 0 ? '▲ ' : '▼ ') + Math.abs(dc) + '% vs yesterday (₦' + fmt(d.revenue.yesterday) + ')';
+      document.getElementById('opsRevDelta').className = 'change ' + (dc == null ? '' : dc >= 0 ? 'positive' : 'negative');
 
-      document.getElementById('opsLiability').textContent = '₦' + fmt(d.liability.outstanding);
+      document.getElementById('opsLiability').textContent = fmt(d.liability.outstanding);
       document.getElementById('opsLiabilityCount').textContent = fmt(d.liability.count) + ' unpaid';
 
       // Breaching the published 72h promise is the one number worth alarming on
       const breach = d.liability.breaching_72h || 0;
       document.getElementById('opsBreach').textContent = fmt(breach);
       document.getElementById('opsOldest').textContent = 'oldest ' + ago(d.liability.oldest_pending_at);
+      // Only turn the card red when the promise is actually being missed
       document.getElementById('opsBreachCard').className =
-        'ops-card ' + (breach > 0 ? 'bad' : 'good');
+        'overview-card ' + (breach > 0 ? 'alert' : 'net');
 
       const p = d.payouts || {};
       document.getElementById('opsPromise').innerHTML =
@@ -442,7 +436,7 @@
       document.getElementById('opsMedian').textContent =
         p.median_hours == null ? 'median —' : 'median ' + p.median_hours + 'h · n=' + fmt(p.paid_count);
 
-      document.getElementById('opsCash').textContent = '₦' + fmt(d.cash_position);
+      document.getElementById('opsCash').textContent = fmt(d.cash_position);
 
       const b = d.credits || {};
       document.getElementById('opsBurn').textContent = (b.burn_rate_pct ?? 0) + '%';
@@ -458,7 +452,7 @@
       if (!rows.length) { tb.innerHTML = '<tr><td colspan="3" class="empty-state">Nothing outstanding 🎉</td></tr>'; return; }
       tb.innerHTML = rows.map(b => {
         const late = (b.bucket === '3-7d' || b.bucket === '7d+');
-        return '<tr' + (late ? ' style="background:#fef2f2"' : '') + '><td><strong>' + b.bucket + '</strong>' +
+        return '<tr' + (late ? ' class="row-late"' : '') + '><td><strong>' + b.bucket + '</strong>' +
           (late ? ' <span class="pill bad">late</span>' : '') + '</td>' +
           '<td class="text-right">' + fmt(b.count) + '</td>' +
           '<td class="text-right amount">₦' + fmt(b.amount) + '</td></tr>';

@@ -1146,6 +1146,12 @@ class GameService {
         try {
             if (user.email) return false;
 
+            // Web-play accounts always carry an email, so this should never
+            // fire there — but a chat-style prompt is meaningless on web and
+            // would leave the player staring at a game that never starts.
+            // Guard explicitly rather than relying on that invariant.
+            if (platformOf(user) === 'web') return false;
+
             const recent = await pool.query(
                 `SELECT COUNT(*) AS n FROM game_sessions
                  WHERE user_id = $1 AND status = 'completed'
@@ -1758,7 +1764,20 @@ class GameService {
         // Digit map is fixed platform-wide: 1 Play · 2 Leaderboard ·
         // 3 Claim · 4 Share · 5 Main Menu. A digit is omitted when the
         // action doesn't apply — never reused to mean something else.
-        let message = `🎓 PRACTICE COMPLETE! 🎓\n\n` +
+        // Whatever ended the round is stated here, so practice sends exactly
+        // one message like every other mode.
+        const outcome = session._practiceOutcome || null;
+        let head = '';
+        if (outcome && outcome.reason === 'timeout') {
+            head = `⏰ TIME'S UP! You didn't answer in time.\n\n`;
+        } else if (outcome && outcome.reason === 'wrong_answer') {
+            head = `❌ WRONG ANSWER\n` +
+                (outcome.correct ? `Correct: ${outcome.correct}\n` : '') +
+                (outcome.funFact ? `\n${outcome.funFact}\n` : '') + `\n`;
+        }
+
+        let message = head +
+            `🎓 PRACTICE COMPLETE! 🎓\n\n` +
             `Great job, ${user.full_name}!\n\n` +
             `You answered ${questionNumber - 1}/15 questions correctly.\n` +
             `Potential Score: ₦${score.toLocaleString()}\n\n` +
@@ -2650,6 +2669,7 @@ class GameService {
     }
 
     async handleWrongAnswer(session, user, question) {
+        const isPracticeMode = session.game_mode === 'practice' || session.game_type === 'practice';
         const questionNumber = session.current_question;
         const isTournament = session.is_tournament_game;
         let guaranteedAmount = 0;
@@ -2693,7 +2713,18 @@ class GameService {
             }
         }
         
-        await messagingService.sendMessage(user.phone_number, message);
+        // In practice mode the PRACTICE COMPLETE message follows immediately,
+        // and two messages carrying the same menu is exactly the stacking this
+        // pass removes. Hand the outcome over instead of sending it.
+        if (isPracticeMode) {
+            session._practiceOutcome = {
+                reason: 'wrong_answer',
+                correct: `${question.correct_answer}) ${question['option_' + question.correct_answer.toLowerCase()]}`,
+                funFact: question.fun_fact || null
+            };
+        } else {
+            await messagingService.sendMessage(user.phone_number, message);
+        }
         await this.completeGame(session, user, false, 'wrong_answer');
     }
 
@@ -2709,6 +2740,7 @@ class GameService {
     // ============================================
 
     async handleTimeout(session, user) {
+        const isPracticeMode = session.game_mode === 'practice' || session.game_type === 'practice';
         // GUARD: Prevent double timeout handling with Redis lock
         const timeoutLockKey = `lock:timeout:${session.id}:q${session.current_question}`;
         const lockAcquired = await redis.set(timeoutLockKey, '1', 'NX', 'EX', 10);
@@ -2780,7 +2812,11 @@ class GameService {
             session.current_score = guaranteedAmount;
         }
         
-        await messagingService.sendMessage(user.phone_number, message);
+        if (isPracticeMode) {
+            session._practiceOutcome = { reason: 'timeout' };
+        } else {
+            await messagingService.sendMessage(user.phone_number, message);
+        }
         await this.completeGame(session, user, false, 'timeout');
     }
 

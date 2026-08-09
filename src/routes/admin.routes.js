@@ -5464,11 +5464,14 @@ router.get('/api/financials/top-winners', authenticateAdmin, requireFinancialAcc
 // permission, activity logged, { success, data }.
 // ============================================
 
-// One-screen morning check: revenue vs yesterday, liability, payout speed
-router.get('/api/financials/overview', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+// One-screen morning check: revenue vs yesterday, liability, payout speed.
+// NOTE the path: /operations, not /overview — an /overview route already
+// exists further down for the revenue cards, and Express matches the first
+// registration, so reusing the name silently served the wrong payload.
+router.get('/api/financials/operations', authenticateAdmin, requireFinancialAccess, async (req, res) => {
   try {
-    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_financial_overview', {}, getIpAddress(req), req.headers['user-agent']);
-    const data = await financialService.getOverview();
+    await adminAuthService.logActivity(req.adminSession.admin_id, 'view_financial_operations', {}, getIpAddress(req), req.headers['user-agent']);
+    const data = await financialService.getOperationsOverview();
     res.json({ success: true, data });
   } catch (error) {
     logger.error(`Error loading financial overview: ${error.message}`);

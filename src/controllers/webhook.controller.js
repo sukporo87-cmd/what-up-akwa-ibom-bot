@@ -1998,6 +1998,11 @@ Type the code, or type SKIP to continue:`
         await this.showGameModeMenu(user);
         return;
       } else if (input === '2' || input.includes('LEADERBOARD')) {
+        // Leaving the post-game window: the leaderboard submenu has its own
+        // 1-4, and while post_game was still set those digits were being
+        // intercepted here — picking "1 Today's Winners" reopened the game
+        // mode menu instead.
+        await redis.del(`post_game:${user.id}`);
         await this.sendLeaderboardMenu(user.phone_number);
         return;
       } else if (input === '5' || input === 'MENU' || input.includes('MAIN MENU')) {
