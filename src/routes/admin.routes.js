@@ -8084,10 +8084,10 @@ router.post('/api/messaging/broadcast', async (req, res) => {
     await pool.query(`
       INSERT INTO admin_message_log (message_type, recipient_count, content, sent_by, status, metadata)
       VALUES ('broadcast', $1, $2, $3, $4, $5)
-    `, [phones.length, message, sentBy || 'admin', failed > 0 ? 'partial' : 'sent',
+    `, [users.rows.length, message, sentBy || 'admin', failed > 0 ? 'partial' : 'sent',
         JSON.stringify({ sent, failed, filter: filter || {} })]);
 
-    res.json({ success: true, sent, failed, total: phones.length });
+    res.json({ success: true, sent, failed, total: users.rows.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

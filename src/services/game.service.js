@@ -1673,7 +1673,7 @@ class GameService {
 
             // Send completion messages
             if (session.game_type === 'practice') {
-                await this.sendPracticeCompleteMessage(user, finalScore, questionNumber);
+                await this.sendPracticeCompleteMessage(user, finalScore, questionNumber, session);
             } else if (session.is_tournament_game) {
                 const timeTaken = await this.getGameTimeTaken(session.id);
                 if (wonGrandPrize) {
@@ -1760,13 +1760,13 @@ class GameService {
     }
 
     // Message senders (unchanged from original)
-    async sendPracticeCompleteMessage(user, score, questionNumber) {
+    async sendPracticeCompleteMessage(user, score, questionNumber, session = null) {
         // Digit map is fixed platform-wide: 1 Play · 2 Leaderboard ·
         // 3 Claim · 4 Share · 5 Main Menu. A digit is omitted when the
         // action doesn't apply — never reused to mean something else.
         // Whatever ended the round is stated here, so practice sends exactly
         // one message like every other mode.
-        const outcome = session._practiceOutcome || null;
+        const outcome = (session && session._practiceOutcome) || null;
         let head = '';
         if (outcome && outcome.reason === 'timeout') {
             head = `⏰ TIME'S UP! You didn't answer in time.\n\n`;
