@@ -1223,7 +1223,7 @@ function relay(text){
   // "5 Main Menu" now appears on every post-game screen, and on web the chat
   // main menu is the wrong artefact entirely — the lobby IS the main menu.
   // Return there instead of printing a numbered list the player can't use.
-  if(/^\s*🏠?\s*MAIN MENU/.test(t)){
+  if(/^\s*🏠?\s*MAIN MENU/.test(t) || (t.includes('MAIN MENU')&&t.includes('PLAY NOW'))){
     closeAsk(); $('over').classList.remove('on');
     if(!onDedicatedScreen()){ view('vLobby'); refresh(); }
     return;
@@ -1272,8 +1272,10 @@ function relay(text){
   // Excludes the victory-card gate explicitly: that message opens with
   // "Congratulations on winning ₦1,000" and was being read as a game ending,
   // which is how it kept rendering as a dead result card.
+  // The practice summary now opens with "TIME'S UP" when that's how the round
+  // ended; game.over has already painted the real result, so don't re-parse it.
   if((t.includes('GAME OVER')||t.includes('CONGRATULATIONS')||t.includes("TIME'S UP"))
-     && !t.includes('VICTORY CARD')){
+     && !t.includes('VICTORY CARD') && !t.includes('PRACTICE COMPLETE')){
     // game.over already handled this properly — don't show it twice.
     if(Date.now()-lastOver < 8000) return;
     gameOver(text); return;
@@ -1304,7 +1306,9 @@ function relay(text){
     return;
   }
 
-  if(t.includes('BUY GAMES')||t.includes('SELECT PAYMENT PROCESSOR')){
+  // "4️⃣ Buy Games" is a line in the MAIN MENU too — matching on it alone
+  // turned "show me the menu" into "open the till".
+  if((t.includes('BUY GAMES')&&!t.includes('MAIN MENU'))||t.includes('SELECT PAYMENT PROCESSOR')){
     // The chat buy flow leaked through — web has its own screen for this.
     openBuy(); return;
   }

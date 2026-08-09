@@ -3132,6 +3132,13 @@ Type the code, or type SKIP to continue:`
     if (user) {
       await redis.del(`post_game:${user.id}`);
     }
+
+    // Going to the main menu means abandoning whatever prompt you were in.
+    // Without this the old state survived in Redis for 30 minutes: on web,
+    // the client re-reads state after navigating and would be thrown into
+    // that stale screen — an abandoned top-up reappearing as the buy screen
+    // when the player asked for the main menu.
+    await userService.clearUserState(phone);
     
     const isPaymentEnabled = paymentService.isEnabled();
 
