@@ -25,6 +25,7 @@
     { href: '/admin/financials', label: 'Financials',  icon: '💰', color: '#22c55e' },
     { href: '/admin/reviews',    label: 'Reviews',     icon: '⭐', color: '#f59e0b' },
     { href: '/admin/content',    label: 'Site Content',icon: '✏️', color: '#3b82f6' },
+    { href: '/admin/toggles',    label: 'Toggles',     icon: '🎚️', color: '#14b8a6' },
     { href: '/admin/tournaments/manage', label: 'Tournaments', icon: '🏆', color: '#eab308' },
     { href: '/admin/messaging',  label: 'Messaging',   icon: '📨', color: '#f97316' },
     { href: '/admin/watchlist',  label: 'Watchlist',   icon: '🎯', color: '#ef4444' },

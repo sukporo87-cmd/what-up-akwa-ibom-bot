@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎚️ Feature Toggles | What's Up Trivia</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0f0f13; --surface: #1a1a23; --surface2: #22222f; --border: #2d2d3d;
+    --text: #e4e4ef; --text-dim: #8888a0; --green: #00d68f; --red: #ff3b5c;
+    --amber: #ffc233; --blue: #3b82f6;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--amber); }
+  .container { max-width: 1000px; margin: 0 auto; padding: 26px 22px 90px; }
+
+  .explain { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; font-size: 13.5px; color: var(--text-dim); line-height: 1.65; margin-bottom: 24px; }
+  .explain b { color: var(--text); }
+  .explain code { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--amber); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; margin-bottom: 20px; }
+  .card h2 { font-size: 15px; margin-bottom: 4px; }
+  .card .hint { font-size: 12.5px; color: var(--text-dim); margin-bottom: 16px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--text-dim); padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  th.ctr, td.ctr { text-align: center; }
+  td { padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 14px; }
+  tr:last-child td { border-bottom: 0; }
+  .mode-name { font-weight: 600; }
+  .mode-sub { font-size: 11.5px; color: var(--text-dim); }
+
+  /* switch */
+  .sw { position: relative; display: inline-block; width: 46px; height: 26px; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .track { position: absolute; inset: 0; background: rgba(255,59,92,.28); border: 1px solid rgba(255,59,92,.5);
+    border-radius: 26px; cursor: pointer; transition: .18s; }
+  .track:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+    background: #ff8fa3; border-radius: 50%; transition: .18s; }
+  input:checked + .track { background: rgba(0,214,143,.26); border-color: rgba(0,214,143,.55); }
+  input:checked + .track:before { transform: translateX(20px); background: var(--green); }
+  input:disabled + .track { opacity: .4; cursor: not-allowed; }
+
+  .src { display: block; font-size: 10px; color: #5c5c72; margin-top: 5px; font-family: 'JetBrains Mono', monospace; }
+  .src.override { color: var(--amber); }
+  .msg-row td { padding-top: 0; }
+  .msg-row input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 11px; font-size: 13px; font-family: 'DM Sans', sans-serif; }
+  .msg-row input:focus { outline: none; border-color: var(--blue); }
+  .msg-label { font-size: 11.5px; color: var(--text-dim); }
+
+  .btn { border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    border-radius: 8px; padding: 7px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    font-family: 'DM Sans', sans-serif; }
+  .btn:hover { border-color: var(--blue); }
+  .btn-clear { color: var(--text-dim); }
+
+  .banner { border-radius: 12px; padding: 13px 16px; font-size: 13.5px; margin-bottom: 18px; display: none; }
+  .banner.on { display: block; }
+  .banner.warn { background: rgba(255,194,51,.12); border: 1px solid rgba(255,194,51,.45); color: #ffe0a3; }
+
+  .toast { position: fixed; bottom: 22px; right: 22px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13.5px;
+    opacity: 0; transform: translateY(8px); transition: .3s; pointer-events: none; z-index: 50; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: rgba(0,214,143,.5); }
+  .toast.err { border-color: rgba(255,59,92,.5); }
+  .loading { text-align: center; color: var(--text-dim); padding: 40px 0; }
+  @media (max-width: 640px) { th, td { padding: 9px 6px; font-size: 13px; } .sw { width: 40px; height: 23px; } }
+</style>
+</head>
+<body>
+
+<div class="topbar"><h1>🎚️ Feature Toggles</h1></div>
+
+<div class="container">
+  <div class="explain">
+    Turn a game mode off on <b>one platform</b> without touching the others — or take a
+    whole platform down during an incident. Changes apply <b>within 15 seconds</b>, with
+    no deploy.
+    <br><br>
+    Precedence, most specific first: <code>mode + platform</code> → <code>platform</code>
+    → <code>mode</code> → environment variable → enabled. <b>Clear</b> removes an override
+    and hands control back to the level below it, which is different from switching it on.
+  </div>
+
+  <div class="banner warn" id="allOffBanner"></div>
+  <div id="content"><div class="loading">Loading toggles…</div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = '/admin/api';
+let sessionToken = localStorage.getItem('adminSessionToken');
+if (!sessionToken) window.location.href = '/admin';
+
+const MODES = [
+  ['practice',   'Practice Mode',  'Free, unlimited, no rewards'],
+  ['classic',    'Classic Mode',   'One credit per round, real rewards'],
+  ['tournament', 'Tournaments',    'Sponsored events, ranked']
+];
+const PLATFORMS = [['whatsapp','WhatsApp'], ['telegram','Telegram'], ['web','Web-play']];
+
+async function apiCall(endpoint, options = {}) {
+  const r = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json', ...options.headers }
+  });
+  if (r.status === 401) { localStorage.removeItem('adminSessionToken'); window.location.href = '/admin'; return; }
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) return null;
+  return r.json();
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function sw(key, on, disabled) {
+  return `<label class="sw"><input type="checkbox" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''}
+    onchange="setToggle('${key}', this.checked)"><span class="track"></span></label>`;
+}
+
+function render(grid) {
+  // Platform kill switches
+  let html = `<div class="card">
+    <h2>Platforms</h2>
+    <div class="hint">Turning a platform off stops every mode on that channel. Use during an outage.</div>
+    <table><tbody>`;
+  PLATFORMS.forEach(([p, label]) => {
+    const g = grid.platforms[p];
+    html += `<tr>
+      <td class="mode-name">${label}<span class="src ${g.source === 'database' ? 'override' : ''}">${g.source}</span></td>
+      <td class="ctr">${sw('platform.' + p, g.enabled, false)}</td>
+      <td style="text-align:right">${g.source === 'database'
+        ? `<button class="btn btn-clear" onclick="clearToggle('platform.${p}')">Clear</button>` : ''}</td>
+    </tr>
+    <tr class="msg-row"><td colspan="3">
+      <span class="msg-label">Message shown to players (optional)</span>
+      <input value="${esc(g.message || '')}" placeholder="Leave blank for the default message"
+        onchange="setToggle('platform.${p}', ${g.enabled}, this.value)">
+    </td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+
+  // The grid
+  html += `<div class="card">
+    <h2>Game modes by platform</h2>
+    <div class="hint">A row switch turns the mode off everywhere. A cell switch overrides just that platform.</div>
+    <table>
+      <thead><tr><th>Mode</th><th class="ctr">All platforms</th>
+      ${PLATFORMS.map(([, l]) => `<th class="ctr">${l}</th>`).join('')}</tr></thead><tbody>`;
+
+  MODES.forEach(([m, label, sub]) => {
+    const gm = grid.modes[m];
+    html += `<tr>
+      <td><span class="mode-name">${label}</span><br><span class="mode-sub">${sub}</span>
+        <span class="src ${gm.source === 'database' ? 'override' : ''}">${gm.source}</span></td>
+      <td class="ctr">${sw('mode.' + m, gm.enabled, false)}
+        ${gm.source === 'database' ? `<br><button class="btn btn-clear" style="margin-top:6px"
+          onclick="clearToggle('mode.${m}')">Clear</button>` : ''}</td>`;
+    PLATFORMS.forEach(([p]) => {
+      const cell = grid.matrix[m][p];
+      html += `<td class="ctr">${sw(`mode.${m}.${p}`, cell.enabled, false)}
+        <span class="src ${cell.override ? 'override' : ''}">${cell.override ? 'override' : cell.source}</span>
+        ${cell.override ? `<br><button class="btn btn-clear" style="margin-top:5px"
+          onclick="clearToggle('mode.${m}.${p}')">Clear</button>` : ''}</td>`;
+    });
+    html += `</tr>
+    <tr class="msg-row"><td colspan="${2 + PLATFORMS.length}">
+      <span class="msg-label">Message when ${label} is unavailable (optional)</span>
+      <input value="${esc(gm.message || '')}" placeholder="Leave blank — the default names where players can still play"
+        onchange="setToggle('mode.${m}', ${gm.enabled}, this.value)">
+    </td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  document.getElementById('content').innerHTML = html;
+
+  // Warn if a platform has no modes left — easy to do by accident
+  const stranded = PLATFORMS.filter(([p]) =>
+    grid.platforms[p].enabled && MODES.every(([m]) => !grid.matrix[m][p].enabled)
+  ).map(([, l]) => l);
+  const banner = document.getElementById('allOffBanner');
+  if (stranded.length) {
+    banner.textContent = `⚠️ ${stranded.join(' and ')} ${stranded.length > 1 ? 'have' : 'has'} no playable modes. `
+      + `Players there can still message the bot but cannot start a game.`;
+    banner.classList.add('on');
+  } else {
+    banner.classList.remove('on');
+  }
+}
+
+async function load() {
+  const r = await apiCall('/toggles');
+  if (!r || !r.success) {
+    document.getElementById('content').innerHTML = '<div class="loading">Could not load toggles. Refresh to retry.</div>';
+    return;
+  }
+  render(r.grid);
+}
+
+async function setToggle(key, enabled, message) {
+  const body = { key, enabled };
+  if (message !== undefined) body.message = message;
+  const r = await apiCall('/toggles', { method: 'PUT', body: JSON.stringify(body) });
+  if (r && r.success) { toast(`${key} → ${enabled ? 'enabled' : 'disabled'}`); load(); }
+  else { toast((r && r.error) || 'Failed to save', false); load(); }
+}
+
+async function clearToggle(key) {
+  if (!confirm(`Clear the override on "${key}"?\n\nControl returns to the level below it — the mode setting, the environment variable, or the default.`)) return;
+  const r = await apiCall(`/toggles/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (r && r.success) { toast(`${key} override cleared`); load(); }
+  else { toast((r && r.error) || 'Failed to clear', false); load(); }
+}
+
+load();
+setInterval(load, 30000);
+</script>
+<script src="/admin-nav.js"></script>
+</body>
+</html>

@@ -111,6 +111,11 @@ router.get('/content', (req, res) => {
   res.sendFile('admin-content.html', { root: './src/views' });
 });
 
+// Feature toggles — per mode, per platform
+router.get('/toggles', (req, res) => {
+  res.sendFile('admin-toggles.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -8796,6 +8801,68 @@ router.delete('/api/site-content/:key', authenticateAdmin, async (req, res) => {
   } catch (error) {
     logger.error(`Error deleting site content: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to delete content' });
+  }
+});
+
+
+// ============================================
+// FEATURE TOGGLES (per mode, per platform)
+// Database-backed so they take effect immediately — the env vars they
+// replace needed a redeploy, which is the wrong property for a switch
+// you reach for during an incident. Env vars remain the fallback.
+// ============================================
+const togglesService = require('../services/toggles.service');
+
+// The whole grid, including where each value came from
+router.get('/api/toggles', authenticateAdmin, async (req, res) => {
+  try {
+    const grid = await togglesService.getGrid();
+    res.json({ success: true, grid, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading toggles: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load toggles' });
+  }
+});
+
+// PUT /admin/api/toggles  { key, enabled, message? }
+router.put('/api/toggles', authenticateAdmin, async (req, res) => {
+  try {
+    const { key, enabled, message } = req.body || {};
+    const result = await togglesService.setToggle(key, enabled, message, req.adminSession.username);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      enabled ? 'toggle_enabled' : 'toggle_disabled',
+      { key, message: message || null },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error setting toggle: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to set toggle' });
+  }
+});
+
+// Clearing an override hands control back to the env var / default,
+// rather than pinning the value to true.
+router.delete('/api/toggles/:key', authenticateAdmin, async (req, res) => {
+  try {
+    const removed = await togglesService.clearToggle(req.params.key, req.adminSession.username);
+    if (!removed) return res.status(404).json({ success: false, error: 'No override set for that key' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'toggle_cleared',
+      { key: req.params.key },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error clearing toggle: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to clear toggle' });
   }
 });
 

@@ -16,6 +16,7 @@ const ReferralService = require('../services/referral.service');
 const TournamentService = require('../services/tournament.service');
 const streakService = require('../services/streak.service');
 const restrictionsService = require('../services/restrictions.service');
+const { platformOf } = require('../utils/platform');
 const achievementsService = require('../services/achievements.service');
 const victoryCardsService = require('../services/victory-cards.service');
 const antiFraudService = require('../services/anti-fraud.service');
@@ -112,6 +113,17 @@ class WebhookController {
       // ===================================
       if (restrictionsService.isMaintenanceMode()) {
         await messagingService.sendMessage(phone, restrictionsService.getMaintenanceMessage());
+        return;
+      }
+
+      // ===================================
+      // PRIORITY -0.9: PER-PLATFORM KILL SWITCH
+      // Lets one channel be taken down — a WhatsApp API incident, say —
+      // without stopping the other two.
+      // ===================================
+      const incomingPlatform = platformOf(phone);
+      if (!restrictionsService.isPlatformEnabled(incomingPlatform)) {
+        await messagingService.sendMessage(phone, restrictionsService.getPlatformDisabledMessage(incomingPlatform));
         return;
       }
 
@@ -920,9 +932,12 @@ Type the code, or type SKIP to continue:`
     
     let message = `🎮 SELECT GAME MODE 🎮\n\nChoose your challenge:\n\n`;
     
-    const practiceEnabled = restrictionsService.isModeEnabled('practice');
-    const classicEnabled = restrictionsService.isModeEnabled('classic');
-    const tournamentEnabled = restrictionsService.isModeEnabled('tournament');
+    // Availability is per platform now: a mode can be pulled on WhatsApp while
+    // staying live on Web-play, so the menu must be asked about *this* player.
+    const platform = platformOf(user);
+    const practiceEnabled = restrictionsService.isModeEnabled('practice', platform);
+    const classicEnabled = restrictionsService.isModeEnabled('classic', platform);
+    const tournamentEnabled = restrictionsService.isModeEnabled('tournament', platform);
     
     message += `1️⃣ *Free Play - Practice Mode*\n`;
     message += practiceEnabled 
@@ -951,8 +966,8 @@ Type the code, or type SKIP to continue:`
     switch(input) {
       case '1':
         // Free Play - Practice Mode
-        if (!restrictionsService.isModeEnabled('practice')) {
-          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('practice'));
+        if (!restrictionsService.isModeEnabled('practice', platformOf(user))) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('practice', platformOf(user)));
           return;
         }
         
@@ -974,8 +989,8 @@ Type the code, or type SKIP to continue:`
         
       case '2':
         // Classic Mode
-        if (!restrictionsService.isModeEnabled('classic')) {
-          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('classic'));
+        if (!restrictionsService.isModeEnabled('classic', platformOf(user))) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('classic', platformOf(user)));
           return;
         }
         
@@ -1005,8 +1020,8 @@ Type the code, or type SKIP to continue:`
         
       case '3':
         // Sponsored Tournaments
-        if (!restrictionsService.isModeEnabled('tournament')) {
-          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('tournament'));
+        if (!restrictionsService.isModeEnabled('tournament', platformOf(user))) {
+          await messagingService.sendMessage(user.phone_number, restrictionsService.getModeDisabledMessage('tournament', platformOf(user)));
           return;
         }
         

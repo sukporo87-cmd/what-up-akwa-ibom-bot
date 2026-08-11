@@ -224,6 +224,12 @@ async function startScheduledSendProcessor() {
 
   const messagingService = new MessagingService();
 
+  // Feature toggles: load the snapshot once at boot, then refresh on a timer.
+  // Lookups stay synchronous so the six call sites that ask "is this mode on?"
+  // don't have to become async — a missed await there would return a Promise,
+  // which is truthy, and every mode would silently read as enabled.
+  require('./services/toggles.service').start();
+
   setInterval(async () => {
     try {
       const result = await pool.query(`

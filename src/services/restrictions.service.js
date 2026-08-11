@@ -21,6 +21,8 @@ const Q1_TIMEOUT_CONFIG = {
     STREAK_RESET_HOURS: 24,         // Reset streak if no Q1 timeout for 24h
 };
 
+const togglesService = require('./toggles.service');
+
 class RestrictionsService {
     
     // ============================================
@@ -48,39 +50,81 @@ class RestrictionsService {
     // Custom messages: CLASSIC_MODE_MESSAGE, TOURNAMENT_MODE_MESSAGE, PRACTICE_MODE_MESSAGE
     // ============================================
     
-    isModeEnabled(mode) {
-        const envKey = `${mode.toUpperCase()}_MODE_ENABLED`;
-        const value = process.env[envKey];
-        // Default to enabled if env var not set
-        if (value === undefined || value === null || value === '') return true;
-        return value === 'true';
+    // Now resolved per platform, database first, env vars as fallback.
+    // `platform` is optional: omitted, it answers the global question, which
+    // keeps every existing caller working unchanged.
+    isModeEnabled(mode, platform = null) {
+        return togglesService.isModeEnabled(mode, platform);
+    }
+
+    isPlatformEnabled(platform) {
+        return togglesService.isPlatformEnabled(platform);
+    }
+
+    getPlatformDisabledMessage(platform) {
+        const row = togglesService._db(`platform.${platform}`);
+        if (row && row.message) return row.message;
+
+        const names = { whatsapp: 'WhatsApp', telegram: 'Telegram', web: 'Web-play' };
+        const others = ['whatsapp', 'telegram', 'web']
+            .filter(p => p !== platform && togglesService.isPlatformEnabled(p))
+            .map(p => names[p] || p);
+
+        let msg = `⏸️ *Temporarily Unavailable on ${names[platform] || platform}*\n\n`;
+        msg += `We've paused play on this channel for maintenance.\n\n`;
+        if (others.length) {
+            msg += `You can still play on ${others.join(' or ')}`;
+            msg += others.includes('Web-play') ? ` \u2014 play.whatsuptrivia.com.ng\n\n` : `.\n\n`;
+        }
+        msg += `Thanks for your patience. 🙏`;
+        return msg;
     }
     
-    getModeDisabledMessage(mode) {
+    getModeDisabledMessage(mode, platform = null) {
+        // A message set against the specific toggle wins — that is the one an
+        // admin wrote for this outage.
+        const resolved = togglesService.resolveMode(mode, platform);
+        if (resolved.message) return resolved.message;
+
         const envKey = `${mode.toUpperCase()}_MODE_MESSAGE`;
         const customMessage = process.env[envKey];
         if (customMessage) return customMessage;
-        
+
         const modeNames = {
             classic: 'Classic Mode',
             tournament: 'Tournaments',
             practice: 'Practice Mode'
         };
+        const platformNames = { whatsapp: 'WhatsApp', telegram: 'Telegram', web: 'Web-play' };
         const modeName = modeNames[mode] || mode;
-        
-        // Suggest available alternatives
-        const alternatives = [];
-        if (mode !== 'practice' && this.isModeEnabled('practice')) alternatives.push('Practice Mode');
-        if (mode !== 'classic' && this.isModeEnabled('classic')) alternatives.push('Classic Mode');
-        if (mode !== 'tournament' && this.isModeEnabled('tournament')) alternatives.push('Tournaments');
-        
+
         let msg = `⏸️ *${modeName} Temporarily Unavailable*\n\n`;
-        msg += `${modeName} is currently disabled for maintenance.\n\n`;
+
+        // If the mode still runs elsewhere, redirect rather than apologise —
+        // an outage on one platform becomes a route to another.
+        const otherPlatforms = platform ? togglesService.alternativePlatforms(mode, platform) : [];
+        if (otherPlatforms.length > 0) {
+            msg += `${modeName} isn't available on ${platformNames[platform] || platform} right now, `;
+            msg += `but you can still play it on ${otherPlatforms.map(p => platformNames[p] || p).join(' or ')}.\n\n`;
+            if (otherPlatforms.includes('web')) {
+                msg += `👉 play.whatsuptrivia.com.ng\n\n`;
+            }
+        } else {
+            msg += `${modeName} is currently disabled for maintenance.\n\n`;
+        }
+
+        // Other modes still available on this platform
+        const alternatives = [];
+        ['practice', 'classic', 'tournament'].forEach(m => {
+            if (m !== mode && this.isModeEnabled(m, platform)) {
+                alternatives.push(modeNames[m]);
+            }
+        });
         if (alternatives.length > 0) {
             msg += `In the meantime, try:\n`;
             alternatives.forEach(alt => { msg += `• ${alt}\n`; });
             msg += `\nType MENU to see available options.`;
-        } else {
+        } else if (otherPlatforms.length === 0) {
             msg += `Please check back soon!`;
         }
         return msg;
