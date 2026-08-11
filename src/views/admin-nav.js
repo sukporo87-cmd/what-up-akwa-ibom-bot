@@ -19,18 +19,18 @@
   'use strict';
 
   var NAV_ITEMS = [
-    { href: '/admin',            label: 'Main Admin',  icon: '🏠', color: '#6366f1', exact: true },
-    { href: '/admin/dashboard',  label: 'Analytics',   icon: '📊', color: '#8b5cf6' },
-    { href: '/admin/questions',  label: 'Questions',   icon: '❓', color: '#0ea5e9' },
-    { href: '/admin/financials', label: 'Financials',  icon: '💰', color: '#22c55e' },
-    { href: '/admin/reviews',    label: 'Reviews',     icon: '⭐', color: '#f59e0b' },
-    { href: '/admin/content',    label: 'Site Content',icon: '✏️', color: '#3b82f6' },
-    { href: '/admin/toggles',    label: 'Toggles',     icon: '🎚️', color: '#14b8a6' },
-    { href: '/admin/tournaments/manage', label: 'Tournaments', icon: '🏆', color: '#eab308' },
-    { href: '/admin/messaging',  label: 'Messaging',   icon: '📨', color: '#f97316' },
-    { href: '/admin/watchlist',  label: 'Watchlist',   icon: '🎯', color: '#ef4444' },
-    { href: '/admin/rotation',   label: 'Rotation',    icon: '🔄', color: '#a855f7' },
-    { href: '/admin/audit',      label: 'Audit Trail', icon: '📝', color: '#10b981' }
+    { href: '/admin',                   label: 'Main Admin',   icon: '🏠', color: '#6366f1', exact: true },
+    { href: '/admin/dashboard',         label: 'Analytics',    icon: '📊', color: '#8b5cf6' },
+    { href: '/admin/audit',             label: 'Audit Trail',  icon: '📝', color: '#10b981' },
+    { href: '/admin/financials',        label: 'Financials',   icon: '💰', color: '#22c55e' },
+    { href: '/admin/tournaments/manage',label: 'Tournaments',  icon: '🏆', color: '#eab308' },
+    { href: '/admin/reviews',           label: 'Reviews',      icon: '⭐', color: '#f59e0b' },
+    { href: '/admin/toggles',           label: 'Toggles',      icon: '🎚️', color: '#14b8a6' },
+    { href: '/admin/messaging',         label: 'Messaging',    icon: '📨', color: '#f97316' },
+    { href: '/admin/watchlist',         label: 'Watchlist',    icon: '🎯', color: '#ef4444' },
+    { href: '/admin/content',           label: 'Site Content', icon: '✏️', color: '#3b82f6' },
+    { href: '/admin/questions',         label: 'Questions',    icon: '❓', color: '#0ea5e9' },
+    { href: '/admin/rotation',          label: 'Rotation',     icon: '🔄', color: '#a855f7' }
   ];
 
   var CSS = [

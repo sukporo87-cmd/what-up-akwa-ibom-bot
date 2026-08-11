@@ -8866,4 +8866,102 @@ router.delete('/api/toggles/:key', authenticateAdmin, async (req, res) => {
   }
 });
 
+
+// ============================================
+// PAYOUT FORFEITURE (72-hour rule)
+// Distinct from the existing /cancel endpoints: a forfeit is the
+// enforcement of a published rule, so it is only permitted on rewards
+// that genuinely breached the window — unclaimed AND older than 72
+// hours. That check happens in SQL, not in the client, so a mis-click
+// cannot void a reward someone claimed in time.
+// ============================================
+
+// What would be forfeited, without doing it — always look before you leap
+router.get('/api/payouts/forfeitable', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id, t.amount, t.created_at, u.username, u.phone_number,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - t.created_at)) / 3600)::int AS hours_since_win
+      FROM transactions t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.transaction_type IN ('prize','tournament_prize')
+        AND t.payout_status = 'pending'
+        AND t.claimed_at IS NULL
+        AND t.created_at < NOW() - INTERVAL '72 hours'
+      ORDER BY t.created_at ASC
+    `);
+    const total = result.rows.reduce((a, r) => a + parseFloat(r.amount || 0), 0);
+    res.json({ success: true, transactions: result.rows, count: result.rows.length, total_amount: total });
+  } catch (error) {
+    logger.error(`Error listing forfeitable payouts: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load forfeitable payouts' });
+  }
+});
+
+// Forfeit one
+router.post('/api/payouts/:id/forfeit', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const result = await pool.query(`
+      UPDATE transactions
+      SET payout_status = 'cancelled',
+          notes = COALESCE(notes, '') || $2
+      WHERE id = $1
+        AND transaction_type IN ('prize','tournament_prize')
+        AND payout_status = 'pending'
+        AND claimed_at IS NULL
+        AND created_at < NOW() - INTERVAL '72 hours'
+      RETURNING id, user_id, amount
+    `, [id, '\n[Forfeited: unclaimed after 72 hours, at ' + new Date().toISOString() + ']']);
+
+    if (!result.rows.length) {
+      return res.status(409).json({
+        success: false,
+        error: 'Not forfeitable — it may have been claimed in time, already settled, or is still inside the 72-hour window.'
+      });
+    }
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id, 'payout_forfeited',
+      { transaction_id: id, amount: result.rows[0].amount, rule: '72h_unclaimed' },
+      getIpAddress(req), req.headers['user-agent']
+    );
+    logger.info(`Payout ${id} forfeited (unclaimed >72h) by ${req.adminSession.username}`);
+    res.json({ success: true, transaction: result.rows[0] });
+  } catch (error) {
+    logger.error(`Error forfeiting payout: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to forfeit payout' });
+  }
+});
+
+// Forfeit every reward currently past the window. The WHERE clause is the
+// safety: ids are not accepted from the client, so the set can only ever be
+// what actually breached the rule at the moment the query runs.
+router.post('/api/payouts/forfeit-expired', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      UPDATE transactions
+      SET payout_status = 'cancelled',
+          notes = COALESCE(notes, '') || $1
+      WHERE transaction_type IN ('prize','tournament_prize')
+        AND payout_status = 'pending'
+        AND claimed_at IS NULL
+        AND created_at < NOW() - INTERVAL '72 hours'
+      RETURNING id, user_id, amount
+    `, ['\n[Forfeited: unclaimed after 72 hours, at ' + new Date().toISOString() + ']']);
+
+    const total = result.rows.reduce((a, r) => a + parseFloat(r.amount || 0), 0);
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id, 'payouts_forfeited_bulk',
+      { count: result.rowCount, total_amount: total, rule: '72h_unclaimed' },
+      getIpAddress(req), req.headers['user-agent']
+    );
+    logger.info(`Bulk forfeited ${result.rowCount} unclaimed payouts totalling ₦${total}`);
+    res.json({ success: true, count: result.rowCount, total_amount: total });
+  } catch (error) {
+    logger.error(`Error bulk forfeiting payouts: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to forfeit payouts' });
+  }
+});
+
 module.exports = router;

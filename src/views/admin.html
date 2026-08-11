@@ -854,6 +854,10 @@
             <button class="btn btn-primary" onclick="loadPayouts()">🔄 Refresh</button>
           </div>
         </div>
+        <div id="forfeitBanner" style="display:none;align-items:center;gap:14px;flex-wrap:wrap;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:13px 16px;margin-bottom:14px;font-size:13.5px;color:#991b1b">
+          <span id="forfeitText" style="flex:1"></span>
+          <button class="btn btn-danger btn-sm" onclick="forfeitAllExpired()">🚫 Forfeit all expired</button>
+        </div>
         <div id="payoutsTableContainer">
           <div class="loading">
             <div class="spinner"></div>
@@ -2739,22 +2743,98 @@ async function loadPayouts() {
       container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending payouts</p></div>';
       return;
     }
-    let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Status</th><th>Bank Details</th><th>Verification</th><th>Date</th><th>Actions</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Status</th><th>Bank Details</th><th>Verification</th><th>Won</th><th>Claimed</th><th>Age</th><th>Actions</th></tr></thead><tbody>';
     payouts.forEach(payout => {
       const hasDetails = payout.account_name ? '✅' : '⏳';
       const detailsText = payout.account_name ? `${payout.account_name}<br><small>${payout.bank_name} - ${payout.account_number}</small>` : 'Awaiting details';
       const verificationBadge = payout.verified ? '<span class="verified-badge">✓ Verified</span>' : payout.account_name ? '<span class="unverified-badge">⚠ Not Verified</span>' : '-';
-      html += `<tr><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}</div>` : `<button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>`}</td></tr>`;
+      // The 72-hour rule needs three moments visible, not one date: when they
+      // won, whether they ever claimed, and how long it has been sitting.
+      const claimedCell = payout.claimed_at
+        ? new Date(payout.claimed_at).toLocaleDateString() + ' ' + new Date(payout.claimed_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
+        : '<span style="color:#b91c1c">not claimed</span>';
+      const hrs = payout.hours_since_win;
+      const ageCell = (hrs == null) ? '-' : (hrs < 24 ? hrs + 'h' : Math.floor(hrs/24) + 'd ' + (hrs%24) + 'h');
+      const expired = payout.forfeitable === true;
+      const forfeitBtn = expired
+        ? `<button class="btn btn-danger btn-sm" onclick="forfeitPayout(${payout.transaction_id})">🚫 Forfeit</button>`
+        : '';
+      html += `<tr${expired ? ' style="background:#fef2f2"' : ''}><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td><small>${claimedCell}</small></td><td>${ageCell}${expired ? '<br><small style="color:#b91c1c">past 72h</small>' : ''}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>` : `<div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>`}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
+    loadForfeitableSummary();
   } catch (error) {
     console.error('Error loading payouts:', error);
     container.innerHTML = '<div class="empty-state"><p>Error loading payouts</p></div>';
   }
 }
 
-function filterPayouts() { loadPayouts(); }
+function filterPayouts() { loadPayouts(); loadForfeitableSummary(); }
+
+// ---- payout forfeiture (11 Aug 2026) ----
+// Forfeit and cancel are separate on purpose: forfeit enforces the published
+// 72-hour rule and the server re-checks that the reward genuinely breached it,
+// so a mis-click cannot void money someone claimed in time. Cancel is an
+// administrative decision and always records a reason.
+async function forfeitPayout(transactionId) {
+  if (!confirm('Forfeit this reward?\n\nIt was won more than 72 hours ago and was never claimed. This cannot be undone.')) return;
+  try {
+    const response = await fetch(`/admin/api/payouts/${transactionId}/forfeit`, { method: 'POST', headers: getAuthHeaders() });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Reward forfeited', 'success'); loadPayouts(); loadForfeitableSummary(); }
+    else showAlert(`❌ ${result.error || 'Could not forfeit'}`, 'error');
+  } catch (error) {
+    showAlert('❌ Error forfeiting reward', 'error');
+  }
+}
+
+async function cancelPayout(transactionId) {
+  const reason = prompt('Reason for cancelling this payout (recorded in the audit log):');
+  if (reason === null) return;
+  if (!reason.trim()) { showAlert('A reason is required', 'error'); return; }
+  try {
+    const response = await fetch(`/admin/api/payouts/${transactionId}/cancel`, {
+      method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reason })
+    });
+    const result = await response.json();
+    if (result.success) { showAlert('✅ Payout cancelled', 'success'); loadPayouts(); loadForfeitableSummary(); }
+    else showAlert(`❌ ${result.error || 'Could not cancel'}`, 'error');
+  } catch (error) {
+    showAlert('❌ Error cancelling payout', 'error');
+  }
+}
+
+async function forfeitAllExpired() {
+  try {
+    const preview = await (await fetch('/admin/api/payouts/forfeitable', { headers: getAuthHeaders() })).json();
+    if (!preview.success || !preview.count) { showAlert('Nothing is past the 72-hour window', 'info'); return; }
+    if (!confirm(`Forfeit ${preview.count} unclaimed reward(s) totalling ₦${parseFloat(preview.total_amount).toLocaleString()}?\n\nEach was won more than 72 hours ago and never claimed. This cannot be undone.`)) return;
+    const response = await fetch('/admin/api/payouts/forfeit-expired', { method: 'POST', headers: getAuthHeaders() });
+    const result = await response.json();
+    if (result.success) {
+      showAlert(`✅ Forfeited ${result.count} reward(s), ₦${parseFloat(result.total_amount).toLocaleString()}`, 'success');
+      loadPayouts(); loadForfeitableSummary();
+    } else showAlert(`❌ ${result.error || 'Could not forfeit'}`, 'error');
+  } catch (error) {
+    showAlert('❌ Error forfeiting rewards', 'error');
+  }
+}
+
+// Banner above the payout table: never forfeit in bulk without seeing the
+// count and the money first.
+async function loadForfeitableSummary() {
+  const banner = document.getElementById('forfeitBanner');
+  if (!banner) return;
+  try {
+    const r = await (await fetch('/admin/api/payouts/forfeitable', { headers: getAuthHeaders() })).json();
+    if (r.success && r.count > 0) {
+      document.getElementById('forfeitText').innerHTML =
+        `<strong>${r.count} unclaimed reward${r.count === 1 ? '' : 's'}</strong> past the 72-hour window, totalling ₦${parseFloat(r.total_amount).toLocaleString()}.`;
+      banner.style.display = 'flex';
+    } else banner.style.display = 'none';
+  } catch (e) { banner.style.display = 'none'; }
+}
 
 async function reverifyPayout(transactionId) {
   if (!confirm('Re-verify this bank account with Paystack?')) return;
