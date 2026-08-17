@@ -16,7 +16,14 @@ const STATS_KEY = 'mq:stats';
 const MAX_PER_SECOND = 60;       // Stay under WhatsApp's 80/sec limit
 const RETRY_MAX = 3;              // Max retries per message
 const RETRY_DELAY_BASE = 2000;    // 2s base retry delay (exponential)
-const PROCESS_INTERVAL = 100;     // Process queue every 100ms
+const PROCESS_INTERVAL = 100;     // Drain speed while there is work to do
+// BANDWIDTH: this loop used to run every 100ms forever, doing two Redis
+// round trips per tick — 1.73M calls/day against an EXTERNAL Redis, which
+// was ~99% of the service's outbound bandwidth even with an empty queue.
+// It now backs off when idle and is woken instantly by enqueue(), so an
+// idle bot costs ~0.5 round trips/sec instead of 20.
+const IDLE_INTERVAL_MAX = 5000;   // Slowest poll when nothing is queued
+const IDLE_BACKOFF_STEP = 2;      // Double the wait after each empty tick
 const BATCH_SIZE = 6;             // 6 messages per 100ms = 60/sec
 
 class MessageQueueService {
@@ -38,13 +45,41 @@ class MessageQueueService {
 
         if (this.intervalId) return; // Already started
 
-        this.intervalId = setInterval(() => this.processBatch(), PROCESS_INTERVAL);
-        logger.info('✅ Message queue started (60 msgs/sec rate limit)');
+        // A self-rescheduling timeout rather than a fixed interval, so the
+        // delay can adapt to whether there is anything to send.
+        this.currentInterval = PROCESS_INTERVAL;
+        this._scheduleNext(PROCESS_INTERVAL);
+        logger.info(`✅ Message queue started (60 msgs/sec, idle backoff to ${IDLE_INTERVAL_MAX}ms)`);
+    }
+
+    _scheduleNext(delay) {
+        if (this.stopped) return;
+        this.intervalId = setTimeout(async () => {
+            const didWork = await this.processBatch();
+            // Work found: stay fast. Nothing there: wait longer next time.
+            this.currentInterval = didWork
+                ? PROCESS_INTERVAL
+                : Math.min(this.currentInterval * IDLE_BACKOFF_STEP, IDLE_INTERVAL_MAX);
+            this._scheduleNext(this.currentInterval);
+        }, delay);
+        this.intervalId.unref?.();
+    }
+
+    // Called by enqueue(): a message just arrived, so drop back to full speed
+    // immediately. This is what stops the backoff from adding latency —
+    // messages queued in this process are picked up on the next tick, not
+    // after the idle delay.
+    _wake() {
+        if (this.stopped || this.currentInterval === PROCESS_INTERVAL) return;
+        this.currentInterval = PROCESS_INTERVAL;
+        if (this.intervalId) clearTimeout(this.intervalId);
+        this._scheduleNext(0);
     }
 
     stop() {
+        this.stopped = true;
         if (this.intervalId) {
-            clearInterval(this.intervalId);
+            clearTimeout(this.intervalId);
             this.intervalId = null;
             logger.info('🛑 Message queue stopped');
         }
@@ -75,6 +110,7 @@ class MessageQueueService {
         // Use sorted set with priority + timestamp as score for ordering
         const score = priority * 1e13 + Date.now();
         await redis.zadd(QUEUE_KEY, score, JSON.stringify(message));
+        this._wake();
         this.stats.queued++;
 
         return message.id;
@@ -103,27 +139,40 @@ class MessageQueueService {
     /**
      * Process a batch of messages from the queue
      */
+    // Returns true when it actually sent something, so the caller knows
+    // whether to keep polling fast or back off.
     async processBatch() {
-        if (this.processing) return; // Prevent overlapping
+        if (this.processing) return false; // Prevent overlapping
         this.processing = true;
 
         try {
-            // Check rate limit
-            const currentRate = parseInt(await redis.get(RATE_LIMIT_KEY) || '0');
+            // One pipelined round trip instead of two sequential ones. Over
+            // an external Redis this halves the per-tick network cost, and
+            // the rate-limit read is useless without the pop anyway.
+            const [[, rateRaw], [, messages]] = await redis.pipeline()
+                .get(RATE_LIMIT_KEY)
+                .zpopmin(QUEUE_KEY, BATCH_SIZE)
+                .exec();
+
+            const currentRate = parseInt(rateRaw || '0');
+
             if (currentRate >= MAX_PER_SECOND) {
+                // Over the rate limit: put back anything we just popped so it
+                // is not lost, and treat this as "work pending" so we stay fast.
+                if (messages && messages.length) {
+                    const back = redis.pipeline();
+                    for (let i = 0; i < messages.length; i += 2) {
+                        back.zadd(QUEUE_KEY, messages[i + 1], messages[i]);
+                    }
+                    await back.exec();
+                }
                 this.processing = false;
-                return;
+                return true;
             }
-
-            const remaining = MAX_PER_SECOND - currentRate;
-            const batchCount = Math.min(BATCH_SIZE, remaining);
-
-            // Pop messages from sorted set (lowest score = highest priority)
-            const messages = await redis.zpopmin(QUEUE_KEY, batchCount);
 
             if (!messages || messages.length === 0) {
                 this.processing = false;
-                return;
+                return false;
             }
 
             // messages is [member, score, member, score, ...]
@@ -145,9 +194,11 @@ class MessageQueueService {
             await pipeline.exec();
 
             await Promise.allSettled(promises);
+            return true;   // work was done — keep draining at full speed
 
         } catch (error) {
-            logger.error('Message queue processing error:', error.message);
+            logger.error(`Message queue processing error: ${error.message}`);
+            return false;
         } finally {
             this.processing = false;
         }
