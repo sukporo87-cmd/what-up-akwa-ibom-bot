@@ -9,8 +9,4 @@ Disallow: /web/
 Disallow: /payment
 Disallow: /webhook
 
-# Site icons live at the root and are intentionally crawlable — Google needs
-# to fetch /favicon-96.png (and friends) to show the logo in search results.
-# Do not add a Disallow that covers them.
-
 Sitemap: https://whatsuptrivia.com.ng/sitemap.xml
