@@ -56,6 +56,10 @@ const SITE_HOSTS = new Set([
   'whatsuptrivia.com.ng',
   'www.whatsuptrivia.com.ng'
 ]);
+// Paths no legitimate visitor to a Node app ever requests. Kept deliberately
+// narrow: real 404s (a mistyped /leaderbords) still get the themed page.
+const SCANNER_PROBE = /\.(php|asp|aspx|jsp|cgi|sql|bak|old|env|ini|sh|exe|dll)($|\?)|^\/(wp-|wordpress|xmlrpc|vendor\/|cgi-bin\/|phpmyadmin|\.git|\.env|\.aws|autodiscover|owa\/|boaform|hudson|jenkins|solr\/|struts)/i;
+
 const isSiteHost = (hostname) => {
   const h = String(hostname || '').toLowerCase();
   return SITE_HOSTS.has(h)
@@ -166,6 +170,18 @@ app.use('/web/payment', webPaymentRoutes);
 // Anything unmatched on the demo host gets the site's own 404 page.
 // Sits after the API routes so /api/public/* still works on that hostname.
 app.use((req, res, next) => {
+  // ============================================
+  // SCANNER PROBES — cheap 404, no page render
+  // Automated bots sweep every public IP looking for PHP/WordPress
+  // backdoors. They cannot hurt a Node app, but each probe was being
+  // answered with the full themed 404 page: 73 KB a time, ~2.8 MB per
+  // scan burst, for requests that will never be a real visitor.
+  // These get an empty 404 instead — 0 bytes of body.
+  // ============================================
+  if (req.method === 'GET' && SCANNER_PROBE.test(req.path)) {
+    return res.status(404).type('txt').send('');
+  }
+
   if (isSiteHost(req.hostname) && req.method === 'GET' && !req.path.startsWith('/api')) {
     return res.status(404).sendFile('404.html', {
       root: path.join(__dirname, 'views', 'site')
@@ -223,12 +239,6 @@ async function startScheduledSendProcessor() {
   const pool = require('./config/database');
 
   const messagingService = new MessagingService();
-
-  // Feature toggles: load the snapshot once at boot, then refresh on a timer.
-  // Lookups stay synchronous so the six call sites that ask "is this mode on?"
-  // don't have to become async — a missed await there would return a Promise,
-  // which is truthy, and every mode would silently read as enabled.
-  require('./services/toggles.service').start();
 
   setInterval(async () => {
     try {

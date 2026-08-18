@@ -580,8 +580,18 @@ const activityService = require('../services/activity.service');
 router.get('/activity/recent', async (req, res) => {
     try {
         const events = await activityService.recent(req.query.limit);
+        // `timestamp: new Date()` used to change on every single request, so
+        // Express's ETag never matched and every poll returned the full 3 KB
+        // body — even when the feed was identical. Deriving it from the data
+        // means the response is byte-identical while nothing new happens, the
+        // ETag matches, and the browser gets a ~150-byte 304 instead.
+        // The ticker only reads `events`, so nothing downstream changes.
         res.header('Cache-Control', 'public, max-age=15');
-        res.json({ success: true, events, timestamp: new Date().toISOString() });
+        res.json({
+            success: true,
+            events,
+            timestamp: events.length ? events[0].at : null
+        });
     } catch (error) {
         logger.error(`Error fetching activity feed: ${error.message}`);
         res.status(500).json({ success: false, error: 'Failed to fetch activity' });
