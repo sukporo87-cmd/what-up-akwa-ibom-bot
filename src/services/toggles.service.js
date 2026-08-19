@@ -70,7 +70,13 @@ class TogglesService {
         } catch (error) {
             // Never let a toggle lookup failure take the game down: keep the
             // last known snapshot, or fall through to env vars if we have none.
-            logger.warn(`Toggle refresh failed, using last snapshot: ${error.message}`);
+            // Log loudly when we have NO snapshot at all, because in that state
+            // every mode reads as enabled and a switched-off mode is playable.
+            if (this._loaded) {
+                logger.warn(`Toggle refresh failed, using last snapshot: ${error.message}`);
+            } else {
+                logger.error(`Toggle cache EMPTY — all modes will read as enabled until this recovers: ${error.message}`);
+            }
         }
     }
 
@@ -84,6 +90,14 @@ class TogglesService {
     }
 
     _db(key) {
+        // Defence in depth: if start() was never called — the exact bug that
+        // let Classic stay playable after being switched off — begin loading
+        // now rather than reporting "no override set" forever. The first few
+        // lookups still fall through to env/default, but the window is
+        // seconds instead of permanent.
+        if (!this._loaded && !this._timer) {
+            this.start();
+        }
         return this._cache.get(key) || null;
     }
 

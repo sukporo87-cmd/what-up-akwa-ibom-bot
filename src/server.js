@@ -240,6 +240,12 @@ async function startScheduledSendProcessor() {
 
   const messagingService = new MessagingService();
 
+  // Feature toggles: load the snapshot at boot, then refresh on a timer.
+  // WITHOUT THIS the cache stays empty, every _db() lookup returns null, and
+  // resolveMode() falls through to the env vars and then to "enabled" — so a
+  // mode switched off in the admin grid silently stayed playable.
+  require('./services/toggles.service').start();
+
   setInterval(async () => {
     try {
       const result = await pool.query(`
