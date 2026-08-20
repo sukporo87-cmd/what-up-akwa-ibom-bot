@@ -81,12 +81,16 @@ class TogglesService {
     }
 
     // Called once at boot from server.js
-    start() {
+    // Returns the first refresh, so the caller can await it before serving
+    // traffic. Awaiting matters: a request handled before the first load
+    // reads every mode as enabled.
+    async start() {
         if (this._timer) return;
-        this.refresh();
+        const first = this.refresh();
         this._timer = setInterval(() => this.refresh(), REFRESH_MS);
         this._timer.unref?.();
-        logger.info(`🎚️  Feature toggles active (refresh every ${REFRESH_MS / 1000}s)`);
+        await first;
+        logger.info(`🎚️  Feature toggles active (${this._cache.size} override(s) loaded, refresh every ${REFRESH_MS / 1000}s)`);
     }
 
     _db(key) {

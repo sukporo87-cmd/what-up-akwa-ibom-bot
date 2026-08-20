@@ -240,12 +240,6 @@ async function startScheduledSendProcessor() {
 
   const messagingService = new MessagingService();
 
-  // Feature toggles: load the snapshot at boot, then refresh on a timer.
-  // WITHOUT THIS the cache stays empty, every _db() lookup returns null, and
-  // resolveMode() falls through to the env vars and then to "enabled" — so a
-  // mode switched off in the admin grid silently stayed playable.
-  require('./services/toggles.service').start();
-
   setInterval(async () => {
     try {
       const result = await pool.query(`
@@ -275,7 +269,27 @@ async function startScheduledSendProcessor() {
   console.log('✅ Love Quest scheduled send processor started (60s interval)');
 }
 
+// ============================================
+// FEATURE TOGGLES — loaded BEFORE the first request
+// This must complete before app.listen(). An unloaded cache makes every
+// _db() lookup return null, so resolveMode() falls through to the env vars
+// and then to "enabled" — a mode switched off in the admin grid stays
+// silently playable. Awaiting the first load removes that window entirely
+// rather than narrowing it.
+// ============================================
+const togglesService = require('./services/toggles.service');
+
+async function bootstrap() {
+  try {
+    await togglesService.start();
+  } catch (e) {
+    console.error('⚠️  Toggle cache failed to load at boot:', e.message);
+  }
+  startServer();
+}
+
 // Start server
+function startServer() {
 app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -325,6 +339,10 @@ app.listen(PORT, async () => {
   // who've been inactive for 20+ hours
   startWelcomeMessageProcessor();
 });
+}
+
+bootstrap();
+
 
 function startWelcomeMessageProcessor() {
   const welcomeService = require('./services/welcome-message.service');
