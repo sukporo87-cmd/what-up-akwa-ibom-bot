@@ -2166,6 +2166,10 @@ class GameService {
                     if (timeout) {
                         await redis.del(timeoutKey);
                         await redis.del(captchaKey);
+                        // Breadcrumb so an answer arriving a moment late can be
+                        // answered honestly instead of falling through into
+                        // silence and leaving the client on "Checking…".
+                        await redis.setex(`captcha_gone:${session.session_key}`, 120, 'timeout');
                         activeTimeouts.delete(timeoutKey);
                         await auditService.logCaptchaTimeout(session.id, user.id, questionNumber, captcha.type);
                         await this.handleCaptchaFailure(session, user, 'timeout');
@@ -2222,6 +2226,42 @@ class GameService {
                 : `❌ *VERIFICATION FAILED*\n\nYou didn't pass the security check.\n\nYour game has ended.\n\n💰 Final Score: ₦${session.current_score.toLocaleString()}`;
             
             await messagingService.sendMessage(user.phone_number, message);
+
+            // A web client sitting on the security screen NEVER sees this
+            // message: relay() suppresses all text while the captcha view is
+            // open, precisely so a stray message can't cover the puzzle. So a
+            // timed-out check ended the game server-side while the browser sat
+            // on "Checking…" forever. Emit the structured event the client
+            // already knows how to handle.
+            if (user.phone_number && user.phone_number.startsWith('web_')) {
+                try {
+                    const gameEvents = require('./game-events.service');
+                    await gameEvents.clearSnapshot(user.id);
+                    gameEvents.emit(user.id, 'game.over', {
+                        outcome: reason === 'timeout' ? 'captcha_timeout' : 'captcha_failed',
+                        amountWon: 0,
+                        wonGrandPrize: false,
+                        perfect: false,
+                        questionsAnswered: Math.max(0, (session.current_question || 1) - 1),
+                        totalQuestions: Object.keys(PRIZE_LADDER).length,
+                        gameMode: session.game_mode,
+                        gameType: session.game_type,
+                        isPractice: session.game_type === 'practice',
+                        isTournament: !!session.is_tournament_game,
+                        tournamentId: session.tournament_id || null,
+                        hasWinnings: false,
+                        canClaim: false,
+                        sessionId: session.id,
+                        reason,
+                        menu: [
+                            { k: '1', v: 'Play again' },
+                            { k: '5', v: 'Main menu' }
+                        ]
+                    });
+                } catch (evtErr) {
+                    logger.error(`Could not emit captcha failure event: ${evtErr.message}`);
+                }
+            }
             
             await pool.query('UPDATE game_sessions SET status = \'completed\', completed_at = NOW(), captcha_passed = false WHERE id = $1', [session.id]);
             await redis.del(`session:${session.session_key}`);
@@ -2230,6 +2270,16 @@ class GameService {
             await redis.del(`captcha:${session.session_key}`);
             this.clearAllSessionTimeouts(session.session_key);
         } catch (error) { logger.error('Error handling CAPTCHA failure:', error); }
+    }
+
+    // True if a captcha for this session expired or was resolved in the last
+    // couple of minutes. Lets a late submission get a real reply.
+    async wasCaptchaJustResolved(sessionKey) {
+        try {
+            return !!(await redis.get(`captcha_gone:${sessionKey}`));
+        } catch (e) {
+            return false;
+        }
     }
 
     async hasPendingCaptcha(sessionKey) {

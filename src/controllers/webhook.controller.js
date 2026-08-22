@@ -3039,6 +3039,17 @@ Type the code, or type SKIP to continue:`
       if (handled) {
         return;
       }
+    } else if (await gameService.wasCaptchaJustResolved(session.session_key)) {
+      // The answer arrived AFTER the 12-second timer fired and deleted the
+      // captcha key — a second of mobile latency is enough. Previously it fell
+      // through every handler below and produced no response at all, so a web
+      // client sat on "Checking…" indefinitely. Say what happened instead.
+      await messagingService.sendMessage(
+        user.phone_number,
+        `⏱️ That security check had already expired when your answer arrived.\n\n` +
+        `1️⃣ Play Again\n5️⃣ Main Menu`
+      );
+      return;
     }
 
     // Lifelines

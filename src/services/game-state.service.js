@@ -235,8 +235,32 @@ class GameStateService {
                     try { data = JSON.parse(raw); } catch (e) { /* legacy shape */ }
                     const started = data && data.startTime ? data.startTime : null;
                     const expiresAt = started ? started + 12000 : null;
+
+                    // The PUZZLE ITSELF must travel with the state, not only
+                    // with the captcha.required event. If that event is missed
+                    // — SSE dropped, tab backgrounded, phone switched network
+                    // — the client reconnects, sees phase 'captcha', and
+                    // renders an empty box with no question and no options. It
+                    // looks like it is still loading, the server-side timer
+                    // runs out, and the session is lost. Everything needed is
+                    // already in this Redis record; it simply was not returned.
+                    //
+                    // Parsing is identical to the live event in
+                    // game.service.js — the keys MUST match, or an answer
+                    // picked after a reconnect would submit as "1." instead of
+                    // "1" and be marked wrong.
+                    const capOptions = data && Array.isArray(data.options)
+                        ? data.options.map(o => {
+                            const m = /^\s*(\d+)[.)]\s*(.*)$/.exec(o);
+                            return m ? { k: m[1], v: m[2].trim() } : null;
+                          }).filter(Boolean)
+                        : null;
+
                     return {
                         ...base,
+                        body: data ? (data.displayQuestion || null) : null,
+                        summary: data ? (data.displayQuestion || null) : null,
+                        options: capOptions,
                         phase: 'captcha',
                         expects: 'captcha',
                         sessionId: session.id,

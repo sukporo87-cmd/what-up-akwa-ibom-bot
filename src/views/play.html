@@ -62,7 +62,13 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .opt{display:flex;align-items:center;gap:13px;width:100%;text-align:left;padding:15px 16px;
      background:var(--slate);border:1.5px solid transparent;border-radius:13px;
      font-size:15.5px;line-height:1.35;transition:transform .12s,border-color .18s,background .18s;
-     opacity:0;animation:rise .32s cubic-bezier(.2,.8,.3,1) forwards}
+     opacity:1;animation:rise .32s cubic-bezier(.2,.8,.3,1) forwards}
+/* An answer button must never depend on an animation to become visible.
+   `.opt` used to start at opacity:0 and rely on `rise` to reveal it — but the
+   prefers-reduced-motion rule below kills all animations, so anyone with
+   "Reduce Motion" enabled saw the question, the timer and the lifelines, and
+   no answers at all. The button is now visible by default and the animation
+   only adds the entrance. */
 @keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 .opt .k{font-family:var(--display);font-weight:600;font-size:13px;width:25px;height:25px;flex:none;
         border-radius:8px;background:var(--raise);color:var(--brass);display:grid;place-items:center}
@@ -956,9 +962,13 @@ function applyState(st, text){
       return;
 
     case 'captcha':
-      // A reconnect or refresh mid-check: we have the deadline but not the
-      // puzzle, which only ships with the event. Re-render what we can.
-      if(!$('vCap').classList.contains('on')) showCaptcha(st);
+      // A reconnect or refresh mid-check. The state now carries the puzzle
+      // itself, so re-render whenever it has one — previously we only painted
+      // if the screen was closed, which left an already-open but EMPTY check
+      // sitting there until it timed out.
+      if(!$('vCap').classList.contains('on') || st.body || (st.options||[]).length){
+        showCaptcha(st);
+      }
       return;
 
     case 'turbo_go':
@@ -1629,7 +1639,11 @@ function showCaptcha(c){
   capMode=true;
   $('mCap').textContent='';
   $('capTitle').textContent=c.title||'Quick check';
-  $('capBody').textContent=(c.body||c.summary||'').trim();
+  const puzzle=(c.body||c.summary||'').trim();
+  // An empty puzzle area is indistinguishable from a loading screen, which is
+  // exactly how players described this failing. Say what happened instead.
+  $('capBody').textContent = puzzle ||
+    "We couldn't load this check. Tap Send to request a new one.";
 
   // Some types are multiple choice, some want a typed answer. Show one or the
   // other, never both — a text box under four emoji buttons is just confusing.
