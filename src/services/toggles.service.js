@@ -39,6 +39,18 @@ const REFRESH_MS = 15000;
 // .start() inside bootstrap() before app.listen() — before that fix the cache
 // was empty at boot and every lookup fell through to "enabled".
 const MODES = ['practice', 'classic', 'tournament', 'challenge'];
+
+// Modes that are OFF until somebody turns them on.
+//
+// Every other mode defaults to enabled, which is right for features that have
+// always existed — a missing toggle row should not take Classic down. It is
+// wrong for a new one: it means the moment the code deploys, the feature is
+// live everywhere, and "remember to switch it off first" is a step in a
+// document rather than a property of the system.
+//
+// A mode listed here still respects a database row or an env var. It simply
+// does not come up live by accident.
+const DEFAULT_OFF = ['challenge'];
 const PLATFORMS = ['whatsapp', 'telegram', 'web'];
 
 class TogglesService {
@@ -145,6 +157,10 @@ class TogglesService {
         }
         const envGlobal = this._env(`${mode.toUpperCase()}_MODE_ENABLED`);
         if (envGlobal !== null) return { enabled: envGlobal, reason: 'env', message: null };
+
+        if (DEFAULT_OFF.includes(mode)) {
+            return { enabled: false, reason: 'default-off', message: null };
+        }
 
         return { enabled: true, reason: 'default', message: null };
     }
