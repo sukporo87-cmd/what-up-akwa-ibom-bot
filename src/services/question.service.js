@@ -268,12 +268,12 @@ class QuestionService {
                    ARRAY_AGG(difficulty ORDER BY n, difficulty) AS levels_by_supply,
                    ARRAY_AGG(n ORDER BY n, difficulty)          AS supply_by_level
             FROM (
-                SELECT category, difficulty, COUNT(*)::int AS n
+                SELECT LOWER(category) AS category, difficulty, COUNT(*)::int AS n
                 FROM questions
                 WHERE question_bank_id = $1
                   AND is_active = true
                   AND (is_disabled = false OR is_disabled IS NULL)
-                GROUP BY category, difficulty
+                GROUP BY LOWER(category), difficulty
             ) per_level
             GROUP BY category
             ORDER BY MIN(n), category
@@ -328,7 +328,11 @@ class QuestionService {
     async buildChallengeQuestionSet(categories, excludeQuestionIds = [], candidatesPerSlot = 12) {
         const bankId = await this.getChallengeBankId();
         const positions = Array.from({ length: 15 }, (_, i) => i + 1);
-        const chosen = [...new Set(categories)];
+        // Both sides lowercased: whatever case the bank rows were written in,
+        // and whatever case the caller passes.
+        const chosen = [...new Set(
+            (categories || []).map(c => String(c || '').trim().toLowerCase()).filter(Boolean)
+        )];
 
         const slots = positions.map(p => ({
             position: p,
@@ -356,13 +360,20 @@ class QuestionService {
                 SELECT s.position,
                        q.id,
                        q.difficulty,
-                       q.category,
+                       -- Lowercased so the quota bookkeeping below and the
+                       -- stored challenge.categories agree. Categories are
+                       -- lowercased when a challenge is created; matching on
+                       -- the raw column would mean a bank row saved as
+                       -- "Word Power" never matches a challenge asking for
+                       -- "word power", and the set would fail to build with no
+                       -- obvious cause.
+                       LOWER(q.category) AS category,
                        ROW_NUMBER() OVER (PARTITION BY s.position ORDER BY RANDOM()) AS rn
                 FROM slots s
                 JOIN questions q
                   ON q.difficulty = ANY(s.difficulties)
                  AND q.question_bank_id = $1
-                 AND q.category = ANY($2::text[])
+                 AND LOWER(q.category) = ANY($2::text[])
                  AND q.is_active = true
                  AND (q.is_disabled = false OR q.is_disabled IS NULL)
                  AND NOT (q.id = ANY(${excludeParam}::int[]))
