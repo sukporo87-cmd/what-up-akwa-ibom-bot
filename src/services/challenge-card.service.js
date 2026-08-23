@@ -23,7 +23,9 @@
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
-const imageService = require('./image.service');
+// image.service exports the CLASS, not an instance.
+const ImageService = require('./image.service');
+const imageService = new ImageService();
 const deepLinkService = require('./deeplink.service');
 const challengeService = require('./challenge.service');
 

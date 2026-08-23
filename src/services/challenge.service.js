@@ -427,7 +427,8 @@ class ChallengeService {
         }
 
         if (entryMethod === 'credit') {
-            const paymentService = require('./payment.service');
+            const PaymentService = require('./payment.service');
+            const paymentService = new PaymentService();
             const spend = await paymentService.deductGameAtomic(user.id);
             if (!spend.deducted) return { ok: false, reason: 'no_credits', challenge };
             creditConsumed = true;
@@ -459,7 +460,8 @@ class ChallengeService {
             // — the join did not happen.
             if (error && error.code === '23505') {
                 if (creditConsumed) {
-                    const paymentService = require('./payment.service');
+                    const PaymentService = require('./payment.service');
+                    const paymentService = new PaymentService();
                     await paymentService.refundGameCredit(user.id, 'duplicate_join');
                 }
                 return { ok: false, reason: 'already_joined', challenge };

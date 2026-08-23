@@ -18,8 +18,14 @@
 
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
-const userService = require('./user.service');
-const messagingService = require('./messaging.service');
+// These two export the CLASS, not an instance. webhook.controller.js does
+// `new UserService()` for the same reason. Calling a method on the class
+// itself throws TypeError, which routeMessage's outer catch swallows — the
+// player just gets the main menu with no clue anything failed.
+const UserService = require('./user.service');
+const userService = new UserService();
+const MessagingService = require('./messaging.service');
+const messagingService = new MessagingService();
 const challengeService = require('./challenge.service');
 const challengeRoundService = require('./challenge-round.service');
 const pool = require('../config/database');
