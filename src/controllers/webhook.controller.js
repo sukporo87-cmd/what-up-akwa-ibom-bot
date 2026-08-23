@@ -7,6 +7,13 @@
 
 const pool = require('../config/database');
 const redis = require('../config/redis');
+const deepLinkService = require('../services/deeplink.service');
+const challengeChatService = require('../services/challenge-chat.service');
+
+// The handler stage 2 deliberately left unregistered. Registered here rather
+// than inside deeplink.service so that file keeps no require() into game code.
+deepLinkService.register('challenge', (link, ctx) =>
+  challengeChatService.handleDeepLink(link, ctx));
 const MessagingService = require('../services/messaging.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
@@ -134,6 +141,76 @@ class WebhookController {
       if (rateLimit.limited) {
         await messagingService.sendMessage(phone, restrictionsService.getRateLimitMessage());
         return;
+      }
+
+      // ===================================
+      // PRIORITY -0.4: DEEP LINKS
+      // A shared invite arrives here as ordinary text: `/start c_K7P2M4RN`
+      // from Telegram, `CHALLENGE K7P2M4RN` from a wa.me link. Before this
+      // block Telegram's ?start= payload fell through to the menu and the
+      // code was silently discarded.
+      //
+      // Parsed before RESET so an invite still works for a user who is
+      // mid-registration, and stored against the identifier so it survives
+      // all six signup steps for someone who has never played.
+      // ===================================
+      const deepLink = deepLinkService.parse(message);
+      if (deepLink) {
+        await deepLinkService.setPending(phone, deepLink);
+
+        const consumed = await deepLinkService.dispatch(deepLink, {
+          identifier: phone,
+          platform: incomingPlatform,
+          raw: message
+        });
+
+        // No handler registered yet (tournaments, until BACKLOG item 2 lands)
+        // means we fall through to normal routing rather than dead-ending.
+        if (consumed) return;
+      }
+
+      // ===================================
+      // PRIORITY -0.35: CHALLENGE FLOW
+      // Deliberately ONE call. routeMessage has already produced three bugs
+      // in a day from phrase matching, so the state machine itself lives in
+      // challenge-chat.service.js and this asks a single question.
+      // Returns false when it has nothing to do, and routing continues.
+      // ===================================
+      if (await challengeChatService.isInFlow(phone)) {
+        const chatUser = await userService.getUserByPhone(phone);
+        if (chatUser && await challengeChatService.handleStep(phone, message, chatUser, incomingPlatform)) {
+          return;
+        }
+      }
+
+      // A challenge round in progress owns A/B/C/D. This MUST sit above the
+      // Classic answer path: a challenge round writes a real game_sessions row,
+      // and although getActiveSession() now filters challenge_id IS NULL, the
+      // ordering here is the second guard rather than the only one.
+      if (await challengeChatService.isPlaying(phone)) {
+        const playingUser = await userService.getUserByPhone(phone);
+        if (playingUser && await challengeChatService.handleAnswer(phone, message, playingUser, incomingPlatform)) {
+          return;
+        }
+      }
+
+      if (input === 'PLAY') {
+        const playUser = await userService.getUserByPhone(phone);
+        if (playUser && await challengeChatService.handlePlay(phone, playUser, incomingPlatform)) {
+          return;
+        }
+      }
+
+      if (input === 'ACCEPT' || input === 'NO' || input === 'CHALLENGE') {
+        // Deliberately loud. This block silently not firing is indistinguishable
+        // from the file not being deployed, and the outer catch reports neither.
+        const chatUser = await userService.getUserByPhone(phone);
+        logger.info(`\u2694\ufe0f CHALLENGE-HOOK input=${input} platform=${incomingPlatform} user=${chatUser ? chatUser.id : 'NONE'}`);
+        if (chatUser) {
+          if (input === 'ACCEPT' && await challengeChatService.handleAccept(phone, chatUser, incomingPlatform)) return;
+          if (input === 'NO' && await challengeChatService.handleDecline(phone)) return;
+          if (input === 'CHALLENGE' && await challengeChatService.start(phone, incomingPlatform)) return;
+        }
       }
 
       // ===================================
@@ -2921,7 +2998,7 @@ Type the code, or type SKIP to continue:`
       const result = await pool.query(
         `SELECT * FROM transactions
          WHERE user_id = $1
-         AND transaction_type IN ('prize', 'tournament_prize')
+         AND transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
          AND payout_status = 'paid'
          ORDER BY paid_at DESC
          LIMIT 1`,

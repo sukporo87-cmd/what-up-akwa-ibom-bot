@@ -335,7 +335,10 @@ class ChallengeChatService {
     // an acceptor lost between "challenge a friend" and a link they can send.
 
     async start(identifier, platform) {
-        if (!restrictionsService.isModeEnabled('challenge', platform)) {
+        const enabled = restrictionsService.isModeEnabled('challenge', platform);
+        logger.info(`\u2694\ufe0f CHALLENGE-START platform=${platform} modeEnabled=${enabled}`);
+
+        if (!enabled) {
             await messagingService.sendMessage(identifier, STRINGS.notAvailable);
             return true;
         }
