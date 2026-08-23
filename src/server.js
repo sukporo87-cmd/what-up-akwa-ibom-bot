@@ -41,6 +41,16 @@ app.get('/', (req, res, next) => {
   next();
 });
 
+// A challenge invite link: play.<domain>/c/K7P2M4RN
+// Serves the same single-page app; the client reads the code off the path,
+// stashes it, and resumes after login. Without this the path falls through to
+// the static handler and 404s, which is what every first-time invitee would
+// have seen.
+app.get(/^\/c\/[A-Z0-9]{8}$/, (req, res, next) => {
+  if (!req.hostname.startsWith('play.')) return next();
+  return res.sendFile('play.html', { root: path.join(__dirname, 'views') });
+});
+
 // ============================================
 // The marketing site (views/site) is served on the APEX domain and on
 // demo.<domain>, with clean URLs. play.<domain> keeps the game and every
@@ -165,6 +175,7 @@ app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
+app.use('/challenge', require('./routes/challenge.routes'));
 app.use('/web/payment', webPaymentRoutes);
 
 // Anything unmatched on the demo host gets the site's own 404 page.

@@ -34,7 +34,11 @@ const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
 const REFRESH_MS = 15000;
-const MODES = ['practice', 'classic', 'tournament'];
+// 'challenge' is the kill switch for Challenge a Friend. It works as a real
+// switch from the first request because server.js now awaits togglesService
+// .start() inside bootstrap() before app.listen() — before that fix the cache
+// was empty at boot and every lookup fell through to "enabled".
+const MODES = ['practice', 'classic', 'tournament', 'challenge'];
 const PLATFORMS = ['whatsapp', 'telegram', 'web'];
 
 class TogglesService {

@@ -4,20 +4,40 @@
 // ============================================
 
 const pool = require('../config/database');
+const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const deviceFingerprintService = require('./device-fingerprint.service');
 
 class DeviceTrackingService {
     
     // ============================================
     // GENERATE DEVICE FINGERPRINT
     // ============================================
+    //
+    // Two paths, and it matters which one produced a value.
+    //
+    // BROWSER path — pass `platformData.browser` with the raw components
+    // collected by views/js/fingerprint.js. This describes the machine, so it
+    // can genuinely link two accounts on one device.
+    //
+    // IDENTIFIER path — everything else. The hash reduces to
+    // `platform | phone_number`, which is per-ACCOUNT: two accounts on one
+    // handset produce two different values and can never collide. It is kept
+    // because it gives every account a stable row in device_fingerprints and
+    // because existing callers depend on it, but it is NOT a device signal and
+    // recordDevice() will refuse to link on it. WhatsApp and Telegram webhooks
+    // carry nothing that describes the handset, so there is no third path to
+    // build.
     
     generateDeviceFingerprint(platformData) {
-        // For WhatsApp: use phone number as primary identifier
-        // For Telegram: use telegram user ID
-        // Additional: any metadata from the platform
-        
+        if (platformData && platformData.browser) {
+            const result = deviceFingerprintService.fromBrowser(platformData.browser);
+            if (result) return result.deviceId;
+            // Fall through to the identifier path rather than returning null —
+            // callers expect a string and a missing row is worse than a weak one.
+        }
+
         const components = [
             platformData.platform || 'unknown',
             platformData.phoneNumber || platformData.telegramId || 'unknown',
@@ -41,6 +61,12 @@ class DeviceTrackingService {
     
     async recordDevice(userId, deviceId, platform, deviceInfo = {}) {
         try {
+            // Anything that does not say otherwise came from the identifier
+            // path. Recording that explicitly is the point: a value tagged
+            // identifier_only can never match another account, so nobody
+            // should later build a fraud rule on top of it believing it can.
+            const info = { source: 'identifier_only', ...deviceInfo };
+
             const result = await pool.query(`
                 INSERT INTO device_fingerprints (user_id, device_id, platform, device_info)
                 VALUES ($1, $2, $3, $4)
@@ -49,7 +75,7 @@ class DeviceTrackingService {
                     last_seen_at = NOW(),
                     device_info = COALESCE(device_fingerprints.device_info, '{}')::jsonb || $4::jsonb
                 RETURNING id, is_flagged
-            `, [userId, deviceId, platform, JSON.stringify(deviceInfo)]);
+            `, [userId, deviceId, platform, JSON.stringify(info)]);
             
             // Update user's primary device if not set
             await pool.query(`
@@ -58,14 +84,41 @@ class DeviceTrackingService {
                 WHERE id = $2
             `, [deviceId, userId]);
             
-            // Check for multi-account usage
-            await this.checkMultiAccountByDevice(deviceId, userId);
+            // Only link accounts on a signal that describes the machine. On the
+            // identifier path this check ran on every game start and could never
+            // match, so skipping it changes no outcome and saves three queries a
+            // game. On a low_entropy browser sample it MUST be skipped: those
+            // components are shared widely enough to link strangers.
+            if (deviceFingerprintService.isLinkable(info)) {
+                await this.checkMultiAccountByDevice(deviceId, userId);
+            }
             
             return result.rows[0];
         } catch (error) {
             logger.error('Error recording device:', error);
             return null;
         }
+    }
+
+    // ============================================
+    // RECORD DEVICE FROM BROWSER
+    // ============================================
+    // The web entry point. Hashes server-side, records, and returns what
+    // happened so the route can log it without re-deriving anything.
+
+    async recordBrowserDevice(userId, rawComponents, platform = 'web') {
+        const result = deviceFingerprintService.fromBrowser(rawComponents);
+        if (!result) return { recorded: false, reason: 'no_usable_components' };
+
+        const row = await this.recordDevice(userId, result.deviceId, platform, result.info);
+
+        return {
+            recorded: !!row,
+            deviceId: result.deviceId,
+            quality: result.quality,
+            linkable: deviceFingerprintService.isLinkable(result.info),
+            summary: deviceFingerprintService.describe(result)
+        };
     }
     
     // ============================================
@@ -112,6 +165,35 @@ class DeviceTrackingService {
         }
     }
     
+    // ============================================
+    // RECORD IP — THROTTLED
+    // ============================================
+    // recordIP() costs two INSERTs plus checkMultiAccountByIP(), which scans
+    // ip_logs. That is fine at the existing call sites — payment callbacks fire
+    // rarely — but the new capture points (session start, and later challenge
+    // join) fire far more often, and Postgres is a network hop from Render.
+    //
+    // Same user, same IP, same action within the window: skip. The row already
+    // exists and a second one tells the fraud tooling nothing new.
+    //
+    // The Redis SET NX is also the lock: if it does not acquire, we already
+    // recorded. A Redis failure falls through to recording, because losing a
+    // fraud signal is worse than writing a duplicate row.
+
+    async recordIPThrottled(userId, ipAddress, actionType, windowSeconds = 3600) {
+        if (!userId || !ipAddress) return false;
+
+        try {
+            const key = `ip_seen:${userId}:${actionType}:${ipAddress}`;
+            const acquired = await redis.set(key, '1', 'NX', 'EX', windowSeconds);
+            if (acquired !== 'OK') return false;
+        } catch (redisError) {
+            logger.warn(`IP throttle unavailable, recording anyway: ${redisError.message}`);
+        }
+
+        return this.recordIP(userId, ipAddress, actionType);
+    }
+
     // ============================================
     // BASIC VPN/PROXY DETECTION
     // ============================================

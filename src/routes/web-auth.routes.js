@@ -210,6 +210,51 @@ router.get('/me', async (req, res) => {
     }
 });
 
+// ============================================
+// POST /web/auth/device
+// ============================================
+// Receives raw browser components and records a device fingerprint. The
+// components are hashed SERVER-SIDE — the client never sends a finished id,
+// because a client-computed id could be randomised per account and the whole
+// multi-account check would be decorative.
+//
+// Always answers 200. This is a background integrity signal; a player whose
+// browser blocks canvas should notice nothing, and an error here must never
+// look like a login problem.
+router.post('/device', requireWebAuth, async (req, res) => {
+    try {
+        const deviceTrackingService = require('../services/device-tracking.service');
+        const components = req.body && req.body.components;
+
+        const result = await deviceTrackingService.recordBrowserDevice(
+            req.webUser.id, components, 'web'
+        );
+
+        // Same request carries the real client IP — a browser request, unlike a
+        // WhatsApp webhook, which arrives from Meta's servers. Throttled to
+        // once an hour per user per IP so it cannot flood ip_logs.
+        try {
+            const ip = getIp(req);
+            if (ip) {
+                await deviceTrackingService.recordIPThrottled(
+                    req.webUser.id, ip, 'web_session'
+                );
+            }
+        } catch (ipError) {
+            logger.warn(`Could not record web session IP (non-fatal): ${ipError.message}`);
+        }
+
+        if (result && result.recorded) {
+            logger.info(`🔍 Device recorded for web user ${req.webUser.id}: ${result.summary}`);
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Error recording web device (non-fatal):', error.message);
+        res.json({ success: true });
+    }
+});
+
 router.post('/logout', async (req, res) => {
     try {
         await webAuthService.destroySession(getToken(req));

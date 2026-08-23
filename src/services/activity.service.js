@@ -48,7 +48,7 @@ class ActivityService {
       CREATE TABLE IF NOT EXISTS activity_events (
         id BIGSERIAL PRIMARY KEY,
         event_type TEXT NOT NULL CHECK (event_type IN
-          ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy')),
+          ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete')),
         actor TEXT NOT NULL,
         event_text TEXT NOT NULL,
         badge TEXT,
@@ -75,7 +75,7 @@ class ActivityService {
     await pool.query(`
       ALTER TABLE activity_events ADD CONSTRAINT activity_events_event_type_check
       CHECK (event_type IN
-        ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy'))
+        ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete'))
     `);
 
     this._schemaReady = true;
@@ -188,6 +188,29 @@ class ActivityService {
         return {
           text: name ? `went again in '${name}'` : 'went again in a tournament',
           badge: 'Rebuy \uD83D\uDD01'
+        };
+      }
+      case 'challenge_complete': {
+        // Challenge results stay off the main leaderboard, so nothing here may
+        // read as a ranking. No naira, no comparison to Classic scores, and
+        // the score sits in the badge where it decorates rather than ranks.
+        const size = parseInt(extra.participants) || 2;
+        const placed = parseInt(extra.rank) || 0;
+
+        if (size <= 2) {
+          return extra.won
+            ? { text: 'beat a friend in a Challenge', badge: extra.score ? `${extra.score}/15` : 'Challenge' }
+            : { text: 'played a Challenge', badge: extra.score ? `${extra.score}/15` : 'Challenge' };
+        }
+
+        const ordinal = placed === 1 ? '1st' : placed === 2 ? '2nd' : placed === 3 ? '3rd'
+                      : placed > 0 ? `${placed}th` : null;
+
+        return {
+          text: ordinal
+            ? `finished ${ordinal} in a ${size}-player Challenge`
+            : `played a ${size}-player Challenge`,
+          badge: 'Challenge'
         };
       }
       case 'reward_claim':

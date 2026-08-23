@@ -154,7 +154,17 @@ class TelegramService {
         }
         
         logger.info(`💬 Telegram message from ${chatId}: ${text}`);
-        
+
+        // A ?start= payload arrives as the literal text "/start c_K7P2M4RN".
+        // routeMessage parses it (see PRIORITY -0.4), so nothing is stripped
+        // here — but log it, because a deep link that silently fails is
+        // otherwise indistinguishable from a user who typed nonsense.
+        const deepLinkService = require('./deeplink.service');
+        const parsedLink = deepLinkService.parse(text);
+        if (parsedLink) {
+          logger.info(`🔗 Telegram deep link: ${parsedLink.type}=${parsedLink.value} (valid: ${parsedLink.valid})`);
+        }
+
         // Route through webhook controller
         const webhookController = require('../controllers/webhook.controller');
         await webhookController.routeMessage(identifier, text);

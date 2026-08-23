@@ -20,7 +20,11 @@ const OTP_MAX_ATTEMPTS = 5;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;   // 30 days
 const OTP_PER_EMAIL_PER_HOUR = 5;
 const OTP_PER_IP_PER_HOUR = 15;
-const MIN_AGE = 18;                               // real-money product
+// 13 platform-wide, matching the chat registration flow
+// (webhook.controller.js) and the published legal pages. Web was the odd one
+// out at 18. Putting money UP for a sponsored challenge prize still requires
+// 18+ — that check lives at challenge creation, not here.
+const MIN_AGE = 13;
 
 // Must match the slugs used by the WhatsApp/Telegram registration flow,
 // otherwise web signups fragment the acquisition-source reporting.
@@ -62,7 +66,7 @@ class WebAuthService {
         }
         const parsedAge = parseInt(age, 10);
         if (isNaN(parsedAge) || parsedAge < MIN_AGE || parsedAge > 120) {
-            errors.push(`You must be at least ${MIN_AGE} to play for cash prizes`);
+            errors.push(`You must be at least ${MIN_AGE} to play`);
         }
         if (!acquisitionSource || !ACQUISITION_VALUES.includes(acquisitionSource)) {
             errors.push('Tell us how you heard about us');
@@ -602,7 +606,7 @@ class WebAuthService {
         if (!city || city.trim().length < 2) errors.push('Enter your city');
         const parsedAge = parseInt(age, 10);
         if (isNaN(parsedAge) || parsedAge < MIN_AGE || parsedAge > 120) {
-            errors.push(`You must be at least ${MIN_AGE} to play for cash prizes`);
+            errors.push(`You must be at least ${MIN_AGE} to play`);
         }
         if (errors.length) {
             const err = new Error(errors[0]);

@@ -362,7 +362,10 @@ class MessagingService {
     if (platform === 'web') {
       const gameEvents = require('./game-events.service');
       const userId = await this._webUserId(identifier);
-      if (userId) gameEvents.emitMessage(userId, caption || '', { mediaUrl: arguments[1] });
+      // `caption` was never a parameter of sendAudio — this line threw a
+      // ReferenceError for every web user sent audio. sendImage and sendVideo
+      // take a caption; sendAudio does not, so there is no text to carry.
+      if (userId) gameEvents.emitMessage(userId, '', { mediaUrl: audioBuffer });
       require('./game-state.service').schedule(identifier);
       return { platform: 'web', delivered: !!userId };
     }
