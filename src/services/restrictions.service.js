@@ -93,7 +93,8 @@ class RestrictionsService {
         const modeNames = {
             classic: 'Classic Mode',
             tournament: 'Tournaments',
-            practice: 'Practice Mode'
+            practice: 'Practice Mode',
+            challenge: 'Challenge a Friend'
         };
         const platformNames = { whatsapp: 'WhatsApp', telegram: 'Telegram', web: 'Web-play' };
         const modeName = modeNames[mode] || mode;

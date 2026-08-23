@@ -138,7 +138,24 @@ class TogglesService {
         if (platform) {
             const specific = this._db(`mode.${mode}.${platform}`);
             if (specific) {
-                return { enabled: specific.enabled, reason: 'mode+platform', message: specific.message };
+                // MESSAGE INHERITANCE. The admin grid offers exactly ONE
+                // message box per mode, written against `mode.<m>`. But the
+                // per-platform cells write `mode.<m>.<platform>` rows, which
+                // carry no message of their own — so switching Classic off for
+                // web-play only meant resolveMode() returned message: null,
+                // getModeDisabledMessage() fell through to the
+                // CLASSIC_MODE_MESSAGE env var, and the text the admin had
+                // just typed was never shown to anybody.
+                //
+                // A per-platform override with no message of its own inherits
+                // the mode's message, which is what the single input in the UI
+                // implies. An explicit message on the specific row still wins.
+                let message = specific.message;
+                if (!message) {
+                    const modeRow = this._db(`mode.${mode}`);
+                    if (modeRow && modeRow.message) message = modeRow.message;
+                }
+                return { enabled: specific.enabled, reason: 'mode+platform', message };
             }
             const plat = this._db(`platform.${platform}`);
             if (plat && plat.enabled === false) {
