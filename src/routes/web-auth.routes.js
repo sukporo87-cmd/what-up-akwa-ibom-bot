@@ -65,11 +65,26 @@ function fail(res, error, fallbackStatus = 500) {
  */
 async function requireWebAuth(req, res, next) {
     try {
-        const user = await webAuthService.getSessionUser(getToken(req));
-        if (!user) {
+        const ctx = await webAuthService.getSessionContext(getToken(req));
+        if (!ctx) {
             return res.status(401).json({ success: false, error: 'Not signed in' });
         }
-        req.webUser = user;
+
+        // A CHALLENGE-SCOPED SESSION IS NOT A LOGIN. It is minted from a
+        // six-digit code sent over WhatsApp, which sits on a lock screen and
+        // is valid for minutes. It must never reach Classic, purchases, the
+        // profile or a payout claim. Challenge routes use requireChallengeAuth
+        // instead, which checks the scope matches the challenge in the URL.
+        if (ctx.scope) {
+            return res.status(403).json({
+                success: false,
+                error: 'This session can only play the challenge it was created for.',
+                reason: 'scoped_session'
+            });
+        }
+
+        req.webUser = ctx.user;
+        req.webSession = ctx;
         next();
     } catch (error) {
         return fail(res, error);

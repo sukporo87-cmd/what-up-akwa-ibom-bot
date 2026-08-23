@@ -611,6 +611,25 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <button class="ghost" id="chalAccept" onclick="acceptChallenge()">Accept</button>
     </div>
 
+    <!-- Play as a WhatsApp/Telegram account, without creating a web account.
+         Username identifies, the code proves ownership. The session it mints
+         works on THIS challenge only. -->
+    <div id="chalAuth" style="display:none;margin-top:18px">
+      <div class="who">Play as your chat account</div>
+      <div class="msg" id="chalAuthNote">
+        Enter the username you use on WhatsApp or Telegram. We'll send a code there.
+      </div>
+      <input id="chalAuthUser" placeholder="your username" autocomplete="off"
+             style="width:100%;margin-top:10px">
+      <div id="chalAuthStep2" style="display:none">
+        <input id="chalAuthCode" placeholder="6-digit code" inputmode="numeric"
+               maxlength="6" autocomplete="one-time-code" style="width:100%;margin-top:10px">
+      </div>
+      <div class="cardActs">
+        <button class="ghost" id="chalAuthBtn" onclick="chalAuthSubmit()">Send me a code</button>
+      </div>
+    </div>
+
     <input type="hidden" id="chalCode" value="">
   </section>
 
@@ -826,7 +845,11 @@ function showChallengeInvite(c){
     || (c.isInitiator ? 'Your challenge. Play your round to set the pace.' : null)
     || (c.joined ? "You're in. Play your round." : entry);
   $('chalNote').textContent=note;
-  $('chalAccept').style.display=(blocked||full)?'none':'inline-block';
+  /* Signed out: offer the chat-account route instead of a dead Accept button.
+     Someone with no web account can still play as their WhatsApp identity. */
+  const signedIn=!!token;
+  chalAuthShow(!signedIn && !blocked && !full);
+  $('chalAccept').style.display=(blocked||full||!signedIn)?'none':'inline-block';
   /* A LIVE challenge goes to the lobby, not to startChallenge. Sending it to
      startRound would materialise the set and begin immediately for whoever
      pressed first, skipping the lobby, the shared clock and the reveal — the
@@ -1150,6 +1173,82 @@ async function shareChallengeCard(){
     $('cbSub').textContent='Link copied.';
     track('challenge_card_shared',{platform:'web'});
   }catch(e){}
+}
+
+/* ---- PLAY AS A CHAT ACCOUNT ------------------------------------------
+   Two steps in one panel: username, then the code that was sent to it.
+   The token it returns is CHALLENGE-SCOPED \u2014 it works on this challenge and
+   is rejected everywhere else, so it is deliberately NOT stored as the normal
+   login token.
+   ---------------------------------------------------------------------- */
+let chalAuthStage='username';
+
+function chalAuthShow(show){
+  $('chalAuth').style.display=show?'block':'none';
+  chalAuthStage='username';
+  $('chalAuthStep2').style.display='none';
+  $('chalAuthBtn').textContent='Send me a code';
+}
+
+async function chalAuthSubmit(){
+  const code=$('chalCode').value;
+  const username=$('chalAuthUser').value.trim();
+  if(!username){ $('chalAuthNote').textContent='Enter your username first.'; return; }
+  $('chalAuthBtn').disabled=true;
+
+  try{
+    if(chalAuthStage==='username'){
+      const r=await fetch('/challenge/'+code+'/auth/request',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({username:username})
+      });
+      const d=await r.json();
+      if(!d.success){
+        $('chalAuthNote').textContent = d.reason==='rate_limited'
+          ? 'Too many attempts. Try again in an hour.'
+          : 'Could not send a code right now.';
+        return;
+      }
+      /* Deliberately the same message whether or not that username exists.
+         Anything else turns this box into a way to test which usernames are
+         real, and usernames are printed on every result card. */
+      $('chalAuthNote').textContent = d.hint
+        ? 'Code sent to your '+d.hint+'. Enter it below.'
+        : 'If that username exists, a code has been sent to it. Enter it below.';
+      $('chalAuthStep2').style.display='block';
+      $('chalAuthBtn').textContent='Play';
+      chalAuthStage='code';
+      return;
+    }
+
+    const entered=$('chalAuthCode').value.trim();
+    const r=await fetch('/challenge/'+code+'/auth/verify',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:username,code:entered})
+    });
+    const d=await r.json();
+
+    if(!d.success){
+      $('chalAuthNote').textContent={
+        expired:'That code expired. Reply CODE in the chat for a new one.',
+        too_many_attempts:'Too many wrong tries. Reply CODE in the chat for a new one.',
+        bad_input:'Enter the 6-digit code.',
+        wrong_challenge:'That code was for a different challenge.'
+      }[d.reason] || ('That code is not right.'+(d.attemptsLeft!==undefined?' '+d.attemptsLeft+' tries left.':''));
+      return;
+    }
+
+    /* Held for this page only, and never written to localStorage as the login
+       token \u2014 a scoped session is not a login and must not outlive the tab. */
+    token=d.token;
+    chalAuthShow(false);
+    const info=await(await fetch('/challenge/'+code,{headers:H()})).json();
+    if(info.success) showChallengeInvite(info.challenge);
+  }catch(e){
+    $('chalAuthNote').textContent='Something went wrong. Try again.';
+  }finally{
+    $('chalAuthBtn').disabled=false;
+  }
 }
 
 async function acceptChallenge(){

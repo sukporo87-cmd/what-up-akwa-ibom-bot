@@ -60,22 +60,30 @@ const STRINGS = {
     //
     // Nigeria is WAT year-round with no daylight saving, so the conversion to
     // the server's UTC is a fixed one hour \u2014 no timezone database needed.
-    pickStartTime:
-        'When should it start?\n\n' +
-        'Reply with a date and time \u2014 like *2:30pm*, *tomorrow 9am*, or ' +
-        '*25/08 2:30pm*.\n' +
+    // Two steps, not one. A single "date and time" box means every wrong entry
+    // has two possible causes, and the player has to guess which half you
+    // didn't understand.
+    pickStartDate: (options) =>
+        'What day?\n\n' + options + '\n\nReply with a number.',
+
+    pickStartTime: (dayLabel) =>
+        `What time on ${dayLabel}?\n\n` +
+        'Reply with a time like *2:30pm* or *14:30*.\n' +
         'All times are West Africa Time (WAT).',
 
     badStartTime:
-        "That doesn't look like a date and time. Try *2:30pm*, *tomorrow 9am*, " +
-        'or *25/08 2:30pm* \u2014 West Africa Time.',
+        "That doesn't look like a time. Try *2:30pm* or *14:30* \u2014 West Africa Time.",
+
+    badStartDate: (options) =>
+        'Pick a day by number.\n\n' + options,
 
     startTimeTooSoon:
         'That is too close. The lobby opens 10 minutes before the start, so pick ' +
         'a time at least 15 minutes from now.',
 
-    startTimeTooFar:
-        'That is more than a week away. Pick a date within the next 7 days.',
+    startTimeTooSoonToday:
+        'That time has already gone today. Pick a later time, or start again ' +
+        'and choose another day.',
 
     pickFormat:
         'Who are you challenging?\n\n' +
@@ -144,7 +152,8 @@ const STRINGS = {
             // challenger has played. Saying nothing here left the initiator
             // with a link and no idea it was their turn.
             : 'Invites last 48 hours.\n\n*Reply PLAY to set your score first* \u2014 ' +
-              'your friend races the pace you set.'),
+              'your friend races the pace you set.\n' +
+              '_Or reply CODE to play it in the browser instead._'),
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
@@ -246,6 +255,9 @@ const STRINGS = {
     noQuestions:
         "We couldn't build a question set for that challenge. Nothing was charged. " +
         'Reply *CHALLENGE* to start another one.',
+
+    noChallengeForCode:
+        "You don't have a challenge running. Reply *CHALLENGE* to start one.",
 
     notAvailable:
         'Challenges are coming soon.'
@@ -376,6 +388,35 @@ class ChallengeChatService {
     }
 
     // ============================================
+    // CODE — reissue
+    // ============================================
+    // The code expires in ten minutes, which is right for a credential and
+    // wrong for a person who put their phone down. This reissues for their
+    // most recent open challenge rather than making them create a new one.
+
+    async handleCodeRequest(identifier, user, platform) {
+        const result = await pool.query(`
+            SELECT c.*
+            FROM challenge_participants p
+            JOIN challenges c ON c.id = p.challenge_id
+            WHERE p.user_id = $1
+              AND c.status IN ('open', 'lobby', 'live')
+            ORDER BY p.joined_at DESC NULLS LAST, c.created_at DESC
+            LIMIT 1
+        `, [user.id]);
+
+        const challenge = result.rows[0];
+        if (!challenge) {
+            await messagingService.sendMessage(identifier, STRINGS.noChallengeForCode);
+            return true;
+        }
+
+        const challengeAuthService = require('./challenge-auth.service');
+        await challengeAuthService.issueCode(challenge, user);
+        return true;
+    }
+
+    // ============================================
     // CREATION STATE MACHINE
     // ============================================
     // Six steps, each one message. Deliberately short: every extra question is
@@ -477,14 +518,33 @@ class ChallengeChatService {
                 // created from chat with "A live challenge needs a start time",
                 // which then fell through to the main menu.
                 if (data.mode === 'live') {
-                    await this._advance(identifier, 'starttime', data, STRINGS.pickStartTime);
+                    data.dayOptions = this.startDayOptions();
+                    await this._advance(identifier, 'startdate', data,
+                        STRINGS.pickStartDate(this._numberedDays(data.dayOptions)));
                     return true;
                 }
 
                 return this._finish(identifier, data, user, platform);
 
+            case 'startdate': {
+                const options = data.dayOptions || this.startDayOptions();
+                const choice = parseInt(input, 10);
+
+                if (!(choice >= 1 && choice <= options.length)) {
+                    await messagingService.sendMessage(identifier,
+                        STRINGS.badStartDate(this._numberedDays(options)));
+                    return true;
+                }
+
+                data.startDayOffset = options[choice - 1].offset;
+                data.startDayLabel = options[choice - 1].label;
+                await this._advance(identifier, 'starttime', data,
+                    STRINGS.pickStartTime(data.startDayLabel));
+                return true;
+            }
+
             case 'starttime': {
-                const when = this.parseWatDateTime(input);
+                const when = this.parseWatTimeOnDay(input, data.startDayOffset);
 
                 if (!when) {
                     await messagingService.sendMessage(identifier, STRINGS.badStartTime);
@@ -495,11 +555,10 @@ class ChallengeChatService {
                 // The lobby opens 10 minutes before the start, so anything
                 // closer than that has no lobby at all.
                 if (leadMs < 15 * 60000) {
-                    await messagingService.sendMessage(identifier, STRINGS.startTimeTooSoon);
-                    return true;
-                }
-                if (leadMs > 7 * 24 * 3600 * 1000) {
-                    await messagingService.sendMessage(identifier, STRINGS.startTimeTooFar);
+                    await messagingService.sendMessage(identifier,
+                        data.startDayOffset === 0
+                            ? STRINGS.startTimeTooSoonToday
+                            : STRINGS.startTimeTooSoon);
                     return true;
                 }
 
@@ -554,6 +613,19 @@ class ChallengeChatService {
             result.links, this._categoryList(data.categories), startLabel
         ));
         await messagingService.sendMessage(identifier, STRINGS.cancellationNotice);
+
+        // A live challenge is played in the browser, so the initiator needs a
+        // way in as THIS account. Sent as its own message, never appended to
+        // the invite: the invite is built to be forwarded, and a code inside a
+        // forwarded message is a code given away.
+        if (data.mode === 'live' && !String(identifier).startsWith('web_')) {
+            try {
+                const challengeAuthService = require('./challenge-auth.service');
+                await challengeAuthService.issueCode(result.challenge, user);
+            } catch (error) {
+                logger.error('Could not issue initiator challenge code:', error.message);
+            }
+        }
 
         await challengeService.recordEvent(
             result.challenge.id, user.id, 'invite_sent', platform, {}
@@ -763,40 +835,55 @@ class ChallengeChatService {
 
     _WAT_OFFSET_MS = 60 * 60 * 1000;
 
+    // The window a challenge may be scheduled inside. Bounded on purpose: a
+    // date picker offering any day means someone eventually schedules one for
+    // next March and it sits in the sweeper for six months.
+    _MAX_DAYS_AHEAD = 7;
+
     /**
-     * Accepts a DATE AND TIME, because a challenge can be set for a later day:
-     *
-     *   "2:30pm"                -> today, or tomorrow if it has passed
-     *   "today 2:30pm"          -> today
-     *   "tomorrow 9am"          -> tomorrow
-     *   "25/08 2:30pm"          -> 25 August, dd/mm as written in Nigeria
-     *   "25 aug 2:30pm"         -> same
-     *   "25/08/2026 14:30"      -> same
-     *
-     * Returns a Date in UTC, or null on anything it cannot read. It never
-     * guesses: a half-understood date is worse than a rejection, because the
-     * player finds out by nobody turning up.
+     * The days a player may pick, as a numbered list rather than free text.
+     * Offset 0 is today IN WAT, not the server's today \u2014 at 00:30 WAT the
+     * server is still on the previous UTC day.
      */
-    parseWatDateTime(text, now = new Date()) {
-        const raw = String(text || '').trim().toLowerCase();
-        if (!raw) return null;
+    startDayOptions(now = new Date()) {
+        const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const nowWat = new Date(now.getTime() + this._WAT_OFFSET_MS);
 
-        // Take the time off the end; whatever is left is the date.
-        const timeMatch = raw.match(/(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*$/);
-        if (!timeMatch) return null;
+        const options = [];
+        for (let offset = 0; offset < this._MAX_DAYS_AHEAD; offset++) {
+            const d = new Date(Date.UTC(
+                nowWat.getUTCFullYear(), nowWat.getUTCMonth(), nowWat.getUTCDate() + offset
+            ));
+            const label = offset === 0 ? 'today'
+                        : offset === 1 ? 'tomorrow'
+                        : `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+            options.push({ offset, label });
+        }
+        return options;
+    }
 
-        let hour = parseInt(timeMatch[1], 10);
-        const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-        const meridiem = timeMatch[3];
+    _numberedDays(options) {
+        return options.map((o, i) => `*${i + 1}* \u2014 ${o.label}`).join('\n');
+    }
+
+    /**
+     * A time, on a day already chosen. Returns a Date in UTC, or null.
+     *
+     * Nigeria is WAT, UTC+1, ALL YEAR \u2014 no daylight saving \u2014 so the conversion
+     * is a constant rather than a timezone-database lookup. The server runs
+     * UTC: "2:30pm" means 13:30Z, and storing the wall-clock time unconverted
+     * would start every live challenge an hour late.
+     */
+    parseWatTimeOnDay(text, dayOffset = 0, now = new Date()) {
+        const raw = String(text || '').trim().toLowerCase().replace(/\s+/g, '');
+        const m = raw.match(/^(\d{1,2})(?:[:.]?(\d{2}))?(am|pm)?$/);
+        if (!m) return null;
+
+        let hour = parseInt(m[1], 10);
+        const minute = m[2] ? parseInt(m[2], 10) : 0;
+        const meridiem = m[3];
         if (minute > 59) return null;
-
-        const datePart = raw.slice(0, timeMatch.index).trim().replace(/[,]+$/, '').trim();
-
-        // "25/08" with no time would otherwise read "08" as 8 o'clock.
-        if (/[/-]$/.test(datePart)) return null;
-        // A bare number with a date attached is ambiguous: "25/08 3" could be
-        // 3am or 3pm. Require a separator or a meridiem when a date is given.
-        if (datePart && !meridiem && !timeMatch[2]) return null;
 
         if (meridiem) {
             if (hour < 1 || hour > 12) return null;
@@ -806,76 +893,18 @@ class ChallengeChatService {
             return null;
         }
 
-        // Today AS SEEN IN WAT. At 00:30 WAT the server is still on the
-        // previous UTC day, and using its date would be 24 hours out.
         const nowWat = new Date(now.getTime() + this._WAT_OFFSET_MS);
-        let year = nowWat.getUTCFullYear();
-        let month = nowWat.getUTCMonth();
-        let day = nowWat.getUTCDate();
-        let dateWasExplicit = false;
+        const utcMs = Date.UTC(
+            nowWat.getUTCFullYear(), nowWat.getUTCMonth(),
+            nowWat.getUTCDate() + (parseInt(dayOffset, 10) || 0),
+            hour, minute, 0, 0
+        ) - this._WAT_OFFSET_MS;
 
-        if (datePart && datePart !== 'today') {
-            if (datePart === 'tomorrow' || datePart === 'tmr' || datePart === 'tmrw') {
-                const t = new Date(Date.UTC(year, month, day + 1));
-                year = t.getUTCFullYear(); month = t.getUTCMonth(); day = t.getUTCDate();
-                dateWasExplicit = true;
-            } else {
-                const parsed = this._parseWatDatePart(datePart, year);
-                if (!parsed) return null;
-                year = parsed.year; month = parsed.month; day = parsed.day;
-                dateWasExplicit = true;
-            }
-        }
-
-        const utcMs = Date.UTC(year, month, day, hour, minute, 0, 0) - this._WAT_OFFSET_MS;
-
-        // A bare time that has already gone means tomorrow. An EXPLICIT date
-        // never rolls \u2014 if someone types a date in the past, that is a mistake
-        // to reject, not a day to add.
-        if (utcMs <= now.getTime()) {
-            if (dateWasExplicit) return null;
-            return new Date(utcMs + 24 * 3600 * 1000);
-        }
+        // The day was chosen explicitly, so a time already gone is a mistake to
+        // reject rather than a day to silently add.
+        if (utcMs <= now.getTime()) return null;
 
         return new Date(utcMs);
-    }
-
-    /** "25/08" | "25/08/2026" | "25 aug" | "aug 25" -> { year, month, day } */
-    _parseWatDatePart(part, defaultYear) {
-        const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-
-        // dd/mm or dd/mm/yyyy \u2014 day first, as written in Nigeria.
-        const numeric = part.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/);
-        if (numeric) {
-            const day = parseInt(numeric[1], 10);
-            const month = parseInt(numeric[2], 10) - 1;
-            let year = numeric[3] ? parseInt(numeric[3], 10) : defaultYear;
-            if (year < 100) year += 2000;
-            if (day < 1 || day > 31 || month < 0 || month > 11) return null;
-            return { year, month, day };
-        }
-
-        // "25 aug" or "aug 25", full month names accepted.
-        const words = part.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
-        if (words.length === 2) {
-            const [a, b] = words;
-            const dayFirst = /^\d{1,2}$/.test(a);
-            const dayStr = dayFirst ? a : b;
-            const monStr = dayFirst ? b : a;
-            if (!/^\d{1,2}$/.test(dayStr)) return null;
-            const month = MONTHS.indexOf(monStr.slice(0, 3));
-            if (month < 0) return null;
-            const day = parseInt(dayStr, 10);
-            if (day < 1 || day > 31) return null;
-            return { year: defaultYear, month, day };
-        }
-
-        return null;
-    }
-
-    /** Kept so existing callers reading a bare time still work. */
-    parseWatTime(text, now = new Date()) {
-        return this.parseWatDateTime(text, now);
     }
 
     /**

@@ -23,7 +23,44 @@ const restrictionsService = require('../services/restrictions.service');
 const { logger } = require('../utils/logger');
 
 const webAuthRoutes = require('./web-auth.routes');
-const { requireWebAuth, requireCompleteProfile } = webAuthRoutes;
+const { requireWebAuth, requireCompleteProfile, getToken } = webAuthRoutes;
+const challengeAuthService = require('../services/challenge-auth.service');
+
+// ============================================
+// requireChallengeAuth
+// ============================================
+// Accepts EITHER a normal web login OR a challenge-scoped session — and a
+// scoped session only on the challenge it was minted for.
+//
+// The scope check compares against req.params.code, so a code obtained for one
+// challenge cannot be replayed against another. That was the explicit ruling:
+// a chat user with several invites uses each link with its own code.
+async function requireChallengeAuth(req, res, next) {
+    try {
+        const ctx = await webAuthService.getSessionContext(getToken(req));
+        if (!ctx) {
+            return res.status(401).json({ success: false, error: 'Not signed in' });
+        }
+
+        if (ctx.scope) {
+            const wanted = String(req.params.code || '').toUpperCase();
+            if (ctx.scope.type !== 'challenge' || String(ctx.scope.code).toUpperCase() !== wanted) {
+                return res.status(403).json({
+                    success: false,
+                    reason: 'wrong_challenge',
+                    error: 'That code was for a different challenge.'
+                });
+            }
+        }
+
+        req.webUser = ctx.user;
+        req.webSession = ctx;
+        next();
+    } catch (error) {
+        logger.error('Challenge auth middleware failed:', error);
+        return res.status(500).json({ success: false, error: 'Could not verify that session' });
+    }
+}
 
 function clientIp(req) {
     return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
@@ -148,7 +185,7 @@ router.get('/:code', async (req, res) => {
 // ============================================
 // POST /challenge/:code/join
 // ============================================
-router.post('/:code/join', requireWebAuth, requireCompleteProfile, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/join', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const code = String(req.params.code || '').toUpperCase();
 
@@ -184,7 +221,7 @@ router.post('/:code/join', requireWebAuth, requireCompleteProfile, requireChalle
 // ============================================
 // The question set is materialised on the FIRST start, not at creation, so the
 // second player cannot read the answers early.
-router.post('/:code/start', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/start', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const code = String(req.params.code || '').toUpperCase();
         const challenge = await challengeService.getByCode(code);
@@ -229,7 +266,7 @@ router.post('/:code/start', requireWebAuth, requireChallengesEnabled, async (req
 // ============================================
 // POST /challenge/:code/answer
 // ============================================
-router.post('/:code/answer', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/answer', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const code = String(req.params.code || '').toUpperCase();
         const position = parseInt(req.body && req.body.position, 10);
@@ -376,7 +413,7 @@ router.post('/:code/sponsor', requireWebAuth, requireChallengesEnabled, async (r
 // connection, no WebSockets. These endpoints only push players into a room and
 // take their answers; everything the client renders arrives as SSE events.
 
-router.post('/:code/lobby', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/lobby', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const code = String(req.params.code || '').toUpperCase();
         const challenge = await challengeService.getByCode(code);
@@ -398,7 +435,7 @@ router.post('/:code/lobby', requireWebAuth, requireChallengesEnabled, async (req
     }
 });
 
-router.post('/:code/lobby/leave', requireWebAuth, async (req, res) => {
+router.post('/:code/lobby/leave', requireChallengeAuth, async (req, res) => {
     try {
         const challenge = await challengeService.getByCode(String(req.params.code || '').toUpperCase());
         if (challenge) challengeArenaService.leaveLobby(challenge.id, req.webUser.id);
@@ -411,7 +448,7 @@ router.post('/:code/lobby/leave', requireWebAuth, async (req, res) => {
 // The initiator's "wait +5 min or start now" decision. If they never answer,
 // the match auto-starts after the grace period — nineteen people must not be
 // held up by one dead battery.
-router.post('/:code/lobby/extend', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/lobby/extend', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const challenge = await challengeService.getByCode(String(req.params.code || '').toUpperCase());
         if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
@@ -426,7 +463,7 @@ router.post('/:code/lobby/extend', requireWebAuth, requireChallengesEnabled, asy
     }
 });
 
-router.post('/:code/lobby/start', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/lobby/start', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const challenge = await challengeService.getByCode(String(req.params.code || '').toUpperCase());
         if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
@@ -445,7 +482,7 @@ router.post('/:code/lobby/start', requireWebAuth, requireChallengesEnabled, asyn
 // The answer lands here and goes NOWHERE ELSE. It is never broadcast — the
 // player is told their answer is in, and the correct answer arrives for
 // everyone at once in the reveal frame.
-router.post('/:code/arena/answer', requireWebAuth, requireChallengesEnabled, async (req, res) => {
+router.post('/:code/arena/answer', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
     try {
         const challenge = await challengeService.getByCode(String(req.params.code || '').toUpperCase());
         if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
@@ -462,6 +499,73 @@ router.post('/:code/arena/answer', requireWebAuth, requireChallengesEnabled, asy
     } catch (error) {
         logger.error('Error submitting arena answer:', error);
         res.status(500).json({ success: false, error: 'Could not record that answer' });
+    }
+});
+
+// ============================================
+// CHALLENGE-SCOPED AUTH
+// ============================================
+// Play on web as your WhatsApp or Telegram account, without creating a web
+// account. The username identifies; a code sent to that chat account proves
+// ownership. The session it mints works on THIS challenge and nothing else.
+
+router.post('/:code/auth/request', requireChallengesEnabled, async (req, res) => {
+    try {
+        const code = String(req.params.code || '').toUpperCase();
+        const challenge = await challengeService.getByCode(code);
+        if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
+
+        const result = await challengeAuthService.requestCode(
+            challenge, req.body && req.body.username, clientIp(req)
+        );
+
+        if (!result.ok) return res.status(429).json({ success: false, reason: result.reason });
+
+        // The SAME response whether the username exists or not. Anything else
+        // turns this into a way to test which usernames are real — and
+        // usernames are printed on every result card.
+        res.json({
+            success: true,
+            sent: true,
+            hint: result.hint || null,
+            alreadyJoined: result.alreadyJoined || false
+        });
+    } catch (error) {
+        logger.error('Error requesting challenge code:', error);
+        res.status(500).json({ success: false, error: 'Could not send a code' });
+    }
+});
+
+router.post('/:code/auth/verify', requireChallengesEnabled, async (req, res) => {
+    try {
+        const code = String(req.params.code || '').toUpperCase();
+        const challenge = await challengeService.getByCode(code);
+        if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
+
+        const result = await challengeAuthService.verifyCode(
+            challenge,
+            req.body && req.body.username,
+            req.body && req.body.code,
+            { ip: clientIp(req), userAgent: req.headers['user-agent'] }
+        );
+
+        if (!result.ok) {
+            return res.status(401).json({
+                success: false,
+                reason: result.reason,
+                attemptsLeft: result.attemptsLeft
+            });
+        }
+
+        res.json({
+            success: true,
+            token: result.token,
+            user: result.user,
+            scopedTo: result.scopedTo
+        });
+    } catch (error) {
+        logger.error('Error verifying challenge code:', error);
+        res.status(500).json({ success: false, error: 'Could not verify that code' });
     }
 });
 

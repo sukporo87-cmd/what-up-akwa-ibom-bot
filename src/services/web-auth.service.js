@@ -670,15 +670,44 @@ class WebAuthService {
     // SESSIONS  (Redis-backed opaque tokens)
     // ============================================
 
-    async createSession(userId, ip, userAgent) {
+    // `scope` is null for a normal login. A challenge code produces a SCOPED
+    // session instead: it resolves to the same user, but requireWebAuth
+    // refuses it everywhere except that one challenge. A code arriving over
+    // WhatsApp must not be a way into credits, payout history or bank details.
+    async createSession(userId, ip, userAgent, scope = null, ttlSeconds = null) {
         const token = crypto.randomBytes(32).toString('hex');
-        await redis.setex(`web_sess:${token}`, SESSION_TTL_SECONDS, JSON.stringify({
+        await redis.setex(`web_sess:${token}`, ttlSeconds || SESSION_TTL_SECONDS, JSON.stringify({
             userId,
             ip: ip || null,
             userAgent: (userAgent || '').slice(0, 200),
+            scope: scope || null,
             createdAt: Date.now()
         }));
         return token;
+    }
+
+    /**
+     * The user AND the session's scope. getSessionUser() returns only the user
+     * and therefore cannot tell a full login from a scoped one \u2014 anything
+     * making an authorisation decision must use this.
+     */
+    async getSessionContext(token) {
+        if (!token) return null;
+        try {
+            const raw = await redis.get(`web_sess:${token}`);
+            if (!raw) return null;
+
+            const sess = JSON.parse(raw);
+            await redis.expire(`web_sess:${token}`, SESSION_TTL_SECONDS);
+
+            const r = await pool.query('SELECT * FROM users WHERE id = $1', [sess.userId]);
+            if (!r.rows[0]) return null;
+
+            return { user: r.rows[0], scope: sess.scope || null };
+        } catch (error) {
+            logger.error('Error resolving web session context:', error.message);
+            return null;
+        }
     }
 
     /** Returns the full user row, or null. Slides the session TTL on each use. */
