@@ -515,7 +515,57 @@ class GameService {
     }
 
     /** Get current timeout for session (turbo > penalty > progressive > base) */
+    // Cached for 5 minutes: a challenge's speed level is fixed at creation and
+    // never changes, and this is called on every question and every answer.
+    async getChallengeSpeedLevel(sessionKey) {
+        const cacheKey = `chal_speed:${sessionKey}`;
+        try {
+            const cached = await redis.get(cacheKey);
+            if (cached) return parseInt(cached, 10);
+        } catch (e) { /* fall through */ }
+
+        const result = await pool.query(`
+            SELECT c.speed_level
+            FROM challenges c
+            JOIN challenge_rounds r ON r.challenge_id = c.id
+            WHERE r.session_key = $1
+            LIMIT 1
+        `, [sessionKey]);
+
+        const level = result.rows[0] ? result.rows[0].speed_level : 2;
+        try { await redis.setex(cacheKey, 300, String(level)); } catch (e) { /* cache is optional */ }
+        return level;
+    }
+
     async getSessionTimeout(sessionKey, questionNumber = null, userId = null) {
+        // ============================================
+        // CHALLENGE BYPASS — must be first
+        // ============================================
+        // A challenge is a race between two people on the SAME clock. Three
+        // things below would silently break that:
+        //
+        //   * DIFFICULTY_TIMERS: Q1-5 12s, Q6-10 11s, Q11-15 10s
+        //   * turbo mode: drops to 5-8s for three questions
+        //   * watchlist shortened timers: 8/7/6s for flagged users
+        //
+        // Player A racing a 10s clock while player B gets 7s from question six
+        // is not a duel, it is two different games. So a challenge session
+        // returns its own clock and nothing else.
+        //
+        // Turbo DETECTION still runs elsewhere and still writes its flags — we
+        // record the behaviour, we just do not change the clock.
+        if (sessionKey && String(sessionKey).startsWith('chal_')) {
+            try {
+                const challengeService = require('./challenge.service');
+                const speedLevel = await this.getChallengeSpeedLevel(sessionKey);
+                const ms = challengeService.timeoutFor(speedLevel);
+                return { timeoutMs: ms, seconds: Math.round(ms / 1000), isTurbo: false, source: 'challenge' };
+            } catch (error) {
+                logger.error('Error resolving challenge timeout, using default:', error.message);
+                return { timeoutMs: 10000, seconds: 10, isTurbo: false, source: 'challenge_fallback' };
+            }
+        }
+
         const trackingKey = `turbo_track:${sessionKey}`;
         
         // Priority 0: Watchlist shortened timers (skip for practice mode)
@@ -3004,7 +3054,21 @@ class GameService {
     // ============================================
 
     async getActiveSession(userId) {
-        const result = await pool.query(`SELECT * FROM game_sessions WHERE user_id = $1 AND status = 'active' ORDER BY started_at DESC LIMIT 1`, [userId]);
+        // challenge_id IS NULL is load-bearing. A challenge round writes a real
+        // game_sessions row (deliberately — it is how the round stays visible
+        // to every existing fraud query and admin inspector), and without this
+        // filter Classic's answer path would pick it up and run processAnswer
+        // on it: prize ladder, elimination on a wrong answer, and
+        // updateSession writing current_score, which is a NAIRA column.
+        //
+        // Every caller of this method is Classic or Practice. Challenge rounds
+        // are fetched through challenge_rounds, never here.
+        const result = await pool.query(
+            `SELECT * FROM game_sessions
+             WHERE user_id = $1 AND status = 'active' AND challenge_id IS NULL
+             ORDER BY started_at DESC LIMIT 1`,
+            [userId]
+        );
         return result.rows[0] || null;
     }
 

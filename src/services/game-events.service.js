@@ -18,6 +18,8 @@ class GameEventsService {
     constructor() {
         /** @type {Map<number, Set<import('express').Response>>} */
         this.connections = new Map();
+        /** @type {Map<number, Set<number>>} challengeId -> userIds */
+        this.rooms = new Map();
 
         setInterval(() => this._heartbeat(), HEARTBEAT_MS).unref?.();
     }
@@ -42,6 +44,59 @@ class GameEventsService {
 
     isConnected(userId) {
         return (this.connections.get(userId)?.size || 0) > 0;
+    }
+
+    // ============================================
+    // ROOM REGISTRY (live arena)
+    // ============================================
+    // A room is a set of user ids, and emitRoom() loops the existing per-user
+    // emit(). No new connection, no new endpoint, no WebSockets \u2014 the live
+    // arena rides the SSE stream that is already open.
+    //
+    // IN-PROCESS, DELIBERATELY. Like activeTimeouts in game.service, this
+    // assumes a single Render instance. A second instance would split rooms in
+    // half and neither would see the other's players. That constraint already
+    // exists in this codebase; the live arena makes it load-bearing, so it is
+    // written down here rather than discovered later.
+
+    joinRoom(challengeId, userId) {
+        if (!this.rooms) this.rooms = new Map();
+        if (!this.rooms.has(challengeId)) this.rooms.set(challengeId, new Set());
+        this.rooms.get(challengeId).add(userId);
+        return this.rooms.get(challengeId).size;
+    }
+
+    leaveRoom(challengeId, userId) {
+        if (!this.rooms || !this.rooms.has(challengeId)) return 0;
+        const room = this.rooms.get(challengeId);
+        room.delete(userId);
+        if (room.size === 0) this.rooms.delete(challengeId);
+        return room.size;
+    }
+
+    roomMembers(challengeId) {
+        if (!this.rooms || !this.rooms.has(challengeId)) return [];
+        return [...this.rooms.get(challengeId)];
+    }
+
+    closeRoom(challengeId) {
+        if (this.rooms) this.rooms.delete(challengeId);
+    }
+
+    /**
+     * One frame per member. Returns how many actually landed.
+     *
+     * There is no per-answer fan-out anywhere in the arena: twenty players
+     * times fifteen questions times twenty recipients would be 6,000 frames a
+     * match. The scoreboard is batched into the reveal frame instead, once per
+     * question.
+     */
+    emitRoom(challengeId, type, payload = {}) {
+        let delivered = 0;
+        for (const userId of this.roomMembers(challengeId)) {
+            if (this.emit(userId, type, payload)) delivered++;
+        }
+        return delivered;
     }
 
     // ============================================

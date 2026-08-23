@@ -27,6 +27,11 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
         // Check if this is a tournament payment
         if (reference.startsWith('TRN-') || reference.startsWith('TRNR-')) {
             await handleTournamentPaymentWebhook(reference, metadata);
+        } else if (reference.startsWith('CHS-')) {
+            // A sponsored challenge prize. THIS is the only thing that opens
+            // the challenge to participants — settled, not initiated. The
+            // browser callback sets nothing, exactly like credit tokens.
+            await handleChallengeSponsorshipWebhook(reference);
         } else {
             // Handle regular game payment
             const verification = await paymentService.verifyPayment(reference);
@@ -73,6 +78,40 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
         logger.info(`Payment webhook (${gatewayName}) processed: ${reference}`);
     } catch (error) {
         logger.error(`Error processing ${gatewayName} webhook event:`, error);
+    }
+}
+
+// ============================================
+// CHALLENGE SPONSORSHIP WEBHOOK
+// ============================================
+async function handleChallengeSponsorshipWebhook(reference) {
+    const challengeSponsorshipService = require('../services/challenge-sponsorship.service');
+    const deepLinkService = require('../services/deeplink.service');
+
+    const result = await challengeSponsorshipService.settle(reference);
+    if (!result.ok || result.alreadySettled) return;
+
+    try {
+        const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [result.userId]);
+        const user = userResult.rows[0];
+        if (!user || !result.code) return;
+
+        const links = deepLinkService.buildLinks(result.code);
+
+        // No "confirming" message was ever sent, so this is the first thing
+        // the initiator hears — and it is the thing they actually want, which
+        // is the link.
+        const body =
+            `\u2705 Prize confirmed \u2014 \u20a6${Number(result.amount).toLocaleString()} is held.\n\n` +
+            `Your challenge is live. Send this to whoever you want to beat:\n` +
+            `${links.web}\n\n` +
+            `At least two people have to finish for the prize to be won.`;
+
+        await messagingService.sendMessage(user.phone_number, body);
+    } catch (error) {
+        // The money is settled and the challenge is open. A failed message is
+        // not a failed payment, and must not look like one.
+        logger.error('Sponsorship settled but notification failed:', error.message);
     }
 }
 

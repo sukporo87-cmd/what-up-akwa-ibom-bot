@@ -471,6 +471,10 @@ class AnalyticsService {
                         2
                     ) as completion_rate
                 FROM game_sessions
+                -- Challenge rounds have no ladder and no elimination, so their
+                -- completion rate is structurally near 100% and would lift this
+                -- figure without anything about Classic having changed.
+                WHERE challenge_id IS NULL
             `);
             
             return result.rows[0];

@@ -212,6 +212,164 @@ class ImageService {
   // Layout: Trophy → Amount (hero) → Username → Score → Challenge CTA
   // ============================================
 
+  // ============================================
+  // CHALLENGE RESULT CARD
+  // ============================================
+  // The growth engine. This is designed to be screenshotted and posted back
+  // into the group chat it came from, so two rules shape the layout:
+  //
+  //   1. THE LOSER MUST BE WILLING TO SHARE IT. No humiliation copy, no
+  //      "destroyed", no "crushed". Both scores are given the same treatment
+  //      and the loser is named neutrally. A card only the winner will post
+  //      halves the reach of the whole feature.
+  //
+  //   2. THE QR IS A REMATCH, NOT A HOMEPAGE. It encodes a challenge that
+  //      already exists with the same settings, so one scan puts you in a
+  //      duel. Sending a beaten player to a creation form loses them.
+  //
+  // Layout copied from generateTournamentCard rather than invented: same
+  // canvas size, background loader, roundRect, QR helper and shadow treatment,
+  // so it inherits the look with no new assets.
+  async generateChallengeCard(cardData) {
+    const {
+      winnerName, winnerScore, winnerTimeMs,
+      loserName, loserScore, loserTimeMs,
+      categories, rematchUrl, isGroup, groupSize
+    } = cardData;
+
+    const W = 1080, H = 1080;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+
+    const perfect = winnerScore === 15;
+
+    await this.drawBackground(ctx, W, H, perfect ? 'dark' : 'warm');
+    if (perfect) this.drawConfetti(ctx, W, H, ['#FFD700', '#FFA500', '#FFFF00'], 40, true);
+
+    const ac = perfect ? '#FFD700' : '#FF9E4A';
+    const tx = '#FFFFFF';
+    const fmtTime = (ms) => (Number(ms || 0) / 1000).toFixed(1) + 's';
+
+    // ─── REMATCH QR (top-right) ───
+    await this.drawQRCode(ctx, W, rematchUrl);
+
+    // ─── BADGE (top-left) ───
+    const bY = 35;
+    ctx.fillStyle = ac;
+    ctx.globalAlpha = 0.9;
+    this.roundRect(ctx, 30, bY, 620, 55, 28);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#1a0a2e';
+    ctx.font = 'bold 26px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('CHALLENGE', 340, bY + 37);
+
+    // ─── THE VERDICT — the hero line ───
+    ctx.textAlign = 'center';
+    ctx.fillStyle = ac;
+    ctx.font = 'bold 22px Arial';
+    ctx.globalAlpha = 0.85;
+    ctx.fillText(isGroup ? `${groupSize} PLAYERS` : 'HEAD TO HEAD', W / 2, 150);
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = tx;
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 14;
+    // Sized down for long usernames rather than clipped — Nigerian handles run
+    // long and a truncated name is not shareable.
+    const verdict = isGroup
+      ? `@${winnerName} took 1st`
+      : `@${winnerName} beat @${loserName}`;
+    ctx.font = `bold ${verdict.length > 26 ? 44 : verdict.length > 20 ? 54 : 64}px Arial`;
+    ctx.fillText(verdict, W / 2, 235);
+    ctx.shadowBlur = 0;
+
+    // ─── THE SCORES — equal weight, deliberately ───
+    const rowY = 360;
+    const rowH = 150;
+    const boxW = 900;
+    const boxX = (W - boxW) / 2;
+
+    const scoreRow = (y, name, score, time, isWinner) => {
+      ctx.fillStyle = isWinner ? 'rgba(255,215,0,0.16)' : 'rgba(255,255,255,0.10)';
+      this.roundRect(ctx, boxX, y, boxW, rowH, 22);
+      ctx.fill();
+
+      if (isWinner) {
+        ctx.strokeStyle = ac;
+        ctx.lineWidth = 3;
+        this.roundRect(ctx, boxX, y, boxW, rowH, 22);
+        ctx.stroke();
+      }
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = tx;
+      ctx.font = 'bold 42px Arial';
+      ctx.fillText('@' + String(name || 'player').slice(0, 18), boxX + 40, y + 62);
+
+      ctx.fillStyle = isWinner ? ac : 'rgba(255,255,255,0.75)';
+      ctx.font = 'bold 26px Arial';
+      ctx.fillText(fmtTime(time), boxX + 40, y + 108);
+
+      ctx.textAlign = 'right';
+      ctx.fillStyle = isWinner ? ac : tx;
+      ctx.font = 'bold 72px Arial';
+      ctx.fillText(`${score}/15`, boxX + boxW - 40, y + 95);
+    };
+
+    scoreRow(rowY, winnerName, winnerScore, winnerTimeMs, true);
+    if (!isGroup || loserName) {
+      scoreRow(rowY + rowH + 24, loserName, loserScore, loserTimeMs, false);
+    }
+
+    // ─── TIEBREAK NOTE, only when it actually decided the result ───
+    if (winnerScore === loserScore) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = '24px Arial';
+      ctx.fillText('Same score \u2014 won on speed', W / 2, rowY + 2 * rowH + 78);
+    }
+
+    // ─── CATEGORY CHIPS ───
+    // The Speed Level slot lives here in the layout but renders nothing while
+    // every challenge runs one clock. Switching levels on later is a chip.
+    ctx.textAlign = 'center';
+    let chipY = 720;
+    const chips = (categories || []).slice(0, 3);
+    if (chips.length) {
+      const chipW = 240, gap = 20;
+      const totalW = chips.length * chipW + (chips.length - 1) * gap;
+      let x = (W - totalW) / 2;
+      for (const chip of chips) {
+        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+        this.roundRect(ctx, x, chipY, chipW, 56, 28);
+        ctx.fill();
+        ctx.fillStyle = tx;
+        ctx.font = 'bold 24px Arial';
+        ctx.fillText(String(chip).replace(/[_-]+/g, ' ').toUpperCase().slice(0, 16), x + chipW / 2, chipY + 37);
+        x += chipW + gap;
+      }
+      chipY += 90;
+    }
+
+    // ─── 15 QUESTIONS · 10 SECONDS ───
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '26px Arial';
+    ctx.fillText('15 questions \u00b7 10 seconds each', W / 2, chipY + 20);
+
+    // ─── THE CALL TO ACTION ───
+    ctx.fillStyle = ac;
+    ctx.font = 'bold 34px Arial';
+    ctx.fillText('Scan to take them on', W / 2, H - 110);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '22px Arial';
+    ctx.fillText(String(rematchUrl || '').replace(/^https?:\/\//, ''), W / 2, H - 62);
+
+    return canvas.toBuffer('image/png');
+  }
+
   async generateRegularWinPNG(winData) {
     const { username, city, amount, questionsAnswered, totalQuestions } = winData;
     const W = 1080, H = 1080;
@@ -369,9 +527,12 @@ class ImageService {
     return fp;
   }
 
-  async drawQRCode(ctx, W) {
+  // `link` is optional. Every existing caller omits it and gets the wa.me
+  // destination it always got; the challenge card passes a rematch URL so the
+  // QR is the growth loop rather than a generic "come to the bot" code.
+  async drawQRCode(ctx, W, link = null) {
     const sz = 140, pad = 25;
-    const link = 'https://wa.me/' + (process.env.WHATSAPP_PHONE_NUMBER || '2348030890744');
+    link = link || ('https://wa.me/' + (process.env.WHATSAPP_PHONE_NUMBER || '2348030890744'));
     try {
       const url = await QRCode.toDataURL(link, { width: sz, margin: 1, color: { dark: '#1a0a2e', light: '#FFFFFF' } });
       const img = await loadImage(url);

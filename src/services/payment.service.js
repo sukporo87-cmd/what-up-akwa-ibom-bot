@@ -276,6 +276,66 @@ class PaymentService {
     }
   }
 
+  // ============================================
+  // DEDUCT ONE CREDIT — ATOMIC
+  // ============================================
+  // deductGame() uses GREATEST(games_remaining - 1, 0), which succeeds even
+  // when the balance is already zero, so callers have to check first — and
+  // check-then-deduct is a TOCTOU. With twenty people joining a group
+  // challenge at once, two requests can both read 1 and both "succeed".
+  //
+  // This variant makes the balance check part of the UPDATE. rowCount === 0
+  // means there was nothing to take, with no separate read to race against.
+  // Returns { deducted, gamesLeft }.
+
+  async deductGameAtomic(userId) {
+    try {
+      const result = await pool.query(
+        `UPDATE users
+         SET games_remaining = games_remaining - 1
+         WHERE id = $1 AND games_remaining > 0
+         RETURNING games_remaining`,
+        [userId]
+      );
+
+      if (result.rowCount === 0) {
+        return { deducted: false, gamesLeft: 0 };
+      }
+
+      const gamesLeft = result.rows[0].games_remaining;
+      logger.info(`Game deducted from user ${userId}. Games remaining: ${gamesLeft}`);
+      return { deducted: true, gamesLeft };
+    } catch (error) {
+      logger.error('Error deducting game atomically:', error);
+      return { deducted: false, gamesLeft: 0 };
+    }
+  }
+
+  // ============================================
+  // RETURN ONE CREDIT
+  // ============================================
+  // Used when a challenge expires without completing and the participant never
+  // started a round. Someone who played their 15 questions got the game they
+  // paid for even if nobody raced them; someone who sat in a lobby that never
+  // started did not.
+
+  async refundGameCredit(userId, reason = 'challenge_not_completed') {
+    try {
+      const result = await pool.query(
+        `UPDATE users SET games_remaining = games_remaining + 1
+         WHERE id = $1 RETURNING games_remaining`,
+        [userId]
+      );
+      if (result.rowCount === 0) return { refunded: false, gamesLeft: 0 };
+
+      logger.info(`Credit returned to user ${userId} (${reason}). Now: ${result.rows[0].games_remaining}`);
+      return { refunded: true, gamesLeft: result.rows[0].games_remaining };
+    } catch (error) {
+      logger.error('Error returning game credit:', error);
+      return { refunded: false, gamesLeft: 0 };
+    }
+  }
+
   async deductGame(userId) {
     try {
       const result = await pool.query(

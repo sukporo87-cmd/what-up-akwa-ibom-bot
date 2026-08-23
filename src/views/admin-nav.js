@@ -28,6 +28,7 @@
     { href: '/admin/toggles',           label: 'Toggles',      icon: '🎚️', color: '#14b8a6' },
     { href: '/admin/messaging',         label: 'Messaging',    icon: '📨', color: '#f97316' },
     { href: '/admin/watchlist',         label: 'Watchlist',    icon: '🎯', color: '#ef4444' },
+    { href: '/admin/challenges',        label: 'Challenges',   icon: '⚔️', color: '#ec4899' },
     { href: '/admin/content',           label: 'Site Content', icon: '✏️', color: '#3b82f6' },
     { href: '/admin/questions',         label: 'Questions',    icon: '❓', color: '#0ea5e9' },
     { href: '/admin/rotation',          label: 'Rotation',     icon: '🔄', color: '#a855f7' }

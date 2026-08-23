@@ -486,6 +486,134 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <div class="msg" id="mStats" style="margin-top:10px"></div>
   </section>
 
+  <!-- ============ ARENA LOBBY ============ -->
+  <!-- Copied from vStats/vChal: same bar, hero, msg and cardActs classes.
+       The countdown is a single number driven by an absolute epoch time the
+       server sent ONCE — no per-second frames. -->
+  <section class="view" id="vArenaLobby">
+    <div class="bar">
+      <button class="back" onclick="leaveArena()">← Leave</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 14px">
+      <span class="fig" style="font-size:44px" id="alSecs">–</span>
+      <p id="alCount">Waiting for players…</p>
+    </div>
+
+    <div class="msg" id="alWho">Waiting for players…</div>
+    <div class="msg" id="alNote" style="margin-top:8px"></div>
+
+    <div class="cardActs">
+      <button class="ghost" id="alExtend" onclick="arenaExtend()" style="display:none">+5 minutes</button>
+      <button class="ghost" id="alStart" onclick="arenaStartNow()" style="display:none">Start now</button>
+    </div>
+  </section>
+
+  <!-- ============ ARENA (live match) ============ -->
+  <section class="view" id="vArena">
+    <div class="bar">
+      <div class="brand" id="aqCount">Question 1 of 15</div>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="ladderMeta"><span id="aqBoard"></span></div>
+
+    <div class="qwrap">
+      <p class="qtext" id="aqText">Waiting for the first question…</p>
+      <div class="opts" id="aqOpts"></div>
+      <div class="verdict" id="aqVerdict"></div>
+    </div>
+
+    <div class="foot">
+      <div class="clock">
+        <div class="track"><i id="abar"></i></div>
+        <span class="secs" id="asecs">–</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHALLENGE PLAY ============ -->
+  <!-- Copied from vGame: same bar, qwrap, opts, verdict, foot and clock
+       classes, so it inherits the existing styling with no new CSS.
+       Deliberately WITHOUT the prize ladder, the banked line and the lifeline
+       chips — a challenge has no ladder, no checkpoints and no lifelines. -->
+  <section class="view" id="vChalPlay">
+    <div class="bar">
+      <div class="brand" id="cqCount">Question 1 of 15</div>
+      <div class="icons">
+        <button class="icon" id="bSound3" onclick="toggleSound()">♪</button>
+      </div>
+    </div>
+
+    <div class="ladderMeta">
+      <span id="cqScore">0 correct</span>
+      <!-- Pace only. Never whether they were right — that would leak the
+           answer before this player has locked in. -->
+      <span id="cqGhost"></span>
+    </div>
+
+    <div class="qwrap">
+      <p class="qtext" id="cqText">Getting your first question…</p>
+      <div class="opts" id="cqOpts"></div>
+      <div class="verdict" id="cqVerdict"></div>
+    </div>
+
+    <div class="foot">
+      <div class="clock">
+        <div class="track"><i id="cbar"></i></div>
+        <span class="secs" id="csecs">–</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHALLENGE RESULT / BOARD ============ -->
+  <section class="view" id="vChalBoard">
+    <div class="bar">
+      <button class="back" onclick="view('vLobby');refresh()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 14px">
+      <span class="fig" style="font-size:30px" id="cbScore">0/15</span>
+      <p id="cbSub"></p>
+    </div>
+
+    <div class="card" id="cbCard" style="display:none"></div>
+
+    <div id="cbBoard"></div>
+
+    <div class="cardActs">
+      <button class="ghost" id="cbShare" onclick="shareChallengeCard()" style="display:none">Share</button>
+      <button class="ghost" onclick="view('vLobby');refresh()">Done</button>
+    </div>
+  </section>
+
+  <!-- ============ CHALLENGE INVITE ============ -->
+  <!-- Markup copied from vStats/vCard rather than invented: same bar, hero,
+       card and cardActs classes, so it inherits the existing styling with no
+       new CSS. -->
+  <section class="view" id="vChal">
+    <div class="bar">
+      <button class="back" onclick="clearChallenge();view('vLobby');refresh()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:20px 0 14px">
+      <span class="fig" style="font-size:26px" id="chalFrom">You've been challenged</span>
+      <p id="chalMeta"></p>
+      <p id="chalPrize" style="display:none"></p>
+    </div>
+
+    <div class="msg" id="chalNote" style="margin-top:6px"></div>
+
+    <div class="cardActs">
+      <button class="ghost" id="chalAccept" onclick="acceptChallenge()">Accept</button>
+    </div>
+
+    <input type="hidden" id="chalCode" value="">
+  </section>
+
   <!-- ============ VICTORY CARD ============ -->
   <section class="view" id="vCard">
     <div class="bar">
@@ -625,6 +753,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
   </div>
 </div>
 
+<script src="/js/fingerprint.js"></script>
 <script>
 const BUILD = '2026-07-30 16:32 UTC';   // console.log below tells you which copy is loaded
 const CHECKPOINTS = [5,10];
@@ -636,7 +765,439 @@ let token = localStorage.getItem('wut_token'), es=null, tick=null,
 let packs=[], gates=[], chosenPack=null, pendingPaid=null, pendingMode=null, payPoll=null;
 
 const $=id=>document.getElementById(id);
+/* GA4 / Meta. wutTrack is defined on the marketing site; play.html can load
+   without it, so this is a safe no-op wrapper rather than a hard dependency.
+   Firing an analytics event must never be able to break a game. */
+function track(name, params){
+  try{ if(window.wutTrack) window.wutTrack(name, params||{}); }catch(e){}
+}
+
 const H=()=>{const h={'Content-Type':'application/json'};if(token)h.Authorization='Bearer '+token;return h;};
+
+/* ---- CHALLENGE INVITE RESUME -----------------------------------------
+   Called from enter() once the player is authenticated. Resolves the code
+   stashed by stashChallenge() and shows what they were invited to.
+   ---------------------------------------------------------------------- */
+async function resumeChallenge(){
+  const code=pendingChallenge();
+  if(!code)return;
+  try{
+    const r=await fetch('/challenge/'+code);
+    const d=await r.json();
+    if(!d.success||!d.challenge){ clearChallenge(); return; }
+    track('challenge_invite_opened',{platform:'web',mode:d.challenge.mode});
+    showChallengeInvite(d.challenge);
+  }catch(e){ clearChallenge(); }
+}
+
+/* Refusal copy lives here so it matches the chat flow word for word. Two
+   surfaces saying different things about the same rule is how a support
+   conversation starts. */
+const CHAL_STATE_COPY={
+  awaiting_sponsorship:"This challenge isn't open yet \u2014 the prize is still being confirmed. Try again in a minute.",
+  expired:"This challenge expired. Invites only last 48 hours.",
+  completed:"This challenge has already finished.",
+  cancelled:"This challenge was cancelled.",
+  lobby:"This challenge is about to start.",
+  live:"This challenge has already started.",
+  grading:"This challenge has already finished."
+};
+
+function showChallengeInvite(c){
+  const cats=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
+  const blocked=CHAL_STATE_COPY[c.status];
+  const full=c.participants>=c.maxParticipants;
+
+  const entry = c.entryModel==='free'    ? 'Free to enter.'
+              : c.entryModel==='prepaid' ? 'Your entry is already paid for.'
+              :                            'Costs one of your credits.';
+
+  $('chalFrom').textContent='@'+c.createdBy+' challenged you';
+  $('chalMeta').textContent=cats+' \u00b7 15 questions \u00b7 10 seconds each';
+  $('chalPrize').textContent=c.prizeAmount>0?('\u20a6'+Number(c.prizeAmount).toLocaleString('en-NG')+' prize'):'';
+  $('chalPrize').style.display=c.prizeAmount>0?'block':'none';
+
+  const note=blocked || (full?'This challenge is full \u2014 someone got there first.':entry);
+  $('chalNote').textContent=note;
+  $('chalAccept').style.display=(blocked||full)?'none':'inline-block';
+  $('chalAccept').textContent=c.joined?'Play now':'Accept';
+  $('chalAccept').onclick=c.joined?(()=>startChallenge(c.code)):acceptChallenge;
+  $('chalCode').value=c.code;
+  view('vChal');
+}
+
+/* ---- LIVE ARENA ------------------------------------------------------
+   A separate loop from both Classic and the async challenge screens. The
+   server is authoritative for everything: the clock, the reveal, and when
+   the next question arrives. This client renders what it is pushed.
+
+   It never polls, and it never counts down against a number the server
+   sends repeatedly — challenge.question carries an absolute expiresAt and
+   the countdown runs from the local clock.
+   --------------------------------------------------------------------- */
+let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15};
+
+function arenaStopClock(){ if(arena.timer){clearInterval(arena.timer);arena.timer=null;} }
+
+/* One local ticker, reused by the lobby countdown and the question clock.
+   `until` is an absolute epoch time the server sent ONCE. */
+function arenaCountdown(until,elSecs,elBar,span,onZero){
+  arenaStopClock();
+  const tick=()=>{
+    const left=Math.max(0,until-Date.now());
+    if(elSecs)elSecs.textContent=left>60000
+      ? Math.ceil(left/60000)+'m'
+      : Math.ceil(left/1000);
+    if(elBar)elBar.style.width=(span?Math.min(100,left/span*100):0)+'%';
+    if(left<=0){ arenaStopClock(); if(onZero)onZero(); }
+  };
+  tick();
+  arena.timer=setInterval(tick,200);
+}
+
+async function joinArena(code){
+  try{
+    const r=await fetch('/challenge/'+code+'/lobby',{method:'POST',headers:H()});
+    const d=await r.json();
+    if(!d.success){
+      $('chalNote').textContent={
+        too_early:'The lobby opens 10 minutes before the start time.',
+        already_started:'This one has already started — you can\'t join midway.',
+        not_a_participant:'You need to accept this challenge first.',
+        not_live:'This is an anytime challenge, not a live one.'
+      }[d.reason]||'Could not join that lobby.';
+      return;
+    }
+    arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15};
+    clearChallenge();
+    $('alWho').textContent='Waiting for players…';
+    $('alExtend').style.display='none';
+    view('vArenaLobby');
+    arenaCountdown(d.startsAt,$('alSecs'),null,null,null);
+  }catch(e){ $('chalNote').textContent='Could not join that lobby.'; }
+}
+
+function arenaLobby(d){
+  const names=(d.present||[]).map(p=>'@'+p.username);
+  $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
+  $('alWho').textContent=names.join(' · ')||'Waiting for players…';
+}
+
+function arenaExtended(d){
+  arena.startsAt=d.startsAt;
+  $('alNote').textContent='Waiting a little longer.';
+  $('alExtend').style.display='none';
+  arenaCountdown(d.startsAt,$('alSecs'),null,null,null);
+}
+
+/* Only the initiator gets this. If they do nothing, the server starts anyway
+   after its grace period — the buttons are a courtesy, not a gate. */
+function arenaAskInitiator(d){
+  $('alNote').textContent='Not everyone is here. Start now, or give them 5 more minutes?';
+  $('alExtend').style.display=d.extensionsLeft>0?'inline-block':'none';
+  $('alStart').style.display='inline-block';
+}
+
+async function arenaExtend(){
+  try{ await fetch('/challenge/'+arena.code+'/lobby/extend',{method:'POST',headers:H()}); }catch(e){}
+}
+async function arenaStartNow(){
+  try{ await fetch('/challenge/'+arena.code+'/lobby/start',{method:'POST',headers:H()}); }catch(e){}
+}
+async function leaveArena(){
+  arenaStopClock();
+  try{ await fetch('/challenge/'+arena.code+'/lobby/leave',{method:'POST',headers:H()}); }catch(e){}
+  view('vLobby'); refresh();
+}
+
+function arenaStarted(d){
+  track('challenge_round_started',{platform:'web',mode:'live',players:d.players});
+  arena.total=d.totalQuestions||15;
+  $('aqBoard').innerHTML='';
+  view('vArena');
+}
+
+function arenaQuestion(d){
+  arena.position=d.position; arena.locked=false;
+  $('aqCount').textContent='Question '+d.position+' of '+(d.total||arena.total);
+  $('aqText').textContent=d.text;
+  $('aqVerdict').textContent='';
+  $('aqOpts').innerHTML='';
+  ['A','B','C','D'].forEach(letter=>{
+    const b=document.createElement('button');
+    b.className='opt'; b.id='aqOpt'+letter;
+    b.textContent=letter+'. '+d.options[letter];
+    b.onclick=()=>arenaAnswer(letter);
+    $('aqOpts').appendChild(b);
+  });
+  view('vArena');
+  /* expiresAt is absolute and was sent once. When it passes we simply stop
+     accepting input — the server reveals on its own schedule and we wait to
+     be told, rather than asking. */
+  const span=Math.max(1,d.expiresAt-Date.now());
+  arenaCountdown(d.expiresAt,$('asecs'),$('abar'),span,()=>{
+    arena.locked=true;
+    [...$('aqOpts').children].forEach(b=>b.disabled=true);
+  });
+}
+
+async function arenaAnswer(letter){
+  if(arena.locked)return;
+  arena.locked=true;
+  [...$('aqOpts').children].forEach(b=>{ b.disabled=true; });
+  const chosen=$('aqOpt'+letter); if(chosen)chosen.classList.add('picked');
+  try{
+    await fetch('/challenge/'+arena.code+'/arena/answer',{
+      method:'POST',headers:H(),
+      body:JSON.stringify({position:arena.position,answer:letter})
+    });
+  }catch(e){}
+}
+
+/* Locked in. Deliberately says nothing about whether it was right — in a
+   live arena two players can be sitting in the same room. */
+function arenaLocked(){
+  $('aqVerdict').textContent='Locked in. Waiting for everyone…';
+}
+
+function arenaReveal(d){
+  arenaStopClock();
+  $('asecs').textContent='–';
+  $('aqVerdict').textContent='Answer: '+d.correctAnswer;
+  const picked=[...$('aqOpts').children];
+  picked.forEach(b=>{ if(b.textContent.charAt(0)===d.correctAnswer) b.classList.add('right'); });
+  arenaBoard(d.board);
+}
+
+/* The board arrives batched inside the reveal frame, never as its own event.
+   Keys are compact on purpose: u/c/t, about 35 bytes an entry. */
+function arenaBoard(board){
+  if(!board||!board.length)return;
+  $('aqBoard').innerHTML=board.slice(0,8).map((r,i)=>
+    '<span class="chip">'+(i+1)+'. '+r.c+'/15</span>').join(' ');
+}
+
+function arenaFinished(d){
+  arenaStopClock();
+  $('cbScore').textContent='Final';
+  $('cbSub').textContent='Here is how it finished.';
+  $('cbBoard').innerHTML='<div class="who">Final standings</div>'+
+    (d.board||[]).map(r=>'<div class="grid2"><span>'+r.position+'. @'+r.username+
+      '</span><span>'+r.score+'/15 · '+(r.timeMs/1000).toFixed(1)+'s</span></div>').join('');
+  if(d.cardUrl){
+    $('cbCard').innerHTML='<img src="'+d.cardUrl+'" alt="Result card" style="width:100%;border-radius:14px">';
+    $('cbCard').style.display='block';
+    $('cbShare').style.display='inline-block';
+    chal.code=arena.code;
+  }
+  view('vChalBoard');
+}
+
+function arenaAbandoned(d){
+  arenaStopClock();
+  $('chalNote').textContent={
+    not_enough_players:'Not enough players turned up — a challenge needs at least two to finish.',
+    no_questions:"We couldn't build a question set for this one. Nothing was charged."
+  }[d.reason]||'That challenge was called off.';
+  view('vChal');
+}
+
+/* ---- CHALLENGE PLAY --------------------------------------------------
+   Deliberately a separate loop from the Classic one: no ladder, no
+   checkpoints, no lifelines, no elimination. Score is a count and the
+   tiebreak is cumulative time.
+
+   The clock is DISPLAY ONLY. The server records the elapsed time from its
+   own question_start key and rejects anything past the timeout, so a client
+   that pauses this timer gains nothing.
+   ---------------------------------------------------------------------- */
+let chal={code:null,position:1,correct:0,deadline:0,timer:null,locked:false};
+
+function chalStopClock(){ if(chal.timer){clearInterval(chal.timer);chal.timer=null;} }
+
+function chalStartClock(ms){
+  chalStopClock();
+  chal.deadline=Date.now()+ms;
+  const tick=()=>{
+    const left=Math.max(0,chal.deadline-Date.now());
+    $('csecs').textContent=Math.ceil(left/1000);
+    $('cbar').style.width=(left/ms*100)+'%';
+    if(left<=0){ chalStopClock(); if(!chal.locked) chalAnswer(null); }
+  };
+  tick();
+  chal.timer=setInterval(tick,100);
+}
+
+function chalRenderQuestion(q){
+  chal.position=q.position; chal.locked=false;
+  $('cqCount').textContent='Question '+q.position+' of 15';
+  $('cqScore').textContent=chal.correct+' correct';
+  /* Pace only, and only when there is a ghost. Never correctness. */
+  $('cqGhost').textContent=q.ghostMs?('They answered in '+(q.ghostMs/1000).toFixed(1)+'s'):'';
+  $('cqText').textContent=q.text;
+  $('cqVerdict').textContent='';
+  $('cqOpts').innerHTML='';
+  ['A','B','C','D'].forEach(letter=>{
+    const b=document.createElement('button');
+    b.className='opt';
+    b.textContent=letter+'. '+q.options[letter];
+    b.onclick=()=>chalAnswer(letter);
+    $('cqOpts').appendChild(b);
+  });
+  chalStartClock(q.timeoutMs||10000);
+}
+
+async function startChallenge(code){
+  try{
+    const r=await fetch('/challenge/'+code+'/start',{method:'POST',headers:H()});
+    const d=await r.json();
+    if(!d.success){
+      $('chalNote').textContent={
+        already_played:"You've already played this one. Waiting on the others.",
+        no_questions:"We couldn't build a question set for this one. Nothing was charged.",
+        not_a_participant:'You need to join this challenge first.'
+      }[d.reason]||'Could not start that round.';
+      return;
+    }
+    track('challenge_round_started',{platform:'web',mode:'async'});
+    chal={code:code,position:1,correct:0,deadline:0,timer:null,locked:false};
+    clearChallenge();
+    view('vChalPlay');
+    chalRenderQuestion(d.question);
+  }catch(e){ $('chalNote').textContent='Could not start that round.'; }
+}
+
+async function chalAnswer(letter){
+  if(chal.locked)return;
+  chal.locked=true; chalStopClock();
+  [...$('cqOpts').children].forEach(b=>b.disabled=true);
+
+  try{
+    const r=await fetch('/challenge/'+chal.code+'/answer',{
+      method:'POST',headers:H(),
+      body:JSON.stringify({position:chal.position,answer:letter||''})
+    });
+    const d=await r.json();
+    if(!d.success)return;
+
+    if(d.isCorrect)chal.correct++;
+    /* The correct answer is revealed only now, after locking in. */
+    $('cqVerdict').textContent=d.timedOut?("Time's up. It was "+d.correctAnswer+'.')
+                              :d.isCorrect?('Correct — '+d.correctAnswer+'.')
+                              :('You said '+letter+'. It was '+d.correctAnswer+'.');
+    $('cqScore').textContent=chal.correct+' correct';
+
+    if(d.finished){ setTimeout(()=>chalFinish(d),1400); return; }
+    setTimeout(()=>{ if(d.question)chalRenderQuestion(d.question); },1400);
+  }catch(e){ chal.locked=false; }
+}
+
+async function chalFinish(d){
+  chalStopClock();
+  $('cbScore').textContent=(d.score!==null?d.score:chal.correct)+'/15';
+  $('cbSub').textContent=d.challengeComplete
+    ?'Here is how it finished.'
+    :"That's your round done. We'll let you know when the others finish.";
+  $('cbCard').style.display='none';
+  $('cbShare').style.display='none';
+  $('cbBoard').innerHTML='';
+  view('vChalBoard');
+
+  track('challenge_completed',{platform:'web',score:d.score,complete:!!d.challengeComplete});
+  if(!d.challengeComplete)return;
+  await loadChallengeBoard(chal.code);
+}
+
+async function loadChallengeBoard(code){
+  try{
+    const r=await fetch('/challenge/'+code+'/board');
+    const d=await r.json();
+    if(!d.success||!d.board.length)return;
+
+    /* The running leaderboard: everyone who has FINISHED, not the leader's
+       ghost. Racing the leader from fifth place is demoralising and gives
+       different players a different experience of the same challenge. */
+    $('cbBoard').innerHTML='<div class="who">Final standings</div>'+
+      d.board.map(r2=>'<div class="grid2"><span>'+r2.position+'. @'+r2.username+
+        '</span><span>'+r2.score+'/15 · '+(r2.timeMs/1000).toFixed(1)+'s</span></div>').join('');
+
+    $('cbCard').innerHTML='<img src="/challenge/'+code+'/card" alt="Result card" style="width:100%;border-radius:14px">';
+    $('cbCard').style.display='block';
+    $('cbShare').style.display='inline-block';
+  }catch(e){}
+}
+
+async function shareChallengeCard(){
+  const url=location.origin+'/challenge/'+chal.code+'/card';
+  try{
+    if(navigator.share){ await navigator.share({title:"What's Up Trivia",url:url}); track('challenge_card_shared',{platform:'web'}); return; }
+    await navigator.clipboard.writeText(url);
+    $('cbSub').textContent='Link copied.';
+    track('challenge_card_shared',{platform:'web'});
+  }catch(e){}
+}
+
+async function acceptChallenge(){
+  const code=$('chalCode').value;
+  $('chalAccept').disabled=true;
+  try{
+    const r=await fetch('/challenge/'+code+'/join',{method:'POST',headers:H()});
+    const d=await r.json();
+    if(d.success){
+      /* Straight into the round rather than a dead end. The moment after
+         accepting is the highest-intent moment in the whole flow. */
+      track('challenge_accepted',{platform:'web'});
+      clearChallenge(); refresh(); return startChallenge(code);
+    }
+    /* Every refusal names itself \u2014 "you cannot join" with no reason is the
+       most annoying thing an invite link can do. */
+    const why={
+      no_credits:'You need a credit to join this one.',
+      already_joined:"You've already joined this challenge.",
+      own_challenge:"This is your own challenge \u2014 send the link to someone else.",
+      full:'This challenge is full \u2014 someone got there first.',
+      expired:'This challenge expired. Invites only last 48 hours.',
+      not_ready:"This challenge isn't open yet \u2014 the prize is still being confirmed.",
+      device_already_in:'Someone on this device has already joined this challenge.',
+      closed:'This challenge has already started or finished.'
+    }[d.reason]||'Could not join that challenge.';
+    $('chalNote').textContent=why;
+    if(d.reason!=='no_credits')$('chalAccept').style.display='none';
+  }catch(e){ $('chalNote').textContent='Could not join that challenge.'; }
+  finally{ $('chalAccept').disabled=false; }
+}
+
+/* ---- CHALLENGE INVITE CAPTURE ----------------------------------------
+   Arriving at /c/K7P2M4RN. The code has to survive whatever happens next:
+   a signup, an email OTP opened in a different tab, or a Google round trip
+   that leaves the page entirely and comes back.
+
+   Stored in BOTH places on purpose. sessionStorage covers the ordinary
+   flow; the cookie is what survives the OAuth redirect and an OTP link
+   opened from a mail client. SameSite=Lax is deliberate — the return from
+   Google is a top-level GET, which Lax permits.
+   ---------------------------------------------------------------------- */
+const CHALLENGE_PATH=/^\/c\/([A-Z0-9]{8})$/;
+function stashChallenge(){
+  const m=location.pathname.match(CHALLENGE_PATH);
+  if(!m)return;
+  const code=m[1];
+  try{sessionStorage.setItem('wut_challenge',code);}catch(e){}
+  try{document.cookie='wut_challenge='+code+';path=/;max-age=3600;SameSite=Lax';}catch(e){}
+  /* Clean the address bar so a refresh after login doesn't re-enter the
+     invite flow, and so the code isn't sitting in a shared screenshot. */
+  try{history.replaceState({},'','/');}catch(e){}
+}
+function pendingChallenge(){
+  try{const v=sessionStorage.getItem('wut_challenge');if(v)return v;}catch(e){}
+  const m=document.cookie.match(/(?:^|;\s*)wut_challenge=([A-Z0-9]{8})/);
+  return m?m[1]:null;
+}
+function clearChallenge(){
+  try{sessionStorage.removeItem('wut_challenge');}catch(e){}
+  try{document.cookie='wut_challenge=;path=/;max-age=0;SameSite=Lax';}catch(e){}
+}
+stashChallenge();
 const naira=n=>'₦'+Number(n||0).toLocaleString();
 function view(v){document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));$(v).classList.add('on');}
 function show(on,off){$(on).style.display='block';$(off).style.display='none';}
@@ -797,6 +1358,14 @@ function enter(user){
   $('lobbyName').textContent='@'+user.username;
   $('lobbyCredits').textContent=user.gamesRemaining??0;
   view('vLobby'); stream(); refresh();
+  /* Background integrity signal. Fire-and-forget and never awaited — a browser
+     that blocks canvas must reach the lobby exactly as fast as one that
+     doesn't. See views/js/fingerprint.js. */
+  try{ if(window.wutFingerprint) window.wutFingerprint.send(H()); }catch(e){}
+  /* An invite that was waiting through the login. The challenge screens land
+     in stage 5; until then the code is held, not thrown away, so a link
+     shared before launch still works on the day it opens. */
+  if(pendingChallenge() && typeof resumeChallenge==='function'){ resumeChallenge(); }
   if(pendingPaid){
     const p=pendingPaid; pendingPaid=null;
     settlePayment(p.reference,p.hint);
@@ -906,6 +1475,21 @@ function stream(){
     clearTimeout(textT); flushText();
     showCaptcha(JSON.parse(e.data));
   });
+
+  /* ---- LIVE ARENA ------------------------------------------------------
+     Every one of these is push-only. The client NEVER polls the arena, and
+     it never asks the server what time it is: challenge.question carries an
+     absolute expiresAt and the countdown runs locally from there.
+     --------------------------------------------------------------------- */
+  es.addEventListener('challenge.lobby',      e=>arenaLobby(JSON.parse(e.data)));
+  es.addEventListener('challenge.extended',   e=>arenaExtended(JSON.parse(e.data)));
+  es.addEventListener('challenge.wait_or_start', e=>arenaAskInitiator(JSON.parse(e.data)));
+  es.addEventListener('challenge.started',    e=>arenaStarted(JSON.parse(e.data)));
+  es.addEventListener('challenge.question',   e=>arenaQuestion(JSON.parse(e.data)));
+  es.addEventListener('challenge.locked',     ()=>arenaLocked());
+  es.addEventListener('challenge.reveal',     e=>arenaReveal(JSON.parse(e.data)));
+  es.addEventListener('challenge.finished',   e=>arenaFinished(JSON.parse(e.data)));
+  es.addEventListener('challenge.abandoned',  e=>arenaAbandoned(JSON.parse(e.data)));
 }
 
 let textBuf=[], textT=null, gstate=null;
@@ -929,7 +1513,7 @@ function flushText(){
 /* Screens that own the viewport and must never be navigated away from by a
    passing state event. Anything added here later needs to go in this list. */
 function onDedicatedScreen(){
-  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame']
+  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame','vChal','vChalPlay','vChalBoard','vArenaLobby','vArena']
     .some(id=>{ const el=document.getElementById(id); return el && el.classList.contains('on'); })
     || $('over').classList.contains('on')
     || $('ask').classList.contains('on');

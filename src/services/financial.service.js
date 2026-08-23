@@ -45,7 +45,7 @@ class FinancialService {
           COALESCE(SUM(t.amount), 0) as total,
           COUNT(*) as payout_count
         FROM transactions t
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND t.${dateFilter}` : ''}
       `);
@@ -56,7 +56,7 @@ class FinancialService {
           COALESCE(SUM(amount), 0) as total,
           COUNT(*) as pending_count
         FROM transactions
-        WHERE transaction_type IN ('prize', 'tournament_prize')
+        WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND payout_status IN ('pending', 'details_collected', 'approved')
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
@@ -178,7 +178,7 @@ class FinancialService {
             (SELECT COALESCE(SUM(amount), 0) 
              FROM transactions 
              WHERE tournament_id = t.id 
-               AND transaction_type IN ('prize', 'tournament_prize')
+               AND transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
                AND payout_status IN ('paid', 'confirmed')),
             (SELECT COALESCE(SUM(prize_won), 0) 
              FROM tournament_participants 
@@ -188,7 +188,7 @@ class FinancialService {
                AND NOT EXISTS (
                  SELECT 1 FROM transactions 
                  WHERE tournament_id = t.id 
-                   AND transaction_type IN ('prize', 'tournament_prize')
+                   AND transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
                ))
           ) as prizes_paid
         FROM tournaments t
@@ -265,7 +265,7 @@ class FinancialService {
           COALESCE(MIN(t.amount), 0) as lowest_winning
         FROM transactions t
         JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND gs.game_mode = 'classic'
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY DATE(t.created_at)
@@ -281,7 +281,7 @@ class FinancialService {
           COALESCE(AVG(t.amount), 0) as avg_amount
         FROM transactions t
         JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND gs.game_mode = 'classic'
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
@@ -315,7 +315,7 @@ class FinancialService {
           COUNT(*) as count,
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY t.payout_status
       `);
@@ -336,6 +336,7 @@ class FinancialService {
           pd.bank_name,
           pd.account_number,
           CASE 
+            WHEN t.transaction_type IN ('challenge_prize','challenge_refund') THEN 'challenge'
             WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
             WHEN gs.game_mode = 'practice' THEN 'practice'
             ELSE 'classic'
@@ -345,7 +346,7 @@ class FinancialService {
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at DESC
@@ -365,6 +366,7 @@ class FinancialService {
           pd.bank_name,
           pd.account_number,
           CASE 
+            WHEN t.transaction_type IN ('challenge_prize','challenge_refund') THEN 'challenge'
             WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
             WHEN gs.game_mode = 'practice' THEN 'practice'
             ELSE 'classic'
@@ -373,7 +375,7 @@ class FinancialService {
         JOIN users u ON t.user_id = u.id
         LEFT JOIN payout_details pd ON t.id = pd.transaction_id
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('pending', 'details_collected', 'approved')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         ORDER BY t.created_at ASC
@@ -383,6 +385,7 @@ class FinancialService {
       const byGameMode = await pool.query(`
         SELECT 
           CASE 
+            WHEN t.transaction_type IN ('challenge_prize','challenge_refund') THEN 'challenge'
             WHEN t.transaction_type = 'tournament_prize' OR gs.tournament_id IS NOT NULL THEN 'tournament'
             WHEN gs.game_mode = 'practice' THEN 'practice'
             ELSE 'classic'
@@ -391,7 +394,7 @@ class FinancialService {
           COALESCE(SUM(t.amount), 0) as total_amount
         FROM transactions t
         LEFT JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY 1
@@ -433,10 +436,14 @@ class FinancialService {
         FROM users u
         JOIN transactions t ON u.id = t.user_id
         JOIN game_sessions gs ON t.session_id = gs.id
-        WHERE t.transaction_type IN ('prize', 'tournament_prize')
+        WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
           AND t.amount > 0
           AND gs.game_mode != 'practice'
           AND (gs.game_type IS NULL OR gs.game_type != 'practice')
+          -- Free challenge rounds cost nothing and earn nothing. Leaving them
+          -- in drags revenue-per-game toward zero and makes the series
+          -- discontinuous at the launch date.
+          AND gs.challenge_id IS NULL
         ${dateFilter ? `AND ${dateFilter}` : ''}
         GROUP BY u.id, u.username, u.phone_number, u.created_at
         ORDER BY total_winnings DESC
@@ -500,7 +507,7 @@ class FinancialService {
       const totalPayouts = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as total
         FROM transactions
-        WHERE transaction_type IN ('prize', 'tournament_prize')
+        WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND payout_status IN ('paid', 'confirmed')
         ${txFilter ? `AND ${txFilter}` : ''}
       `);
@@ -510,7 +517,7 @@ class FinancialService {
       const outstanding = await pool.query(`
         SELECT COALESCE(SUM(amount), 0) as total
         FROM transactions
-        WHERE transaction_type IN ('prize', 'tournament_prize')
+        WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND payout_status NOT IN ('paid', 'confirmed')
       `);
 
@@ -853,7 +860,8 @@ class FinancialService {
                     WHERE status = 'success'), 0) AS credits_bought,
           COALESCE((SELECT COUNT(*) FROM game_sessions
                     WHERE status = 'completed'
-                      AND COALESCE(game_type,'') <> 'practice'), 0) AS games_played,
+                      AND COALESCE(game_type,'') <> 'practice'
+                      AND challenge_id IS NULL), 0) AS games_played,
           COALESCE((SELECT SUM(games_remaining) FROM users), 0) AS credits_outstanding
       `);
       const r = result.rows[0];
@@ -992,7 +1000,7 @@ class FinancialService {
           COALESCE(SUM(amount), 0) as amount,
           COUNT(*) as count
         FROM transactions
-        WHERE transaction_type IN ('prize', 'tournament_prize')
+        WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND payout_status IN ('paid', 'confirmed')
         AND created_at >= CURRENT_DATE - INTERVAL '${interval}'
         GROUP BY ${dateGroup}
@@ -1402,7 +1410,7 @@ class FinancialService {
           JOIN users u ON t.user_id = u.id
           LEFT JOIN payout_details pd ON t.id = pd.transaction_id
           LEFT JOIN game_sessions gs ON t.session_id = gs.id
-          WHERE t.transaction_type IN ('prize', 'tournament_prize')
+          WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
           ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ORDER BY t.created_at DESC
         `;
@@ -1451,7 +1459,7 @@ class FinancialService {
               t.created_at
             FROM transactions t
             JOIN users u ON t.user_id = u.id
-            WHERE t.transaction_type IN ('prize', 'tournament_prize')
+            WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
             ${dateCondition ? `AND ${dateCondition.replace('created_at', 't.created_at')}` : ''}
           ) all_transactions
           ORDER BY created_at DESC

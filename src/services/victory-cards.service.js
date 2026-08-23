@@ -72,7 +72,7 @@ class VictoryCardsService {
                 UPDATE transactions 
                 SET victory_card_shared = true, victory_card_shared_at = NOW()
                 WHERE user_id = $1
-                AND transaction_type = 'prize'
+                AND transaction_type IN ('prize', 'challenge_prize')
                 AND amount > 0
                 AND (victory_card_shared = false OR victory_card_shared IS NULL)
                 RETURNING id
@@ -120,7 +120,7 @@ class VictoryCardsService {
                 FROM transactions t
                 LEFT JOIN victory_cards vc ON t.id = vc.transaction_id
                 WHERE t.user_id = $1 
-                AND t.transaction_type = 'prize'
+                AND t.transaction_type IN ('prize', 'challenge_prize')
                 AND t.amount > 0
                 AND (t.victory_card_shared = false OR t.victory_card_shared IS NULL)
                 ORDER BY t.created_at DESC

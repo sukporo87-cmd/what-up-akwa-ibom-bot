@@ -116,6 +116,10 @@ router.get('/toggles', (req, res) => {
   res.sendFile('admin-toggles.html', { root: './src/views' });
 });
 
+router.get('/challenges', (req, res) => {
+  res.sendFile('admin-challenges.html', { root: './src/views' });
+});
+
 // Login endpoint
 router.post('/api/login', async (req, res) => {
   try {
@@ -187,11 +191,11 @@ router.get('/api/stats', authenticateAdmin, async (req, res) => {
         COUNT(*) FILTER (WHERE payout_status = 'confirmed') as confirmed_count,
         COALESCE(SUM(amount) FILTER (WHERE payout_status = 'confirmed'), 0) as confirmed_amount
       FROM transactions
-      WHERE transaction_type IN ('prize', 'tournament_prize')
+      WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
     `);
 
     const totalUsers = await pool.query('SELECT COUNT(*) as count FROM users');
-    const totalGames = await pool.query('SELECT COUNT(*) as count FROM game_sessions WHERE status = \'completed\'');
+    const totalGames = await pool.query('SELECT COUNT(*) as count FROM game_sessions WHERE status = \'completed\' AND challenge_id IS NULL');
     const totalQuestions = await pool.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
 
     // Love Quest stats
@@ -634,7 +638,7 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type IN ('prize', 'tournament_prize')
+      WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
       ${platformCondition}
       ${statusCondition}
       ORDER BY t.created_at DESC
@@ -645,7 +649,7 @@ router.get('/api/payouts/platform', authenticateAdmin, async (req, res) => {
       SELECT COUNT(*) as total 
       FROM transactions t
       JOIN users u ON t.user_id = u.id
-      WHERE t.transaction_type IN ('prize', 'tournament_prize')
+      WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
       ${platformCondition}
       ${statusCondition}
     `);
@@ -720,7 +724,7 @@ router.get('/api/payouts/recent', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type IN ('prize', 'tournament_prize')
+      WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
       ORDER BY t.created_at DESC
       LIMIT $1
     `, [limit]);
@@ -738,9 +742,11 @@ router.get('/api/stats/quick', authenticateAdmin, async (req, res) => {
     const result = await pool.query(`
       SELECT
         -- Pending payouts
-        COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize') AND payout_status IN ('pending', 'details_collected', 'approved')) as pending_payouts,
+        COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund') AND payout_status IN ('pending', 'details_collected', 'approved')) as pending_payouts,
         
         -- Active games now
+        -- DELIBERATELY INCLUSIVE: this is a live-ops figure, not a claim about
+        -- Classic play. Support needs to see a challenge round in progress.
         (SELECT COUNT(*) FROM game_sessions WHERE status = 'active') as active_games,
         
         -- Cross-platform users (users who exist on both platforms - this is tricky, might not be possible)
@@ -755,7 +761,7 @@ router.get('/api/stats/quick', authenticateAdmin, async (req, res) => {
     const yesterdayResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM transactions
-      WHERE transaction_type IN ('prize', 'tournament_prize') 
+      WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund') 
         AND payout_status IN ('pending', 'details_collected', 'approved')
         AND created_at >= CURRENT_DATE - INTERVAL '1 day'
         AND created_at < CURRENT_DATE
@@ -855,7 +861,7 @@ router.get('/api/analytics', authenticateAdmin, async (req, res) => {
         COUNT(*) as count,
         COALESCE(SUM(amount), 0) as total_amount
       FROM transactions
-      WHERE transaction_type IN ('prize', 'tournament_prize')
+      WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
       GROUP BY payout_status
       ORDER BY 
         CASE payout_status
@@ -991,7 +997,7 @@ router.get('/api/analytics/conversion-funnel', authenticateAdmin, async (req, re
         COUNT(CASE WHEN EXISTS (
           SELECT 1 FROM transactions t 
           WHERE t.user_id = users.id 
-          AND t.transaction_type IN ('prize', 'tournament_prize')
+          AND t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
           AND t.payout_status IN ('paid', 'confirmed')
         ) THEN 1 END) as claimed_payout,
         ROUND(
@@ -1534,7 +1540,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
       FROM transactions t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN payout_details pd ON t.id = pd.transaction_id
-      WHERE t.transaction_type IN ('prize', 'tournament_prize')
+      WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
       ORDER BY t.paid_at DESC
@@ -1544,7 +1550,7 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
     const countQuery = `
       SELECT COUNT(*) as total
       FROM transactions t
-      WHERE t.transaction_type IN ('prize', 'tournament_prize')
+      WHERE t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
         AND t.payout_status IN ('paid', 'confirmed')
         ${dateFilter}
     `;
@@ -1733,7 +1739,7 @@ router.post('/api/payouts/:id/cancel', authenticateAdmin, async (req, res) => {
              SET payout_status = 'cancelled', 
                  admin_notes = COALESCE(admin_notes, '') || $1
              WHERE id = $2 
-               AND transaction_type IN ('prize', 'tournament_prize')
+               AND transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
                AND payout_status IN ('pending', 'details_collected', 'approved')
              RETURNING id, user_id, amount, payout_status`,
             ['\n[Cancelled: ' + (reason || 'Admin action') + ' at ' + new Date().toISOString() + ']', transactionId]
@@ -1772,7 +1778,7 @@ router.post('/api/payouts/bulk-cancel', authenticateAdmin, async (req, res) => {
                  SET payout_status = 'cancelled',
                      admin_notes = COALESCE(admin_notes, '') || $1
                  WHERE id = ANY($2::int[])
-                   AND transaction_type IN ('prize', 'tournament_prize')
+                   AND transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
                    AND payout_status IN ('pending', 'details_collected', 'approved')
                  RETURNING id, amount`,
                 ['\n[Bulk cancelled: ' + (reason || 'Admin bulk action') + ' at ' + new Date().toISOString() + ']', transactionIds]
@@ -1783,7 +1789,7 @@ router.post('/api/payouts/bulk-cancel', authenticateAdmin, async (req, res) => {
                 `UPDATE transactions 
                  SET payout_status = 'cancelled',
                      admin_notes = COALESCE(admin_notes, '') || $1
-                 WHERE transaction_type IN ('prize', 'tournament_prize')
+                 WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
                    AND payout_status IN ('pending', 'details_collected', 'approved')
                  RETURNING id, amount`,
                 ['\n[Bulk cancelled: ' + (reason || 'Admin bulk action') + ' at ' + new Date().toISOString() + ']']
@@ -3463,7 +3469,7 @@ router.get('/api/newsletter/export', authenticateAdmin, async (req, res) => {
                 phone_number, platform, created_at,
                 newsletter_token, newsletter_source, newsletter_opted_in_at,
                 current_streak, longest_streak,
-                (SELECT COUNT(*) FROM game_sessions WHERE user_id = users.id AND status = 'completed') as total_games
+                (SELECT COUNT(*) FROM game_sessions WHERE user_id = users.id AND status = 'completed' AND challenge_id IS NULL) as total_games
             FROM users 
             WHERE email IS NOT NULL 
               AND newsletter_opted_in = true
@@ -3737,7 +3743,7 @@ router.get('/api/streaks/leaderboard', authenticateAdmin, async (req, res) => {
                 u.last_play_date,
                 u.streak_badge,
                 u.created_at as member_since,
-                (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed') as total_games
+                (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed' AND challenge_id IS NULL) as total_games
             FROM users u
             WHERE u.current_streak > 0 OR u.longest_streak > 0
             ORDER BY ${orderBy}
@@ -3850,7 +3856,7 @@ router.get('/api/streaks/champions', authenticateAdmin, async (req, res) => {
                 u.current_streak,
                 u.longest_streak,
                 u.last_play_date,
-                (SELECT COALESCE(SUM(final_score), 0) FROM game_sessions WHERE user_id = u.id AND status = 'completed') as total_winnings
+                (SELECT COALESCE(SUM(final_score), 0) FROM game_sessions WHERE user_id = u.id AND status = 'completed' AND challenge_id IS NULL) as total_winnings
             FROM users u
             WHERE u.current_streak >= 60
             ORDER BY u.current_streak DESC
@@ -4029,14 +4035,14 @@ router.get('/api/users/:id/profile', authenticateAdmin, async (req, res) => {
         // complete story on both sides of the ledger.
         const financialResult = await pool.query(`
             SELECT
-                COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')), 0) as total_winnings,
+                COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')), 0) as total_winnings,
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'prize'), 0) as classic_winnings,
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'tournament_prize'), 0) as tournament_winnings,
-                COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as prize_count,
+                COUNT(*) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')) as prize_count,
                 COUNT(*) FILTER (WHERE transaction_type = 'prize') as classic_prize_count,
                 COUNT(*) FILTER (WHERE transaction_type = 'tournament_prize') as tournament_prize_count,
                 COALESCE(SUM(amount) FILTER (WHERE transaction_type IN ('prize','tournament_prize') AND payout_status IN ('paid','confirmed')), 0) as winnings_paid,
-                MAX(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize')) as highest_win
+                MAX(amount) FILTER (WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')) as highest_win
             FROM transactions
             WHERE user_id = $1
         `, [userId]);
@@ -4138,7 +4144,7 @@ router.get('/api/users/search', authenticateAdmin, async (req, res) => {
             FROM users u
             LEFT JOIN (
                 SELECT user_id, SUM(amount) as total_winnings 
-                FROM transactions WHERE transaction_type IN ('prize', 'tournament_prize') 
+                FROM transactions WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund') 
                 GROUP BY user_id
             ) t ON u.id = t.user_id
             LEFT JOIN (
@@ -4275,7 +4281,7 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
         const offset = (pageNum - 1) * limitNum;
         
         // Build query conditions
-        let conditions = [`t.transaction_type IN ('prize', 'tournament_prize')`, `t.amount > 0`];
+        let conditions = [`t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')`, `t.amount > 0`];
         let params = [];
         let paramIndex = 1;
         
@@ -4406,7 +4412,7 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
                 LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
                     AND DATE(gs.completed_at) = DATE(t.created_at)
                     AND gs.current_score = t.amount
-                WHERE t.id = $1 AND t.transaction_type IN ('prize', 'tournament_prize')
+                WHERE t.id = $1 AND t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
             `, [cardId]);
             
             if (transactionResult.rows.length > 0) {
@@ -5708,6 +5714,138 @@ router.get('/api/questions/rotation-stats', authenticateAdmin, async (req, res) 
  * GET /admin/api/questions/difficulty-stats
  * Question count by difficulty level (1-15)
  */
+// ============================================
+// CHALLENGE BANK READINESS — THE LAUNCH GATE
+// ============================================
+// Registered above /api/questions/:id deliberately. Express matches the first
+// registration, and a duplicate has already silently served the wrong payload
+// on this router once.
+//
+// Reports the THINNEST difficulty level per category, not the total. A
+// category with 400 questions can still only run five challenges if only five
+// of them sit at difficulty 14 — position 14 draws from difficulty 14 and
+// nothing else.
+// ============================================
+// CHALLENGE INTEGRITY REVIEW QUEUE
+// ============================================
+// Challenges where anti-collusion tripped. Nothing here has been actioned:
+// the rounds played, the players saw their results, and no ban or forfeiture
+// has happened. What IS held is the challenge leaderboard entry and, on a
+// sponsored challenge, the prize.
+//
+// Sorted by prize amount first — the ones with money on them are the ones
+// where a decision actually costs something.
+// The instrumentation panel. Registered above /api/challenges/:id so Express
+// does not match the literal path as an id.
+router.get('/api/challenges/metrics', authenticateAdmin, async (req, res) => {
+  try {
+    const challengeAnalyticsService = require('../services/challenge-analytics.service');
+    const days = Math.min(365, Math.max(1, parseInt(req.query.days, 10) || 30));
+    const summary = await challengeAnalyticsService.summary(days);
+    res.json(summary.ok ? { success: true, ...summary } : { success: false, error: summary.error });
+  } catch (error) {
+    logger.error('Error loading challenge metrics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Modelled bandwidth for a live match, so the panel can be compared against
+// Render's actual metrics rather than against a number in a design document.
+router.get('/api/challenges/bandwidth', authenticateAdmin, async (req, res) => {
+  try {
+    const challengeArenaService = require('../services/challenge-arena.service');
+    const players = Math.min(20, Math.max(2, parseInt(req.query.players, 10) || 4));
+    const estimate = challengeArenaService.estimateBytes(players);
+    res.json({
+      success: true,
+      players,
+      perPlayerKb: Number((estimate.perPlayer / 1024).toFixed(1)),
+      perMatchKb: Number((estimate.perMatch / 1024).toFixed(1)),
+      monthlyMbAt1000Matches: Number((estimate.perMatch * 1000 / 1048576).toFixed(1))
+    });
+  } catch (error) {
+    logger.error('Error estimating challenge bandwidth:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/api/challenges/integrity-queue', authenticateAdmin, async (req, res) => {
+  try {
+    const challengeIntegrityService = require('../services/challenge-integrity.service');
+    const queue = await challengeIntegrityService.getReviewQueue(
+      Math.min(200, parseInt(req.query.limit, 10) || 50)
+    );
+
+    res.json({
+      success: true,
+      count: queue.length,
+      withPrizes: queue.filter(c => Number(c.prize_amount) > 0).length,
+      totalHeld: queue.reduce((sum, c) => sum + Number(c.prize_amount || 0), 0),
+      queue
+    });
+  } catch (error) {
+    logger.error('Error loading challenge integrity queue:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clearing a hold says "this challenge is clean". It deliberately does NOT pay
+// anything out — awarding a held prize is a separate, explicit action in the
+// payout workspace, so nobody clears a queue and moves money by accident.
+router.post('/api/challenges/:id/clear-hold', authenticateAdmin, async (req, res) => {
+  try {
+    const challengeId = parseInt(req.params.id, 10);
+    if (!challengeId) return res.status(400).json({ success: false, error: 'Bad challenge id' });
+
+    const challengeIntegrityService = require('../services/challenge-integrity.service');
+    const result = await challengeIntegrityService.clearHold(
+      // authenticateAdmin attaches req.adminSession (line 41), not req.admin.
+      challengeId,
+      req.adminSession ? req.adminSession.admin_id : null,
+      req.body ? req.body.notes : ''
+    );
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    logger.error('Error clearing challenge integrity hold:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/api/questions/challenge-readiness', authenticateAdmin, async (req, res) => {
+  try {
+    const QuestionService = require('../services/question.service');
+    const questionService = new QuestionService();
+
+    const minimum = Math.max(1, parseInt(req.query.minimum, 10) || 10);
+    const categories = await questionService.getChallengeBankReadiness(minimum);
+
+    const ready = categories.filter(c => c.ready);
+    const blocked = categories.filter(c => !c.ready);
+
+    res.json({
+      success: true,
+      minimumPerLevel: minimum,
+      // The toggle should stay off until at least one category is ready.
+      canLaunch: ready.length > 0,
+      readyCategories: ready.map(c => c.category),
+      // How many challenges the best-stocked category can run before repeating.
+      headroom: ready.length ? Math.max(...ready.map(c => c.challengesAvailable)) : 0,
+      categories,
+      blocked: blocked.map(c => ({
+        category: c.category,
+        reason: c.missingLevels
+          ? `only ${c.levelsPresent} of 15 difficulty levels have any questions`
+          : `thinnest level has ${c.thinnestLevel}, needs ${minimum}`,
+        weakest: c.weakest
+      }))
+    });
+  } catch (error) {
+    logger.error('Error checking challenge bank readiness:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/api/questions/difficulty-stats', authenticateAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -8389,8 +8527,8 @@ router.get('/api/watchlist/search-users', authenticateAdmin, authenticateWatchli
         
         const result = await pool.query(`
             SELECT id, username, full_name, phone_number, fraud_flags, is_suspended,
-                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id) as total_games,
-                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed' AND final_score > 0) as games_won
+                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND challenge_id IS NULL) as total_games,
+                   (SELECT COUNT(*) FROM game_sessions WHERE user_id = u.id AND status = 'completed' AND final_score > 0 AND challenge_id IS NULL) as games_won
             FROM users u
             WHERE username ILIKE $1 OR full_name ILIKE $1 OR phone_number ILIKE $1
             LIMIT 20

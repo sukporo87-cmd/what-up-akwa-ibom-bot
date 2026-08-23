@@ -376,7 +376,15 @@ router.get('/stats', requireWebAuth, async (req, res) => {
         // rather than silently changing numbers players already know.
         const rows = await pool.query(`
             SELECT
-              CASE WHEN game_type = 'practice'      THEN 'practice'
+              -- challenge_id FIRST. A challenge round writes a real
+              -- game_sessions row, and without this branch it falls through
+              -- ELSE and is counted as a Classic game in every player's stats
+              -- — the exact opposite of "challenge scores stay off Classic".
+              -- Bucketed rather than excluded so the profile can show
+              -- "214 games played · 38 challenges": two numbers, each meaning
+              -- one thing.
+              CASE WHEN challenge_id IS NOT NULL     THEN 'challenge'
+                   WHEN game_type = 'practice'      THEN 'practice'
                    WHEN is_tournament_game IS TRUE  THEN 'tournament'
                    ELSE 'classic' END                AS bucket,
               COUNT(*)                                                  AS played,
