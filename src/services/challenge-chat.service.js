@@ -49,6 +49,34 @@ const STRINGS = {
         '*2* \u2014 Together, live\n\n' +
         'Reply 1 or 2, or MENU to go back.',
 
+    // Minutes from now, deliberately — NOT a clock time. A chat flow that asks
+    // for "12:10" has to guess a timezone: the server runs UTC, the player is
+    // on WAT, and a one-hour error means a lobby that opens after everyone has
+    // given up. Minutes are unambiguous on both sides.
+    // An ABSOLUTE clock time, in WAT. Minutes-from-now would be wrong: the
+    // invitee reads the message later than it was sent, so "in 15 minutes"
+    // means something different to each person. A wall-clock time is the one
+    // thing everybody agrees on.
+    //
+    // Nigeria is WAT year-round with no daylight saving, so the conversion to
+    // the server's UTC is a fixed one hour \u2014 no timezone database needed.
+    pickStartTime:
+        'When should it start?\n\n' +
+        'Reply with a date and time \u2014 like *2:30pm*, *tomorrow 9am*, or ' +
+        '*25/08 2:30pm*.\n' +
+        'All times are West Africa Time (WAT).',
+
+    badStartTime:
+        "That doesn't look like a date and time. Try *2:30pm*, *tomorrow 9am*, " +
+        'or *25/08 2:30pm* \u2014 West Africa Time.',
+
+    startTimeTooSoon:
+        'That is too close. The lobby opens 10 minutes before the start, so pick ' +
+        'a time at least 15 minutes from now.',
+
+    startTimeTooFar:
+        'That is more than a week away. Pick a date within the next 7 days.',
+
     pickFormat:
         'Who are you challenging?\n\n' +
         '*1* \u2014 One friend\n' +
@@ -96,13 +124,27 @@ const STRINGS = {
         'You need to be 18 or over to put up a prize. You can still create this ' +
         'challenge for bragging rights \u2014 reply *SKIP* to carry on.',
 
-    created: (links, categories) =>
+    created: (links, categories, startLabel) =>
         '\u2705 *Your challenge is ready.*\n\n' +
         `Categories: ${categories}\n` +
-        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n\n' +
+        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
+        // An absolute time, because whoever receives this reads it later than
+        // it was sent. And a live challenge is played in the browser — the
+        // lobby, the shared clock and the reveal have no chat equivalent, so
+        // say so here rather than letting someone wait in WhatsApp.
+        (startLabel
+            ? `*Starts ${startLabel}* \u00b7 everyone plays at once, in the browser\n\n`
+            : '\n') +
         'Send this to whoever you want to beat:\n' +
         `${links.web}\n\n` +
-        'Invites last 48 hours.',
+        (startLabel
+            ? `The lobby opens 10 minutes before ${startLabel}.`
+            // THE INITIATOR PLAYS FIRST. In an async ghost race their run IS
+            // the ghost \u2014 there is nothing for the friend to race until the
+            // challenger has played. Saying nothing here left the initiator
+            // with a link and no idea it was their turn.
+            : 'Invites last 48 hours.\n\n*Reply PLAY to set your score first* \u2014 ' +
+              'your friend races the pace you set.'),
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
@@ -278,6 +320,11 @@ class ChallengeChatService {
                         : STRINGS.entryLineCredit;
 
         const lines = [`Categories: ${this._categoryList(challenge.categories)}`];
+        // The person receiving this is the one who most needs the start time,
+        // and they are reading it later than it was sent.
+        if (challenge.mode === 'live' && challenge.scheduled_start_at) {
+            lines.push(`\u23f0 Starts ${this.watLabel(challenge.scheduled_start_at)} \u2014 in the browser`);
+        }
         if (challenge.prize_amount > 0) lines.push(STRINGS.prizeLine(challenge.prize_amount));
 
         await messagingService.sendMessage(identifier, STRINGS.inviteFound(
@@ -424,7 +471,41 @@ class ChallengeChatService {
                     // then say so plainly rather than half-building it.
                     data.entryModel = 'free';
                 }
+
+                // A live challenge needs a start time, and nothing was asking
+                // for one — validateCreation rejected every live challenge
+                // created from chat with "A live challenge needs a start time",
+                // which then fell through to the main menu.
+                if (data.mode === 'live') {
+                    await this._advance(identifier, 'starttime', data, STRINGS.pickStartTime);
+                    return true;
+                }
+
                 return this._finish(identifier, data, user, platform);
+
+            case 'starttime': {
+                const when = this.parseWatDateTime(input);
+
+                if (!when) {
+                    await messagingService.sendMessage(identifier, STRINGS.badStartTime);
+                    return true;
+                }
+
+                const leadMs = when.getTime() - Date.now();
+                // The lobby opens 10 minutes before the start, so anything
+                // closer than that has no lobby at all.
+                if (leadMs < 15 * 60000) {
+                    await messagingService.sendMessage(identifier, STRINGS.startTimeTooSoon);
+                    return true;
+                }
+                if (leadMs > 7 * 24 * 3600 * 1000) {
+                    await messagingService.sendMessage(identifier, STRINGS.startTimeTooFar);
+                    return true;
+                }
+
+                data.scheduledStartAt = when.toISOString();
+                return this._finish(identifier, data, user, platform);
+            }
 
             default:
                 await userService.clearUserState(identifier);
@@ -454,6 +535,7 @@ class ChallengeChatService {
             maxParticipants: data.maxParticipants,
             categories: data.categories,
             entryModel: data.entryModel,
+            scheduledStartAt: data.scheduledStartAt || null,
             rounds: 1,
             prizeAmount: 0
         }, platform);
@@ -464,8 +546,12 @@ class ChallengeChatService {
             return true;
         }
 
+        const startLabel = data.scheduledStartAt
+            ? this.watLabel(data.scheduledStartAt)
+            : null;
+
         await messagingService.sendMessage(identifier, STRINGS.created(
-            result.links, this._categoryList(data.categories)
+            result.links, this._categoryList(data.categories), startLabel
         ));
         await messagingService.sendMessage(identifier, STRINGS.cancellationNotice);
 
@@ -662,6 +748,162 @@ class ChallengeChatService {
             // player has already been told their score.
             logger.error('Could not send challenge card:', error.message);
         }
+    }
+
+    // ============================================
+    // WAT TIME
+    // ============================================
+    // Nigeria is West Africa Time, UTC+1, ALL YEAR. There is no daylight
+    // saving, so the offset is a constant rather than a timezone-database
+    // lookup. That is why this is fifteen lines and not a dependency.
+    //
+    // The server runs UTC. A player typing "2:30pm" means 2:30pm WAT, which is
+    // 13:30 UTC. Storing the wall-clock time unconverted would start every
+    // live challenge an hour late.
+
+    _WAT_OFFSET_MS = 60 * 60 * 1000;
+
+    /**
+     * Accepts a DATE AND TIME, because a challenge can be set for a later day:
+     *
+     *   "2:30pm"                -> today, or tomorrow if it has passed
+     *   "today 2:30pm"          -> today
+     *   "tomorrow 9am"          -> tomorrow
+     *   "25/08 2:30pm"          -> 25 August, dd/mm as written in Nigeria
+     *   "25 aug 2:30pm"         -> same
+     *   "25/08/2026 14:30"      -> same
+     *
+     * Returns a Date in UTC, or null on anything it cannot read. It never
+     * guesses: a half-understood date is worse than a rejection, because the
+     * player finds out by nobody turning up.
+     */
+    parseWatDateTime(text, now = new Date()) {
+        const raw = String(text || '').trim().toLowerCase();
+        if (!raw) return null;
+
+        // Take the time off the end; whatever is left is the date.
+        const timeMatch = raw.match(/(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*$/);
+        if (!timeMatch) return null;
+
+        let hour = parseInt(timeMatch[1], 10);
+        const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        const meridiem = timeMatch[3];
+        if (minute > 59) return null;
+
+        const datePart = raw.slice(0, timeMatch.index).trim().replace(/[,]+$/, '').trim();
+
+        // "25/08" with no time would otherwise read "08" as 8 o'clock.
+        if (/[/-]$/.test(datePart)) return null;
+        // A bare number with a date attached is ambiguous: "25/08 3" could be
+        // 3am or 3pm. Require a separator or a meridiem when a date is given.
+        if (datePart && !meridiem && !timeMatch[2]) return null;
+
+        if (meridiem) {
+            if (hour < 1 || hour > 12) return null;
+            if (meridiem === 'pm' && hour !== 12) hour += 12;
+            if (meridiem === 'am' && hour === 12) hour = 0;
+        } else if (hour > 23) {
+            return null;
+        }
+
+        // Today AS SEEN IN WAT. At 00:30 WAT the server is still on the
+        // previous UTC day, and using its date would be 24 hours out.
+        const nowWat = new Date(now.getTime() + this._WAT_OFFSET_MS);
+        let year = nowWat.getUTCFullYear();
+        let month = nowWat.getUTCMonth();
+        let day = nowWat.getUTCDate();
+        let dateWasExplicit = false;
+
+        if (datePart && datePart !== 'today') {
+            if (datePart === 'tomorrow' || datePart === 'tmr' || datePart === 'tmrw') {
+                const t = new Date(Date.UTC(year, month, day + 1));
+                year = t.getUTCFullYear(); month = t.getUTCMonth(); day = t.getUTCDate();
+                dateWasExplicit = true;
+            } else {
+                const parsed = this._parseWatDatePart(datePart, year);
+                if (!parsed) return null;
+                year = parsed.year; month = parsed.month; day = parsed.day;
+                dateWasExplicit = true;
+            }
+        }
+
+        const utcMs = Date.UTC(year, month, day, hour, minute, 0, 0) - this._WAT_OFFSET_MS;
+
+        // A bare time that has already gone means tomorrow. An EXPLICIT date
+        // never rolls \u2014 if someone types a date in the past, that is a mistake
+        // to reject, not a day to add.
+        if (utcMs <= now.getTime()) {
+            if (dateWasExplicit) return null;
+            return new Date(utcMs + 24 * 3600 * 1000);
+        }
+
+        return new Date(utcMs);
+    }
+
+    /** "25/08" | "25/08/2026" | "25 aug" | "aug 25" -> { year, month, day } */
+    _parseWatDatePart(part, defaultYear) {
+        const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+        // dd/mm or dd/mm/yyyy \u2014 day first, as written in Nigeria.
+        const numeric = part.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/);
+        if (numeric) {
+            const day = parseInt(numeric[1], 10);
+            const month = parseInt(numeric[2], 10) - 1;
+            let year = numeric[3] ? parseInt(numeric[3], 10) : defaultYear;
+            if (year < 100) year += 2000;
+            if (day < 1 || day > 31 || month < 0 || month > 11) return null;
+            return { year, month, day };
+        }
+
+        // "25 aug" or "aug 25", full month names accepted.
+        const words = part.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+        if (words.length === 2) {
+            const [a, b] = words;
+            const dayFirst = /^\d{1,2}$/.test(a);
+            const dayStr = dayFirst ? a : b;
+            const monStr = dayFirst ? b : a;
+            if (!/^\d{1,2}$/.test(dayStr)) return null;
+            const month = MONTHS.indexOf(monStr.slice(0, 3));
+            if (month < 0) return null;
+            const day = parseInt(dayStr, 10);
+            if (day < 1 || day > 31) return null;
+            return { year: defaultYear, month, day };
+        }
+
+        return null;
+    }
+
+    /** Kept so existing callers reading a bare time still work. */
+    parseWatTime(text, now = new Date()) {
+        return this.parseWatDateTime(text, now);
+    }
+
+    /**
+     * A Date -> "2:30pm WAT" for today, "tomorrow 2:30pm WAT", or
+     * "Tue 25 Aug, 2:30pm WAT" beyond that.
+     *
+     * The day matters as much as the time here: whoever receives the invite
+     * reads it later, possibly on a different day, and "2:30pm" alone would be
+     * read as today by someone opening it tomorrow morning.
+     */
+    watLabel(date, now = new Date()) {
+        const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        const wat = new Date(new Date(date).getTime() + this._WAT_OFFSET_MS);
+        const nowWat = new Date(now.getTime() + this._WAT_OFFSET_MS);
+
+        const minute = String(wat.getUTCMinutes()).padStart(2, '0');
+        const suffix = wat.getUTCHours() >= 12 ? 'pm' : 'am';
+        const hour = wat.getUTCHours() % 12 || 12;
+        const clock = `${hour}:${minute}${suffix} WAT`;
+
+        const dayKey = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        const daysApart = Math.round((dayKey(wat) - dayKey(nowWat)) / 86400000);
+
+        if (daysApart === 0) return clock;
+        if (daysApart === 1) return `tomorrow ${clock}`;
+        return `${DAYS[wat.getUTCDay()]} ${wat.getUTCDate()} ${MONTHS[wat.getUTCMonth()]}, ${clock}`;
     }
 
     // ============================================

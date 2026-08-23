@@ -100,6 +100,7 @@ router.get('/:code', async (req, res) => {
         // a token happens to be present we can tell them whether they have
         // already joined, so the button reads "Play now" instead of "Accept".
         let joined = false;
+        let isInitiator = false;
         try {
             const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
             if (token) {
@@ -108,6 +109,7 @@ router.get('/:code', async (req, res) => {
                 const sessionUser = await webAuthService.getSessionUser(token);
                 if (sessionUser && sessionUser.id) {
                     joined = !!(await challengeService.getParticipant(challenge.id, sessionUser.id));
+                    isInitiator = sessionUser.id === challenge.creator_user_id;
                 }
             }
         } catch (e) {
@@ -133,6 +135,7 @@ router.get('/:code', async (req, res) => {
                 // state so the client can say "not ready yet" rather than
                 // "expired", which would be a lie.
                 joined,
+                isInitiator,
                 status: expired && challenge.status === 'open' ? 'expired' : challenge.status
             }
         });

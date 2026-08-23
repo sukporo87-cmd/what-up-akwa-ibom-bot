@@ -806,7 +806,11 @@ const CHAL_STATE_COPY={
 function showChallengeInvite(c){
   const cats=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
   const blocked=CHAL_STATE_COPY[c.status];
-  const full=c.participants>=c.maxParticipants;
+  /* "Full" is about people who have NOT joined yet. Someone already in the
+     challenge \u2014 the initiator above all \u2014 is not blocked by a full roster,
+     and telling them "someone got there first" about their own challenge is
+     the wrong answer to the wrong question. */
+  const full=!c.joined && c.participants>=c.maxParticipants;
 
   const entry = c.entryModel==='free'    ? 'Free to enter.'
               : c.entryModel==='prepaid' ? 'Your entry is already paid for.'
@@ -817,11 +821,22 @@ function showChallengeInvite(c){
   $('chalPrize').textContent=c.prizeAmount>0?('\u20a6'+Number(c.prizeAmount).toLocaleString('en-NG')+' prize'):'';
   $('chalPrize').style.display=c.prizeAmount>0?'block':'none';
 
-  const note=blocked || (full?'This challenge is full \u2014 someone got there first.':entry);
+  const note = blocked
+    || (full ? 'This challenge is full \u2014 someone got there first.' : null)
+    || (c.isInitiator ? 'Your challenge. Play your round to set the pace.' : null)
+    || (c.joined ? "You're in. Play your round." : entry);
   $('chalNote').textContent=note;
   $('chalAccept').style.display=(blocked||full)?'none':'inline-block';
-  $('chalAccept').textContent=c.joined?'Play now':'Accept';
-  $('chalAccept').onclick=c.joined?(()=>startChallenge(c.code)):acceptChallenge;
+  /* A LIVE challenge goes to the lobby, not to startChallenge. Sending it to
+     startRound would materialise the set and begin immediately for whoever
+     pressed first, skipping the lobby, the shared clock and the reveal — the
+     entire point of the arena. */
+  const live = c.mode === 'live';
+  $('chalAccept').textContent = c.joined ? (live?'Enter lobby':'Play now') : 'Accept';
+  $('chalAccept').onclick = c.joined
+    ? (live ? (()=>joinArena(c.code)) : (()=>startChallenge(c.code)))
+    : acceptChallenge;
+  chalIsLive = live;
   $('chalCode').value=c.code;
   view('vChal');
 }
@@ -1147,7 +1162,8 @@ async function acceptChallenge(){
       /* Straight into the round rather than a dead end. The moment after
          accepting is the highest-intent moment in the whole flow. */
       track('challenge_accepted',{platform:'web'});
-      clearChallenge(); refresh(); return startChallenge(code);
+      clearChallenge(); refresh();
+      return chalIsLive ? joinArena(code) : startChallenge(code);
     }
     /* Every refusal names itself \u2014 "you cannot join" with no reason is the
        most annoying thing an invite link can do. */
@@ -1177,6 +1193,7 @@ async function acceptChallenge(){
    opened from a mail client. SameSite=Lax is deliberate — the return from
    Google is a top-level GET, which Lax permits.
    ---------------------------------------------------------------------- */
+let chalIsLive=false;
 const CHALLENGE_PATH=/^\/c\/([A-Z0-9]{8})$/;
 function stashChallenge(){
   const m=location.pathname.match(CHALLENGE_PATH);
