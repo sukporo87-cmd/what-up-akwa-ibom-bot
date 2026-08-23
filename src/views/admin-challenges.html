@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚔️ Challenges | What's Up Trivia</title>
+<!--
+  Design system copied from admin-reviews.html rather than invented: same
+  variables, same topbar, same card and table treatment. Adding a page to this
+  admin should not add a fourteenth visual style.
+
+  Everything here reads challenge_events, challenge_participants, challenges
+  and challenge_sponsorships. Held challenges are excluded from every rate —
+  counting a farmed accept would flatter exactly the number a farmer inflates.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a23;
+    --surface2: #22222f;
+    --border: #2d2d3d;
+    --text: #e4e4ef;
+    --text-dim: #8888a0;
+    --accent: #ffc233;
+    --green: #00d68f;
+    --red: #ff3b5c;
+    --yellow: #ffc233;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+  }
+
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar h1 { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--accent); }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  .rangebar { display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; align-items: center; }
+  .rangebar button {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim);
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .rangebar button.on { background: var(--accent); color: #1a1a23; border-color: var(--accent); font-weight: 600; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 26px; }
+
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .stat .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+  .stat .value { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .stat .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .stat.good .value { color: var(--green); }
+  .stat.bad .value { color: var(--red); }
+  .stat.warn .value { color: var(--yellow); }
+  .stat.none .value { color: var(--text-dim); font-size: 20px; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); margin-bottom: 14px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  td.num { font-family: 'JetBrains Mono', monospace; text-align: right; }
+
+  .bar { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+
+  .note { font-size: 12px; color: var(--text-dim); line-height: 1.6; margin-top: 10px; }
+  .empty { color: var(--text-dim); font-size: 14px; padding: 18px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>⚔️ Challenges</h1>
+</div>
+
+<div class="container">
+
+  <div class="rangebar">
+    <button data-days="7">7 days</button>
+    <button data-days="30" class="on">30 days</button>
+    <button data-days="90">90 days</button>
+    <span id="status" style="font-size:12px;color:var(--text-dim);margin-left:8px"></span>
+  </div>
+
+  <!-- The headline row. acceptRate is the number the backlog set a bar for. -->
+  <div class="grid" id="headline"></div>
+
+  <div class="panel">
+    <h2>Invite funnel</h2>
+    <table id="funnel"></table>
+    <p class="note">
+      Held challenges are excluded from every figure on this page. A challenge
+      where anti-collusion tripped is not a real accept and not a real
+      completion.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Mode, format and completion</h2>
+    <table id="breakdown"></table>
+    <p class="note">
+      Completion rate counts only settled challenges. One still inside its
+      48-hour invite window has not failed yet, and counting it as a failure
+      makes every fresh day look like a collapse.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Group size — actual players, not the cap chosen</h2>
+    <table id="sizes"></table>
+  </div>
+
+  <div class="panel">
+    <h2>Sponsored prizes</h2>
+    <table id="money"></table>
+    <p class="note">
+      Sponsored prizes are <strong>pass-through money, not house cost</strong>.
+      The sponsor pays it in and we hand it on, so gross in and paid out are
+      reported as a matched pair. The only figure the business actually keeps
+      is the 15% retained on challenges that did not complete.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Modelled live-arena bandwidth</h2>
+    <table id="bandwidth"></table>
+    <p class="note">
+      Modelled, not measured — compare against Render's own metrics. If actual
+      runs materially above this, the first thing to check is whether anything
+      is emitting per-answer.
+    </p>
+  </div>
+
+</div>
+
+<script src="/admin-nav.js"></script>
+<script>
+  var token = localStorage.getItem('adminToken');
+  var days = 30;
+
+  function H() { return { 'Authorization': 'Bearer ' + token }; }
+  function n(v) { return Number(v || 0).toLocaleString(); }
+  function naira(v) { return '₦' + Number(v || 0).toLocaleString(); }
+
+  /* A rate with no denominator is NOT zero. "0% accept rate" on a feature
+     nobody has been invited to yet is a false alarm that costs somebody an
+     afternoon, so the server sends null and this renders it honestly. */
+  function pct(v) { return v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%'; }
+
+  function card(label, value, sub, cls) {
+    return '<div class="stat ' + (cls || '') + '">' +
+             '<div class="label">' + label + '</div>' +
+             '<div class="value">' + value + '</div>' +
+             (sub ? '<div class="sub">' + sub + '</div>' : '') +
+           '</div>';
+  }
+
+  function rows(pairs) {
+    return pairs.map(function (p) {
+      return '<tr><td>' + p[0] + '</td><td class="num">' + p[1] + '</td></tr>';
+    }).join('');
+  }
+
+  async function load() {
+    document.getElementById('status').textContent = 'Loading…';
+    try {
+      var r = await fetch('/admin/api/challenges/metrics?days=' + days, { headers: H() });
+      var d = await r.json();
+      if (!d.success) { document.getElementById('status').textContent = d.error || 'Failed'; return; }
+      render(d);
+      document.getElementById('status').textContent = '';
+    } catch (e) {
+      document.getElementById('status').textContent = 'Could not load metrics';
+    }
+  }
+
+  function render(d) {
+    var f = d.funnel, nu = d.newUsers, b = d.breakdown, m = d.money;
+
+    var acceptCls = f.acceptRate === null ? 'none' : (f.meetsTarget ? 'good' : 'warn');
+
+    document.getElementById('headline').innerHTML =
+      card('Challenges created', n(f.created)) +
+      card('Accept rate', pct(f.acceptRate),
+           'target ' + (f.acceptRateTarget * 100).toFixed(0) + '%', acceptCls) +
+      card('Brand-new acceptors', pct(nu.share),
+           n(nu.brandNew) + ' of ' + n(nu.accepted) + ' — growth vs retention',
+           nu.share === null ? 'none' : '') +
+      card('Rounds finished', n(f.roundsFinished)) +
+      card('Cards generated', n(f.cardsGenerated),
+           n(f.cardsShared) + ' shared');
+
+    document.getElementById('funnel').innerHTML =
+      '<tr><th>Step</th><th style="text-align:right">Count</th></tr>' +
+      rows([
+        ['Created', n(f.created)],
+        ['Invites sent', n(f.invitesSent)],
+        ['Invites opened', n(f.invitesOpened) + ' (' + pct(f.openRate) + ')'],
+        ['Accepted', n(f.accepted) + ' (' + pct(f.acceptRate) + ')'],
+        ['Rounds started', n(f.roundsStarted)],
+        ['Rounds finished', n(f.roundsFinished)]
+      ]);
+
+    document.getElementById('breakdown').innerHTML =
+      '<tr><th>Split</th><th style="text-align:right">Value</th></tr>' +
+      rows([
+        ['Async', n(b.modes.async)],
+        ['Live', n(b.modes.live)],
+        ['1 v 1', n(b.formats.direct)],
+        ['Group', n(b.formats.group)],
+        ['Async completion rate', pct(b.completionRate.async.rate) +
+          ' (' + n(b.completionRate.async.completed) + ' of ' +
+          n(b.completionRate.async.completed + b.completionRate.async.expired) + ' settled)'],
+        ['Live completion rate', pct(b.completionRate.live.rate) +
+          ' (' + n(b.completionRate.live.completed) + ' of ' +
+          n(b.completionRate.live.completed + b.completionRate.live.expired) + ' settled)'],
+        ['Still open', n(b.completionRate.async.stillOpen + b.completionRate.live.stillOpen)]
+      ]);
+
+    var sizeKeys = Object.keys(b.groupSizes).sort(function (a, c) { return a - c; });
+    document.getElementById('sizes').innerHTML = sizeKeys.length
+      ? '<tr><th>Players</th><th style="text-align:right">Challenges</th></tr>' +
+        rows(sizeKeys.map(function (k) { return [k + ' players', n(b.groupSizes[k])]; }))
+      : '<tr><td class="empty">No challenges in this window.</td></tr>';
+
+    document.getElementById('money').innerHTML =
+      '<tr><th>Figure</th><th style="text-align:right">Amount</th></tr>' +
+      rows([
+        ['Sponsored challenges', n(b.sponsorship.sponsored)],
+        ['Unsponsored', n(b.sponsorship.unsponsored)],
+        ['Gross paid in by sponsors', naira(m.grossIn)],
+        ['Paid out to winners and refunds', naira(m.paidOut)],
+        ['Currently held', naira(m.currentlyHeld)],
+        ['Retained (15% on non-completion)', naira(m.retained)],
+        ['Withheld pending review', n(m.counts.withheld)]
+      ]);
+  }
+
+  async function loadBandwidth() {
+    try {
+      var out = [];
+      for (var i = 0; i < 4; i++) {
+        var players = [2, 4, 8, 20][i];
+        var r = await fetch('/admin/api/challenges/bandwidth?players=' + players, { headers: H() });
+        var d = await r.json();
+        if (d.success) out.push([players + ' players', d.perPlayerKb + ' KB/player · ' + d.perMatchKb + ' KB/match']);
+      }
+      document.getElementById('bandwidth').innerHTML =
+        '<tr><th>Match size</th><th style="text-align:right">Modelled</th></tr>' + rows(out);
+    } catch (e) { /* the panel above is the important half */ }
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.rangebar button'), function (btn) {
+    btn.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.rangebar button'), function (b) {
+        b.classList.remove('on');
+      });
+      btn.classList.add('on');
+      days = parseInt(btn.getAttribute('data-days'), 10);
+      load();
+    });
+  });
+
+  load();
+  loadBandwidth();
+</script>
+</body>
+</html>
