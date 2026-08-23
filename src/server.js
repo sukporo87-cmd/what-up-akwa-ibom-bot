@@ -175,7 +175,18 @@ app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
-app.use('/challenge', require('./routes/challenge.routes'));
+// BATCH A: this line is commented out on purpose.
+//
+// routes/challenge.routes.js is a BATCH B file, and it pulls in the round
+// engine, the arena, the card service and the sponsorship service — none of
+// which exist on disk yet. require() runs at boot, so an uncommented mount
+// crashes the process before app.listen() and Render never comes up.
+//
+// UNCOMMENT THIS WHEN YOU DEPLOY BATCH B. The /c/:code route above works
+// without it: it only serves play.html, which stashes the invite code. The
+// code sits in Redis with 48 hours on it, so a link shared between the two
+// batches still resolves when Batch B lands.
+// app.use('/challenge', require('./routes/challenge.routes'));
 app.use('/web/payment', webPaymentRoutes);
 
 // Anything unmatched on the demo host gets the site's own 404 page.
