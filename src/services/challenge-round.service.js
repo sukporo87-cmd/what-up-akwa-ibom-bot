@@ -484,6 +484,17 @@ class ChallengeRoundService {
         // people seeing the result of a game they just played.
         const integrity = await challengeIntegrityService.run(challenge);
 
+        // SOCIAL PROOF. Stage 3 added the composer and the CHECK constraint and
+        // then never called record() \u2014 so the feed has been silent about
+        // challenges since launch. Fired here rather than in the chat service so
+        // it covers web play too.
+        //
+        // A held challenge is deliberately excluded: a farmed result must not
+        // advertise itself on the homepage.
+        if (!(integrity && integrity.tripped)) {
+            await this._recordSocialProof(challenge);
+        }
+
         // AWARD HAPPENS HERE AND NOWHERE ELSE. Putting the INSERT at a single
         // state transition is what makes "only a completed challenge awards"
         // structurally true rather than a rule someone has to remember. A solo
@@ -507,6 +518,52 @@ class ChallengeRoundService {
         }
 
         return { complete: true, finishers: finished.rows[0].n, integrity, award };
+    }
+
+    // ============================================
+    // SOCIAL PROOF
+    // ============================================
+    // Every finisher gets an entry, not just the winner. A feed that only ever
+    // says "X won" reads as a highlight reel; one that says people are playing
+    // each other reads as a place with people in it, which is the thing that
+    // actually makes someone try it.
+    //
+    // Names only \u2014 no score in the sentence, no naira anywhere. Challenge
+    // results stay off the published ranking, so nothing here may read like one.
+
+    async _recordSocialProof(challenge) {
+        try {
+            const activityService = require('./activity.service');
+
+            const finishers = await pool.query(`
+                SELECT p.user_id, p.rank, p.final_score, u.username
+                FROM challenge_participants p
+                JOIN users u ON u.id = p.user_id
+                WHERE p.challenge_id = $1 AND p.status = 'finished'
+                ORDER BY p.rank NULLS LAST
+            `, [challenge.id]);
+
+            const rows = finishers.rows;
+            if (rows.length < 2) return;
+
+            const categories = (challenge.categories || [])
+                .map(c => String(c).replace(/[_-]+/g, ' ')).join(', ');
+
+            for (const row of rows) {
+                const opponent = rows.find(r => r.user_id !== row.user_id);
+                await activityService.record('challenge_complete', row.user_id, {
+                    won: row.rank === 1,
+                    score: row.final_score,
+                    rank: row.rank,
+                    participants: rows.length,
+                    opponent: opponent ? opponent.username : null,
+                    categories
+                });
+            }
+        } catch (error) {
+            // Fire and forget. A feed entry is never worth failing a result for.
+            logger.error('Could not record challenge social proof:', error.message);
+        }
     }
 
     // ============================================
@@ -572,7 +629,9 @@ class ChallengeRoundService {
             `, [challenge.id]);
 
             for (const participant of unplayed.rows) {
-                const paymentService = require('./payment.service');
+                // payment.service exports the CLASS, not an instance.
+                const PaymentService = require('./payment.service');
+                const paymentService = new PaymentService();
                 const result = await paymentService.refundGameCredit(
                     participant.user_id, 'challenge_expired_unplayed'
                 );

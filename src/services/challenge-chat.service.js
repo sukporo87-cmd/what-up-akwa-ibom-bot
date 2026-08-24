@@ -132,28 +132,41 @@ const STRINGS = {
         'You need to be 18 or over to put up a prize. You can still create this ' +
         'challenge for bragging rights \u2014 reply *SKIP* to carry on.',
 
-    created: (links, categories, startLabel) =>
-        '\u2705 *Your challenge is ready.*\n\n' +
-        `Categories: ${categories}\n` +
-        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
-        // An absolute time, because whoever receives this reads it later than
-        // it was sent. And a live challenge is played in the browser — the
-        // lobby, the shared clock and the reveal have no chat equivalent, so
-        // say so here rather than letting someone wait in WhatsApp.
+    // TWO MESSAGES, and the split is the point.
+    //
+    // The first is FOR the challenger: what they made, and that it is their
+    // turn. The second is a finished invite written to be FORWARDED \u2014 it names
+    // the challenger, says what the game is, and carries a link for each
+    // platform so the recipient taps the one they already play on.
+    //
+    // Before this, the only thing worth copying was a bare URL, which meant
+    // every invite arrived with no branding and no explanation of what it was.
+    created: (categories, startLabel) =>
+        '\u2705 *Challenge created.*\n\n' +
+        `${categories} \u00b7 15 questions \u00b7 10 seconds each\n` +
         (startLabel
-            ? `*Starts ${startLabel}* \u00b7 everyone plays at once, in the browser\n\n`
+            ? `Starts ${startLabel} \u00b7 everyone plays at once, in the browser\n\n`
             : '\n') +
-        'Send this to whoever you want to beat:\n' +
-        `${links.web}\n\n` +
         (startLabel
-            ? `The lobby opens 10 minutes before ${startLabel}.`
-            // THE INITIATOR PLAYS FIRST. In an async ghost race their run IS
-            // the ghost \u2014 there is nothing for the friend to race until the
-            // challenger has played. Saying nothing here left the initiator
-            // with a link and no idea it was their turn.
-            : 'Invites last 48 hours.\n\n*Reply PLAY to set your score first* \u2014 ' +
-              'your friend races the pace you set.\n' +
-              '_Or reply CODE to play it in the browser instead._'),
+            ? 'The invite is below \u2014 forward it to whoever you want to beat.'
+            : '*Reply PLAY to set your score first* \u2014 whoever you invite races ' +
+              'the pace you set.\n\nThe invite is below \u2014 forward it to whoever ' +
+              'you want to beat.'),
+
+    // The forwardable one. Deliberately self-contained: someone who receives
+    // this with no context should understand what it is and how to play.
+    invite: (username, links, categories, startLabel) =>
+        `\u2694\ufe0f *@${username} has challenged you to a game of trivia!*\n\n` +
+        `\ud83c\udfaf *What's Up Trivia* \u2014 ${categories}\n` +
+        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
+        (startLabel ? `\u23f0 Starts ${startLabel}\n` : '') +
+        '\n*Tap the link for the platform you play on:*\n\n' +
+        `\ud83d\udcac WhatsApp: ${links.whatsapp}\n\n` +
+        `\u2708\ufe0f Telegram: ${links.telegram}\n\n` +
+        `\ud83c\udf10 Web: ${links.web}\n\n` +
+        (startLabel
+            ? '_Live challenge \u2014 be there on time._'
+            : '_You have 48 hours to accept._'),
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
@@ -228,6 +241,13 @@ const STRINGS = {
     roundDone: (correct, seconds) =>
         `\ud83c\udfc1 *That\u2019s all 15.*\n\n` +
         `You got *${correct}/15* in ${seconds}s.`,
+
+    // Sent to the OTHER participants when someone finishes and the challenge
+    // completes. Before this only the person who happened to finish last saw
+    // any result at all \u2014 the initiator, who played first and generated the
+    // ghost, was told nothing.
+    opponentFinished: (who, categories) =>
+        `\ud83c\udfc1 *${who} has finished your challenge.*\n\n${categories}\n\nHere is how it went:`,
 
     waitingForThem:
         'Now we wait for them to play. You\u2019ll get the result as soon as they finish.',
@@ -609,9 +629,16 @@ class ChallengeChatService {
             ? this.watLabel(data.scheduledStartAt)
             : null;
 
-        await messagingService.sendMessage(identifier, STRINGS.created(
-            result.links, this._categoryList(data.categories), startLabel
-        ));
+        const categoryLabel = this._categoryList(data.categories);
+
+        await messagingService.sendMessage(identifier,
+            STRINGS.created(categoryLabel, startLabel));
+
+        // Sent separately so it can be forwarded on its own, without the
+        // challenger's own instructions riding along.
+        await messagingService.sendMessage(identifier,
+            STRINGS.invite(user.username, result.links, categoryLabel, startLabel));
+
         await messagingService.sendMessage(identifier, STRINGS.cancellationNotice);
 
         // A live challenge is played in the browser, so the initiator needs a
@@ -798,7 +825,64 @@ class ChallengeChatService {
         // likely to post it into the group chat is the one who lost, and the
         // card is written so they can.
         await this._sendCard(identifier, challenge);
+
+        // AND to everyone else who already finished. The initiator plays
+        // first, so by the time the challenge completes they have been sitting
+        // with "we'll let you know" for hours \u2014 and were never told.
+        await this._notifyOtherParticipants(challenge, user, board);
         return true;
+    }
+
+    /**
+     * Messages every OTHER finished participant on a chat platform.
+     *
+     * Web participants are skipped: they have no chat identifier, and their
+     * result is already on screen. `phone_number` starting with `web_` is how
+     * this codebase marks a web account.
+     */
+    async _notifyOtherParticipants(challenge, finisher, board) {
+        try {
+            const others = await pool.query(`
+                SELECT u.id, u.phone_number, u.username
+                FROM challenge_participants p
+                JOIN users u ON u.id = p.user_id
+                WHERE p.challenge_id = $1
+                  AND p.status = 'finished'
+                  AND p.user_id <> $2
+            `, [challenge.id, finisher.id]);
+
+            const categories = this._categoryList(challenge.categories);
+
+            for (const other of others.rows) {
+                if (!other.phone_number || other.phone_number.startsWith('web_')) continue;
+
+                try {
+                    await messagingService.sendMessage(other.phone_number,
+                        STRINGS.opponentFinished('@' + finisher.username, categories));
+
+                    if (challenge.format === 'group') {
+                        await messagingService.sendMessage(other.phone_number, STRINGS.board(board));
+                    } else {
+                        const theirs = board.find(r => r.username === other.username);
+                        const them = board.find(r => r.username !== other.username);
+                        if (theirs && them) {
+                            const fmt = (r) => `${r.score}/15 \u00b7 ${(r.timeMs / 1000).toFixed(1)}s`;
+                            await messagingService.sendMessage(other.phone_number,
+                                theirs.position < them.position
+                                    ? STRINGS.resultWon(fmt(theirs), fmt(them), them.username)
+                                    : STRINGS.resultLost(fmt(theirs), fmt(them), them.username));
+                        }
+                    }
+
+                    await this._sendCard(other.phone_number, challenge);
+                } catch (perUser) {
+                    // One unreachable player must not stop the rest being told.
+                    logger.error(`Could not notify participant ${other.id}:`, perUser.message);
+                }
+            }
+        } catch (error) {
+            logger.error('Could not notify other challenge participants:', error.message);
+        }
     }
 
     async _sendCard(identifier, challenge) {

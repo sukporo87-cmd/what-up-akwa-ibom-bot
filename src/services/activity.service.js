@@ -197,10 +197,18 @@ class ActivityService {
         const size = parseInt(extra.participants) || 2;
         const placed = parseInt(extra.rank) || 0;
 
+        const cats = extra.categories ? ` \u00b7 ${extra.categories}` : '';
+
         if (size <= 2) {
+          // Naming the opponent is what makes this read as two people playing
+          // rather than one person scoring. Both are public usernames and both
+          // already appear on the shared result card, so nothing new is exposed.
+          const vs = extra.opponent ? ` @${extra.opponent}` : ' a friend';
           return extra.won
-            ? { text: 'beat a friend in a Challenge', badge: extra.score ? `${extra.score}/15` : 'Challenge' }
-            : { text: 'played a Challenge', badge: extra.score ? `${extra.score}/15` : 'Challenge' };
+            ? { text: `beat${vs} in a Challenge${cats}`,
+                badge: extra.score !== undefined ? `${extra.score}/15` : 'Challenge' }
+            : { text: `took on${vs} in a Challenge${cats}`,
+                badge: extra.score !== undefined ? `${extra.score}/15` : 'Challenge' };
         }
 
         const ordinal = placed === 1 ? '1st' : placed === 2 ? '2nd' : placed === 3 ? '3rd'
@@ -208,8 +216,8 @@ class ActivityService {
 
         return {
           text: ordinal
-            ? `finished ${ordinal} in a ${size}-player Challenge`
-            : `played a ${size}-player Challenge`,
+            ? `finished ${ordinal} of ${size} in a Challenge${cats}`
+            : `played a ${size}-player Challenge${cats}`,
           badge: 'Challenge'
         };
       }

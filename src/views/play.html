@@ -585,6 +585,10 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="cardActs">
       <button class="ghost" id="cbShare" onclick="shareChallengeCard()" style="display:none">Share</button>
+      <!-- A separate download, because sharing and saving are different acts:
+           the share sheet posts a link, this saves the image so it can be put
+           on a status or a feed where a link would not render. -->
+      <a class="ghost" id="cbDownload" style="display:none" download="whatsup-trivia-challenge.png">Save image</a>
       <button class="ghost" onclick="view('vLobby');refresh()">Done</button>
     </div>
   </section>
@@ -965,7 +969,7 @@ function arenaQuestion(d){
     const b=document.createElement('button');
     b.className='opt'; b.id='aqOpt'+letter;
     b.textContent=letter+'. '+d.options[letter];
-    b.onclick=()=>arenaAnswer(letter);
+    b.onclick=()=>{ sfx.tap(); arenaAnswer(letter); };
     $('aqOpts').appendChild(b);
   });
   view('vArena');
@@ -995,6 +999,10 @@ async function arenaAnswer(letter){
 /* Locked in. Deliberately says nothing about whether it was right — in a
    live arena two players can be sitting in the same room. */
 function arenaLocked(){
+  /* A distinct sound from right/wrong on purpose: locking in tells you the
+     answer landed, NOT whether it was correct. A correct-sounding chime here
+     would leak the result to anyone sitting in the same room. */
+  sfx.lock();
   $('aqVerdict').textContent='Locked in. Waiting for everyone…';
 }
 
@@ -1003,6 +1011,10 @@ function arenaReveal(d){
   $('asecs').textContent='–';
   $('aqVerdict').textContent='Answer: '+d.correctAnswer;
   const picked=[...$('aqOpts').children];
+  /* Only now, once the reveal has reached everyone at once, may a sound say
+     whether you were right. */
+  const mine=picked.find(b=>b.classList.contains('picked'));
+  if(mine) (mine.textContent.charAt(0)===d.correctAnswer ? sfx.right() : sfx.wrong());
   picked.forEach(b=>{ if(b.textContent.charAt(0)===d.correctAnswer) b.classList.add('right'); });
   arenaBoard(d.board);
 }
@@ -1026,7 +1038,10 @@ function arenaFinished(d){
     $('cbCard').innerHTML='<img src="'+d.cardUrl+'" alt="Result card" style="width:100%;border-radius:14px">';
     $('cbCard').style.display='block';
     $('cbShare').style.display='inline-block';
+    $('cbDownload').href=d.cardUrl;
+    $('cbDownload').style.display='inline-block';
     chal.code=arena.code;
+    chalShareCaption=buildShareCaption(d.board);
   }
   view('vChalBoard');
 }
@@ -1079,7 +1094,7 @@ function chalRenderQuestion(q){
     const b=document.createElement('button');
     b.className='opt';
     b.textContent=letter+'. '+q.options[letter];
-    b.onclick=()=>chalAnswer(letter);
+    b.onclick=()=>{ sfx.tap(); chalAnswer(letter); };
     $('cqOpts').appendChild(b);
   });
   chalStartClock(q.timeoutMs||10000);
@@ -1120,6 +1135,9 @@ async function chalAnswer(letter){
 
     if(d.isCorrect)chal.correct++;
     /* The correct answer is revealed only now, after locking in. */
+    /* Same sfx Classic uses. These screens were silent only because they are a
+       separate loop, not because silence was intended. */
+    d.timedOut ? sfx.wrong() : (d.isCorrect ? sfx.right() : sfx.wrong());
     $('cqVerdict').textContent=d.timedOut?("Time's up. It was "+d.correctAnswer+'.')
                               :d.isCorrect?('Correct — '+d.correctAnswer+'.')
                               :('You said '+letter+'. It was '+d.correctAnswer+'.');
@@ -1138,8 +1156,10 @@ async function chalFinish(d){
     :"That's your round done. We'll let you know when the others finish.";
   $('cbCard').style.display='none';
   $('cbShare').style.display='none';
+  $('cbDownload').style.display='none';
   $('cbBoard').innerHTML='';
   view('vChalBoard');
+  if(d.challengeComplete) sfx.fanfare(); else sfx.lock();
 
   track('challenge_completed',{platform:'web',score:d.score,complete:!!d.challengeComplete});
   if(!d.challengeComplete)return;
@@ -1159,18 +1179,45 @@ async function loadChallengeBoard(code){
       d.board.map(r2=>'<div class="grid2"><span>'+r2.position+'. @'+r2.username+
         '</span><span>'+r2.score+'/15 · '+(r2.timeMs/1000).toFixed(1)+'s</span></div>').join('');
 
-    $('cbCard').innerHTML='<img src="/challenge/'+code+'/card" alt="Result card" style="width:100%;border-radius:14px">';
+    const cardUrl='/challenge/'+code+'/card';
+    $('cbCard').innerHTML='<img src="'+cardUrl+'" alt="Result card" style="width:100%;border-radius:14px">';
     $('cbCard').style.display='block';
     $('cbShare').style.display='inline-block';
+    $('cbDownload').href=cardUrl;
+    $('cbDownload').style.display='inline-block';
+    chalShareCaption=buildShareCaption(d.board);
   }catch(e){}
+}
+
+let chalShareCaption='';
+
+/* The caption is what makes a shared card recruit anybody. A bare image on a
+   status says nothing; a line naming the players and inviting a rematch is the
+   whole growth loop. Deliberately neutral \u2014 the person most likely to post
+   this is the one who lost. */
+function buildShareCaption(board){
+  if(!board||!board.length)return "I just played a Challenge on What's Up Trivia \u2694\ufe0f";
+  const top=board[0];
+  const line=board.length===2
+    ? '@'+board[0].username+' '+board[0].score+'/15 vs @'+board[1].username+' '+board[1].score+'/15'
+    : '@'+top.username+' took 1st of '+board.length;
+  return '\u2694\ufe0f '+line+"\n\nThink you can do better? Play What's Up Trivia: "
+    + location.origin+'/c/'+chal.code;
 }
 
 async function shareChallengeCard(){
   const url=location.origin+'/challenge/'+chal.code+'/card';
+  const text=chalShareCaption||"I just played a Challenge on What's Up Trivia";
   try{
-    if(navigator.share){ await navigator.share({title:"What's Up Trivia",url:url}); track('challenge_card_shared',{platform:'web'}); return; }
-    await navigator.clipboard.writeText(url);
-    $('cbSub').textContent='Link copied.';
+    if(navigator.share){
+      await navigator.share({title:"What's Up Trivia",text:text,url:url});
+      track('challenge_card_shared',{platform:'web'});
+      return;
+    }
+    /* No share sheet: copy the caption AND the link together, so pasting it
+       anywhere produces the whole invite rather than a naked URL. */
+    await navigator.clipboard.writeText(text+'\n'+url);
+    $('cbSub').textContent='Copied \u2014 paste it anywhere.';
     track('challenge_card_shared',{platform:'web'});
   }catch(e){}
 }

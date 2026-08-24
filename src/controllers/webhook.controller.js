@@ -194,6 +194,16 @@ class WebhookController {
         }
       }
 
+      // MYCODE, not CODE: CODE is already the promo-code keyword in this
+      // controller (two call sites below), and a challenge reusing it would
+      // either shadow promo codes or be shadowed by them.
+      if (input === 'MYCODE') {
+        const codeUser = await userService.getUserByPhone(phone);
+        if (codeUser && await challengeChatService.handleCodeRequest(phone, codeUser, incomingPlatform)) {
+          return;
+        }
+      }
+
       if (input === 'PLAY') {
         const playUser = await userService.getUserByPhone(phone);
         if (playUser && await challengeChatService.handlePlay(phone, playUser, incomingPlatform)) {

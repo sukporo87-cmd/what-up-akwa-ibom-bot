@@ -107,7 +107,8 @@ class ChallengeAuthService {
                `then enter your username and this code.\n\n` +
                `It works only for this one challenge (${challenge.code}) and ` +
                `expires in 10 minutes.\n\n` +
-               `_Don't share this code \u2014 it isn't part of the invite._`;
+               `_Don't share this code \u2014 it isn't part of the invite._\n` +
+               `_Reply *MYCODE* if it expires._`;
     }
 
     unsolicitedNote() {
