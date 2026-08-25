@@ -45,6 +45,7 @@ const { logger } = require('../utils/logger');
 const antiFraudService = require('./anti-fraud.service');
 const challengeService = require('./challenge.service');
 const challengeIntegrityService = require('./challenge-integrity.service');
+const auditService = require('./audit.service');
 
 const QUESTIONS_PER_ROUND = 15;
 
@@ -119,6 +120,19 @@ class ChallengeRoundService {
         await challengeService.recordEvent(
             challenge.id, user.id, 'round_started', context.platform, { roundNo }
         );
+
+        // AUDIT TRAIL. Classic writes these from game.service's answer loop;
+        // the challenge loop is separate (stage 6) and never called them, so
+        // every challenge session showed 0 events in the admin audit view
+        // while Classic sessions showed 5. Same shape as the anti-fraud
+        // coverage: a fork has to re-declare what it inherited.
+        try {
+            await auditService.logGameStart(
+                session.rows[0].id, user.id, 'challenge', context.platform || 'web', null
+            );
+        } catch (e) {
+            logger.error('Could not audit challenge start:', e.message);
+        }
 
         return { ok: true, round: round.rows[0], resumed: false };
     }
@@ -235,6 +249,12 @@ class ChallengeRoundService {
         // by the same code.
         await antiFraudService.setQuestionStartTime(round.session_key, position);
 
+        try {
+            await auditService.logQuestionAsked(
+                round.game_session_id, round.user_id, position, question, 0, false
+            );
+        } catch (e) { /* the audit trail must never block a question */ }
+
         return {
             position,
             questionId: question.id,
@@ -348,6 +368,18 @@ class ChallengeRoundService {
         // The same fraud primitive Classic calls on every answer. This is one
         // of the five checks the separate loop has to keep firing explicitly.
         try {
+            if (timedOut) {
+                await auditService.logTimeout(round.game_session_id, user.id, position);
+            } else {
+                await auditService.logAnswer(
+                    round.game_session_id, user.id, position, chosenLetter,
+                    String(correct.rows[0].correct_answer || '').toUpperCase(),
+                    isCorrect, 0, answerMs
+                );
+            }
+        } catch (e) { /* never block an answer on the audit trail */ }
+
+        try {
             await antiFraudService.trackResponseTime(
                 round.game_session_id, position, answerMs, user.id
             );
@@ -422,6 +454,14 @@ class ChallengeRoundService {
             await redis.expire(`chal:${challenge.id}:board`, 259200);
         } catch (e) {
             logger.warn(`Could not update challenge board: ${e.message}`);
+        }
+
+        try {
+            await auditService.logGameEnd(
+                round.game_session_id, user.id, correct, QUESTIONS_PER_ROUND, 'completed', 0
+            );
+        } catch (e) {
+            logger.error('Could not audit challenge end:', e.message);
         }
 
         await challengeService.recordEvent(

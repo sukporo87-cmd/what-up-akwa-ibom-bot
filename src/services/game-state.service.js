@@ -30,6 +30,19 @@ const { logger } = require('../utils/logger');
 // ============================================
 
 const PROMPTS = {
+    // --- challenge creation ---
+    // Without these, every step of the challenge flow logged
+    // "not in PROMPTS — falling back to a plain text field" and web players
+    // got a text box instead of tappable options. The chat flow numbers its
+    // choices, so they are all 'choice' except the two free-text steps.
+    'challenge_create:mode':       { expects: 'choice', title: 'How do you want to play?' },
+    'challenge_create:format':     { expects: 'choice', title: 'Who are you challenging?' },
+    'challenge_create:size':       { expects: 'text',   title: 'How many players?' },
+    'challenge_create:categories': { expects: 'text',   title: 'Pick up to 3 categories' },
+    'challenge_create:entry':      { expects: 'choice', title: 'How do people get in?' },
+    'challenge_create:startdate':  { expects: 'choice', title: 'What day?' },
+    'challenge_create:starttime':  { expects: 'text',   title: 'What time? (WAT)' },
+
     // --- pick one of a numbered list ---
     SELECT_GAME_MODE:           { expects: 'choice', title: 'Choose a mode' },
     SELECT_TOURNAMENT:          { expects: 'choice', title: 'Pick a tournament' },

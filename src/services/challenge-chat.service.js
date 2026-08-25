@@ -894,11 +894,24 @@ class ChallengeChatService {
             const card = await challengeCardService.generate(challenge, winner.user_id);
             if (!card.ok) return;
 
-            await messagingService.sendImage(
-                identifier, card.buffer,
-                challengeCardService.caption(card.data || await challengeCardService.getCardData(challenge),
-                                             card.rematchUrl)
-            );
+            // A PATH, not a Buffer. whatsapp.service.uploadMedia streams from
+            // disk; passing the bytes threw ERR_INVALID_ARG_VALUE and the card
+            // silently never arrived.
+            const data = card.data || await challengeCardService.getCardData(challenge);
+            const caption = challengeCardService.caption(data, card.rematchUrl);
+
+            let filePath = card.filePath;
+            if (!filePath) {
+                // Served from the Redis cache, so there is no file on disk any
+                // more. Write the cached bytes back out for the upload.
+                const fs = require('fs');
+                const os = require('os');
+                const path = require('path');
+                filePath = path.join(os.tmpdir(), `challenge_${challenge.code}_${Date.now()}.png`);
+                fs.writeFileSync(filePath, card.buffer);
+            }
+
+            await messagingService.sendImage(identifier, filePath, caption);
         } catch (error) {
             // A card that fails to render must never swallow the result. The
             // player has already been told their score.

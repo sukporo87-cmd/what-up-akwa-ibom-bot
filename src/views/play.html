@@ -363,6 +363,13 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <strong>Tournaments</strong>
       <span>Compete for the weekly prize pool</span>
     </button>
+    <!-- Web players had no way to START a challenge: the flow existed and was
+         reachable only by typing CHALLENGE into the chat field, which nobody
+         would guess. This runs the same command. -->
+    <button class="tile" onclick="openChallenges()">
+      <strong>Challenge a friend</strong>
+      <span>Race someone you know, 15 questions each</span>
+    </button>
     <button class="tile" onclick="openBuy()">
       <strong>Top up</strong>
       <span>Credits and tournament entries</span>
@@ -1098,6 +1105,14 @@ function chalRenderQuestion(q){
     $('cqOpts').appendChild(b);
   });
   chalStartClock(q.timeoutMs||10000);
+}
+
+/* Starts the creation flow. It is the identical state machine chat uses, so
+   the web client just sends the same keyword the bot would receive. */
+function openChallenges(){
+  sfx.tap();
+  track('challenge_create_opened',{platform:'web'});
+  go('CHALLENGE');
 }
 
 async function startChallenge(code){

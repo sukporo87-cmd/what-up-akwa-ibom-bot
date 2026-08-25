@@ -367,7 +367,11 @@ class ImageService {
     ctx.font = '22px Arial';
     ctx.fillText(String(rematchUrl || '').replace(/^https?:\/\//, ''), W / 2, H - 62);
 
-    return canvas.toBuffer('image/png');
+    // saveCanvas, like every other generator here. Returning a raw Buffer was
+    // the bug: whatsapp.service.uploadMedia does fs.createReadStream(path), so
+    // a Buffer threw ERR_INVALID_ARG_VALUE and no card ever reached WhatsApp.
+    // The web route reads the file and caches the bytes itself.
+    return this.saveCanvas(canvas, 'challenge');
   }
 
   async generateRegularWinPNG(winData) {
