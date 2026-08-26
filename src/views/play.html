@@ -366,7 +366,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <!-- Web players had no way to START a challenge: the flow existed and was
          reachable only by typing CHALLENGE into the chat field, which nobody
          would guess. This runs the same command. -->
-    <button class="tile" onclick="openChallenges()">
+    <button class="tile" onclick="openChallengeHub()">
       <strong>Challenge a friend</strong>
       <span>Race someone you know, 15 questions each</span>
     </button>
@@ -597,6 +597,53 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
            on a status or a feed where a link would not render. -->
       <a class="ghost" id="cbDownload" style="display:none" download="whatsup-trivia-challenge.png">Save image</a>
       <button class="ghost" onclick="view('vLobby');refresh()">Done</button>
+    </div>
+  </section>
+
+  <!-- ============ CHALLENGE HUB ============ -->
+  <!-- Web players had nowhere to see a challenge once they navigated away:
+       no list, no way back into one waiting on them, and the result card
+       vanished. Chat players can scroll their thread; this is the equivalent.
+       Markup copied from vStats/vLobby — same bar, hero, tile and card. -->
+  <section class="view" id="vChalHub">
+    <div class="bar">
+      <button class="back" onclick="view('vLobby');refresh()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:18px 0 12px">
+      <span class="fig" style="font-size:26px">Challenges</span>
+      <p id="chHubSub">Race someone you know</p>
+    </div>
+
+    <button class="tile primary" onclick="openChallenges()">
+      <strong>New challenge</strong>
+      <span>Pick categories, send the link</span>
+    </button>
+
+    <div id="chHubList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- ============ CHALLENGE DETAIL ============ -->
+  <section class="view" id="vChalDetail">
+    <div class="bar">
+      <button class="back" onclick="openChallengeHub()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:18px 0 12px">
+      <span class="fig" style="font-size:24px" id="cdTitle">Challenge</span>
+      <p id="cdSub"></p>
+    </div>
+
+    <div class="msg" id="cdNote"></div>
+    <div id="cdBoard" style="margin-top:12px"></div>
+    <div class="card" id="cdCard" style="display:none;margin-top:12px"></div>
+
+    <div class="cardActs">
+      <button class="ghost" id="cdPlay" onclick="cdPlayNow()" style="display:none">Play my round</button>
+      <button class="ghost" id="cdShare" onclick="cdShare()" style="display:none">Share</button>
+      <a class="ghost" id="cdDownload" style="display:none" download="whatsup-trivia-challenge.png">Save image</a>
     </div>
   </section>
 
@@ -1106,6 +1153,111 @@ function chalRenderQuestion(q){
   });
   chalStartClock(q.timeoutMs||10000);
 }
+
+/* ---- CHALLENGE HUB ---------------------------------------------------
+   The list a web player never had. Chat players scroll their thread to find
+   a challenge; this is the equivalent, and it is also where result cards
+   live until they are saved or shared.
+   ---------------------------------------------------------------------- */
+let chHub=[];
+
+const CH_STATE_LABEL={
+  open:'Open', lobby:'Lobby', live:'Live', grading:'Finishing',
+  completed:'Finished', expired:'Expired', cancelled:'Cancelled',
+  void_refunded:'Cancelled', awaiting_sponsorship:'Confirming payment'
+};
+
+async function openChallengeHub(){
+  sfx.tap();
+  view('vChalHub');
+  $('chHubList').innerHTML='<div class="msg">Loading…</div>';
+  try{
+    const r=await fetch('/challenge/mine',{headers:H()});
+    const d=await r.json();
+    if(!d.success){ $('chHubList').innerHTML='<div class="msg">Could not load your challenges.</div>'; return; }
+    chHub=d.challenges||[];
+    $('chHubSub').textContent = d.waitingForYou
+      ? d.waitingForYou+(d.waitingForYou===1?' waiting on you':' waiting on you')
+      : 'Race someone you know';
+    renderChallengeHub();
+  }catch(e){ $('chHubList').innerHTML='<div class="msg">Could not load your challenges.</div>'; }
+}
+
+function renderChallengeHub(){
+  if(!chHub.length){
+    $('chHubList').innerHTML='<div class="msg">No challenges yet. Start one above.</div>';
+    return;
+  }
+  /* Waiting-on-you first. It is the only actionable state, and burying it
+     under finished games is how a challenge quietly expires. */
+  const order=c=>c.waitingForYou?0:(c.status==='completed'?1:2);
+  const sorted=[...chHub].sort((a,b)=>order(a)-order(b));
+
+  $('chHubList').innerHTML=sorted.map(c=>{
+    const cats=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
+    const who=c.isMine?'You started it':('@'+c.createdBy);
+    const state=c.waitingForYou?'YOUR TURN'
+      :c.waitingForThem?'Waiting for them'
+      :(CH_STATE_LABEL[c.status]||c.status);
+    const score=c.myScore!==null&&c.myScore!==undefined?(' · you scored '+c.myScore+'/15'):'';
+    return '<button class="tile" onclick="openChallengeDetail(\''+c.code+'\')">'
+      +'<strong>'+state+(c.hasCard?' 🏅':'')+'</strong>'
+      +'<span>'+who+' · '+(cats||'Challenge')+score+'</span></button>';
+  }).join('');
+}
+
+async function openChallengeDetail(code){
+  sfx.tap();
+  const c=chHub.find(x=>x.code===code);
+  if(!c)return;
+  chal.code=code;
+
+  $('cdTitle').textContent=c.isMine?'Your challenge':('@'+c.createdBy+' challenged you');
+  $('cdSub').textContent=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
+  $('cdBoard').innerHTML='';
+  $('cdCard').style.display='none';
+  $('cdShare').style.display='none';
+  $('cdDownload').style.display='none';
+  $('cdPlay').style.display=c.waitingForYou?'inline-block':'none';
+  chalIsLive=c.mode==='live';
+
+  $('cdNote').textContent = c.waitingForYou
+    ? (c.mode==='live'?'Live challenge — open the lobby when it starts.':'Your round is waiting.')
+    : c.waitingForThem ? "You've played. Waiting for the others to finish."
+    : c.status==='completed' ? 'Finished.'
+    : (CH_STATE_LABEL[c.status]||c.status);
+
+  view('vChalDetail');
+
+  if(c.status==='completed'){
+    try{
+      const r=await fetch('/challenge/'+code+'/board');
+      const d=await r.json();
+      if(d.success&&d.board&&d.board.length){
+        $('cdBoard').innerHTML='<div class="who">Final standings</div>'+
+          d.board.map(x=>'<div class="grid2"><span>'+x.position+'. @'+x.username+
+            '</span><span>'+x.score+'/15 · '+(x.timeMs/1000).toFixed(1)+'s</span></div>').join('');
+        chalShareCaption=buildShareCaption(d.board);
+      }
+      if(c.hasCard){
+        const url='/challenge/'+code+'/card';
+        $('cdCard').innerHTML='<img src="'+url+'" alt="Result card" style="width:100%;border-radius:14px">';
+        $('cdCard').style.display='block';
+        $('cdShare').style.display='inline-block';
+        $('cdDownload').href=url;
+        $('cdDownload').style.display='inline-block';
+      }
+    }catch(e){}
+  }
+}
+
+function cdPlayNow(){
+  const c=chHub.find(x=>x.code===chal.code);
+  if(!c)return;
+  return c.mode==='live'?joinArena(c.code):startChallenge(c.code);
+}
+
+function cdShare(){ return shareChallengeCard(); }
 
 /* Starts the creation flow. It is the identical state machine chat uses, so
    the web client just sends the same keyword the bot would receive. */
@@ -1691,7 +1843,7 @@ function flushText(){
 /* Screens that own the viewport and must never be navigated away from by a
    passing state event. Anything added here later needs to go in this list. */
 function onDedicatedScreen(){
-  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame','vChal','vChalPlay','vChalBoard','vArenaLobby','vArena']
+  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame','vChal','vChalPlay','vChalBoard','vArenaLobby','vArena','vChalHub','vChalDetail']
     .some(id=>{ const el=document.getElementById(id); return el && el.classList.contains('on'); })
     || $('over').classList.contains('on')
     || $('ask').classList.contains('on');

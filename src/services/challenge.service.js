@@ -393,6 +393,16 @@ class ChallengeService {
         if (challenge.creator_user_id === user.id) {
             return { ok: false, reason: 'own_challenge', challenge };
         }
+        // Already in it? Then "full" is the wrong question. The initiator
+        // opening their own link, or an invitee reopening theirs, was being
+        // told someone got there first \u2014 and on a 2-player challenge that
+        // consumed the only other slot.
+        const existing = await this.getParticipant(challenge.id, user.id);
+        if (existing) {
+            return { ok: true, alreadyJoined: true, challenge,
+                     entryMethod: existing.entry_method, creditConsumed: false };
+        }
+
         if (challenge.participant_count >= challenge.max_participants) {
             return { ok: false, reason: 'full', challenge };
         }
@@ -507,6 +517,153 @@ class ChallengeService {
         );
 
         return { ok: true, challenge };
+    }
+
+    // ============================================
+    // A PLAYER'S CHALLENGES
+    // ============================================
+    // Web players had nowhere to see a challenge they were part of. Chat
+    // players can scroll back; web players lost the result card the moment
+    // they navigated away. This is the data behind the hub that fixes that.
+    //
+    // "waitingForYou" is the only actionable state, so it is computed here
+    // rather than inferred by each surface from four other fields.
+
+    async listForUser(userId, limit = 30) {
+        const result = await pool.query(`
+            SELECT c.code, c.mode, c.format, c.status, c.categories,
+                   c.prize_amount, c.scheduled_start_at, c.created_at,
+                   c.completed_at, c.invite_expires_at, c.integrity_hold,
+                   c.creator_user_id,
+                   creator.username                       AS created_by,
+                   me.role, me.status AS my_status, me.final_score AS my_score,
+                   me.total_answer_ms AS my_time_ms, me.rank AS my_rank,
+                   me.play_expires_at,
+                   (SELECT COUNT(*)::int FROM challenge_participants p
+                     WHERE p.challenge_id = c.id AND p.status <> 'expired')     AS participants,
+                   (SELECT COUNT(*)::int FROM challenge_participants p
+                     WHERE p.challenge_id = c.id AND p.status = 'finished')     AS finished
+            FROM challenge_participants me
+            JOIN challenges c   ON c.id = me.challenge_id
+            JOIN users creator  ON creator.id = c.creator_user_id
+            WHERE me.user_id = $1
+              AND NOT (c.settings ? 'rematchOf')
+            ORDER BY c.created_at DESC
+            LIMIT $2
+        `, [userId, limit]);
+
+        const now = Date.now();
+
+        return result.rows.map(row => {
+            const playWindowGone = row.play_expires_at &&
+                new Date(row.play_expires_at).getTime() < now;
+
+            const iHavePlayed = row.my_status === 'finished';
+            const isOver = ['completed', 'expired', 'cancelled', 'void_refunded']
+                .includes(row.status);
+
+            return {
+                code: row.code,
+                mode: row.mode,
+                format: row.format,
+                status: row.status,
+                categories: row.categories,
+                prizeAmount: Number(row.prize_amount) || 0,
+                createdBy: row.created_by,
+                isMine: row.creator_user_id === userId,
+                scheduledStartAt: row.scheduled_start_at,
+                createdAt: row.created_at,
+                completedAt: row.completed_at,
+                participants: row.participants,
+                finished: row.finished,
+                myScore: row.my_score,
+                myTimeMs: row.my_time_ms,
+                myRank: row.my_rank,
+                iHavePlayed,
+                // The one thing a player actually wants to know.
+                waitingForYou: !isOver && !iHavePlayed && !playWindowGone,
+                waitingForThem: !isOver && iHavePlayed,
+                // A card only exists once two people have finished.
+                hasCard: row.status === 'completed' && row.finished >= 2
+            };
+        });
+    }
+
+    // ============================================
+    // FULL DETAIL (admin)
+    // ============================================
+    // Everything about one challenge in a single call: who is in it, who has
+    // played, what was charged and to whom, and where the money stands.
+
+    async getAdminDetail(challengeId) {
+        const challenge = await pool.query(`
+            SELECT c.*, u.username AS created_by, u.phone_number AS creator_phone
+            FROM challenges c
+            JOIN users u ON u.id = c.creator_user_id
+            WHERE c.id = $1
+        `, [challengeId]);
+
+        if (!challenge.rows[0]) return null;
+
+        const participants = await pool.query(`
+            SELECT p.user_id, p.role, p.status, p.entry_method, p.credit_consumed,
+                   p.joined_at, p.finished_at, p.final_score, p.total_answer_ms,
+                   p.rank, p.is_new_user, p.join_ip::text AS join_ip,
+                   p.join_device_id, p.collusion_flags,
+                   u.username, u.phone_number
+            FROM challenge_participants p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.challenge_id = $1
+            ORDER BY p.rank NULLS LAST, p.joined_at
+        `, [challengeId]);
+
+        const sponsorship = await pool.query(
+            `SELECT * FROM challenge_sponsorships WHERE challenge_id = $1`,
+            [challengeId]
+        );
+
+        const events = await pool.query(`
+            SELECT event, platform, created_at, meta
+            FROM challenge_events WHERE challenge_id = $1
+            ORDER BY created_at
+        `, [challengeId]);
+
+        const rounds = await pool.query(`
+            SELECT r.user_id, r.round_no, r.status, r.correct_count,
+                   r.total_answer_ms, r.game_session_id, u.username
+            FROM challenge_rounds r
+            JOIN users u ON u.id = r.user_id
+            WHERE r.challenge_id = $1
+            ORDER BY r.round_no, r.correct_count DESC
+        `, [challengeId]);
+
+        const row = challenge.rows[0];
+        const people = participants.rows;
+
+        return {
+            challenge: {
+                ...row,
+                isRematch: !!(row.settings && row.settings.rematchOf)
+            },
+            participants: people,
+            // Split out because "who still owes a round" is the question an
+            // admin actually opens this page to answer.
+            played: people.filter(p => p.status === 'finished'),
+            outstanding: people.filter(p => p.status !== 'finished'),
+            rounds: rounds.rows,
+            sponsorship: sponsorship.rows[0] || null,
+            events: events.rows,
+            entry: {
+                model: row.entry_model,
+                prepaidSlots: row.prepaid_slots,
+                creditsSpent: people.filter(p => p.credit_consumed).length,
+                paidByInitiator: row.entry_model === 'prepaid',
+                free: row.entry_model === 'free'
+            },
+            // Only exists once two people have finished, same rule as the card.
+            hasCard: row.status === 'completed' &&
+                     people.filter(p => p.status === 'finished').length >= 2
+        };
     }
 
     // ============================================

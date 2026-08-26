@@ -255,7 +255,15 @@ class ChallengeRoundService {
             );
         } catch (e) { /* the audit trail must never block a question */ }
 
+        // Whether the lifeline is still available, so the surface can show or
+        // hide the button rather than offering something already spent.
+        const lifeline = await pool.query(
+            `SELECT lifeline_5050_used FROM game_sessions WHERE id = $1`,
+            [round.game_session_id]
+        );
+
         return {
+            fiftyFiftyAvailable: !!(lifeline.rows[0] && !lifeline.rows[0].lifeline_5050_used),
             position,
             questionId: question.id,
             text: question.question_text,
@@ -310,6 +318,70 @@ class ChallengeRoundService {
         } catch (e) { /* cache miss next time is fine */ }
 
         return pace;
+    }
+
+    // ============================================
+    // 50:50
+    // ============================================
+    // One per round, same for everyone, and it removes two WRONG options only.
+    //
+    // Skip is deliberately not offered. In Classic, Skip moves past a question
+    // without answering it; in a race scored on correct answers and broken on
+    // cumulative time, that is either a free pass or a silent penalty
+    // depending on how you count it, and neither is obvious to a player
+    // mid-game. 50:50 has the same meaning in both modes.
+    //
+    // The ghost is unaffected: pace is still pace. A player racing a 4.2s ghost
+    // does not know whether that 4.2s had a 50:50 behind it \u2014 same as Classic,
+    // where the ladder does not tell you either.
+
+    async useFiftyFifty(challenge, round, position, user) {
+        const state = await pool.query(
+            `SELECT lifeline_5050_used FROM game_sessions WHERE id = $1`,
+            [round.game_session_id]
+        );
+        if (!state.rows[0]) return { ok: false, reason: 'no_session' };
+        if (state.rows[0].lifeline_5050_used) return { ok: false, reason: 'already_used' };
+
+        // Refuse once the answer is in. Otherwise it is a free look at the
+        // reveal rather than a help with the question.
+        const answered = await pool.query(
+            `SELECT 1 FROM challenge_answers WHERE round_id = $1 AND position = $2`,
+            [round.id, position]
+        );
+        if (answered.rows.length > 0) return { ok: false, reason: 'already_answered' };
+
+        const question = await pool.query(`
+            SELECT q.correct_answer
+            FROM challenge_question_sets s
+            JOIN questions q ON q.id = s.question_id
+            WHERE s.challenge_id = $1 AND s.round_no = $2 AND s.position = $3
+        `, [challenge.id, round.round_no, position]);
+
+        if (!question.rows[0]) return { ok: false, reason: 'no_such_question' };
+
+        const correct = String(question.rows[0].correct_answer || '').toUpperCase();
+        const wrong = ['A', 'B', 'C', 'D'].filter(l => l !== correct);
+
+        // Drop two of the three wrong ones at random, keep the correct one.
+        for (let i = wrong.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [wrong[i], wrong[j]] = [wrong[j], wrong[i]];
+        }
+        const remaining = [correct, wrong[0]].sort();
+
+        await pool.query(
+            `UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1`,
+            [round.game_session_id]
+        );
+
+        try {
+            await auditService.logLifelineUsed(
+                round.game_session_id, user.id, position, '50:50', remaining.join('/')
+            );
+        } catch (e) { /* never block a lifeline on the audit trail */ }
+
+        return { ok: true, remaining, removed: wrong.slice(1) };
     }
 
     // ============================================

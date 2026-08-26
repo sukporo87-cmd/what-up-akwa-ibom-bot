@@ -197,6 +197,15 @@ class WebhookController {
       // MYCODE, not CODE: CODE is already the promo-code keyword in this
       // controller (two call sites below), and a challenge reusing it would
       // either shadow promo codes or be shadowed by them.
+      // CANCELCHALLENGE, not CANCEL: CANCEL is a common word and would shadow
+      // whatever else a player might be in the middle of.
+      if (input === 'CANCELCHALLENGE') {
+        const cancelUser = await userService.getUserByPhone(phone);
+        if (cancelUser && await challengeChatService.handleCancel(phone, cancelUser, incomingPlatform)) {
+          return;
+        }
+      }
+
       if (input === 'MYCODE') {
         const codeUser = await userService.getUserByPhone(phone);
         if (codeUser && await challengeChatService.handleCodeRequest(phone, codeUser, incomingPlatform)) {

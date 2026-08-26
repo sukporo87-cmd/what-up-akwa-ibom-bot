@@ -34,6 +34,11 @@ const { platformOf } = require('../utils/platform');
 
 const STATE_PREFIX = 'challenge_create';
 
+// The lobby opens 10 minutes before the start, so a challenge scheduled closer
+// than this has no lobby at all. Stated in the prompt AND enforced in the
+// check, from one constant, so the two can never drift apart.
+const MIN_LEAD_MINUTES = 15;
+
 const naira = (n) => '\u20a6' + Number(n || 0).toLocaleString('en-NG');
 
 // ============================================
@@ -66,10 +71,15 @@ const STRINGS = {
     pickStartDate: (options) =>
         'What day?\n\n' + options + '\n\nReply with a number.',
 
-    pickStartTime: (dayLabel) =>
+    // The minimum is stated UP FRONT. Being told "that time has already gone"
+    // about a time eight minutes in the future is both wrong and unfixable
+    // from the player's side \u2014 they have no idea what to type instead.
+    pickStartTime: (dayLabel, minMinutes) =>
         `What time on ${dayLabel}?\n\n` +
         'Reply with a time like *2:30pm* or *14:30*.\n' +
-        'All times are West Africa Time (WAT).',
+        'All times are West Africa Time (WAT).\n' +
+        `_At least ${minMinutes} minutes from now \u2014 the lobby opens 10 minutes ` +
+        'before the start._',
 
     badStartTime:
         "That doesn't look like a time. Try *2:30pm* or *14:30* \u2014 West Africa Time.",
@@ -77,13 +87,14 @@ const STRINGS = {
     badStartDate: (options) =>
         'Pick a day by number.\n\n' + options,
 
-    startTimeTooSoon:
-        'That is too close. The lobby opens 10 minutes before the start, so pick ' +
-        'a time at least 15 minutes from now.',
-
-    startTimeTooSoonToday:
-        'That time has already gone today. Pick a later time, or start again ' +
-        'and choose another day.',
+    // ONE refusal, and it names the real constraint. The old pair guessed:
+    // a time eight minutes ahead was reported as "already gone today", which
+    // is false and leaves the player nothing to act on.
+    startTimeTooSoon: (minMinutes, earliestLabel) =>
+        `That is too soon. A live challenge needs at least ${minMinutes} minutes ` +
+        'so people can reach the lobby.\n\n' +
+        (earliestLabel ? `The earliest you can pick today is *${earliestLabel}*.\n\n` : '') +
+        'Reply with a later time, or *MENU* to start again.',
 
     pickFormat:
         'Who are you challenging?\n\n' +
@@ -148,7 +159,9 @@ const STRINGS = {
             ? `Starts ${startLabel} \u00b7 everyone plays at once, in the browser\n\n`
             : '\n') +
         (startLabel
-            ? 'The invite is below \u2014 forward it to whoever you want to beat.'
+            ? 'The invite is below \u2014 forward it to whoever you want to beat.\n\n' +
+              '*You play in the browser too* \u2014 open your own link before the ' +
+              'start time. Reply *MYCODE* for your entry code.'
             : '*Reply PLAY to set your score first* \u2014 whoever you invite races ' +
               'the pace you set.\n\nThe invite is below \u2014 forward it to whoever ' +
               'you want to beat.'),
@@ -160,13 +173,18 @@ const STRINGS = {
         `\ud83c\udfaf *What's Up Trivia* \u2014 ${categories}\n` +
         '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
         (startLabel ? `\u23f0 Starts ${startLabel}\n` : '') +
-        '\n*Tap the link for the platform you play on:*\n\n' +
-        `\ud83d\udcac WhatsApp: ${links.whatsapp}\n\n` +
-        `\u2708\ufe0f Telegram: ${links.telegram}\n\n` +
-        `\ud83c\udf10 Web: ${links.web}\n\n` +
+        // A LIVE challenge is played in the browser and nowhere else, so
+        // offering a WhatsApp and a Telegram link is offering two dead ends.
+        // Async genuinely is playable on all three, so it lists all three.
         (startLabel
-            ? '_Live challenge \u2014 be there on time._'
-            : '_You have 48 hours to accept._'),
+            ? `\n\ud83c\udf10 *Play here:*\n${links.web}\n\n` +
+              '_Everyone plays at once, in the browser. Open the link before ' +
+              'the start time to join the lobby._'
+            : '\n*Tap the link for the platform you play on:*\n\n' +
+              `\ud83d\udcac WhatsApp: ${links.whatsapp}\n\n` +
+              `\u2708\ufe0f Telegram: ${links.telegram}\n\n` +
+              `\ud83c\udf10 Web: ${links.web}\n\n` +
+              '_You have 48 hours to accept._'),
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
@@ -224,7 +242,7 @@ const STRINGS = {
         (ghosting ? '\nYou\u2019ll see how fast they answered each one.\n' : '') +
         '\nFirst question coming up\u2026',
 
-    question: (position, text, options, ghostMs) =>
+    question: (position, text, options, ghostMs, fiftyAvailable) =>
         `*Q${position}/15*` +
         // Pace only. Never whether they got it right \u2014 that would leak the
         // answer before this player has locked in.
@@ -232,7 +250,32 @@ const STRINGS = {
         `\n\n${text}\n\n` +
         `*A* \u2014 ${options.A}\n*B* \u2014 ${options.B}\n` +
         `*C* \u2014 ${options.C}\n*D* \u2014 ${options.D}\n\n` +
-        'Reply A, B, C or D.',
+        'Reply A, B, C or D.' +
+        (fiftyAvailable ? '\n_or *5050* to remove two wrong answers._' : ''),
+
+    fiftyFiftyDone: (a, b) =>
+        `\u2702\ufe0f *50:50* \u2014 two wrong answers removed.\n\nIt is *${a}* or *${b}*.`,
+
+    fiftyFiftyGone:
+        "You've already used your 50:50 in this round. One per round.",
+
+    fiftyFiftyTooLate:
+        "You've already answered that one.",
+
+    // \u00a72: the cancellation rule existed in cancelChallenge() and was never
+    // told to anybody. A rule nobody can see is not a rule, it is a surprise.
+    cancelHint:
+        '_Reply *CANCELCHALLENGE* to call it off \u2014 you can until someone joins._',
+
+    cancelDone:
+        '\u2705 Challenge cancelled. Nobody had joined, so nothing was charged.',
+
+    cancelTooLate:
+        "Someone has already joined, so this one has to run its course. It " +
+        'expires on its own if nobody finishes.',
+
+    cancelNothing:
+        "You don't have a challenge waiting to be cancelled.",
 
     answerCorrect: (letter) => `\u2705 Correct \u2014 *${letter}*.`,
     answerWrong: (chosen, correct) => `\u274c You said ${chosen}. It was *${correct}*.`,
@@ -261,6 +304,13 @@ const STRINGS = {
         '\ud83d\udcca *So far*\n\n' +
         rows.map(r => `${r.position}. ${r.username} \u2014 ${r.score}/15 \u00b7 ${(r.timeMs / 1000).toFixed(1)}s`)
             .join('\n'),
+
+    livePlayIsWeb: (link, startLabel) =>
+        '\u2694\ufe0f *This is a live challenge* \u2014 everyone plays at the same time, ' +
+        'in the browser.\n\n' +
+        (startLabel ? `Starts ${startLabel}.\n` : '') +
+        `Open the lobby here:\n${link}\n\n` +
+        'Reply *MYCODE* if you need your entry code again.',
 
     nothingToPlay:
         "You don't have a challenge waiting. Reply *CHALLENGE* to start one.",
@@ -404,6 +454,31 @@ class ChallengeChatService {
         if (!code) return false;
         await redis.del(`challenge_pending_accept:${identifier}`);
         await messagingService.sendMessage(identifier, STRINGS.declined);
+        return true;
+    }
+
+    // ============================================
+    // CANCEL
+    // ============================================
+
+    async handleCancel(identifier, user, platform) {
+        const open = await pool.query(`
+            SELECT c.code
+            FROM challenges c
+            WHERE c.creator_user_id = $1
+              AND c.status IN ('open', 'awaiting_sponsorship')
+            ORDER BY c.created_at DESC
+            LIMIT 1
+        `, [user.id]);
+
+        if (!open.rows[0]) {
+            await messagingService.sendMessage(identifier, STRINGS.cancelNothing);
+            return true;
+        }
+
+        const result = await challengeService.cancelChallenge(open.rows[0].code, user);
+        await messagingService.sendMessage(identifier,
+            result.ok ? STRINGS.cancelDone : STRINGS.cancelTooLate);
         return true;
     }
 
@@ -559,7 +634,7 @@ class ChallengeChatService {
                 data.startDayOffset = options[choice - 1].offset;
                 data.startDayLabel = options[choice - 1].label;
                 await this._advance(identifier, 'starttime', data,
-                    STRINGS.pickStartTime(data.startDayLabel));
+                    STRINGS.pickStartTime(data.startDayLabel, MIN_LEAD_MINUTES));
                 return true;
             }
 
@@ -574,11 +649,19 @@ class ChallengeChatService {
                 const leadMs = when.getTime() - Date.now();
                 // The lobby opens 10 minutes before the start, so anything
                 // closer than that has no lobby at all.
-                if (leadMs < 15 * 60000) {
+                if (leadMs < MIN_LEAD_MINUTES * 60000) {
+                    // Say what WOULD work, rounded up to the next five minutes.
+                    // A refusal that does not tell you what to type instead is
+                    // a dead end.
+                    const earliest = new Date(Date.now() + MIN_LEAD_MINUTES * 60000);
+                    earliest.setUTCSeconds(0, 0);
+                    earliest.setUTCMinutes(Math.ceil(earliest.getUTCMinutes() / 5) * 5);
+
                     await messagingService.sendMessage(identifier,
-                        data.startDayOffset === 0
-                            ? STRINGS.startTimeTooSoonToday
-                            : STRINGS.startTimeTooSoon);
+                        STRINGS.startTimeTooSoon(
+                            MIN_LEAD_MINUTES,
+                            data.startDayOffset === 0 ? this.watLabel(earliest) : null
+                        ));
                     return true;
                 }
 
@@ -639,7 +722,8 @@ class ChallengeChatService {
         await messagingService.sendMessage(identifier,
             STRINGS.invite(user.username, result.links, categoryLabel, startLabel));
 
-        await messagingService.sendMessage(identifier, STRINGS.cancellationNotice);
+        await messagingService.sendMessage(identifier,
+            STRINGS.cancellationNotice + '\n\n' + STRINGS.cancelHint);
 
         // A live challenge is played in the browser, so the initiator needs a
         // way in as THIS account. Sent as its own message, never appended to
@@ -687,6 +771,20 @@ class ChallengeChatService {
         `, [user.id]);
 
         const challenge = pending.rows[0];
+
+        // A LIVE challenge is an arena: a shared clock, a lobby, and a reveal
+        // that reaches everyone at once. None of that exists in a chat thread.
+        // Without this check PLAY started a solo round and the whole thing
+        // behaved exactly like async \u2014 which is what it did.
+        if (challenge && challenge.mode === 'live') {
+            const deepLinkService = require('./deeplink.service');
+            await messagingService.sendMessage(identifier, STRINGS.livePlayIsWeb(
+                deepLinkService.buildLinks(challenge.code).web,
+                challenge.scheduled_start_at ? this.watLabel(challenge.scheduled_start_at) : null
+            ));
+            return true;
+        }
+
         if (!challenge) {
             await messagingService.sendMessage(identifier, STRINGS.nothingToPlay);
             return true;
@@ -732,7 +830,8 @@ class ChallengeChatService {
         }
 
         await messagingService.sendMessage(identifier, STRINGS.question(
-            position, question.text, question.options, ghost ? ghost[position] : null
+            position, question.text, question.options, ghost ? ghost[position] : null,
+            question.fiftyFiftyAvailable
         ));
     }
 
@@ -741,7 +840,8 @@ class ChallengeChatService {
         if (!raw) return false;
 
         const letter = String(message || '').trim().toUpperCase();
-        if (!['A', 'B', 'C', 'D'].includes(letter)) return false;
+        const isFifty = letter === '5050' || letter === '50:50' || letter === '50';
+        if (!isFifty && !['A', 'B', 'C', 'D'].includes(letter)) return false;
 
         const state = JSON.parse(raw);
 
@@ -759,8 +859,26 @@ class ChallengeChatService {
 
         const round = {
             id: ctx.round_id, round_no: ctx.round_no,
-            session_key: ctx.session_key, game_session_id: ctx.game_session_id
+            session_key: ctx.session_key, game_session_id: ctx.game_session_id,
+            // user_id is not optional: audit.logQuestionAsked writes it into
+            // game_audit_logs, which is NOT NULL. Omitting it threw 23502 on
+            // every single question served in chat.
+            user_id: user.id
         };
+
+        if (isFifty) {
+            const fifty = await challengeRoundService.useFiftyFifty(
+                ctx, round, state.position, user
+            );
+            await messagingService.sendMessage(identifier,
+                fifty.ok ? STRINGS.fiftyFiftyDone(fifty.remaining[0], fifty.remaining[1])
+              : fifty.reason === 'already_used' ? STRINGS.fiftyFiftyGone
+              : fifty.reason === 'already_answered' ? STRINGS.fiftyFiftyTooLate
+              : STRINGS.fiftyFiftyGone);
+            // The clock keeps running. Everyone pays the same seconds for
+            // using it, which is what keeps the race fair.
+            return true;
+        }
 
         const result = await challengeRoundService.submitAnswer(
             ctx, round, state.position, letter, user
