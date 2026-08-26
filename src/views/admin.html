@@ -2743,7 +2743,18 @@ async function loadPayouts() {
       container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending payouts</p></div>';
       return;
     }
-    let html = '<table><thead><tr><th>ID</th><th>Winner</th><th>Amount</th><th>Status</th><th>Bank Details</th><th>Verification</th><th>Won</th><th>Claimed</th><th>Age</th><th>Actions</th></tr></thead><tbody>';
+    // Bulk bar sits above the table and stays hidden until something is
+    // selected \u2014 a permanently visible "cancel selected" button next to a
+    // list of real money is an invitation to a mis-click.
+    let html = '<div id="bulkBar" style="display:none;align-items:center;gap:12px;padding:10px 12px;margin-bottom:10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px">'
+      + '<strong id="bulkCount">0 selected</strong>'
+      + '<button class="btn btn-danger btn-sm" onclick="bulkCancelSelected()">\u2715 Cancel selected</button>'
+      + '<button class="btn btn-secondary btn-sm" onclick="clearPayoutSelection()">Clear</button>'
+      + '</div>';
+
+    html += '<table><thead><tr>'
+      + '<th style="width:34px"><input type="checkbox" id="payoutSelectAll" onclick="togglePayoutSelectAll(this)" title="Select all"></th>'
+      + '<th>ID</th><th>Winner</th><th>Amount</th><th>Status</th><th>Bank Details</th><th>Verification</th><th>Won</th><th>Claimed</th><th>Age</th><th>Actions</th></tr></thead><tbody>';
     payouts.forEach(payout => {
       const hasDetails = payout.account_name ? '✅' : '⏳';
       const detailsText = payout.account_name ? `${payout.account_name}<br><small>${payout.bank_name} - ${payout.account_number}</small>` : 'Awaiting details';
@@ -2759,7 +2770,7 @@ async function loadPayouts() {
       const forfeitBtn = expired
         ? `<button class="btn btn-danger btn-sm" onclick="forfeitPayout(${payout.transaction_id})">🚫 Forfeit</button>`
         : '';
-      html += `<tr${expired ? ' style="background:#fef2f2"' : ''}><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td><small>${claimedCell}</small></td><td>${ageCell}${expired ? '<br><small style="color:#b91c1c">past 72h</small>' : ''}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>` : `<div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>`}</td></tr>`;
+      html += `<tr${expired ? ' style="background:#fef2f2"' : ''}><td><input type="checkbox" class="payoutPick" value="${payout.transaction_id}" data-amount="${payout.amount}" onclick="updatePayoutSelection()"></td><td>#${payout.transaction_id}</td><td><strong>${payout.full_name}</strong><br><small style="color: #999;">${wutDisplayId(payout)}</small></td><td><strong>₦${parseFloat(payout.amount).toLocaleString()}</strong></td><td><span class="status-badge status-${payout.payout_status}">${payout.payout_status}</span></td><td>${hasDetails} <small>${detailsText}</small></td><td>${verificationBadge}</td><td>${new Date(payout.win_date).toLocaleDateString()}</td><td><small>${claimedCell}</small></td><td>${ageCell}${expired ? '<br><small style="color:#b91c1c">past 72h</small>' : ''}</td><td>${payout.account_name ? `<div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-success btn-sm" onclick="showMarkPaidModal(${payout.transaction_id})">💵 Mark Paid</button>${!payout.verified ? `<button class="btn btn-warning btn-sm" onclick="reverifyPayout(${payout.transaction_id})">🔄 Re-verify</button>` : ''}${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>` : `<div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" disabled>⏳ Waiting</button>${forfeitBtn}<button class="btn btn-secondary btn-sm" onclick="cancelPayout(${payout.transaction_id})">✕ Cancel</button></div>`}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -2771,6 +2782,90 @@ async function loadPayouts() {
 }
 
 function filterPayouts() { loadPayouts(); loadForfeitableSummary(); }
+
+// ---- bulk selection + cancel ----
+// The endpoint has existed since the payout workspace was built; there was
+// simply no way to reach it from the UI, so cancelling an expired queue meant
+// clicking Cancel once per row.
+//
+// Note the server refuses an EMPTY selection rather than treating it as
+// "cancel everything" \u2014 that fallback exists for a deliberate confirmAll
+// call, and a UI must never be able to trigger it by accident.
+function selectedPayoutIds() {
+  return Array.from(document.querySelectorAll('.payoutPick:checked')).map(c => parseInt(c.value, 10));
+}
+
+function updatePayoutSelection() {
+  const picked = Array.from(document.querySelectorAll('.payoutPick:checked'));
+  const bar = document.getElementById('bulkBar');
+  if (!bar) return;
+  const total = picked.reduce((sum, c) => sum + parseFloat(c.dataset.amount || 0), 0);
+  document.getElementById('bulkCount').textContent =
+    picked.length + ' selected \u00b7 \u20a6' + total.toLocaleString();
+  bar.style.display = picked.length ? 'flex' : 'none';
+
+  const all = document.querySelectorAll('.payoutPick');
+  const box = document.getElementById('payoutSelectAll');
+  if (box) {
+    box.checked = all.length > 0 && picked.length === all.length;
+    box.indeterminate = picked.length > 0 && picked.length < all.length;
+  }
+}
+
+function togglePayoutSelectAll(box) {
+  document.querySelectorAll('.payoutPick').forEach(c => { c.checked = box.checked; });
+  updatePayoutSelection();
+}
+
+function clearPayoutSelection() {
+  document.querySelectorAll('.payoutPick').forEach(c => { c.checked = false; });
+  const box = document.getElementById('payoutSelectAll');
+  if (box) { box.checked = false; box.indeterminate = false; }
+  updatePayoutSelection();
+}
+
+async function bulkCancelSelected() {
+  const ids = selectedPayoutIds();
+  if (!ids.length) { showAlert('Nothing selected', 'error'); return; }
+
+  const total = Array.from(document.querySelectorAll('.payoutPick:checked'))
+    .reduce((sum, c) => sum + parseFloat(c.dataset.amount || 0), 0);
+
+  // Amount and count in the confirmation, because "12 payouts" and
+  // "\u20a6480,000" are different decisions.
+  const reason = prompt(
+    'Cancel ' + ids.length + ' payout(s) totalling \u20a6' + total.toLocaleString() + '?\n\n' +
+    'This cannot be undone. Enter a reason (recorded against every one):'
+  );
+  if (reason === null) return;
+  if (!reason.trim()) { showAlert('A reason is required', 'error'); return; }
+
+  try {
+    const r = await fetch('/admin/api/payouts/bulk-cancel', {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactionIds: ids, reason: reason.trim() })
+    });
+    const result = await r.json();
+    if (result.success) {
+      // cancelled_count is what the endpoint actually returns. It can be
+      // LOWER than the number selected \u2014 the UPDATE only touches rows still
+      // in a cancellable status, so anything already paid or forfeited is
+      // skipped. Reporting the selection count would hide that.
+      const done = result.cancelled_count !== undefined ? result.cancelled_count : ids.length;
+      const skipped = ids.length - done;
+      showAlert('\u2705 Cancelled ' + done + ' payout(s)' +
+        (skipped > 0 ? ' \u00b7 ' + skipped + ' skipped (already settled)' : ''), 'success');
+      clearPayoutSelection();
+      loadPayouts();
+      loadForfeitableSummary();
+    } else {
+      showAlert('\u274c ' + (result.error || 'Bulk cancel failed'), 'error');
+    }
+  } catch (e) {
+    showAlert('\u274c Error cancelling payouts', 'error');
+  }
+}
 
 // ---- payout forfeiture (11 Aug 2026) ----
 // Forfeit and cancel are separate on purpose: forfeit enforces the published

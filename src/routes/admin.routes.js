@@ -1575,7 +1575,39 @@ router.get('/api/payouts/history', authenticateAdmin, async (req, res) => {
   }
 });
 
-router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
+// ============================================
+// FORFEITABLE PAYOUTS
+// ============================================
+// MUST be registered before /api/payouts/:id. Express matches the first
+// registration, so with this declared later (it was, ~7,500 lines later) the
+// :id route matched "forfeitable", passed it to Postgres as an integer, and
+// every request 500'd with 22P02 while also firing an admin error alert.
+//
+// Same class as the duplicate PUT /api/questions/:id already in this file:
+// a literal path shadowed by a parameter it sorts after.
+router.get('/api/payouts/forfeitable', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.id, t.amount, t.created_at, u.username, u.phone_number,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - t.created_at)) / 3600)::int AS hours_since_win
+      FROM transactions t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.transaction_type IN ('prize','tournament_prize')
+        AND t.payout_status = 'pending'
+        AND t.claimed_at IS NULL
+        AND t.created_at < NOW() - INTERVAL '72 hours'
+      ORDER BY t.created_at ASC
+    `);
+    const total = result.rows.reduce((a, r) => a + parseFloat(r.amount || 0), 0);
+    res.json({ success: true, transactions: result.rows, count: result.rows.length, total_amount: total });
+  } catch (error) {
+    logger.error(`Error listing forfeitable payouts: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load forfeitable payouts' });
+  }
+});
+
+// Forfeit one
+router.get('/api/payouts/:id(\\d+)', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
 
@@ -1618,7 +1650,7 @@ router.get('/api/payouts/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
-router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id(\\d+)/approve', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
     const success = await payoutService.approvePayout(transactionId, req.adminSession.admin_id);
@@ -1642,7 +1674,7 @@ router.post('/api/payouts/:id/approve', authenticateAdmin, async (req, res) => {
   }
 });
 
-router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id(\\d+)/mark-paid', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
     const { paymentReference, paymentMethod } = req.body;
@@ -1729,7 +1761,7 @@ router.post('/api/payouts/:id/mark-paid', authenticateAdmin, async (req, res) =>
 });
 
 // Cancel/void a pending payout
-router.post('/api/payouts/:id/cancel', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id(\\d+)/cancel', authenticateAdmin, async (req, res) => {
     try {
         const transactionId = req.params.id;
         const { reason } = req.body;
@@ -1768,8 +1800,25 @@ router.post('/api/payouts/:id/cancel', authenticateAdmin, async (req, res) => {
 // Bulk cancel all pending payouts
 router.post('/api/payouts/bulk-cancel', authenticateAdmin, async (req, res) => {
     try {
-        const { reason, transactionIds } = req.body;
-        
+        const { reason, transactionIds, confirmAll } = req.body;
+
+        // An EMPTY array used to fall through to "cancel every pending payout
+        // on the platform". A UI that sends a selection can send an empty one
+        // by accident; wiping the payout queue must never be something that
+        // happens by omission.
+        if (Array.isArray(transactionIds) && transactionIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No payouts selected. To cancel every pending payout, send confirmAll: true.'
+            });
+        }
+        if (!transactionIds && confirmAll !== true) {
+            return res.status(400).json({
+                success: false,
+                error: 'Refusing to cancel all pending payouts without confirmAll: true.'
+            });
+        }
+
         let result;
         if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
             // Cancel specific IDs
@@ -1819,7 +1868,7 @@ router.post('/api/payouts/bulk-cancel', authenticateAdmin, async (req, res) => {
     }
 });
 
-router.post('/api/payouts/:id/reverify', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id(\\d+)/reverify', authenticateAdmin, async (req, res) => {
   try {
     const transactionId = req.params.id;
     const result = await payoutService.reverifyPayout(transactionId);
@@ -9075,29 +9124,7 @@ router.delete('/api/toggles/:key', authenticateAdmin, async (req, res) => {
 // ============================================
 
 // What would be forfeited, without doing it — always look before you leap
-router.get('/api/payouts/forfeitable', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT t.id, t.amount, t.created_at, u.username, u.phone_number,
-             ROUND(EXTRACT(EPOCH FROM (NOW() - t.created_at)) / 3600)::int AS hours_since_win
-      FROM transactions t
-      JOIN users u ON u.id = t.user_id
-      WHERE t.transaction_type IN ('prize','tournament_prize')
-        AND t.payout_status = 'pending'
-        AND t.claimed_at IS NULL
-        AND t.created_at < NOW() - INTERVAL '72 hours'
-      ORDER BY t.created_at ASC
-    `);
-    const total = result.rows.reduce((a, r) => a + parseFloat(r.amount || 0), 0);
-    res.json({ success: true, transactions: result.rows, count: result.rows.length, total_amount: total });
-  } catch (error) {
-    logger.error(`Error listing forfeitable payouts: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to load forfeitable payouts' });
-  }
-});
-
-// Forfeit one
-router.post('/api/payouts/:id/forfeit', authenticateAdmin, async (req, res) => {
+router.post('/api/payouts/:id(\\d+)/forfeit', authenticateAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const result = await pool.query(`
