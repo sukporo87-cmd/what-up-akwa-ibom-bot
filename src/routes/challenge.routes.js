@@ -118,6 +118,27 @@ router.post('/', requireWebAuth, requireCompleteProfile, requireChallengesEnable
 // Deliberately NOT behind requireWebAuth: this is what a first-time invitee
 // hits before they have an account, and it has to tell them what they were
 // invited to. It returns nothing that is not already in the invite message.
+// ============================================
+// GET /challenge/mine  — the player's own challenges
+// ============================================
+// Registered BEFORE /:code. Express matches the first registration, so with
+// the order reversed this would be read as a challenge whose code is "mine".
+router.get('/mine', requireWebAuth, async (req, res) => {
+    try {
+        const challenges = await challengeService.listForUser(req.webUser.id);
+        res.json({
+            success: true,
+            challenges,
+            // Surfaced separately so the hub can badge the tab without the
+            // client re-deriving the rule.
+            waitingForYou: challenges.filter(c => c.waitingForYou).length
+        });
+    } catch (error) {
+        logger.error('Error listing challenges for user:', error);
+        res.status(500).json({ success: false, error: 'Could not load your challenges' });
+    }
+});
+
 router.get('/:code', async (req, res) => {
     try {
         const code = String(req.params.code || '').toUpperCase();
