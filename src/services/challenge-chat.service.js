@@ -538,9 +538,18 @@ class ChallengeChatService {
         const data = stored.data || {};
         const input = String(message || '').trim().toUpperCase();
 
-        if (input === 'MENU' || input === 'CANCEL') {
+        // ESCAPE HATCHES. This hook sits ABOVE the RESET handler in
+        // routeMessage, so without listing RESET here a player stuck
+        // mid-creation could not use the one command that is supposed to work
+        // from anywhere. PLAY is here for the same reason: on web-play it
+        // opens Classic, and a half-finished challenge must not hold the whole
+        // app hostage.
+        //
+        // Every one of these clears the state and returns FALSE, so normal
+        // routing handles the word exactly as it would have.
+        if (['MENU', 'CANCEL', 'RESET', 'RESTART', 'PLAY', 'STOP', 'HELP'].includes(input)) {
             await userService.clearUserState(identifier);
-            return false;   // let the menu render normally
+            return false;
         }
 
         switch (step) {
@@ -772,6 +781,15 @@ class ChallengeChatService {
 
         const challenge = pending.rows[0];
 
+        // NO CHALLENGE WAITING? FALL THROUGH, SILENTLY.
+        //
+        // PLAY is not a challenge word. web-play's startMode() sends PLAY to
+        // open Classic, Practice and Tournaments, so consuming it here and
+        // replying "you don't have a challenge waiting" killed all three modes
+        // on the web platform. Returning false hands the message back to
+        // normal routing, which is what PLAY meant before challenges existed.
+        if (!challenge) return false;
+
         // A LIVE challenge is an arena: a shared clock, a lobby, and a reveal
         // that reaches everyone at once. None of that exists in a chat thread.
         // Without this check PLAY started a solo round and the whole thing
@@ -782,11 +800,6 @@ class ChallengeChatService {
                 deepLinkService.buildLinks(challenge.code).web,
                 challenge.scheduled_start_at ? this.watLabel(challenge.scheduled_start_at) : null
             ));
-            return true;
-        }
-
-        if (!challenge) {
-            await messagingService.sendMessage(identifier, STRINGS.nothingToPlay);
             return true;
         }
 
