@@ -199,8 +199,16 @@ const STRINGS = {
     entryLineCredit:  'Costs one of your credits.',
     prizeLine:        (amount) => `\ud83c\udfc6 Prize: ${naira(amount)}`,
 
-    accepted:
-        '\u2705 You\u2019re in. Reply *PLAY* when you\u2019re ready \u2014 you have 24 hours.',
+    // Mode-aware, because the two modes are played in different places and
+    // telling a live player to "reply PLAY" sends them somewhere that cannot
+    // run a lobby.
+    accepted: (mode, link, startLabel) =>
+        mode === 'live'
+            ? '\u2705 You\u2019re in.\n\n' +
+              (startLabel ? `Starts ${startLabel}.\n` : '') +
+              `Everyone plays at once, in the browser. Open the lobby here:\n${link}\n\n` +
+              'Reply *MYCODE* if you need your entry code.'
+            : '\u2705 You\u2019re in. Reply *PLAY* when you\u2019re ready \u2014 you have 24 hours.',
 
     declined: 'No problem. It\u2019s still there if you change your mind.',
 
@@ -445,7 +453,14 @@ class ChallengeChatService {
         }
 
         await redis.del(`challenge_pending_accept:${identifier}`);
-        await messagingService.sendMessage(identifier, STRINGS.accepted);
+
+        const deepLinkService = require('./deeplink.service');
+        await messagingService.sendMessage(identifier, STRINGS.accepted(
+            result.challenge.mode,
+            deepLinkService.buildLinks(code).web,
+            result.challenge.scheduled_start_at
+                ? this.watLabel(result.challenge.scheduled_start_at) : null
+        ));
         return true;
     }
 
@@ -767,6 +782,16 @@ class ChallengeChatService {
         catch (e) { return false; }
     }
 
+    // PLAY IS A SHARED KEYWORD. web-play's startMode() sends it to open
+    // Classic, Practice and Tournaments, so this method owns exactly one
+    // outcome: an async round it can start RIGHT NOW. Every other case returns
+    // false and hands the word back to normal routing.
+    //
+    // Twice now a branch here has consumed PLAY and taken the whole web
+    // platform down with it \u2014 first "you don't have a challenge waiting", then
+    // "that challenge is over". The rule is the fix, not another special case:
+    // if it is not starting a round, it does not get to reply.
+
     async handlePlay(identifier, user, platform) {
         const pending = await pool.query(`
             SELECT c.*, p.id AS participant_id, p.play_expires_at, p.status AS participant_status
@@ -775,37 +800,24 @@ class ChallengeChatService {
             WHERE p.user_id = $1
               AND p.status IN ('joined','playing')
               AND c.status IN ('open','live')
+              -- A LAPSED play window must not match. A participant row whose
+              -- 24 hours ran out is never swept to 'expired' by anything the
+              -- player does, so without this it matched forever and blocked
+              -- PLAY permanently.
+              AND (p.play_expires_at IS NULL OR p.play_expires_at > NOW())
+              -- Live challenges are played in the browser. There is no lobby,
+              -- no shared clock and no reveal in a chat thread.
+              AND c.mode = 'async'
             ORDER BY p.joined_at DESC NULLS LAST
             LIMIT 1
         `, [user.id]);
 
         const challenge = pending.rows[0];
-
-        // NO CHALLENGE WAITING? FALL THROUGH, SILENTLY.
-        //
-        // PLAY is not a challenge word. web-play's startMode() sends PLAY to
-        // open Classic, Practice and Tournaments, so consuming it here and
-        // replying "you don't have a challenge waiting" killed all three modes
-        // on the web platform. Returning false hands the message back to
-        // normal routing, which is what PLAY meant before challenges existed.
-        if (!challenge) return false;
-
-        // A LIVE challenge is an arena: a shared clock, a lobby, and a reveal
-        // that reaches everyone at once. None of that exists in a chat thread.
-        // Without this check PLAY started a solo round and the whole thing
-        // behaved exactly like async \u2014 which is what it did.
-        if (challenge && challenge.mode === 'live') {
-            const deepLinkService = require('./deeplink.service');
-            await messagingService.sendMessage(identifier, STRINGS.livePlayIsWeb(
-                deepLinkService.buildLinks(challenge.code).web,
-                challenge.scheduled_start_at ? this.watLabel(challenge.scheduled_start_at) : null
-            ));
-            return true;
-        }
-
-        if (challenge.play_expires_at && new Date(challenge.play_expires_at) < new Date()) {
-            await messagingService.sendMessage(identifier, STRINGS.playWindowClosed);
-            return true;
+        if (!challenge) {
+            // Nothing startable. Sweep any dead rows so they stop being
+            // considered, then hand PLAY back untouched.
+            await this._expireLapsedRounds(user.id);
+            return false;
         }
 
         const started = await challengeRoundService.startRound(
@@ -813,9 +825,16 @@ class ChallengeChatService {
         );
 
         if (!started.ok) {
-            await messagingService.sendMessage(identifier,
-                started.reason === 'already_played' ? STRINGS.alreadyPlayed : STRINGS.noQuestions);
-            return true;
+            // The last branch that could still swallow PLAY. It is a narrow
+            // case \u2014 a race, or a bank that cannot fill a set \u2014 but "narrow"
+            // is what the previous two looked like too. Log it and hand the
+            // keyword back; the hub explains the state properly, and Classic
+            // stays reachable no matter what happens here.
+            logger.warn(
+                `Challenge round would not start for user ${user.id} ` +
+                `on ${challenge.code}: ${started.reason}`
+            );
+            return false;
         }
 
         const ghost = await challengeRoundService.loadGhost(challenge, 1);
@@ -832,6 +851,28 @@ class ChallengeChatService {
 
         await this._serveQuestion(identifier, challenge, started.round, 1, ghost);
         return true;
+    }
+
+    /**
+     * Marks a player's lapsed async rounds as expired.
+     *
+     * The hourly sweeper does this globally, but a player typing PLAY should
+     * not have to wait for it: until the row is cleared it keeps matching, and
+     * every stale row is one more chance to swallow a shared keyword.
+     */
+    async _expireLapsedRounds(userId) {
+        try {
+            await pool.query(`
+                UPDATE challenge_participants
+                SET status = 'expired'
+                WHERE user_id = $1
+                  AND status IN ('joined','playing')
+                  AND play_expires_at IS NOT NULL
+                  AND play_expires_at < NOW()
+            `, [userId]);
+        } catch (error) {
+            logger.error('Could not expire lapsed challenge rounds:', error.message);
+        }
     }
 
     async _serveQuestion(identifier, challenge, round, position, ghost) {
