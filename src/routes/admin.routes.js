@@ -5866,6 +5866,149 @@ router.get('/api/challenges/list', authenticateAdmin, async (req, res) => {
   }
 });
 
+// ============================================
+// FORCE-CANCEL A CHALLENGE
+// ============================================
+// Stops a challenge dead and clears the Redis keys that keep its players
+// "in a round". Those keys are what let an abandoned challenge answer for
+// somebody in a completely different game, so clearing them is the point of
+// this endpoint, not a side effect.
+//
+// Cancel keeps the rows. Use it while testing, or when a challenge is stuck.
+router.post('/api/challenges/:id(\\d+)/cancel', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    // Required per-handler, matching how the rest of this file does it.
+    const redis = require('../config/redis');
+
+    const people = await pool.query(`
+      SELECT u.phone_number FROM challenge_participants p
+      JOIN users u ON u.id = p.user_id WHERE p.challenge_id = $1
+    `, [id]);
+
+    await pool.query(
+      `UPDATE challenges SET status = 'cancelled', completion_reason = 'cancelled',
+       updated_at = NOW() WHERE id = $1`, [id]);
+    await pool.query(
+      `UPDATE challenge_participants SET status = 'expired'
+       WHERE challenge_id = $1 AND status NOT IN ('finished')`, [id]);
+    await pool.query(
+      `UPDATE challenge_rounds SET status = 'abandoned'
+       WHERE challenge_id = $1 AND status = 'playing'`, [id]);
+    // The game_sessions rows too, or they sit 'active' forever and keep
+    // blocking the player from starting anything else.
+    await pool.query(
+      `UPDATE game_sessions SET status = 'cancelled', completed_at = NOW()
+       WHERE challenge_id = $1 AND status = 'active'`, [id]);
+
+    let cleared = 0;
+    for (const person of people.rows) {
+      if (!person.phone_number) continue;
+      try {
+        await redis.del(`challenge_playing:${person.phone_number}`);
+        await redis.del(`challenge_pending_accept:${person.phone_number}`);
+        cleared++;
+      } catch (e) { /* a missing key is the desired state anyway */ }
+    }
+
+    logger.info(`Challenge ${id} force-cancelled by admin; ${cleared} play key(s) cleared`);
+    res.json({ success: true, playKeysCleared: cleared });
+  } catch (error) {
+    logger.error('Error cancelling challenge:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// DELETE A CHALLENGE
+// ============================================
+// Removes it entirely. The FK cascades take participants, rounds, answers,
+// question sets and events with it. game_sessions rows are NOT cascaded \u2014
+// they are the audit trail \u2014 so they are unlinked and closed instead.
+router.delete('/api/challenges/:id(\\d+)', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    // Required per-handler, matching how the rest of this file does it.
+    const redis = require('../config/redis');
+
+    const paid = await pool.query(
+      `SELECT payment_status FROM challenge_sponsorships
+       WHERE challenge_id = $1 AND payment_status IN ('settled','awarded')`, [id]);
+    if (paid.rows.length > 0) {
+      // Deleting a challenge somebody paid into would orphan the money.
+      return res.status(409).json({
+        success: false,
+        error: 'This challenge has settled sponsorship money. Cancel it instead.'
+      });
+    }
+
+    const people = await pool.query(`
+      SELECT u.phone_number FROM challenge_participants p
+      JOIN users u ON u.id = p.user_id WHERE p.challenge_id = $1
+    `, [id]);
+
+    await pool.query(
+      `UPDATE game_sessions SET challenge_id = NULL,
+       status = CASE WHEN status = 'active' THEN 'cancelled' ELSE status END
+       WHERE challenge_id = $1`, [id]);
+    await pool.query(`DELETE FROM challenges WHERE id = $1`, [id]);
+
+    for (const person of people.rows) {
+      if (!person.phone_number) continue;
+      try {
+        await redis.del(`challenge_playing:${person.phone_number}`);
+        await redis.del(`challenge_pending_accept:${person.phone_number}`);
+      } catch (e) { /* nothing to clear is fine */ }
+    }
+
+    logger.warn(`Challenge ${id} DELETED by admin`);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting challenge:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// CLEAR EVERY STUCK CHALLENGE SESSION
+// ============================================
+// The blunt instrument, for exactly the situation you hit: rounds left
+// half-played whose Redis keys keep answering for their players. Touches no
+// finished round and no completed challenge.
+router.post('/api/challenges/clear-stuck', authenticateAdmin, async (req, res) => {
+  try {
+    // Required per-handler, matching how the rest of this file does it.
+    const redis = require('../config/redis');
+    const stuck = await pool.query(`
+      SELECT DISTINCT u.phone_number, r.id AS round_id, r.challenge_id
+      FROM challenge_rounds r
+      JOIN users u ON u.id = r.user_id
+      WHERE r.status = 'playing'
+    `);
+
+    await pool.query(
+      `UPDATE challenge_rounds SET status = 'abandoned' WHERE status = 'playing'`);
+    await pool.query(
+      `UPDATE game_sessions SET status = 'cancelled', completed_at = NOW()
+       WHERE challenge_id IS NOT NULL AND status = 'active'`);
+    await pool.query(
+      `UPDATE challenge_participants SET status = 'expired' WHERE status = 'playing'`);
+
+    let cleared = 0;
+    for (const row of stuck.rows) {
+      if (!row.phone_number) continue;
+      try { await redis.del(`challenge_playing:${row.phone_number}`); cleared++; }
+      catch (e) { /* already gone */ }
+    }
+
+    logger.warn(`Admin cleared ${stuck.rows.length} stuck challenge round(s)`);
+    res.json({ success: true, rounds: stuck.rows.length, playKeysCleared: cleared });
+  } catch (error) {
+    logger.error('Error clearing stuck challenges:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/api/challenges/:id/detail', authenticateAdmin, async (req, res) => {
   try {
     const challengeService = require('../services/challenge.service');

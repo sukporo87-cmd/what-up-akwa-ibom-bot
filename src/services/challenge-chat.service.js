@@ -39,6 +39,11 @@ const STATE_PREFIX = 'challenge_create';
 // check, from one constant, so the two can never drift apart.
 const MIN_LEAD_MINUTES = 15;
 
+// How long a challenge round may sit half-finished before its Redis key stops
+// answering for the player. Was two hours, which is far longer than any round
+// takes and long enough for a stale key to hijack a completely different game.
+const CHALLENGE_PLAY_TTL = 20 * 60;
+
 const naira = (n) => '\u20a6' + Number(n || 0).toLocaleString('en-NG');
 
 // ============================================
@@ -812,6 +817,23 @@ class ChallengeChatService {
             LIMIT 1
         `, [user.id]);
 
+        // Never start a challenge round on top of a live Classic, Practice or
+        // tournament game. The player would then have two games and one set of
+        // A/B/C/D keys between them.
+        try {
+            // game.service exports the CLASS with a shared instance on
+            // .shared \u2014 the same singleton webhook.controller uses. Building a
+            // second GameService here would give it its own in-process timer
+            // map, which is exactly the kind of thing that only shows up as a
+            // missed timeout weeks later.
+            const GameService = require('./game.service');
+            const active = await GameService.shared.getActiveSession(user.id);
+            if (active) return false;
+        } catch (error) {
+            logger.error('Could not check for an active session:', error.message);
+            return false;
+        }
+
         const challenge = pending.rows[0];
         if (!challenge) {
             // Nothing startable. Sweep any dead rows so they stop being
@@ -839,7 +861,7 @@ class ChallengeChatService {
 
         const ghost = await challengeRoundService.loadGhost(challenge, 1);
 
-        await redis.setex(this._playKey(identifier), 7200, JSON.stringify({
+        await redis.setex(this._playKey(identifier), CHALLENGE_PLAY_TTL, JSON.stringify({
             challengeId: challenge.id, roundId: started.round.id,
             participantId: challenge.participant_id, position: 1
         }));
@@ -889,6 +911,19 @@ class ChallengeChatService {
         ));
     }
 
+    // A, B, C and D BELONG TO EVERY GAME MODE.
+    //
+    // This hook sits above Classic's answer path, so it must consume a letter
+    // only when a challenge round is genuinely in progress. A stale Redis key
+    // \u2014 left by any abandoned round, and living for two hours \u2014 was enough to
+    // hijack a tournament: the player's answer was scored against a challenge
+    // question, they were told "time's up", and the tournament clock ran out
+    // untouched beside it.
+    //
+    // Two guards, and the first is the decisive one: if the player has an
+    // ACTIVE game session that is not a challenge, they are playing Classic,
+    // Practice or a tournament, and this hook has no business here.
+
     async handleAnswer(identifier, message, user, platform) {
         const raw = await redis.get(this._playKey(identifier));
         if (!raw) return false;
@@ -897,10 +932,36 @@ class ChallengeChatService {
         const isFifty = letter === '5050' || letter === '50:50' || letter === '50';
         if (!isFifty && !['A', 'B', 'C', 'D'].includes(letter)) return false;
 
+        // GUARD 1 \u2014 another mode owns this player right now.
+        // getActiveSession() already filters challenge_id IS NULL, so a row
+        // here means Classic, Practice or a tournament is mid-game.
+        try {
+            // game.service exports the CLASS with a shared instance on
+            // .shared \u2014 the same singleton webhook.controller uses. Building a
+            // second GameService here would give it its own in-process timer
+            // map, which is exactly the kind of thing that only shows up as a
+            // missed timeout weeks later.
+            const GameService = require('./game.service');
+            const active = await GameService.shared.getActiveSession(user.id);
+            if (active) {
+                logger.warn(
+                    `Challenge answer hook stood down for user ${user.id}: ` +
+                    `session ${active.id} (${active.game_type}) is active`
+                );
+                return false;
+            }
+        } catch (error) {
+            // If we cannot tell, do NOT consume. Handing the letter back costs
+            // a challenge answer; taking it wrongly costs someone's tournament.
+            logger.error('Could not check for an active session:', error.message);
+            return false;
+        }
+
         const state = JSON.parse(raw);
 
         const context = await pool.query(`
             SELECT c.*, r.id AS round_id, r.round_no, r.session_key, r.game_session_id,
+                   r.status AS round_status,
                    p.id AS participant_id
             FROM challenge_rounds r
             JOIN challenges c ON c.id = r.challenge_id
@@ -910,6 +971,19 @@ class ChallengeChatService {
 
         const ctx = context.rows[0];
         if (!ctx) { await redis.del(this._playKey(identifier)); return false; }
+
+        // GUARD 2 \u2014 the round must still be playable. An abandoned or finished
+        // round leaves the key behind; without this it keeps answering for the
+        // rest of its TTL.
+        if (ctx.round_status !== 'playing' ||
+            !['open', 'live'].includes(ctx.status)) {
+            await redis.del(this._playKey(identifier));
+            logger.info(
+                `Cleared a stale challenge play key for user ${user.id} ` +
+                `(round ${ctx.round_status}, challenge ${ctx.status})`
+            );
+            return false;
+        }
 
         const round = {
             id: ctx.round_id, round_no: ctx.round_no,
@@ -950,7 +1024,7 @@ class ChallengeChatService {
         }
 
         state.position += 1;
-        await redis.setex(this._playKey(identifier), 7200, JSON.stringify(state));
+        await redis.setex(this._playKey(identifier), CHALLENGE_PLAY_TTL, JSON.stringify(state));
 
         const ghost = await challengeRoundService.loadGhost(ctx, ctx.round_no);
         await this._serveQuestion(identifier, ctx, round, state.position, ghost);
