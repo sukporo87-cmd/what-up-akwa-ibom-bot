@@ -887,7 +887,14 @@ function showChallengeInvite(c){
      challenge \u2014 the initiator above all \u2014 is not blocked by a full roster,
      and telling them "someone got there first" about their own challenge is
      the wrong answer to the wrong question. */
-  const full=!c.joined && c.participants>=c.maxParticipants;
+  /* "Full" can only be judged once we know WHO is asking. A chat player opens
+     the link signed-out, identifies with their code afterwards, and until then
+     c.joined is false \u2014 so the initiator of a 2-player challenge saw "someone
+     got there first" about their own challenge, and had no way in. If the
+     viewer is unidentified, offer the code form instead of a verdict. */
+  const signedIn = !!token;
+  const identified = !!(c.joined || c.isInitiator || signedIn);
+  const full = identified && !c.joined && c.participants >= c.maxParticipants;
 
   const entry = c.entryModel==='free'    ? 'Free to enter.'
               : c.entryModel==='prepaid' ? 'Your entry is already paid for.'
@@ -899,14 +906,14 @@ function showChallengeInvite(c){
   $('chalPrize').style.display=c.prizeAmount>0?'block':'none';
 
   const note = blocked
+    || (!identified ? 'Enter your username and code to play as your WhatsApp or Telegram account.' : null)
     || (full ? 'This challenge is full \u2014 someone got there first.' : null)
     || (c.isInitiator ? 'Your challenge. Play your round to set the pace.' : null)
     || (c.joined ? "You're in. Play your round." : entry);
   $('chalNote').textContent=note;
   /* Signed out: offer the chat-account route instead of a dead Accept button.
      Someone with no web account can still play as their WhatsApp identity. */
-  const signedIn=!!token;
-  chalAuthShow(!signedIn && !blocked && !full);
+  chalAuthShow(!signedIn && !blocked);
   $('chalAccept').style.display=(blocked||full||!signedIn)?'none':'inline-block';
   /* A LIVE challenge goes to the lobby, not to startChallenge. Sending it to
      startRound would materialise the set and begin immediately for whoever

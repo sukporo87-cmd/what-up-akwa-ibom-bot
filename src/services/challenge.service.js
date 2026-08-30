@@ -322,6 +322,10 @@ class ChallengeService {
         const result = await pool.query(`
             SELECT c.*,
                    u.username AS creator_username,
+                   -- Name plus handle. An invite from a bare @handle reads as
+                   -- spam to anyone who has never used the platform.
+                   COALESCE(NULLIF(TRIM(u.full_name), '') || ' (@' || u.username || ')',
+                            '@' || u.username) AS creator_display,
                    (SELECT COUNT(*)::int FROM challenge_participants p
                      WHERE p.challenge_id = c.id AND p.status <> 'expired') AS participant_count
             FROM challenges c

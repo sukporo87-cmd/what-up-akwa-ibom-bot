@@ -37,7 +37,7 @@ const STATE_PREFIX = 'challenge_create';
 // The lobby opens 10 minutes before the start, so a challenge scheduled closer
 // than this has no lobby at all. Stated in the prompt AND enforced in the
 // check, from one constant, so the two can never drift apart.
-const MIN_LEAD_MINUTES = 15;
+const MIN_LEAD_MINUTES = 10;
 
 // How long a challenge round may sit half-finished before its Redis key stops
 // answering for the player. Was two hours, which is far longer than any round
@@ -83,7 +83,7 @@ const STRINGS = {
         `What time on ${dayLabel}?\n\n` +
         'Reply with a time like *2:30pm* or *14:30*.\n' +
         'All times are West Africa Time (WAT).\n' +
-        `_At least ${minMinutes} minutes from now \u2014 the lobby opens 10 minutes ` +
+        `_At least ${minMinutes} minutes from now \u2014 the lobby opens 5 minutes ` +
         'before the start._',
 
     badStartTime:
@@ -166,15 +166,18 @@ const STRINGS = {
         (startLabel
             ? 'The invite is below \u2014 forward it to whoever you want to beat.\n\n' +
               '*You play in the browser too* \u2014 open your own link before the ' +
-              'start time. Reply *MYCODE* for your entry code.'
-            : '*Reply PLAY to set your score first* \u2014 whoever you invite races ' +
+              'start time. Reply *MY CODE* for your entry code.'
+            : '*Reply PLAYCHALLENGE to set your score first* \u2014 whoever you invite races ' +
               'the pace you set.\n\nThe invite is below \u2014 forward it to whoever ' +
               'you want to beat.'),
 
     // The forwardable one. Deliberately self-contained: someone who receives
     // this with no context should understand what it is and how to play.
-    invite: (username, links, categories, startLabel) =>
-        `\u2694\ufe0f *@${username} has challenged you to a game of trivia!*\n\n` +
+    // NAME FIRST, handle in brackets. Someone who has never used the platform
+    // has no idea what @final_obongowo is, and an unexplained link from an
+    // unknown handle reads as spam \u2014 which is exactly what gets it ignored.
+    invite: (displayName, links, categories, startLabel) =>
+        `\u2694\ufe0f *${displayName} has challenged you to a game of trivia!*\n\n` +
         `\ud83c\udfaf *What's Up Trivia* \u2014 ${categories}\n` +
         '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
         (startLabel ? `\u23f0 Starts ${startLabel}\n` : '') +
@@ -193,11 +196,11 @@ const STRINGS = {
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
-        `\u2694\ufe0f *${from} challenged you.*\n\n` +
+        `\u2694\ufe0f *${from} has challenged you to a game of trivia!*\n\n` +
         `${categories}\n` +
         '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
         `${entryLine}\n\n` +
-        'Reply *ACCEPT* to take it on, or *NO* to leave it.',
+        'Reply *ACCEPTCHALLENGE* to take it on, or *DECLINECHALLENGE* to pass.',
 
     entryLineFree:    'Free to enter.',
     entryLinePrepaid: 'They\u2019ve already paid your entry.',
@@ -212,8 +215,8 @@ const STRINGS = {
             ? '\u2705 You\u2019re in.\n\n' +
               (startLabel ? `Starts ${startLabel}.\n` : '') +
               `Everyone plays at once, in the browser. Open the lobby here:\n${link}\n\n` +
-              'Reply *MYCODE* if you need your entry code.'
-            : '\u2705 You\u2019re in. Reply *PLAY* when you\u2019re ready \u2014 you have 24 hours.',
+              'Reply *MY CODE* if you need your entry code.'
+            : '\u2705 You\u2019re in. Reply *PLAYCHALLENGE* when you\u2019re ready \u2014 you have 24 hours.',
 
     declined: 'No problem. It\u2019s still there if you change your mind.',
 
@@ -233,7 +236,7 @@ const STRINGS = {
         // §14.7 — an expired invite is still a warm lead
         expired: (from) =>
             `That challenge expired. ${from} created it more than 48 hours ago, and ` +
-            'invites only last 48 hours.\n\nReply *CHALLENGE* to send one back.',
+            'invites only last 48 hours.\n\nReply *NEW CHALLENGE* to send one back.',
         own_challenge:
             "That's your own challenge \u2014 send the link to someone else.",
         full:
@@ -278,7 +281,7 @@ const STRINGS = {
     // \u00a72: the cancellation rule existed in cancelChallenge() and was never
     // told to anybody. A rule nobody can see is not a rule, it is a surprise.
     cancelHint:
-        '_Reply *CANCELCHALLENGE* to call it off \u2014 you can until someone joins._',
+        '_Reply *CANCEL CHALLENGE* to call it off \u2014 you can until someone joins._',
 
     cancelDone:
         '\u2705 Challenge cancelled. Nobody had joined, so nothing was charged.',
@@ -289,6 +292,10 @@ const STRINGS = {
 
     cancelNothing:
         "You don't have a challenge waiting to be cancelled.",
+
+    badAnswer:
+        'That is not one of the options. Reply *A*, *B*, *C* or *D* \u2014 ' +
+        'or *5050* to remove two wrong answers.',
 
     answerCorrect: (letter) => `\u2705 Correct \u2014 *${letter}*.`,
     answerWrong: (chosen, correct) => `\u274c You said ${chosen}. It was *${correct}*.`,
@@ -310,8 +317,19 @@ const STRINGS = {
 
     resultWon: (me, them, opponent) =>
         `\ud83c\udfc6 *You won.*\n\nYou ${me} \u00b7 ${opponent} ${them}`,
+    // The offer goes to the LOSER, because they are the one who wants another
+    // go. It is an offer, not an automatic challenge: creating one unasked
+    // produced rows nobody joined.
     resultLost: (me, them, opponent) =>
-        `${opponent} took it.\n\nYou ${me} \u00b7 ${opponent} ${them}\n\nReply *CHALLENGE* for a rematch.`,
+        `${opponent} took it.\n\nYou ${me} \u00b7 ${opponent} ${them}\n\n` +
+        'Reply *REMATCH* to run it back \u2014 same categories, same length.',
+
+    rematchCreated: (opponent, links) =>
+        `\u2694\ufe0f *Rematch set.*\n\nSend this to ${opponent}:\n${links.web}\n\n` +
+        'Reply *PLAYCHALLENGE* to set your score first.',
+
+    rematchNothing:
+        "You don't have a finished challenge to run back. Reply *NEW CHALLENGE* to start one.",
 
     board: (rows) =>
         '\ud83d\udcca *So far*\n\n' +
@@ -323,24 +341,29 @@ const STRINGS = {
         'in the browser.\n\n' +
         (startLabel ? `Starts ${startLabel}.\n` : '') +
         `Open the lobby here:\n${link}\n\n` +
-        'Reply *MYCODE* if you need your entry code again.',
+        'Reply *MY CODE* if you need your entry code again.',
+
+    whichChallenge: (list) =>
+        'You have more than one challenge waiting.\n\n' +
+        list.map(c => `\u2022 *${c.code}* \u2014 ${c.from} \u00b7 ${c.categories}`).join('\n') +
+        '\n\nReply *PLAY <code>* \u2014 for example *PLAY ' + (list[0] ? list[0].code : 'ABCD1234') + '*.',
 
     nothingToPlay:
-        "You don't have a challenge waiting. Reply *CHALLENGE* to start one.",
+        "You don't have a challenge waiting. Reply *NEW CHALLENGE* to start one.",
 
     alreadyPlayed:
         "You've already played this one. Waiting on the others to finish.",
 
     playWindowClosed:
         'That challenge is over \u2014 you had 24 hours from accepting it.\n\n' +
-        'Reply *CHALLENGE* to start a new one.',
+        'Reply *NEW CHALLENGE* to start a new one.',
 
     noQuestions:
         "We couldn't build a question set for that challenge. Nothing was charged. " +
-        'Reply *CHALLENGE* to start another one.',
+        'Reply *NEW CHALLENGE* to start another one.',
 
     noChallengeForCode:
-        "You don't have a challenge running. Reply *CHALLENGE* to start one.",
+        "You don't have a challenge running. Reply *NEW CHALLENGE* to start one.",
 
     notAvailable:
         'Challenges are coming soon.'
@@ -423,7 +446,8 @@ class ChallengeChatService {
         if (challenge.prize_amount > 0) lines.push(STRINGS.prizeLine(challenge.prize_amount));
 
         await messagingService.sendMessage(identifier, STRINGS.inviteFound(
-            challenge.creator_username, lines.join('\n'), entryLine
+            challenge.creator_display || challenge.creator_username,
+            lines.join('\n'), entryLine
         ));
 
         return true;
@@ -459,6 +483,12 @@ class ChallengeChatService {
 
         await redis.del(`challenge_pending_accept:${identifier}`);
 
+        // Pin it. PLAYCHALLENGE plays THIS one, not whichever row happens to
+        // sort first.
+        try {
+            await redis.setex(`challenge_active:${identifier}`, 48 * 3600, code);
+        } catch (e) { /* the fallback is the single-pending case below */ }
+
         const deepLinkService = require('./deeplink.service');
         await messagingService.sendMessage(identifier, STRINGS.accepted(
             result.challenge.mode,
@@ -474,6 +504,68 @@ class ChallengeChatService {
         if (!code) return false;
         await redis.del(`challenge_pending_accept:${identifier}`);
         await messagingService.sendMessage(identifier, STRINGS.declined);
+        return true;
+    }
+
+    // ============================================
+    // REMATCH
+    // ============================================
+    // Same settings as the challenge they just played, created only when
+    // somebody asks. A sponsored prize is never carried over \u2014 a rematch that
+    // silently expects another \u20a650,000 is a bill, not a rematch.
+
+    async handleRematch(identifier, user, platform) {
+        const last = await pool.query(`
+            SELECT c.*, me.rank AS my_rank
+            FROM challenge_participants me
+            JOIN challenges c ON c.id = me.challenge_id
+            WHERE me.user_id = $1
+              AND me.status = 'finished'
+              AND c.status = 'completed'
+            ORDER BY c.completed_at DESC NULLS LAST
+            LIMIT 1
+        `, [user.id]);
+
+        const previous = last.rows[0];
+        if (!previous) {
+            await messagingService.sendMessage(identifier, STRINGS.rematchNothing);
+            return true;
+        }
+
+        const opponentRow = await pool.query(`
+            SELECT COALESCE(NULLIF(TRIM(u.full_name), '') || ' (@' || u.username || ')',
+                            '@' || u.username) AS display
+            FROM challenge_participants p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.challenge_id = $1 AND p.user_id <> $2
+            LIMIT 1
+        `, [previous.id, user.id]);
+
+        const created = await challengeService.createChallenge(user, {
+            mode: previous.mode,
+            format: previous.format,
+            maxParticipants: previous.max_participants,
+            categories: previous.categories,
+            entryModel: previous.entry_model === 'free' ? 'free' : 'credit',
+            rounds: 1,
+            prizeAmount: 0,
+            scheduledStartAt: null
+        }, platform);
+
+        if (!created.ok) {
+            await messagingService.sendMessage(identifier,
+                created.errors.join('\n') || 'Could not set up a rematch.');
+            return true;
+        }
+
+        await messagingService.sendMessage(identifier, STRINGS.rematchCreated(
+            opponentRow.rows[0] ? opponentRow.rows[0].display : 'them',
+            created.links
+        ));
+        await messagingService.sendMessage(identifier, STRINGS.invite(
+            this.displayName(user), created.links,
+            this._categoryList(previous.categories), null
+        ));
         return true;
     }
 
@@ -749,7 +841,7 @@ class ChallengeChatService {
         // Sent separately so it can be forwarded on its own, without the
         // challenger's own instructions riding along.
         await messagingService.sendMessage(identifier,
-            STRINGS.invite(user.username, result.links, categoryLabel, startLabel));
+            STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel));
 
         await messagingService.sendMessage(identifier,
             STRINGS.cancellationNotice + '\n\n' + STRINGS.cancelHint);
@@ -797,11 +889,15 @@ class ChallengeChatService {
     // "that challenge is over". The rule is the fix, not another special case:
     // if it is not starting a round, it does not get to reply.
 
-    async handlePlay(identifier, user, platform) {
+    async handlePlay(identifier, user, platform, wantedCode = null) {
         const pending = await pool.query(`
-            SELECT c.*, p.id AS participant_id, p.play_expires_at, p.status AS participant_status
+            SELECT c.*, p.id AS participant_id, p.play_expires_at, p.status AS participant_status,
+                   creator.username AS creator_username,
+                   COALESCE(NULLIF(TRIM(creator.full_name), '') || ' (@' || creator.username || ')',
+                            '@' || creator.username) AS creator_display
             FROM challenge_participants p
             JOIN challenges c ON c.id = p.challenge_id
+            JOIN users creator ON creator.id = c.creator_user_id
             WHERE p.user_id = $1
               AND p.status IN ('joined','playing')
               AND c.status IN ('open','live')
@@ -814,7 +910,7 @@ class ChallengeChatService {
               -- no shared clock and no reveal in a chat thread.
               AND c.mode = 'async'
             ORDER BY p.joined_at DESC NULLS LAST
-            LIMIT 1
+            LIMIT 5
         `, [user.id]);
 
         // Never start a challenge round on top of a live Classic, Practice or
@@ -834,10 +930,34 @@ class ChallengeChatService {
             return false;
         }
 
-        const challenge = pending.rows[0];
+        let challenge = pending.rows[0];
+
+        // WHICH challenge? Picking "whichever you joined last" is how two
+        // players ended up in DIFFERENT challenges during testing: each got a
+        // different question set, and neither challenge ever reached the two
+        // finishers it needs to complete. So the one they most recently
+        // accepted wins, and it is remembered explicitly.
+        const activeCode = wantedCode ||
+            await redis.get(`challenge_active:${identifier}`).catch(() => null);
+        if (activeCode) {
+            const chosen = pending.rows.find(r => r.code === activeCode);
+            if (chosen) challenge = chosen;
+        }
+
+        // More than one waiting and nothing pinned? Ask instead of guessing.
+        if (!activeCode && pending.rows.length > 1) {
+            await messagingService.sendMessage(identifier,
+                STRINGS.whichChallenge(pending.rows.map(r => ({
+                    code: r.code,
+                    from: r.creator_display || ('@' + r.creator_username),
+                    categories: this._categoryList(r.categories)
+                }))));
+            return true;
+        }
+
         if (!challenge) {
             // Nothing startable. Sweep any dead rows so they stop being
-            // considered, then hand PLAY back untouched.
+            // considered, then hand the keyword back untouched.
             await this._expireLapsedRounds(user.id);
             return false;
         }
@@ -925,12 +1045,24 @@ class ChallengeChatService {
     // Practice or a tournament, and this hook has no business here.
 
     async handleAnswer(identifier, message, user, platform) {
+        let state_correction_wanted = false;
         const raw = await redis.get(this._playKey(identifier));
         if (!raw) return false;
 
         const letter = String(message || '').trim().toUpperCase();
         const isFifty = letter === '5050' || letter === '50:50' || letter === '50';
-        if (!isFifty && !['A', 'B', 'C', 'D'].includes(letter)) return false;
+
+        // A player mid-round who fat-fingers "F" was being dropped into the
+        // main menu, which looks like the game crashed. Correct them instead \u2014
+        // but ONLY for input that is obviously an attempted answer, so real
+        // commands still reach their handlers.
+        const looksLikeAnAnswer = /^[A-Z]$/.test(letter) || /^\d{1,4}$/.test(letter);
+        if (!isFifty && !['A', 'B', 'C', 'D'].includes(letter)) {
+            if (!looksLikeAnAnswer) return false;
+            // Guards below still run first; this only fires once we know a
+            // round is genuinely in progress.
+            state_correction_wanted = true;
+        }
 
         // GUARD 1 \u2014 another mode owns this player right now.
         // getActiveSession() already filters challenge_id IS NULL, so a row
@@ -994,6 +1126,11 @@ class ChallengeChatService {
             user_id: user.id
         };
 
+        if (state_correction_wanted) {
+            await messagingService.sendMessage(identifier, STRINGS.badAnswer);
+            return true;
+        }
+
         if (isFifty) {
             const fifty = await challengeRoundService.useFiftyFifty(
                 ctx, round, state.position, user
@@ -1033,6 +1170,7 @@ class ChallengeChatService {
 
     async _finishRound(identifier, challenge, round, user, platform) {
         await redis.del(this._playKey(identifier));
+        await redis.del(`challenge_active:${identifier}`).catch(() => {});
 
         const finished = await challengeRoundService.finishRound(
             challenge,
@@ -1303,6 +1441,17 @@ class ChallengeChatService {
 
     _categoryList(categories) {
         return (categories || []).map(c => this._label(c)).join(', ');
+    }
+
+    /**
+     * "Edidiong Ukporo (@final_obongowo)", or just the handle if we have no
+     * name on file. An invite from a bare handle reads as spam to anyone who
+     * has never used the platform.
+     */
+    displayName(user) {
+        const handle = user.username ? `@${user.username}` : 'A player';
+        const full = (user.full_name || '').trim();
+        return full ? `${full} (${handle})` : handle;
     }
 
     _label(category) {

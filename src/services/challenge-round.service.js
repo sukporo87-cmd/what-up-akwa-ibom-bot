@@ -49,6 +49,11 @@ const auditService = require('./audit.service');
 
 const QUESTIONS_PER_ROUND = 15;
 
+// Classic grants five extra seconds with a 50:50. Challenges break ties on
+// cumulative answer time, so without the same extension a lifeline would make
+// you slower \u2014 a help that costs you the round is not a help.
+const FIFTY_FIFTY_BONUS_MS = 5000;
+
 class ChallengeRoundService {
 
     // ============================================
@@ -381,7 +386,35 @@ class ChallengeRoundService {
             );
         } catch (e) { /* never block a lifeline on the audit trail */ }
 
-        return { ok: true, remaining, removed: wrong.slice(1) };
+        // +5 SECONDS, same as Classic. Using a lifeline costs reading time, and
+        // the tiebreak here is cumulative answer time \u2014 without the extension a
+        // 50:50 would quietly make you slower, which is the opposite of a help.
+        // The clock is server-authoritative, so the extension has to move the
+        // recorded start, not just a number on screen.
+        let newDeadline = null;
+        try {
+            // setQuestionStartTime() always writes Date.now() and takes no
+            // timestamp, so the shifted value goes straight to the same key.
+            // Pushing the START forward by five seconds is what buys the
+            // player five more before the timeout check fires.
+            const started = await antiFraudService.getQuestionStartTime(round.session_key, position);
+            if (started) {
+                await redis.setex(
+                    `question_start:${round.session_key}:q${position}`,
+                    120,
+                    String(started + FIFTY_FIFTY_BONUS_MS)
+                );
+                newDeadline = started + FIFTY_FIFTY_BONUS_MS +
+                    challengeService.timeoutFor(challenge.speed_level);
+            }
+        } catch (e) {
+            logger.error('Could not extend the clock for 50:50:', e.message);
+        }
+
+        return {
+            ok: true, remaining, removed: wrong.slice(1),
+            bonusMs: FIFTY_FIFTY_BONUS_MS, expiresAt: newDeadline
+        };
     }
 
     // ============================================

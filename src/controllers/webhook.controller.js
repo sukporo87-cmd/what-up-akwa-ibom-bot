@@ -194,41 +194,66 @@ class WebhookController {
         }
       }
 
-      // MYCODE, not CODE: CODE is already the promo-code keyword in this
-      // controller (two call sites below), and a challenge reusing it would
-      // either shadow promo codes or be shadowed by them.
-      // CANCELCHALLENGE, not CANCEL: CANCEL is a common word and would shadow
-      // whatever else a player might be in the middle of.
-      if (input === 'CANCELCHALLENGE') {
+      // CHALLENGE KEYWORDS ARE UNIQUE AND SPACE-TOLERANT.
+      //
+      // Every challenge verb ends in CHALLENGE, so none can collide with a
+      // word the rest of the app already owns \u2014 PLAY, RESET and A/B/C/D each
+      // took a game mode down when challenges borrowed them.
+      //
+      // Spaces, hyphens and underscores are stripped, so "cancel challenge",
+      // "Cancel-Challenge" and "CANCELCHALLENGE" are one input. People type
+      // the space; the parser should not care.
+      const chInput = input.replace(/[\s_-]+/g, '');
+
+      if (chInput === 'REMATCH' || chInput === 'REMATCHCHALLENGE') {
+        const rematchUser = await userService.getUserByPhone(phone);
+        if (rematchUser && await challengeChatService.handleRematch(phone, rematchUser, incomingPlatform)) {
+          return;
+        }
+      }
+
+      if (chInput === 'CANCELCHALLENGE') {
         const cancelUser = await userService.getUserByPhone(phone);
         if (cancelUser && await challengeChatService.handleCancel(phone, cancelUser, incomingPlatform)) {
           return;
         }
       }
 
-      if (input === 'MYCODE') {
+      // MYCODE, not CODE: CODE is already the promo-code keyword in this file.
+      if (chInput === 'MYCODE' || chInput === 'CHALLENGECODE') {
         const codeUser = await userService.getUserByPhone(phone);
         if (codeUser && await challengeChatService.handleCodeRequest(phone, codeUser, incomingPlatform)) {
           return;
         }
       }
 
-      if (input === 'PLAY') {
+      // PLAYCHALLENGE, not PLAY. web-play's startMode() sends PLAY to open
+      // Classic, Practice and Tournaments; borrowing it took all three down.
+      // An optional code picks one when several are waiting.
+      const playMatch = input.match(/^(?:PLAY[\s_-]*CHALLENGE)[\s_-]+([A-Z0-9]{8})$/);
+      if (chInput === 'PLAYCHALLENGE' || playMatch) {
         const playUser = await userService.getUserByPhone(phone);
-        if (playUser && await challengeChatService.handlePlay(phone, playUser, incomingPlatform)) {
+        if (playUser && await challengeChatService.handlePlay(
+              phone, playUser, incomingPlatform, playMatch ? playMatch[1] : null)) {
           return;
         }
       }
 
-      if (input === 'ACCEPT' || input === 'NO' || input === 'CHALLENGE') {
+      // ACCEPT and NO were far too generic \u2014 "no" answers half the prompts in
+      // this bot. Every challenge verb now ends in CHALLENGE.
+      if (chInput === 'ACCEPTCHALLENGE' || chInput === 'DECLINECHALLENGE' ||
+          chInput === 'CHALLENGE' || chInput === 'NEWCHALLENGE') {
         // Deliberately loud. This block silently not firing is indistinguishable
         // from the file not being deployed, and the outer catch reports neither.
         const chatUser = await userService.getUserByPhone(phone);
-        logger.info(`\u2694\ufe0f CHALLENGE-HOOK input=${input} platform=${incomingPlatform} user=${chatUser ? chatUser.id : 'NONE'}`);
+        logger.info(`\u2694\ufe0f CHALLENGE-HOOK input=${chInput} platform=${incomingPlatform} user=${chatUser ? chatUser.id : 'NONE'}`);
         if (chatUser) {
-          if (input === 'ACCEPT' && await challengeChatService.handleAccept(phone, chatUser, incomingPlatform)) return;
-          if (input === 'NO' && await challengeChatService.handleDecline(phone)) return;
-          if (input === 'CHALLENGE' && await challengeChatService.start(phone, incomingPlatform)) return;
+          if (chInput === 'ACCEPTCHALLENGE' &&
+              await challengeChatService.handleAccept(phone, chatUser, incomingPlatform)) return;
+          if (chInput === 'DECLINECHALLENGE' &&
+              await challengeChatService.handleDecline(phone)) return;
+          if ((chInput === 'CHALLENGE' || chInput === 'NEWCHALLENGE') &&
+              await challengeChatService.start(phone, incomingPlatform)) return;
         }
       }
 

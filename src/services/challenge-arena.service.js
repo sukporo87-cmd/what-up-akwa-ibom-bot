@@ -48,8 +48,9 @@ const ANSWER_GRACE_MS = 1500;
 // short enough that fifteen of them do not become a coffee break.
 const REVEAL_PAUSE_MS = 4000;
 
-// The lobby opens this long before the scheduled start.
-const LOBBY_OPEN_MS = 10 * 60 * 1000;
+// The lobby opens this long before the scheduled start. Five minutes:
+// ten was long enough that the first arrival sat looking at an empty room.
+const LOBBY_OPEN_MS = 5 * 60 * 1000;
 
 // If the initiator is absent or silent, start anyway rather than hanging.
 // Sixty seconds is long enough for a live initiator to see the prompt and
