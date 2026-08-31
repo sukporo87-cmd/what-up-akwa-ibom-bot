@@ -268,7 +268,40 @@ class ChallengeArenaService {
 
     async startMatch(challenge) {
         const state = this.matches.get(challenge.id) || { challengeId: challenge.id };
-        const players = gameEvents.roomMembers(challenge.id);
+
+        // ONLY PLAYERS WITH A LIVE CONNECTION.
+        //
+        // Room membership is set when someone POSTs to the lobby; it says
+        // nothing about whether their event stream is open. A member with no
+        // stream receives no questions, answers nothing, and is recorded as
+        // fifteen timeouts \u2014 which then TIED on score with everyone else who
+        // struggled and won the tiebreak on time. Somebody who never saw a
+        // question was declared the winner.
+        const members = gameEvents.roomMembers(challenge.id);
+        const players = members.filter(id => gameEvents.isConnected(id));
+
+        if (players.length < members.length) {
+            logger.warn(
+                `Challenge ${challenge.code}: ${members.length - players.length} lobby ` +
+                `member(s) had no open stream and were left out of the match`
+            );
+        }
+
+        if (players.length < 2) {
+            gameEvents.emitRoom(challenge.id, 'challenge.abandoned', {
+                challengeId: challenge.id, reason: 'not_enough_players'
+            });
+            await this._expire(challenge);
+            return { ok: false, reason: 'not_enough_connected' };
+        }
+
+        // The screen must change the moment the clock hits zero. Building the
+        // rounds means a database round trip per player, and during that gap
+        // the lobby just sat there \u2014 long enough that a player nearly closed
+        // the tab before the first question appeared.
+        gameEvents.emitRoom(challenge.id, 'challenge.starting', {
+            challengeId: challenge.id, players: players.length
+        });
 
         const set = await challengeRoundService.ensureQuestionSet(challenge, 1);
         if (!set.ok) {
@@ -362,16 +395,46 @@ class ChallengeArenaService {
 
     async submitAnswer(challenge, user, position, chosen) {
         const state = this.matches.get(challenge.id);
-        if (!state || state.phase !== 'playing') return { ok: false, reason: 'not_playing' };
-        if (position !== state.position) return { ok: false, reason: 'wrong_question' };
+        // Every refusal is logged. Each of these silently discarded an answer
+        // and the player only found out at the reveal, by which point it looked
+        // like they had timed out.
+        if (!state || state.phase !== 'playing') {
+            logger.warn(`Arena answer refused (not_playing): challenge=${challenge.code} user=${user.id}`);
+            return { ok: false, reason: 'not_playing' };
+        }
+        if (position !== state.position) {
+            logger.warn(
+                `Arena answer refused (wrong_question): challenge=${challenge.code} ` +
+                `user=${user.id} sent=${position} current=${state.position}`
+            );
+            return { ok: false, reason: 'wrong_question' };
+        }
         if (state.locked.has(user.id)) return { ok: false, reason: 'already_locked' };
 
         const round = state.rounds.get(user.id);
-        if (!round) return { ok: false, reason: 'not_in_match' };
+        if (!round) {
+            logger.warn(
+                `Arena answer refused (not_in_match): challenge=${challenge.code} user=${user.id} ` +
+                `\u2014 in the room but never enrolled, so their answers cannot record`
+            );
+            return { ok: false, reason: 'not_in_match' };
+        }
 
         const result = await challengeRoundService.submitAnswer(
             challenge, round, position, chosen, user
         );
+
+        // Logged with the outcome. An arena answer that quietly fails to record
+        // is indistinguishable from a timeout afterwards \u2014 a whole round came
+        // back as fifteen timeouts for a player who answered every question,
+        // and there was nothing in the logs to say why.
+        logger.info(
+            `Arena answer: challenge=${challenge.code} user=${user.id} q=${position} ` +
+            `chose=${chosen} ok=${result.ok}` +
+            (result.ok ? ` correct=${result.isCorrect} ms=${result.answerMs}`
+                       : ` reason=${result.reason}`)
+        );
+
         if (!result.ok) return result;
 
         state.locked.set(user.id, true);

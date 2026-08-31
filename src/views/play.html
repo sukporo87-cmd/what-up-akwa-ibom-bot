@@ -706,18 +706,24 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
          Username identifies, the code proves ownership. The session it mints
          works on THIS challenge only. -->
     <div id="chalAuth" style="display:none;margin-top:18px">
-      <div class="who">Play as your chat account</div>
+      <div class="who">Play as your WhatsApp or Telegram account</div>
       <div class="msg" id="chalAuthNote">
-        Enter the username you use on WhatsApp or Telegram. We'll send a code there.
+        Enter your username. If you already have a code, put it in too.
       </div>
+      <!-- BOTH FIELDS, ALWAYS.
+           The two-step version forced everybody down the request-a-code path,
+           including the challenger who was handed a code the moment they
+           created the challenge. Their code worked perfectly well; there was
+           just nowhere to type it, so they had to request a second one and the
+           first was pointless. -->
       <input id="chalAuthUser" placeholder="your username" autocomplete="off"
              style="width:100%;margin-top:10px">
-      <div id="chalAuthStep2" style="display:none">
-        <input id="chalAuthCode" placeholder="6-digit code" inputmode="numeric"
-               maxlength="6" autocomplete="one-time-code" style="width:100%;margin-top:10px">
-      </div>
+      <input id="chalAuthCode" placeholder="6-digit code (if you have one)" inputmode="numeric"
+             maxlength="6" autocomplete="one-time-code" style="width:100%;margin-top:10px">
+      <div id="chalAuthStep2" style="display:none"></div>
       <div class="cardActs">
-        <button class="ghost" id="chalAuthBtn" onclick="chalAuthSubmit()">Send me a code</button>
+        <button class="ghost" id="chalAuthBtn" onclick="chalAuthSubmit()">Play</button>
+        <button class="ghost" id="chalAuthSend" onclick="chalAuthRequest()">Send me a code</button>
       </div>
     </div>
 
@@ -933,16 +939,33 @@ function showChallengeInvite(c){
               : c.entryModel==='prepaid' ? 'Your entry is already paid for.'
               :                            'Costs one of your credits.';
 
-  $('chalFrom').textContent='@'+c.createdBy+' challenged you';
+  $('chalFrom').textContent = c.isInitiator
+    ? 'Your challenge'
+    : ('@' + c.createdBy + ' challenged you');
   $('chalMeta').textContent=cats+' \u00b7 15 questions \u00b7 10 seconds each';
   $('chalPrize').textContent=c.prizeAmount>0?('\u20a6'+Number(c.prizeAmount).toLocaleString('en-NG')+' prize'):'';
   $('chalPrize').style.display=c.prizeAmount>0?'block':'none';
 
+  /* Live and anytime are different games and need different words. There is
+     no pace to set in a live challenge \u2014 everyone answers the same question at
+     the same moment \u2014 so telling the initiator to "set the pace" described a
+     mode they were not in. */
+  const live = c.mode === 'live';
+  const startsWhen = c.scheduledStartAt
+    ? new Date(c.scheduledStartAt).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})
+    : null;
+
   const note = blocked
     || (!identified ? 'Enter your username and code to play as your WhatsApp or Telegram account.' : null)
     || (full ? 'This challenge is full \u2014 someone got there first.' : null)
-    || (c.isInitiator ? 'Your challenge. Play your round to set the pace.' : null)
-    || (c.joined ? "You're in. Play your round." : entry);
+    || (live
+        ? (c.isInitiator
+            ? ('Everyone plays at once' + (startsWhen ? ', starting ' + startsWhen : '') +
+               '. Open the lobby and wait for the others.')
+            : ('You\u2019re in. Everyone plays at once' + (startsWhen ? ', starting ' + startsWhen : '') +
+               '. Open the lobby when it opens, 5 minutes before.'))
+        : (c.isInitiator ? 'Your challenge. Play your round to set the pace \u2014 they race it.' : null)
+           || (c.joined ? "You're in. Play your round." : entry));
   $('chalNote').textContent=note;
   /* Signed out: offer the chat-account route instead of a dead Accept button.
      Someone with no web account can still play as their WhatsApp identity. */
@@ -952,7 +975,7 @@ function showChallengeInvite(c){
      startRound would materialise the set and begin immediately for whoever
      pressed first, skipping the lobby, the shared clock and the reveal — the
      entire point of the arena. */
-  const live = c.mode === 'live';
+  // `live` is already in scope from the copy block above.
   $('chalAccept').textContent = c.joined ? (live?'Enter lobby':'Play now') : 'Accept';
   $('chalAccept').onclick = c.joined
     ? (live ? (()=>joinArena(c.code)) : (()=>startChallenge(c.code)))
@@ -997,7 +1020,7 @@ async function joinArena(code){
     const d=await r.json();
     if(!d.success){
       $('chalNote').textContent={
-        too_early:'The lobby opens 10 minutes before the start time.',
+        too_early:'The lobby opens 5 minutes before the start time — come back then.',
         already_started:'This one has already started — you can\'t join midway.',
         not_a_participant:'You need to accept this challenge first.',
         not_live:'This is an anytime challenge, not a live one.'
@@ -1046,6 +1069,19 @@ async function leaveArena(){
   view('vLobby'); refresh();
 }
 
+/* Fired the instant the clock hits zero, before the rounds are built. Without
+   it the lobby sat unchanged through a database round trip per player \u2014 long
+   enough that someone nearly closed the tab. */
+function arenaStarting(d){
+  arenaStopClock();
+  $('alSecs').textContent='GO';
+  $('alNote').textContent='Starting\u2026';
+  $('alWho').textContent=(d.players||2)+' players. First question coming up\u2026';
+  $('alExtend').style.display='none';
+  $('alStart').style.display='none';
+  sfx.lock();
+}
+
 function arenaStarted(d){
   track('challenge_round_started',{platform:'web',mode:'live',players:d.players});
   arena.total=d.totalQuestions||15;
@@ -1083,11 +1119,23 @@ async function arenaAnswer(letter){
   [...$('aqOpts').children].forEach(b=>{ b.disabled=true; });
   const chosen=$('aqOpt'+letter); if(chosen)chosen.classList.add('picked');
   try{
-    await fetch('/challenge/'+arena.code+'/arena/answer',{
+    const r=await fetch('/challenge/'+arena.code+'/arena/answer',{
       method:'POST',headers:H(),
       body:JSON.stringify({position:arena.position,answer:letter})
     });
-  }catch(e){}
+    const d=await r.json();
+    /* A refused answer used to look identical to a timeout at the reveal. Say
+       so, and let them try again if the question is still open. */
+    if(!d.success){
+      $('aqVerdict').textContent='That did not register — tap again.';
+      arena.locked=false;
+      [...$('aqOpts').children].forEach(b=>{ b.disabled=false; });
+    }
+  }catch(e){
+    $('aqVerdict').textContent='Connection hiccup — tap again.';
+    arena.locked=false;
+    [...$('aqOpts').children].forEach(b=>{ b.disabled=false; });
+  }
 }
 
 /* Locked in. Deliberately says nothing about whether it was right — in a
@@ -1548,6 +1596,31 @@ function chalAuthShow(show){
   $('chalAuthBtn').textContent='Send me a code';
 }
 
+/* Asks for a code to be sent. Split out so it is reachable directly \u2014 the
+   challenger already has one and should never be forced through this. */
+async function chalAuthRequest(){
+  const code=$('chalCode').value;
+  const username=$('chalAuthUser').value.trim();
+  if(!username){ $('chalAuthNote').textContent='Enter your username first.'; return; }
+  $('chalAuthSend').disabled=true;
+  try{
+    const r=await fetch('/challenge/'+code+'/auth/request',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:username})
+    });
+    const d=await r.json();
+    /* Deliberately the same message whether or not that username exists.
+       Anything else turns this box into a way to test which usernames are
+       real, and usernames are printed on every result card. */
+    $('chalAuthNote').textContent = !d.success
+      ? (d.reason==='rate_limited' ? 'Too many attempts. Try again in an hour.'
+                                   : 'Could not send a code right now.')
+      : (d.hint ? 'Code sent to your '+d.hint+'. Enter it above.'
+                : 'If that username exists, a code has been sent to it.');
+  }catch(e){ $('chalAuthNote').textContent='Could not send a code right now.'; }
+  finally{ $('chalAuthSend').disabled=false; }
+}
+
 async function chalAuthSubmit(){
   const code=$('chalCode').value;
   const username=$('chalAuthUser').value.trim();
@@ -1555,28 +1628,11 @@ async function chalAuthSubmit(){
   $('chalAuthBtn').disabled=true;
 
   try{
-    if(chalAuthStage==='username'){
-      const r=await fetch('/challenge/'+code+'/auth/request',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({username:username})
-      });
-      const d=await r.json();
-      if(!d.success){
-        $('chalAuthNote').textContent = d.reason==='rate_limited'
-          ? 'Too many attempts. Try again in an hour.'
-          : 'Could not send a code right now.';
-        return;
-      }
-      /* Deliberately the same message whether or not that username exists.
-         Anything else turns this box into a way to test which usernames are
-         real, and usernames are printed on every result card. */
-      $('chalAuthNote').textContent = d.hint
-        ? 'Code sent to your '+d.hint+'. Enter it below.'
-        : 'If that username exists, a code has been sent to it. Enter it below.';
-      $('chalAuthStep2').style.display='block';
-      $('chalAuthBtn').textContent='Play';
-      chalAuthStage='code';
-      return;
+    /* No code typed? Then they need one sent. A code they already have \u2014 the
+       one handed to the challenger at creation \u2014 goes straight through. */
+    if(!$('chalAuthCode').value.trim()){
+      $('chalAuthBtn').disabled=false;
+      return chalAuthRequest();
     }
 
     const entered=$('chalAuthCode').value.trim();
@@ -1596,10 +1652,15 @@ async function chalAuthSubmit(){
       return;
     }
 
-    /* Held for this page only, and never written to localStorage as the login
-       token \u2014 a scoped session is not a login and must not outlive the tab. */
+    /* A scoped session is not a login, so it never becomes wut_token \u2014 but it
+       DID have to survive a refresh and it DID have to open the event stream.
+       Without the stream the player gets no roster, no questions and nothing
+       at zero: the challenger sat on "waiting for players" through the whole
+       countdown and was bounced to the login screen when he reloaded. */
     token=d.token;
+    try{ sessionStorage.setItem('wut_chal_token', d.token); }catch(e){}
     chalAuthShow(false);
+    stream();
     const info=await(await fetch('/challenge/'+code,{headers:H()})).json();
     if(info.success) showChallengeInvite(info.challenge);
   }catch(e){
@@ -1959,6 +2020,7 @@ function stream(){
   es.addEventListener('challenge.lobby',      e=>arenaLobby(JSON.parse(e.data)));
   es.addEventListener('challenge.extended',   e=>arenaExtended(JSON.parse(e.data)));
   es.addEventListener('challenge.wait_or_start', e=>arenaAskInitiator(JSON.parse(e.data)));
+  es.addEventListener('challenge.starting',   e=>arenaStarting(JSON.parse(e.data)));
   es.addEventListener('challenge.started',    e=>arenaStarted(JSON.parse(e.data)));
   es.addEventListener('challenge.question',   e=>arenaQuestion(JSON.parse(e.data)));
   es.addEventListener('challenge.locked',     ()=>arenaLocked());
@@ -3462,6 +3524,18 @@ function closeOver(){
      has to come first: it is the thing that explains what the link is AND
      carries the username + code form. */
   if(!token && pendingChallenge()){
+    /* Restore a challenge-scoped session across a refresh. Kept in
+       sessionStorage, not localStorage: it dies with the tab, which is the
+       lifetime a scoped session should have. */
+    try{
+      const saved=sessionStorage.getItem('wut_chal_token');
+      if(saved){
+        token=saved;
+        const me=await(await fetch('/web/auth/me',{headers:H()})).json();
+        if(me.authenticated){ stream(); }
+        else { token=null; sessionStorage.removeItem('wut_chal_token'); }
+      }
+    }catch(e){ token=null; }
     try{ await resumeChallenge(); }catch(e){}
   }
 })();
