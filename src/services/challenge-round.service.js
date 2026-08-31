@@ -576,6 +576,20 @@ class ChallengeRoundService {
 
         const completion = await this.checkCompletion(challenge);
 
+        // NOTIFY FROM HERE, not from the chat surface. Whoever finishes last
+        // completes the challenge, and everyone else has to hear about it \u2014
+        // whichever platform that last player happened to be on. This lived in
+        // the chat _finishRound, so a web player finishing second left the
+        // chat player waiting on "we wait for them to play" indefinitely.
+        if (completion && completion.complete) {
+            try {
+                const challengeChatService = require('./challenge-chat.service');
+                await challengeChatService.notifyCompletion(challenge, user.id);
+            } catch (error) {
+                logger.error('Could not notify challenge completion:', error.message);
+            }
+        }
+
         return { ok: true, correct, totalMs, completion };
     }
 

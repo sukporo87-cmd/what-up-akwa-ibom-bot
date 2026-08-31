@@ -843,6 +843,31 @@ class ChallengeChatService {
         await messagingService.sendMessage(identifier,
             STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel));
 
+        // WEB NEEDS THE INVITE AS DATA, not as chat text.
+        //
+        // On WhatsApp the invite is a message you long-press and forward. On
+        // web it arrived as transient chat bubbles with nothing to copy, so a
+        // web player could create a challenge and then had no way to send it.
+        // This pushes the real thing \u2014 links and text \u2014 to the client, which
+        // renders a share screen with Copy and Share buttons.
+        if (platform === 'web') {
+            try {
+                const gameEvents = require('./game-events.service');
+                gameEvents.emit(user.id, 'challenge.created', {
+                    code: result.challenge.code,
+                    links: result.links,
+                    categories: categoryLabel,
+                    startLabel,
+                    inviteText: STRINGS.invite(
+                        this.displayName(user), result.links, categoryLabel, startLabel
+                    ),
+                    shareable: result.shareable
+                });
+            } catch (error) {
+                logger.error('Could not push challenge.created to web:', error.message);
+            }
+        }
+
         await messagingService.sendMessage(identifier,
             STRINGS.cancellationNotice + '\n\n' + STRINGS.cancelHint);
 
@@ -1210,10 +1235,9 @@ class ChallengeChatService {
         // card is written so they can.
         await this._sendCard(identifier, challenge);
 
-        // AND to everyone else who already finished. The initiator plays
-        // first, so by the time the challenge completes they have been sitting
-        // with "we'll let you know" for hours \u2014 and were never told.
-        await this._notifyOtherParticipants(challenge, user, board);
+        // The others are notified by challengeRoundService.finishRound, which
+        // fires for web play too. Doing it here as well would send the card
+        // twice whenever the last finisher happened to be on chat.
         return true;
     }
 
@@ -1224,6 +1248,30 @@ class ChallengeChatService {
      * result is already on screen. `phone_number` starting with `web_` is how
      * this codebase marks a web account.
      */
+    /**
+     * Tells every OTHER finished participant that the challenge is done.
+     *
+     * PUBLIC and surface-agnostic on purpose. It used to be called only from
+     * the chat _finishRound, so when the last player finished on WEB nobody
+     * else heard anything \u2014 the challenger sat on "we wait for them to play"
+     * forever while the other player collected the card.
+     */
+    async notifyCompletion(challenge, finisherUserId) {
+        try {
+            const finisher = await pool.query(
+                `SELECT id, username FROM users WHERE id = $1`, [finisherUserId]
+            );
+            if (!finisher.rows[0]) return;
+
+            const challengeRoundService = require('./challenge-round.service');
+            const board = await challengeRoundService.getBoard(challenge);
+
+            await this._notifyOtherParticipants(challenge, finisher.rows[0], board);
+        } catch (error) {
+            logger.error('Could not notify challenge completion:', error.message);
+        }
+    }
+
     async _notifyOtherParticipants(challenge, finisher, board) {
         try {
             const others = await pool.query(`

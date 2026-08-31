@@ -600,6 +600,34 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
   </section>
 
+  <!-- ============ CHALLENGE CREATED / SHARE ============ -->
+  <!-- On WhatsApp the invite is a message you forward. On web it was arriving
+       as transient chat bubbles with nothing to copy, so a web player could
+       create a challenge and then had no way to send it. -->
+  <section class="view" id="vChalShare">
+    <div class="bar">
+      <button class="back" onclick="openChallengeHub()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
+    </div>
+
+    <div class="hero" style="padding:18px 0 12px">
+      <span class="fig" style="font-size:24px">Challenge ready</span>
+      <p id="csSub"></p>
+    </div>
+
+    <div class="msg" id="csInvite" style="white-space:pre-wrap;font-size:14px"></div>
+
+    <div class="cardActs">
+      <button class="ghost" onclick="copyInvite()">Copy invite</button>
+      <button class="ghost" onclick="shareInvite()">Share</button>
+    </div>
+
+    <div class="cardActs" style="margin-top:4px">
+      <button class="ghost" id="csPlay" onclick="csPlayNow()">Play my round</button>
+      <button class="ghost" id="csCancel" onclick="csCancel()">Cancel challenge</button>
+    </div>
+  </section>
+
   <!-- ============ CHALLENGE HUB ============ -->
   <!-- Web players had nowhere to see a challenge once they navigated away:
        no list, no way back into one waiting on them, and the result card
@@ -642,6 +670,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="cardActs">
       <button class="ghost" id="cdPlay" onclick="cdPlayNow()" style="display:none">Play my round</button>
+      <!-- Only shown for a challenge YOU created that nobody has joined. The
+           rule already existed server-side; web players simply had no way to
+           reach it. -->
+      <button class="ghost" id="cdCancel" onclick="cdCancel()" style="display:none">Cancel</button>
+      <button class="ghost" id="cdInvite" onclick="cdReshare()" style="display:none">Copy invite</button>
       <button class="ghost" id="cdShare" onclick="cdShare()" style="display:none">Share</button>
       <a class="ghost" id="cdDownload" style="display:none" download="whatsup-trivia-challenge.png">Save image</a>
     </div>
@@ -1161,6 +1194,71 @@ function chalRenderQuestion(q){
   chalStartClock(q.timeoutMs||10000);
 }
 
+/* ---- CHALLENGE CREATED: the invite, as something you can actually send ---- */
+let csState=null;
+
+function showChallengeShare(d){
+  csState=d;
+  chal.code=d.code;
+  chalIsLive=!!d.startLabel;
+  $('csSub').textContent=d.categories+(d.startLabel?(' \u00b7 starts '+d.startLabel):'');
+  $('csInvite').textContent=d.inviteText||'';
+  /* A sponsored challenge is not shareable until the money settles, so the
+     buttons must not offer a link that would be a dead end. */
+  $('csPlay').style.display=d.startLabel?'none':'inline-block';
+  closeAsk();
+  view('vChalShare');
+  sfx.lock();
+}
+
+async function copyInvite(){
+  if(!csState)return;
+  try{
+    await navigator.clipboard.writeText(csState.inviteText);
+    $('csSub').textContent='Copied \u2014 paste it to whoever you want to beat.';
+    sfx.tap();
+  }catch(e){
+    /* Clipboard is blocked in some in-app browsers. Select the text instead so
+       a long-press copy still works. */
+    const r=document.createRange(); r.selectNodeContents($('csInvite'));
+    const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $('csSub').textContent='Selected \u2014 long-press to copy.';
+  }
+}
+
+async function shareInvite(){
+  if(!csState)return;
+  try{
+    if(navigator.share){
+      await navigator.share({title:"What's Up Trivia",text:csState.inviteText});
+      track('challenge_invite_shared',{platform:'web'});
+      return;
+    }
+  }catch(e){}
+  copyInvite();
+}
+
+function csPlayNow(){
+  if(!csState)return;
+  return chalIsLive?joinArena(csState.code):startChallenge(csState.code);
+}
+
+async function csCancel(){
+  if(!csState)return;
+  if(!confirm('Cancel this challenge? You can only do this before anyone joins.'))return;
+  try{
+    const r=await fetch('/challenge/'+csState.code+'/cancel',{method:'POST',headers:H()});
+    const d=await r.json();
+    if(d.success){ $('csSub').textContent='Cancelled.'; $('csCancel').style.display='none'; return; }
+    $('csSub').textContent={
+      someone_joined:'Someone has already joined \u2014 it has to run its course now.',
+      already_running:'This one has already started.',
+      prize_paid:'The prize has settled, so it cannot be cancelled.',
+      not_yours:'Only the person who created it can cancel it.'
+    }[d.reason]||'Could not cancel that challenge.';
+  }catch(e){ $('csSub').textContent='Could not cancel that challenge.'; }
+}
+
 /* ---- CHALLENGE HUB ---------------------------------------------------
    The list a web player never had. Chat players scroll their thread to find
    a challenge; this is the equivalent, and it is also where result cards
@@ -1226,6 +1324,11 @@ async function openChallengeDetail(code){
   $('cdShare').style.display='none';
   $('cdDownload').style.display='none';
   $('cdPlay').style.display=c.waitingForYou?'inline-block':'none';
+  /* Cancellable only while it is yours, open, and nobody else has joined \u2014
+     the same rule cancelChallenge() enforces server-side. */
+  const cancellable=c.isMine && c.status==='open' && c.participants<=1;
+  $('cdCancel').style.display=cancellable?'inline-block':'none';
+  $('cdInvite').style.display=(c.isMine && c.status==='open')?'inline-block':'none';
   chalIsLive=c.mode==='live';
 
   $('cdNote').textContent = c.waitingForYou
@@ -1265,6 +1368,40 @@ function cdPlayNow(){
 }
 
 function cdShare(){ return shareChallengeCard(); }
+
+async function cdCancel(){
+  if(!confirm('Cancel this challenge? Only possible before anyone joins.'))return;
+  try{
+    const r=await fetch('/challenge/'+chal.code+'/cancel',{method:'POST',headers:H()});
+    const d=await r.json();
+    $('cdNote').textContent = d.success ? 'Cancelled.' : ({
+      someone_joined:'Someone has already joined \u2014 it has to run its course now.',
+      already_running:'This one has already started.',
+      prize_paid:'The prize has settled, so it cannot be cancelled.',
+      not_yours:'Only the person who created it can cancel it.'
+    }[d.reason]||'Could not cancel that challenge.');
+    if(d.success){ $('cdCancel').style.display='none'; openChallengeHub(); }
+  }catch(e){ $('cdNote').textContent='Could not cancel that challenge.'; }
+}
+
+/* Re-fetch the invite so it can be sent again \u2014 people lose the message. */
+async function cdReshare(){
+  try{
+    const r=await fetch('/challenge/'+chal.code);
+    const d=await r.json();
+    if(!d.success)return;
+    const url=location.origin+'/c/'+chal.code;
+    const text='\u2694\ufe0f '+(d.challenge.createdBy?('@'+d.challenge.createdBy):'Someone')+
+      " has challenged you to a game of trivia on What's Up Trivia!\n\n"+
+      (d.challenge.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ')+
+      '\n15 questions \u00b7 10 seconds each\n\n'+url;
+    try{
+      if(navigator.share){ await navigator.share({title:"What's Up Trivia",text:text}); return; }
+      await navigator.clipboard.writeText(text);
+      $('cdNote').textContent='Invite copied.';
+    }catch(e){ $('cdNote').textContent=text; }
+  }catch(e){}
+}
 
 /* Starts the creation flow. It is the identical state machine chat uses, so
    the web client just sends the same keyword the bot would receive. */
@@ -1818,6 +1955,7 @@ function stream(){
      it never asks the server what time it is: challenge.question carries an
      absolute expiresAt and the countdown runs locally from there.
      --------------------------------------------------------------------- */
+  es.addEventListener('challenge.created',    e=>showChallengeShare(JSON.parse(e.data)));
   es.addEventListener('challenge.lobby',      e=>arenaLobby(JSON.parse(e.data)));
   es.addEventListener('challenge.extended',   e=>arenaExtended(JSON.parse(e.data)));
   es.addEventListener('challenge.wait_or_start', e=>arenaAskInitiator(JSON.parse(e.data)));
@@ -1850,7 +1988,7 @@ function flushText(){
 /* Screens that own the viewport and must never be navigated away from by a
    passing state event. Anything added here later needs to go in this list. */
 function onDedicatedScreen(){
-  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame','vChal','vChalPlay','vChalBoard','vArenaLobby','vArena','vChalHub','vChalDetail']
+  return ['vLobby','vBuy','vCard','vPay','vStats','vPhoto','vCap','vReady','vGame','vChal','vChalPlay','vChalBoard','vArenaLobby','vArena','vChalHub','vChalDetail','vChalShare']
     .some(id=>{ const el=document.getElementById(id); return el && el.classList.contains('on'); })
     || $('over').classList.contains('on')
     || $('ask').classList.contains('on');
@@ -2001,8 +2139,20 @@ function ask(text, actions){
 
   // Everything before the first numbered option is context; a trailing
   // "Reply with your choice" is a chat instruction that doesn't apply here.
-  const firstOpt = lines.findIndex(l=>
-    /^\s*(?:(?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F}|[1-9][0-9]?[.)\-:])/u.test(l));
+  // Ask the PARSER where the options start rather than guessing with a second
+  // regex. The old pattern needed "1." or "1)" and the challenge prompts read
+  // "1 — Anytime", so no option line was found and the entire message \u2014
+  // options and "Reply 1 or 2" included \u2014 was dumped above the buttons as
+  // body text. parseOpts already knows; use its answer.
+  let firstOpt = -1;
+  if (opts.length) {
+    const firstKey = String(opts[0].k).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    firstOpt = lines.findIndex(l => new RegExp('^\\s*' + firstKey + '(?![0-9])').test(l));
+  }
+  if (firstOpt === -1) {
+    firstOpt = lines.findIndex(l=>
+      /^\s*(?:(?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F}|[1-9][0-9]?[.)\-:])/u.test(l));
+  }
   const head = (firstOpt === -1 ? lines : lines.slice(0, firstOpt)).filter(l=>l.trim());
 
   $('askTitle').textContent  = (head[0] || 'One moment').trim();
@@ -3304,6 +3454,16 @@ function closeOver(){
     const d=await(await fetch('/web/auth/me',{headers:H()})).json();
     if(d.authenticated)enter(d.user); else {localStorage.removeItem('wut_token');token=null;}
   }catch(e){}
+
+  /* An invite opened by someone who is NOT signed in.
+     resumeChallenge() used to run only from enter(), i.e. after login \u2014 so a
+     WhatsApp or Telegram player following their link met the web signup screen
+     and had nowhere to enter the code we had just sent them. The invite screen
+     has to come first: it is the thing that explains what the link is AND
+     carries the username + code form. */
+  if(!token && pendingChallenge()){
+    try{ await resumeChallenge(); }catch(e){}
+  }
 })();
 </script>
 </body>
