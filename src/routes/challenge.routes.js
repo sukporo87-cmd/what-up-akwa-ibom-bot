@@ -349,6 +349,45 @@ router.post('/:code/answer', requireChallengeAuth, requireChallengesEnabled, asy
 });
 
 // ============================================
+// POST /challenge/:code/fifty-fifty
+// ============================================
+// The engine has had useFiftyFifty() since the lifeline was built and chat
+// could reach it with "5050", but there was no HTTP route \u2014 so web players
+// had no lifeline at all, in either mode.
+router.post('/:code/fifty-fifty', requireChallengeAuth, requireChallengesEnabled, async (req, res) => {
+    try {
+        const code = String(req.params.code || '').toUpperCase();
+        const position = parseInt(req.body && req.body.position, 10);
+        if (!(position >= 1 && position <= 15)) {
+            return res.status(400).json({ success: false, reason: 'bad_position' });
+        }
+
+        const challenge = await challengeService.getByCode(code);
+        if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
+
+        const round = await challengeService.getRoundFor(challenge.id, req.webUser.id);
+        if (!round) return res.status(409).json({ success: false, reason: 'no_round' });
+
+        const result = await challengeRoundService.useFiftyFifty(
+            challenge, round, position, req.webUser
+        );
+        if (!result.ok) return res.status(409).json({ success: false, reason: result.reason });
+
+        res.json({
+            success: true,
+            remaining: result.remaining,
+            // The clock moved server-side; the client needs the new deadline or
+            // its countdown would still expire at the original time.
+            expiresAt: result.expiresAt,
+            bonusMs: result.bonusMs
+        });
+    } catch (error) {
+        logger.error('Error using 50:50:', error);
+        res.status(500).json({ success: false, error: 'Could not use that lifeline' });
+    }
+});
+
+// ============================================
 // GET /challenge/:code/board
 // ============================================
 // The running leaderboard for group async: everyone who has FINISHED, not the
@@ -449,7 +488,15 @@ router.post('/:code/lobby', requireChallengeAuth, requireChallengesEnabled, asyn
         // startsAt is an absolute epoch time, sent ONCE. The browser counts
         // down locally — a per-second frame would be 600 frames per player in
         // a ten-minute lobby.
-        res.json({ success: true, startsAt: result.startsAt, present: result.present });
+        // The client needs its own id to mark its entry on the live scoreboard.
+        // Without it the board reads "1. 2/15  2. 2/15" and nobody can tell
+        // which score is theirs.
+        res.json({
+            success: true,
+            startsAt: result.startsAt,
+            present: result.present,
+            userId: req.webUser.id
+        });
     } catch (error) {
         logger.error('Error joining challenge lobby:', error);
         res.status(500).json({ success: false, error: 'Could not join that lobby' });

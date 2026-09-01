@@ -352,15 +352,19 @@ class ChallengeArenaService {
         state.position++;
         if (state.position > QUESTIONS_PER_ROUND) return this._endMatch(challenge);
 
-        const anyRound = [...state.rounds.values()][0];
-        const question = await challengeRoundService.getQuestion(challenge, anyRound, state.position);
-        if (!question) return this._endMatch(challenge);
-
-        // Every player's clock starts server-side, individually, so the
-        // per-answer timing recorded in challenge_answers stays honest.
+        // ONE call per round, and the first result is the one we send.
+        //
+        // This used to fetch for `anyRound` and then loop every round as well,
+        // so the first player's round had getQuestion() run TWICE \u2014 two
+        // QUESTION_ASKED audit rows per question for that one player, and two
+        // clock starts a few milliseconds apart. The loop already covers every
+        // round including the first.
+        let question = null;
         for (const round of state.rounds.values()) {
-            await challengeRoundService.getQuestion(challenge, round, state.position);
+            const served = await challengeRoundService.getQuestion(challenge, round, state.position);
+            if (!question) question = served;
         }
+        if (!question) return this._endMatch(challenge);
 
         const timeoutMs = challengeService.timeoutFor(challenge.speed_level);
         state.expiresAt = Date.now() + timeoutMs;

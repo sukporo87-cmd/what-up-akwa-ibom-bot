@@ -529,6 +529,9 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <div class="qwrap">
       <p class="qtext" id="aqText">Waiting for the first question…</p>
       <div class="opts" id="aqOpts"></div>
+      <div class="cardActs" id="aqLifelines" style="display:none">
+        <button class="ghost" id="aq5050" onclick="arenaFiftyFifty()">50:50 &nbsp;<span style="opacity:.6">+5s</span></button>
+      </div>
       <div class="verdict" id="aqVerdict"></div>
     </div>
 
@@ -563,6 +566,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <div class="qwrap">
       <p class="qtext" id="cqText">Getting your first question…</p>
       <div class="opts" id="cqOpts"></div>
+      <!-- The lifeline existed in chat ("reply 5050") and in the engine, but
+           web players had no way to use it at all. -->
+      <div class="cardActs" id="cqLifelines" style="display:none">
+        <button class="ghost" id="cq5050" onclick="chalFiftyFifty()">50:50 &nbsp;<span style="opacity:.6">+5s</span></button>
+      </div>
       <div class="verdict" id="cqVerdict"></div>
     </div>
 
@@ -706,8 +714,19 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
          Username identifies, the code proves ownership. The session it mints
          works on THIS challenge only. -->
     <div id="chalAuth" style="display:none;margin-top:18px">
-      <div class="who">Play as your WhatsApp or Telegram account</div>
-      <div class="msg" id="chalAuthNote">
+      <div class="who">How do you want to play?</div>
+
+      <!-- THREE ROUTES, chosen before anything is asked for.
+           The form used to assume everyone was a chat player, so a web account
+           holder had no way in at all and someone brand new had nowhere to
+           sign up. Each route leads to the same place: this challenge. -->
+      <div id="chalAuthPick" class="cardActs" style="flex-direction:column;gap:8px">
+        <button class="ghost" onclick="chalAuthRoute('chat')">Play as my WhatsApp or Telegram account</button>
+        <button class="ghost" onclick="chalAuthRoute('web')">Play as my web account</button>
+        <button class="ghost" onclick="chalAuthRoute('new')">I'm new — sign me up</button>
+      </div>
+
+      <div class="msg" id="chalAuthNote" style="display:none">
         Enter your username. If you already have a code, put it in too.
       </div>
       <!-- BOTH FIELDS, ALWAYS.
@@ -716,14 +735,39 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
            created the challenge. Their code worked perfectly well; there was
            just nowhere to type it, so they had to request a second one and the
            first was pointless. -->
-      <input id="chalAuthUser" placeholder="your username" autocomplete="off"
-             style="width:100%;margin-top:10px">
-      <input id="chalAuthCode" placeholder="6-digit code (if you have one)" inputmode="numeric"
-             maxlength="6" autocomplete="one-time-code" style="width:100%;margin-top:10px">
-      <div id="chalAuthStep2" style="display:none"></div>
-      <div class="cardActs">
-        <button class="ghost" id="chalAuthBtn" onclick="chalAuthSubmit()">Play</button>
-        <button class="ghost" id="chalAuthSend" onclick="chalAuthRequest()">Send me a code</button>
+      <div id="chalAuthChat" style="display:none">
+        <input id="chalAuthUser" placeholder="your username" autocomplete="off"
+               style="width:100%;margin-top:10px">
+        <input id="chalAuthCode" placeholder="6-digit code (if you have one)" inputmode="numeric"
+               maxlength="6" autocomplete="one-time-code" style="width:100%;margin-top:10px">
+        <div id="chalAuthStep2" style="display:none"></div>
+        <div class="cardActs">
+          <button class="ghost" id="chalAuthBtn" onclick="chalAuthSubmit()">Play</button>
+          <button class="ghost" id="chalAuthSend" onclick="chalAuthRequest()">Send me a code</button>
+        </div>
+      </div>
+
+      <!-- Web sign-in and sign-up reuse the existing screens rather than
+           duplicating them. The challenge code is already stashed, so
+           whichever path they take, enter() lands them back on this invite. -->
+      <div id="chalAuthWeb" style="display:none">
+        <div class="msg" style="margin-top:10px">
+          Sign in and you'll come straight back to this challenge.
+        </div>
+        <div class="cardActs">
+          <button class="ghost" onclick="chalGoToWebAuth('login')">Sign in</button>
+          <button class="ghost" onclick="chalAuthRoute(null)">Back</button>
+        </div>
+      </div>
+
+      <div id="chalAuthNew" style="display:none">
+        <div class="msg" style="margin-top:10px">
+          Create an account and you'll come straight back to this challenge.
+        </div>
+        <div class="cardActs">
+          <button class="ghost" onclick="chalGoToWebAuth('signup')">Sign up</button>
+          <button class="ghost" onclick="chalAuthRoute(null)">Back</button>
+        </div>
       </div>
     </div>
 
@@ -994,7 +1038,7 @@ function showChallengeInvite(c){
    sends repeatedly — challenge.question carries an absolute expiresAt and
    the countdown runs from the local clock.
    --------------------------------------------------------------------- */
-let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15};
+let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15,userId:null};
 
 function arenaStopClock(){ if(arena.timer){clearInterval(arena.timer);arena.timer=null;} }
 
@@ -1027,7 +1071,8 @@ async function joinArena(code){
       }[d.reason]||'Could not join that lobby.';
       return;
     }
-    arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15};
+    arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15,
+           userId:d.userId!==undefined?d.userId:null};
     clearChallenge();
     $('alWho').textContent='Waiting for players…';
     $('alExtend').style.display='none';
@@ -1102,6 +1147,8 @@ function arenaQuestion(d){
     b.onclick=()=>{ sfx.tap(); arenaAnswer(letter); };
     $('aqOpts').appendChild(b);
   });
+  $('aqLifelines').style.display=d.fiftyFiftyAvailable?'flex':'none';
+  $('aq5050').disabled=false;
   view('vArena');
   /* expiresAt is absolute and was sent once. When it passes we simply stop
      accepting input — the server reveals on its own schedule and we wait to
@@ -1111,6 +1158,33 @@ function arenaQuestion(d){
     arena.locked=true;
     [...$('aqOpts').children].forEach(b=>b.disabled=true);
   });
+}
+
+async function arenaFiftyFifty(){
+  if(arena.locked)return;
+  $('aq5050').disabled=true;
+  try{
+    const r=await fetch('/challenge/'+arena.code+'/fifty-fifty',{
+      method:'POST',headers:H(),body:JSON.stringify({position:arena.position})
+    });
+    const d=await r.json();
+    if(!d.success){ $('aqLifelines').style.display='none'; return; }
+    sfx.lock();
+    [...$('aqOpts').children].forEach(b=>{
+      const letter=b.textContent.charAt(0);
+      if(!d.remaining.includes(letter)){ b.disabled=true; b.style.opacity='.35'; }
+    });
+    $('aqLifelines').style.display='none';
+    /* The server moved the deadline; recount from the new one or the local
+       clock would still expire at the original time. */
+    if(d.expiresAt){
+      const span=Math.max(1,d.expiresAt-Date.now());
+      arenaCountdown(d.expiresAt,$('asecs'),$('abar'),span,()=>{
+        arena.locked=true;
+        [...$('aqOpts').children].forEach(b=>b.disabled=true);
+      });
+    }
+  }catch(e){ $('aq5050').disabled=false; }
 }
 
 async function arenaAnswer(letter){
@@ -1163,10 +1237,32 @@ function arenaReveal(d){
 
 /* The board arrives batched inside the reveal frame, never as its own event.
    Keys are compact on purpose: u/c/t, about 35 bytes an entry. */
+/* The board arrives ranked, with `u` as the user id. Marking YOUR entry is the
+   whole point: "1. 2/15  2. 2/15" tells you the scores but not which one is
+   yours, and in a twenty-player challenge that is every chip on screen.
+   Usernames would not fit at that size, so the viewer's own chip is labelled
+   YOU and highlighted instead. */
 function arenaBoard(board){
   if(!board||!board.length)return;
-  $('aqBoard').innerHTML=board.slice(0,8).map((r,i)=>
-    '<span class="chip">'+(i+1)+'. '+r.c+'/15</span>').join(' ');
+  const me=arena.userId;
+  $('aqBoard').innerHTML=board.slice(0,8).map((r,i)=>{
+    const mine=me!==null&&String(r.u)===String(me);
+    const label=mine?'YOU':(i+1)+'.';
+    const style=mine
+      ? ' style="background:var(--brass);color:#1a0a2e;font-weight:700"'
+      : '';
+    return '<span class="chip"'+style+'>'+label+' '+r.c+'/15</span>';
+  }).join(' ');
+
+  /* If you are outside the top eight you would otherwise vanish from your own
+     scoreboard. Append your position rather than dropping you. */
+  if(me!==null){
+    const idx=board.findIndex(r=>String(r.u)===String(me));
+    if(idx>=8){
+      $('aqBoard').innerHTML+=' <span class="chip" style="background:var(--brass);color:#1a0a2e;font-weight:700">YOU '
+        +board[idx].c+'/15 ('+(idx+1)+'th)</span>';
+    }
+  }
 }
 
 function arenaFinished(d){
@@ -1232,6 +1328,10 @@ function chalRenderQuestion(q){
   $('cqText').textContent=q.text;
   $('cqVerdict').textContent='';
   $('cqOpts').innerHTML='';
+  /* Availability comes from the server, so a spent lifeline cannot be offered
+     again after a refresh. */
+  $('cqLifelines').style.display=q.fiftyFiftyAvailable?'flex':'none';
+  $('cq5050').disabled=false;
   ['A','B','C','D'].forEach(letter=>{
     const b=document.createElement('button');
     b.className='opt';
@@ -1479,6 +1579,31 @@ async function startChallenge(code){
   }catch(e){ $('chalNote').textContent='Could not start that round.'; }
 }
 
+/* 50:50 on the async challenge screen. Grants the same +5s Classic gives \u2014
+   the tiebreak here is cumulative time, so without it a lifeline would quietly
+   make you slower. */
+async function chalFiftyFifty(){
+  if(chal.locked)return;
+  $('cq5050').disabled=true;
+  try{
+    const r=await fetch('/challenge/'+chal.code+'/fifty-fifty',{
+      method:'POST',headers:H(),body:JSON.stringify({position:chal.position})
+    });
+    const d=await r.json();
+    if(!d.success){ $('cqLifelines').style.display='none'; return; }
+    sfx.lock();
+    [...$('cqOpts').children].forEach(b=>{
+      const letter=b.textContent.charAt(0);
+      if(!d.remaining.includes(letter)){ b.disabled=true; b.style.opacity='.35'; }
+    });
+    $('cqLifelines').style.display='none';
+    if(d.expiresAt){
+      const left=d.expiresAt-Date.now();
+      if(left>0) chalStartClock(left);
+    }
+  }catch(e){ $('cq5050').disabled=false; }
+}
+
 async function chalAnswer(letter){
   if(chal.locked)return;
   chal.locked=true; chalStopClock();
@@ -1593,7 +1718,35 @@ function chalAuthShow(show){
   $('chalAuth').style.display=show?'block':'none';
   chalAuthStage='username';
   $('chalAuthStep2').style.display='none';
-  $('chalAuthBtn').textContent='Send me a code';
+  /* Do NOT relabel the Play button. This line left two buttons both reading
+     "Send me a code" \u2014 the left one actually submits. */
+  $('chalAuthBtn').textContent='Play';
+  chalAuthRoute(null);
+}
+
+/* Which of the three routes the player picked. null = still choosing. */
+function chalAuthRoute(route){
+  const pick=$('chalAuthPick'), chat=$('chalAuthChat'),
+        web=$('chalAuthWeb'), fresh=$('chalAuthNew'), note=$('chalAuthNote');
+  if(!pick)return;
+  pick.style.display  = route?'none':'flex';
+  chat.style.display  = route==='chat'?'block':'none';
+  web.style.display   = route==='web'?'block':'none';
+  fresh.style.display = route==='new'?'block':'none';
+  note.style.display  = route==='chat'?'block':'none';
+  if(route)sfx.tap();
+}
+
+/* Hands off to the normal web auth screen. The challenge code is already in
+   sessionStorage and a cookie, so whichever way they come back \u2014 sign in or
+   sign up \u2014 enter() resolves the invite and drops them into this challenge. */
+function chalGoToWebAuth(which){
+  sfx.tap();
+  if((which==='signup') !== (mode==='signup')) toggleMode();
+  $('authSub').textContent = which==='signup'
+    ? "Create an account and you'll come straight back to your challenge."
+    : "Sign in and you'll come straight back to your challenge.";
+  view('vAuth');
 }
 
 /* Asks for a code to be sent. Split out so it is reachable directly \u2014 the
