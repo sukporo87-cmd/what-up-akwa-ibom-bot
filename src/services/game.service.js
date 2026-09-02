@@ -665,7 +665,58 @@ class GameService {
             }
         }
 
-        // Priority 3: Progressive difficulty timer
+        // ============================================
+        // Priority 3: ADMIN-SET ANSWER CLOCK
+        //
+        // Set per mode and platform from /admin/toggles. When present it is
+        // FLAT: the same number of seconds on every question, replacing the
+        // 12/11/10 progressive ladder below.
+        //
+        // WHY IT SITS HERE AND NOT AT THE TOP
+        // Everything above this line is anti-cheat: challenge parity,
+        // watchlist timers, turbo mode, penalty mode. Putting an admin
+        // control above them would mean that setting a comfortable 20-second
+        // clock for web players also silently handed a flagged account its
+        // full time back, and that "make the game friendlier" and "switch off
+        // fraud response" became the same button. They are different
+        // decisions, so they stay different controls, and the shorter,
+        // enforced clock always wins.
+        //
+        // A change takes effect on the NEXT question served — the clock is
+        // resolved per question, and the web client is sent an absolute
+        // expiresAt — so nobody mid-round has the timer moved under them.
+        // ============================================
+        try {
+            const gameSettings = require('./game-settings.service');
+            const raw = await redis.get(`session:${sessionKey}`);
+            if (raw) {
+                const s = JSON.parse(raw);
+                // game_mode is what the player chose ('classic', 'practice');
+                // platform is written at session creation from platformOf().
+                // Tournament rounds carry game_mode 'classic' with a
+                // tournament_id, so read the intent from game_type where it
+                // disagrees.
+                const mode = s.game_type === 'practice' ? 'practice'
+                           : s.game_type === 'tournament' ? 'tournament'
+                           : (s.game_mode || 'classic');
+                const override = gameSettings.answerSeconds(mode, s.platform);
+                if (override) {
+                    return {
+                        timeoutMs: override * 1000,
+                        timeoutSeconds: override,
+                        isTurboMode: false,
+                        isAdminOverride: true,
+                        questionsRemaining: 0,
+                    };
+                }
+            }
+        } catch (error) {
+            // Never let a settings lookup cost somebody their question. Fall
+            // through to the built-in ladder, which is always a valid clock.
+            logger.error('Error reading answer-time override, using default ladder:', error.message);
+        }
+
+        // Priority 4: Progressive difficulty timer
         if (questionNumber) {
             const base = DIFFICULTY_TIMERS.getBaseTimeout(questionNumber);
             return {

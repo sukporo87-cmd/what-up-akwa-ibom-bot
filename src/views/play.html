@@ -2057,7 +2057,13 @@ function enter(user){
   if(pendingPaid){
     const p=pendingPaid; pendingPaid=null;
     settlePayment(p.reference,p.hint);
+    return;   // a payment to settle outranks a tournament link
   }
+  /* Followed "Enter on Web" from a tournament card, possibly several screens
+     of signup ago. Tournaments live on the top-up screen, so open it: this is
+     the whole point of the link, and leaving them in the lobby to find it
+     themselves is how a working feature reads as broken. */
+  if(pendingTournament()) openBuy();
 }
 async function refresh(){
   try{
@@ -3259,7 +3265,57 @@ async function loadTournaments(){
       box.appendChild(b);
     });
     $('sTrn').style.display='block';
+    consumeTournamentLink();
   }catch(e){ $('sTrn').style.display='none'; }
+}
+
+/* ---------- tournament deep link (?tournament=<id>) ----------
+   The website's tournament cards carry an "Enter on Web" button pointing
+   here. Without this the link dropped people in the lobby with no idea
+   which of the three screens held the thing they had just tapped.
+
+   The id is captured at boot and held in sessionStorage, because someone
+   arriving from the site is often NOT signed in: the value has to survive
+   the login or signup screens, and it should die with the tab rather than
+   ambush them next week. Same lifetime reasoning as wut_chal_token. */
+const TRN_LINK_KEY='wut_pending_tournament';
+
+function pendingTournament(){
+  try{
+    const raw=sessionStorage.getItem(TRN_LINK_KEY);
+    if(!raw) return null;
+    const [id,at]=raw.split('|');
+    // An hour is generous for "I tapped a button and then signed up", and
+    // short enough that a tab left open overnight doesn't reopen a
+    // checkout nobody asked for.
+    if(Date.now()-Number(at||0)>60*60*1000){ sessionStorage.removeItem(TRN_LINK_KEY); return null; }
+    return Number(id)||null;
+  }catch(e){ return null; }
+}
+
+function consumeTournamentLink(){
+  const id=pendingTournament();
+  if(!id) return;
+  const t=trns.find(x=>Number(x.id)===id);
+
+  // Clear first, whatever happens next. A link that cannot be honoured must
+  // not retry on every subsequent visit to this screen.
+  try{ sessionStorage.removeItem(TRN_LINK_KEY); }catch(e){}
+
+  if(!t){
+    // Visible on the site a minute ago, not in this list now: it filled up,
+    // it ended, or it was pulled. Say which of those we can, rather than
+    // silently doing nothing after a deliberate tap.
+    toast('That tournament is no longer open for entry.');
+    return;
+  }
+  if(t.joined||t.paid){
+    overlay('','Already entered',
+      `You're in ${t.name}. Head back to the lobby and play your tournament round.`,
+      'Back to menu',()=>{ closeOver(); });
+    return;
+  }
+  pickTournament(t);
 }
 
 function pickTournament(t){
@@ -3637,6 +3693,16 @@ function closeOver(){
     if(e.origin!==location.origin) return;
     if(e.data&&e.data.wutPaid) settlePayment(e.data.wutPaid,e.data.wutStatus);
   });
+
+  /* Arrived from a tournament card on the website. Stashed before anything
+     else touches the URL — the payment-recovery block below calls
+     history.replaceState() and would otherwise wipe the parameter before we
+     had read it. Held in sessionStorage so it survives signup. */
+  const trnParam=parseInt(qs.get('tournament')||'',10);
+  if(Number.isInteger(trnParam)&&trnParam>0){
+    try{ sessionStorage.setItem(TRN_LINK_KEY,`${trnParam}|${Date.now()}`); }catch(e){}
+    history.replaceState({},'',location.pathname);
+  }
 
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
 

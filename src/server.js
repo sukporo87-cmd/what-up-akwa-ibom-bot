@@ -289,12 +289,23 @@ async function startScheduledSendProcessor() {
 // rather than narrowing it.
 // ============================================
 const togglesService = require('./services/toggles.service');
+const gameSettingsService = require('./services/game-settings.service');
 
 async function bootstrap() {
   try {
     await togglesService.start();
   } catch (e) {
     console.error('⚠️  Toggle cache failed to load at boot:', e.message);
+  }
+  // Same reasoning as the toggle cache, one step milder: an unloaded cache
+  // here means answerSeconds() returns null and the game uses its built-in
+  // 12/11/10 ladder. That is a safe clock rather than a wrong one, so this
+  // does not block the boot — but an admin's setting silently not applying
+  // is still worth a line in the log.
+  try {
+    await gameSettingsService.start();
+  } catch (e) {
+    console.error('⚠️  Game settings cache failed to load at boot:', e.message);
   }
   startServer();
 }

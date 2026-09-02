@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📣 News Bar | What's Up Trivia</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0f0f13; --surface: #1a1a23; --surface2: #22222f; --border: #2d2d3d;
+    --text: #e4e4ef; --text-dim: #8888a0; --accent: #06b6d4;
+    --green: #00d68f; --red: #ff3b5c; --yellow: #ffc233; --blue: #3b82f6;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--accent); }
+  .container { max-width: 1000px; margin: 0 auto; padding: 28px 24px 100px; }
+
+  .explain { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; font-size: 13.5px; color: var(--text-dim); line-height: 1.65; margin-bottom: 22px; }
+  .explain b { color: var(--text); }
+  .explain code { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--yellow); }
+
+  /* Live preview — the bar as the site will actually draw it, so nobody has
+     to publish a notice to find out it was three words too long. */
+  .preview-wrap { margin-bottom: 22px; }
+  .preview-label { font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: .09em; }
+  .preview { background: linear-gradient(90deg,#0a162a,#0e1e36); border: 1px solid rgba(212,175,55,.28);
+    border-radius: 10px; overflow: hidden; display: flex; align-items: stretch; height: 38px; }
+  .preview .tag { display: flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 0 14px;
+    background: rgba(212,175,55,.14); color: #F0C84B; font-size: 11.5px; font-weight: 700;
+    border-right: 1px solid rgba(212,175,55,.25); }
+  .preview .tag i { width: 7px; height: 7px; border-radius: 50%; background: #F0C84B; font-style: normal; }
+  .preview .strip { flex: 1; display: flex; align-items: center; gap: 26px; overflow: hidden;
+    padding: 0 16px; white-space: nowrap; }
+  .preview .it { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; color: #DCE6F5; }
+  .preview .it i { width: 6px; height: 6px; border-radius: 50%; font-style: normal; }
+  .preview .it b { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; }
+  .preview .none { color: #64748b; font-size: 13px; font-style: italic; }
+  .pip-info { background: #6FA8FF } .lbl-info { color: #6FA8FF }
+  .pip-live { background: #25D366 } .lbl-live { color: #25D366 }
+  .pip-alert { background: #FF6B6B } .lbl-alert { color: #FF6B6B }
+  .pip-win  { background: #F0C84B } .lbl-win  { color: #F0C84B }
+
+  .btn { border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    border-radius: 9px; padding: 9px 15px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: 'DM Sans', sans-serif; transition: all .15s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+  .btn-add { background: rgba(6,182,212,.13); border-color: rgba(6,182,212,.5); color: var(--accent); }
+  .btn-save { background: rgba(0,214,143,.14); border-color: rgba(0,214,143,.5); color: var(--green); }
+  .btn-del { background: rgba(255,59,92,.1); border-color: rgba(255,59,92,.4); color: var(--red); }
+  .btn-sm { padding: 6px 11px; font-size: 12px; }
+
+  .editor { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px;
+    padding: 18px; margin-bottom: 24px; display: none; }
+  .editor.open { display: block; }
+  .editor h2 { font-size: 15px; margin-bottom: 14px; }
+  .fields { display: grid; gap: 14px; grid-template-columns: repeat(2, 1fr); }
+  .fields .wide { grid-column: 1 / -1; }
+  label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+  input, textarea, select { width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 14px;
+    font-family: 'DM Sans', sans-serif; }
+  textarea { min-height: 62px; resize: vertical; line-height: 1.55; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 5px; line-height: 1.5; }
+  .counter { float: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); }
+  .counter.over { color: var(--red); }
+  .editor-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
+  .editor-err { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+  .row { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 15px 17px; margin-bottom: 11px; }
+  .row.live { border-color: rgba(0,214,143,.4); }
+  .row.off { opacity: .58; }
+  .row-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .state { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; }
+  .state.live { background: rgba(0,214,143,.15); color: var(--green); }
+  .state.sched { background: rgba(59,130,246,.15); color: var(--blue); }
+  .state.exp { background: rgba(255,194,51,.13); color: var(--yellow); }
+  .state.hid { background: rgba(136,136,160,.15); color: var(--text-dim); }
+  .row-body { font-size: 14.5px; line-height: 1.5; margin-bottom: 9px; word-break: break-word; }
+  .row-meta { font-size: 11.5px; color: #5c5c72; font-family: 'JetBrains Mono', monospace;
+    display: flex; gap: 14px; flex-wrap: wrap; }
+  .row-actions { display: flex; gap: 8px; margin-top: 11px; justify-content: flex-end; flex-wrap: wrap; }
+
+  .empty { text-align: center; color: var(--text-dim); padding: 54px 0; font-size: 14.5px; line-height: 1.8; }
+  .loading { text-align: center; color: var(--text-dim); padding: 44px 0; }
+  .toast { position: fixed; bottom: 22px; right: 22px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13.5px;
+    opacity: 0; transform: translateY(8px); transition: all .3s; pointer-events: none; z-index: 50; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: rgba(0,214,143,.5); }
+  .toast.err { border-color: rgba(255,59,92,.5); }
+  @media (max-width: 680px) { .fields { grid-template-columns: 1fr; } .container { padding: 20px 14px 90px; } }
+</style>
+</head>
+<body>
+
+<div class="topbar"><h1>📣 News Bar</h1></div>
+
+<div class="container">
+  <div class="explain">
+    The scrolling bar that sits under the header on <b>every page</b> of the website.
+    Notices appear within about a minute of saving.
+    <br><br>
+    <b>End time is the field worth using.</b> Set one and the notice takes itself down —
+    nothing stays on the site because somebody forgot it was there. Leave both times empty
+    and it runs until you hide it. Higher <b>priority</b> scrolls first.
+    <br><br>
+    Plain text only: any HTML typed here appears on the site literally, as characters.
+    <b>Hide</b> takes a notice off the site but keeps the text; <b>delete</b> is permanent.
+  </div>
+
+  <div class="preview-wrap">
+    <div class="preview-label">What the site is showing now</div>
+    <div class="preview" id="preview">
+      <div class="tag"><i></i>Latest</div>
+      <div class="strip" id="previewStrip"><span class="none">Loading…</span></div>
+    </div>
+  </div>
+
+  <div style="margin-bottom:18px">
+    <button class="btn btn-add" onclick="openEditor()">+ New announcement</button>
+  </div>
+
+  <div class="editor" id="editor">
+    <h2 id="editorTitle">New announcement</h2>
+    <div class="fields">
+      <div class="wide">
+        <label for="fBody">Announcement <span class="counter" id="bodyCount">0 / 280</span></label>
+        <textarea id="fBody" maxlength="280" placeholder="Weekend Championship is live — ₦100,000 pool, entry closes Sunday 6pm."></textarea>
+        <div class="hint">It scrolls past in a few seconds. One sentence, the fact first.</div>
+      </div>
+      <div>
+        <label for="fLabel">Label (optional)</label>
+        <input id="fLabel" maxlength="24" placeholder="LIVE">
+        <div class="hint">Short tag shown before the text.</div>
+      </div>
+      <div>
+        <label for="fTone">Colour</label>
+        <select id="fTone">
+          <option value="info">Info — blue</option>
+          <option value="live">Live — green</option>
+          <option value="alert">Alert — red</option>
+          <option value="win">Win — gold</option>
+        </select>
+      </div>
+      <div class="wide">
+        <label for="fUrl">Link (optional)</label>
+        <input id="fUrl" placeholder="/leaderboards">
+        <div class="hint">A path like <code>/leaderboards</code>, or a full https:// address. External links open in a new tab.</div>
+      </div>
+      <div>
+        <label for="fStart">Start showing (optional)</label>
+        <input id="fStart" type="datetime-local">
+        <div class="hint">Empty means immediately.</div>
+      </div>
+      <div>
+        <label for="fEnd">Stop showing (optional)</label>
+        <input id="fEnd" type="datetime-local">
+        <div class="hint">Empty means it runs until hidden.</div>
+      </div>
+      <div>
+        <label for="fPriority">Priority</label>
+        <input id="fPriority" type="number" value="0" step="1">
+        <div class="hint">Higher scrolls first. 0 is fine for most.</div>
+      </div>
+      <div>
+        <label for="fActive">Visible</label>
+        <select id="fActive">
+          <option value="true">Yes — show on the site</option>
+          <option value="false">No — save as a draft</option>
+        </select>
+      </div>
+    </div>
+    <div class="editor-err" id="editorErr"></div>
+    <div class="editor-actions">
+      <button class="btn" onclick="closeEditor()">Cancel</button>
+      <button class="btn btn-save" id="saveBtn" onclick="save()">Save</button>
+    </div>
+  </div>
+
+  <div id="list"><div class="loading">Loading announcements…</div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/admin-nav.js"></script>
+<script>
+const API_BASE = '/admin/api';
+const sessionToken = localStorage.getItem('adminSessionToken');
+if (!sessionToken) window.location.href = '/admin';
+
+let rows = [], editingId = null;
+
+async function apiCall(endpoint, options = {}) {
+  const r = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json', ...options.headers }
+  });
+  if (r.status === 401) { localStorage.removeItem('adminSessionToken'); window.location.href = '/admin'; return null; }
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('application/json') ? r.json() : null;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+function fmt(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString('en-NG',
+    { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/* datetime-local wants local wall-clock with no zone. Converting via
+   toISOString() would silently shift every value by the UTC offset — an
+   admin in Lagos setting 6pm would see 5pm come back. */
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// --------------------------------------------
+// EDITOR
+// --------------------------------------------
+function openEditor(id) {
+  editingId = id != null ? id : null;
+  const r = editingId != null ? rows.find(x => x.id === editingId) : null;
+
+  document.getElementById('editorTitle').textContent = r ? 'Edit announcement' : 'New announcement';
+  document.getElementById('fBody').value     = r ? r.body : '';
+  document.getElementById('fLabel').value    = r && r.label ? r.label : '';
+  document.getElementById('fUrl').value      = r && r.link_url ? r.link_url : '';
+  document.getElementById('fTone').value     = r ? r.tone : 'info';
+  document.getElementById('fPriority').value = r ? r.priority : 0;
+  document.getElementById('fStart').value    = r ? toLocalInput(r.starts_at) : '';
+  document.getElementById('fEnd').value      = r ? toLocalInput(r.ends_at) : '';
+  document.getElementById('fActive').value   = r ? String(r.active) : 'true';
+  document.getElementById('editorErr').textContent = '';
+
+  countBody();
+  document.getElementById('editor').classList.add('open');
+  document.getElementById('fBody').focus();
+}
+
+function closeEditor() {
+  document.getElementById('editor').classList.remove('open');
+  editingId = null;
+}
+
+function countBody() {
+  const n = document.getElementById('fBody').value.length;
+  const c = document.getElementById('bodyCount');
+  c.textContent = `${n} / 280`;
+  c.className = 'counter' + (n > 280 ? ' over' : '');
+}
+document.getElementById('fBody').addEventListener('input', countBody);
+
+async function save() {
+  const body = document.getElementById('fBody').value.trim();
+  const err = document.getElementById('editorErr');
+  err.textContent = '';
+
+  // Checked here for a fast answer, and again on the server because a
+  // client-side check is a courtesy, not a guarantee.
+  if (!body) { err.textContent = 'Write the announcement text.'; return; }
+
+  const start = document.getElementById('fStart').value;
+  const end   = document.getElementById('fEnd').value;
+  if (start && end && new Date(end) <= new Date(start)) {
+    err.textContent = 'The end time has to be after the start time.'; return;
+  }
+
+  const payload = {
+    body,
+    label: document.getElementById('fLabel').value.trim() || null,
+    link_url: document.getElementById('fUrl').value.trim() || null,
+    tone: document.getElementById('fTone').value,
+    priority: parseInt(document.getElementById('fPriority').value, 10) || 0,
+    // new Date(localString).toISOString() is correct here: the browser reads
+    // the input in local time and converts, which is what the server wants.
+    starts_at: start ? new Date(start).toISOString() : null,
+    ends_at:   end   ? new Date(end).toISOString()   : null,
+    active: document.getElementById('fActive').value === 'true'
+  };
+
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  try {
+    const res = editingId != null
+      ? await apiCall(`/announcements/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) })
+      : await apiCall('/announcements', { method: 'POST', body: JSON.stringify(payload) });
+
+    if (!res || !res.success) {
+      err.textContent = (res && res.error) || 'Could not save that.';
+      return;
+    }
+    closeEditor();
+    toast(editingId != null ? 'Announcement updated' : 'Announcement published');
+    load();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --------------------------------------------
+// LIST
+// --------------------------------------------
+function stateOf(r) {
+  if (!r.active) return { cls: 'hid', text: 'Hidden' };
+  if (r.is_live) return { cls: 'live', text: 'On the site' };
+  if (r.is_scheduled) return { cls: 'sched', text: 'Scheduled' };
+  if (r.is_expired) return { cls: 'exp', text: 'Finished' };
+  return { cls: 'hid', text: 'Not showing' };
+}
+
+function rowHtml(r) {
+  const st = stateOf(r);
+  const meta = [];
+  if (r.starts_at) meta.push('from ' + fmt(r.starts_at));
+  if (r.ends_at)   meta.push('until ' + fmt(r.ends_at));
+  if (r.priority)  meta.push('priority ' + r.priority);
+  if (r.link_url)  meta.push('links to ' + r.link_url);
+  if (r.updated_by) meta.push('by ' + r.updated_by);
+
+  return `<div class="row ${r.is_live ? 'live' : ''} ${r.active ? '' : 'off'}">
+    <div class="row-top">
+      <span class="state ${st.cls}">${st.text}</span>
+      ${r.label ? `<span class="state ${'lbl-' + r.tone}" style="background:rgba(255,255,255,.06)">${esc(r.label)}</span>` : ''}
+    </div>
+    <div class="row-body">${esc(r.body)}</div>
+    <div class="row-meta">${meta.map(esc).join(' · ') || 'runs until hidden'}</div>
+    <div class="row-actions">
+      <button class="btn btn-sm" onclick="openEditor(${r.id})">Edit</button>
+      <button class="btn btn-sm" onclick="setVisible(${r.id}, ${!r.active})">${r.active ? 'Hide' : 'Show'}</button>
+      <button class="btn btn-sm btn-del" onclick="remove(${r.id})">Delete</button>
+    </div>
+  </div>`;
+}
+
+function renderPreview() {
+  const live = rows.filter(r => r.is_live);
+  const strip = document.getElementById('previewStrip');
+  if (!live.length) {
+    strip.innerHTML = '<span class="none">Nothing is showing — the bar is hidden on the site entirely.</span>';
+    return;
+  }
+  strip.innerHTML = live.map(r =>
+    `<span class="it"><i class="pip-${r.tone}"></i>` +
+    (r.label ? `<b class="lbl-${r.tone}">${esc(r.label)}</b>` : '') +
+    `<span>${esc(r.body)}</span></span>`
+  ).join('');
+}
+
+async function load() {
+  const res = await apiCall('/announcements');
+  const list = document.getElementById('list');
+  if (!res || !res.success) {
+    list.innerHTML = '<div class="empty">Could not load announcements. Refresh to try again.</div>';
+    return;
+  }
+  rows = res.announcements || [];
+  renderPreview();
+  list.innerHTML = rows.length
+    ? rows.map(rowHtml).join('')
+    : `<div class="empty">No announcements yet.<br>The bar stays hidden on the site until there is something to say.</div>`;
+}
+
+async function setVisible(id, active) {
+  const res = await apiCall(`/announcements/${id}/visibility`,
+    { method: 'POST', body: JSON.stringify({ active }) });
+  if (!res || !res.success) { toast((res && res.error) || 'Could not update that', false); return; }
+  toast(active ? 'Showing on the site' : 'Taken off the site');
+  load();
+}
+
+async function remove(id) {
+  const r = rows.find(x => x.id === id);
+  const preview = r ? `\n\n"${r.body.slice(0, 90)}${r.body.length > 90 ? '…' : ''}"` : '';
+  // Deletion is the only irreversible control on this page, and Hide covers
+  // the urgent case, so this one asks.
+  if (!confirm(`Delete this announcement permanently?${preview}\n\nUse Hide instead if you might want it back.`)) return;
+
+  const res = await apiCall(`/announcements/${id}`, { method: 'DELETE' });
+  if (!res || !res.success) { toast((res && res.error) || 'Could not delete that', false); return; }
+  toast('Announcement deleted');
+  load();
+}
+
+load();
+</script>
+</body>
+</html>

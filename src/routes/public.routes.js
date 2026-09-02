@@ -598,4 +598,134 @@ router.get('/activity/recent', async (req, res) => {
     }
 });
 
+
+// ============================================
+// TOURNAMENT SHOWCASE — what the homepage actually needs
+//
+// WHY THIS EXISTS ALONGSIDE /tournaments/active
+//
+// /tournaments/active asks for `status = 'active' AND start_date <= NOW()`
+// and returns at most one row. But POST /admin/api/tournaments creates
+// every tournament with `status || 'upcoming'`, so a tournament published
+// from the dashboard was invisible on the site until somebody remembered
+// to flip its status by hand — and even after flipping it, one that had
+// not started yet was still excluded by `start_date <= NOW()`. An
+// upcoming tournament could therefore never appear at all. That is the
+// bug behind the permanent "No tournament running right now" card.
+//
+// The fix is to stop treating `status` and the date columns as two
+// answers to the same question. Here:
+//
+//   status      = has an admin published this?   ('active' or 'upcoming')
+//   start_date  = has it begun?                  -> is_live
+//   end_date    = is it over?                    -> excluded entirely
+//
+// /tournaments/active is left exactly as it was. It is a documented
+// public endpoint and something else may be reading it; this is additive.
+// ============================================
+router.get('/tournaments/showcase', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 6, 12);
+
+        const result = await pool.query(`
+            SELECT
+                t.id,
+                t.tournament_name AS name,
+                t.status,
+                t.sponsor_name,
+                t.description,
+                t.payment_type,
+                t.entry_fee,
+                t.prize_pool,
+                t.max_participants,
+                t.start_date,
+                t.end_date,
+                COALESCE(pc.participant_count, 0) AS participant_count,
+                (t.start_date <= NOW()) AS is_live
+            FROM tournaments t
+            LEFT JOIN (
+                SELECT tournament_id, COUNT(*) AS participant_count
+                FROM tournament_participants
+                GROUP BY tournament_id
+            ) pc ON t.id = pc.tournament_id
+            WHERE t.status IN ('active', 'upcoming')
+              AND t.end_date > NOW()
+            ORDER BY
+                (t.start_date <= NOW()) DESC,   -- running before upcoming
+                t.start_date ASC,               -- soonest of the upcoming first
+                t.prize_pool DESC
+            LIMIT $1
+        `, [limit]);
+
+        // Link shapes live in deeplink.service so a bot-username or WhatsApp
+        // number change stays a one-line edit rather than a grep across the
+        // site, the bot and the emails.
+        const deepLinkService = require('../services/deeplink.service');
+
+        const tournaments = result.rows.map(t => {
+            const full = t.max_participants != null &&
+                         Number(t.participant_count) >= Number(t.max_participants);
+            return {
+                id: t.id,
+                name: t.name,
+                sponsor: t.sponsor_name || null,
+                description: t.description || null,
+                isLive: t.is_live === true,
+                isFree: t.payment_type === 'free',
+                entryFee: Number(t.entry_fee || 0),
+                prizePool: Number(t.prize_pool || 0),
+                participants: Number(t.participant_count || 0),
+                maxParticipants: t.max_participants != null ? Number(t.max_participants) : null,
+                // A full tournament still shows — people want to see what they
+                // missed, and it tells them to be quicker next time — but the
+                // entry buttons render disabled rather than taking money for a
+                // seat that does not exist.
+                isFull: full,
+                startsAt: t.start_date,
+                endsAt: t.end_date,
+                enter: deepLinkService.buildTournamentLinks(t.id)
+            };
+        });
+
+        res.json({
+            success: true,
+            tournaments,
+            // Cheap client-side change detection: the homepage re-polls and
+            // only re-renders when this string moves.
+            version: tournaments.length
+                ? tournaments.map(t => `${t.id}:${t.participants}:${t.isLive ? 1 : 0}`).join('|')
+                : 'empty',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        logger.error(`Error fetching tournament showcase: ${error.message}`);
+        res.status(500).json({ success: false, error: 'Failed to fetch tournaments' });
+    }
+});
+
+
+// ============================================
+// ANNOUNCEMENTS — feed for the rolling news bar
+//
+// Cached in Redis for 60s inside the service, and given a short
+// Cache-Control here on top. The bar polls every couple of minutes, so a
+// notice switched off in the dashboard is gone from the site well inside
+// the time it takes to walk to somebody's desk and tell them it is.
+// ============================================
+router.get('/announcements', async (req, res) => {
+    try {
+        const announcementsService = require('../services/announcements.service');
+        const payload = await announcementsService.getLive();
+        res.header('Cache-Control', 'public, max-age=30');
+        res.json({ success: true, ...payload });
+    } catch (error) {
+        logger.error(`Error fetching announcements: ${error.message}`);
+        // A broken news bar must never look like a broken site. Empty is a
+        // valid, meaningful answer here — the ticker hides itself — so this
+        // returns 200 with nothing rather than a 500 the client has to
+        // special-case.
+        res.json({ success: true, items: [], version: 'empty' });
+    }
+});
+
 module.exports = router;

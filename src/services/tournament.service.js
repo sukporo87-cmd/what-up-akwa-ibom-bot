@@ -10,6 +10,29 @@ const activityService = require('./activity.service');
 const { platformOf } = require('../utils/platform');
 
 class TournamentService {
+    // ============================================
+    // STATUS AND DATES MEAN DIFFERENT THINGS
+    //
+    // This query used to require `status = 'active'`, while
+    // POST /admin/api/tournaments creates every row with
+    // `status || 'upcoming'`. The result: a tournament published from the
+    // dashboard did not appear in the chat menu — or on the website, which
+    // had the same filter — until an admin remembered to edit its status by
+    // hand. Nothing in the dashboard says that is a required step, so in
+    // practice it did not happen.
+    //
+    // The two columns answer two different questions and are now read that
+    // way throughout:
+    //
+    //   status IN ('active','upcoming')  has an admin published this?
+    //   start_date <= NOW()              has it begun?      -> is_upcoming
+    //   end_date > NOW()                 is it still open?
+    //
+    // 'completed', 'cancelled' and anything else stay excluded, so ending a
+    // tournament still removes it from every surface. `is_upcoming` was
+    // already being computed and consumed by showTournamentCategories() —
+    // it simply never had a row to compute it for.
+    // ============================================
     async getActiveTournaments() {
         try {
             const result = await pool.query(`
@@ -21,7 +44,7 @@ class TournamentService {
                 FROM tournaments t
                 LEFT JOIN tournament_participants tp ON t.id = tp.tournament_id
                 LEFT JOIN tournament_entry_payments tep ON t.id = tep.tournament_id
-                WHERE t.status = 'active'
+                WHERE t.status IN ('active', 'upcoming')
                     AND t.end_date > NOW()
                 GROUP BY t.id
                 ORDER BY 

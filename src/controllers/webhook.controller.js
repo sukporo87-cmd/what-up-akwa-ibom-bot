@@ -14,6 +14,15 @@ const challengeChatService = require('../services/challenge-chat.service');
 // than inside deeplink.service so that file keeps no require() into game code.
 deepLinkService.register('challenge', (link, ctx) =>
   challengeChatService.handleDeepLink(link, ctx));
+
+// BACKLOG item 2, now landed. deeplink.service has parsed `tour_<id>` and
+// `JOIN TOURNAMENT <id>` since it was written; nothing was listening, so the
+// homepage had no way to send anyone into a tournament on chat and the links
+// would have dead-ended in the main menu. Registered below the class
+// definition — see the bottom of this file — because the handler is a method
+// on WebhookController and the class is not defined yet at this point.
+deepLinkService.register('tournament', (link, ctx) =>
+  module.exports.handleTournamentDeepLink(link, ctx));
 const MessagingService = require('../services/messaging.service');
 const GameService = require('../services/game.service');
 const UserService = require('../services/user.service');
@@ -1178,6 +1187,119 @@ Type the code, or type SKIP to continue:`
           '⚠️ Please reply with 1, 2, or 3'
         );
         return;
+    }
+  }
+
+  // ============================================
+  // TOURNAMENT DEEP LINK
+  //
+  // Entry point for the "Enter on WhatsApp / Telegram" buttons on the
+  // website's tournament cards. Arrives here as ordinary text —
+  // `/start tour_12` from Telegram, `JOIN TOURNAMENT 12` from a wa.me
+  // link — already parsed by deeplink.service into { type, value }.
+  //
+  // DESIGN NOTE: this deliberately does NOT reimplement joining. It
+  // normalises the link into the exact shape handleTournamentSelection()
+  // already expects — a state bag holding the tournament list, and the
+  // player's "1" — and hands over. That flow already handles free entry,
+  // paid entry, promo codes, rebuy when tokens run out, already-joined,
+  // and not-yet-started. A second copy of those branches would drift
+  // from the first within a release.
+  //
+  // Returns true when the link was dealt with (routing stops), false to
+  // fall through to normal routing.
+  // ============================================
+  async handleTournamentDeepLink(link, context) {
+    const identifier = context.identifier;
+    const platform = context.platform || platformOf(identifier);
+
+    try {
+      if (!restrictionsService.isModeEnabled('tournament', platform)) {
+        await messagingService.sendMessage(
+          identifier,
+          restrictionsService.getModeDisabledMessage('tournament', platform)
+        );
+        return true;
+      }
+
+      if (!link.valid) {
+        // A malformed id is still tournament INTENT. Dropping them into the
+        // main menu would leave them wondering whether the button worked.
+        await messagingService.sendMessage(
+          identifier,
+          "❌ That tournament link doesn't look right.\n\nType TOURNAMENTS to see what's running."
+        );
+        return true;
+      }
+
+      const user = await userService.getUserByPhone(identifier);
+      if (!user) {
+        // Not registered. deeplink.service.setPending() is already holding
+        // this for 48 hours against the raw identifier, so it survives all
+        // six signup steps. Fall through to terms + registration rather than
+        // asking someone who does not exist yet to pay an entry fee.
+        return false;
+      }
+
+      const tournament = await tournamentService.getTournamentById(link.value);
+
+      if (!tournament) {
+        await messagingService.sendMessage(
+          identifier,
+          "❌ That tournament no longer exists.\n\nType TOURNAMENTS to see what's running."
+        );
+        return true;
+      }
+
+      // Published-and-not-over is the same test the website's showcase
+      // endpoint uses. Kept in step deliberately: a card visible on the site
+      // must be enterable from the link on that card, and a tournament that
+      // has dropped off the site must not still be quietly takeable.
+      const ended = new Date(tournament.end_date) <= new Date();
+      const published = ['active', 'upcoming'].includes(tournament.status);
+
+      if (ended || !published) {
+        let msg = `🏆 *${tournament.tournament_name}*\n\n`;
+        msg += ended
+          ? 'This tournament has finished.\n\n'
+          : 'This tournament is not open for entry.\n\n';
+        msg += 'Type TOURNAMENTS to see what else is running, or PLAY for Classic Mode.';
+        await messagingService.sendMessage(identifier, msg);
+        return true;
+      }
+
+      if (tournament.max_participants &&
+          Number(tournament.participant_count) >= Number(tournament.max_participants)) {
+        await messagingService.sendMessage(
+          identifier,
+          `🏆 *${tournament.tournament_name}*\n\n` +
+          `This one is full — all ${tournament.max_participants} places are taken.\n\n` +
+          `Type TOURNAMENTS to see what else is open.`
+        );
+        return true;
+      }
+
+      // A one-item list and the answer "1". handleTournamentSelection reads
+      // stateData.tournaments and indexes into it, so this is the same input
+      // it would have received from the numbered menu — no new code path
+      // through the payment logic.
+      const stateData = { tournaments: [tournament] };
+      await userService.setUserState(identifier, 'SELECT_TOURNAMENT', stateData);
+      await this.handleTournamentSelection(user, '1', stateData);
+
+      return true;
+    } catch (error) {
+      logger.error('Error handling tournament deep link:', error);
+      // dispatch() treats a throw as not-consumed, but we have possibly
+      // already written state. Say something rather than leaving them on a
+      // silent screen after tapping a button.
+      try {
+        await messagingService.sendMessage(
+          identifier,
+          "❌ Couldn't open that tournament just now.\n\nType TOURNAMENTS to try again."
+        );
+      } catch (e) { /* nothing further to do */ }
+      return true;
     }
   }
 

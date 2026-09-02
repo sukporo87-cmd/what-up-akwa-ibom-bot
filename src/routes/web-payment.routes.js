@@ -451,7 +451,13 @@ router.get('/tournaments', requireWebAuth, async (req, res) => {
             FROM tournaments t
             LEFT JOIN tournament_participants tp ON tp.tournament_id = t.id
             LEFT JOIN tournament_entry_payments tep ON tep.tournament_id = t.id
-            WHERE t.status = 'active' AND t.end_date > NOW()
+            -- 'upcoming' is included for the same reason it now is in
+            -- tournamentService.getActiveTournaments() and the site's
+            -- /tournaments/showcase: the admin panel creates tournaments with
+            -- status 'upcoming' by default, so filtering on 'active' alone
+            -- hid every newly published tournament from web players. status
+            -- means published; the dates decide live-versus-upcoming.
+            WHERE t.status IN ('active', 'upcoming') AND t.end_date > NOW()
             GROUP BY t.id
             ORDER BY (t.start_date <= NOW()) DESC, t.prize_pool DESC
         `, [req.webUser.id]);

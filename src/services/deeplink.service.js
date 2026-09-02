@@ -246,6 +246,35 @@ class DeepLinkService {
             whatsapp: `https://wa.me/${waNumber}?text=${encodeURIComponent('CHALLENGE ' + code)}`
         };
     }
+
+    /**
+     * "Enter this tournament, on the platform I already use."
+     *
+     * The payloads are exactly the two shapes parse() already recognises —
+     * `tour_<id>` for Telegram's ?start= and `JOIN TOURNAMENT <id>` for
+     * WhatsApp's pre-filled text — so these links land in the handler
+     * registered in webhook.controller rather than in the generic menu.
+     *
+     * Web is a query parameter rather than a path segment: /c/<code> is a
+     * challenge route the play app already owns, and tournaments have no
+     * such route. play.html reads ?tournament= at boot, holds it across
+     * signup, and opens the entry screen on that tournament once the
+     * player is authenticated.
+     */
+    buildTournamentLinks(tournamentId) {
+        const id = parseInt(tournamentId, 10);
+        if (!Number.isInteger(id) || id <= 0) return null;
+
+        const webBase = process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng';
+        const botUser = process.env.TELEGRAM_BOT_USERNAME || 'WhatsUpTrivia_bot';
+        const waNumber = process.env.WHATSAPP_NUMBER || '2349160363909';
+
+        return {
+            web: `${webBase}/?tournament=${id}`,
+            telegram: `https://t.me/${botUser}?start=tour_${id}`,
+            whatsapp: `https://wa.me/${waNumber}?text=${encodeURIComponent('JOIN TOURNAMENT ' + id)}`
+        };
+    }
 }
 
 module.exports = new DeepLinkService();

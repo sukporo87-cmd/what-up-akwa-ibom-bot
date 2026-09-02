@@ -216,6 +216,57 @@ body.home{background:var(--navy-deep)}
 .pulse-tour .t-pool{font-family:var(--font-data);font-weight:800;font-size:30px;color:var(--gold-bright);margin-bottom:6px}
 .pulse-tour .t-meta{font-size:13px;color:var(--d-muted);margin-bottom:16px}
 
+/* ---------- tournaments ----------
+   One card per open tournament. The prize pool is the largest thing on the
+   card because it is the reason anyone reads the card at all; everything
+   else is set quietly around it. The three entry buttons are the only
+   coloured elements, so the eye lands on the decision. */
+.tour-grid{display:grid;gap:18px}
+@media(min-width:760px){.tour-grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1080px){.tour-grid{grid-template-columns:repeat(3,1fr)}}
+.tour-card{display:flex;flex-direction:column;position:relative;overflow:hidden}
+.tour-card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--gold-dim)}
+.tour-card.live::before{background:var(--whatsapp)}
+
+.tour-status{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
+  font-family:var(--font-data);font-size:10.5px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;padding:5px 11px;border-radius:999px;margin-bottom:13px}
+.tour-status.live{background:rgba(37,211,102,.14);color:var(--whatsapp)}
+.tour-status.live .dot{width:7px;height:7px;border-radius:50%;background:var(--whatsapp);animation:blink 1.7s infinite}
+.tour-status.soon{background:rgba(240,200,75,.13);color:var(--gold-bright)}
+
+.tour-name{font-weight:800;font-size:19px;color:#fff;line-height:1.25;margin-bottom:5px}
+.tour-sponsor{font-size:12.5px;color:var(--d-muted);margin-bottom:14px}
+.tour-pool{font-family:var(--font-data);font-weight:800;font-size:32px;line-height:1;
+  color:var(--gold-bright);margin-bottom:4px}
+.tour-pool-label{font-size:12px;color:var(--d-muted);margin-bottom:16px}
+
+.tour-facts{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;
+  padding:14px 0;border-top:1px solid rgba(255,255,255,.07);
+  border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:16px}
+.tour-facts div{min-width:0}
+.tour-facts dt{font-size:11px;color:var(--d-muted);margin-bottom:3px}
+.tour-facts dd{font-family:var(--font-data);font-size:14px;font-weight:700;color:var(--d-text)}
+.tour-facts dd.free{color:var(--whatsapp)}
+
+.tour-enter-label{font-size:12px;color:var(--d-muted);margin-bottom:9px}
+.tour-enter{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap}
+.tour-enter a{flex:1 1 0;min-width:88px;display:inline-flex;align-items:center;justify-content:center;
+  gap:6px;padding:10px 8px;border-radius:10px;font-size:12.5px;font-weight:700;
+  text-decoration:none;border:1.5px solid transparent;transition:transform .15s,background .15s,border-color .15s}
+.tour-enter a:hover{transform:translateY(-2px)}
+.tour-enter a:focus-visible{outline:2px solid var(--gold-bright);outline-offset:2px}
+.tour-enter .e-wa{background:rgba(37,211,102,.12);border-color:rgba(37,211,102,.4);color:var(--whatsapp)}
+.tour-enter .e-wa:hover{background:rgba(37,211,102,.2)}
+.tour-enter .e-tg{background:rgba(42,171,238,.12);border-color:rgba(42,171,238,.4);color:var(--telegram-bright)}
+.tour-enter .e-tg:hover{background:rgba(42,171,238,.2)}
+.tour-enter .e-web{background:rgba(139,92,246,.14);border-color:rgba(139,92,246,.42);color:var(--web-bright)}
+.tour-enter .e-web:hover{background:rgba(139,92,246,.24)}
+
+.tour-full{font-size:13px;color:var(--d-muted);padding:11px 0;margin-top:auto}
+.tour-empty{color:var(--d-muted);font-size:15px;line-height:1.7;max-width:560px}
+.tour-empty a{color:var(--gold-bright)}
+
 /* trust */
 .trust-card{display:flex;gap:14px;align-items:flex-start}
 .trust-card .t-ic{font-size:22px;flex-shrink:0;width:44px;height:44px;border-radius:12px;background:rgba(212,175,55,.1);display:grid;place-items:center}
@@ -818,6 +869,22 @@ body.theme-light .invite-note b{color:#14532d}
   </div>
 </section>
 
+<!-- ================= TOURNAMENTS =================
+     Its own section rather than a panel inside Live Pulse. A tournament is
+     a thing you enter, not a statistic you read, so it needs room for the
+     entry buttons and it needs to sit at a scroll position people reach
+     with intent rather than in passing. -->
+<section class="section" id="tournaments">
+  <div class="container">
+    <div class="section-head rv">
+      <div class="eyebrow" data-ck="home.tournaments.eyebrow">Open for entry</div>
+      <h2 class="section-title" data-ck="home.tournaments.title">Tournaments</h2>
+      <p class="section-lede" data-ck="home.tournaments.lede">Bigger pools, ranked across all three platforms, only your best game counts. Enter wherever you already play.</p>
+    </div>
+    <div id="tourList"><div class="spinner" role="status" aria-label="Loading tournaments"></div></div>
+  </div>
+</section>
+
 <!-- ================= TRUST ================= -->
 <section class="section" id="trust">
   <div class="container">
@@ -1411,6 +1478,19 @@ document.addEventListener('DOMContentLoaded', function () {
 
       // Platform destinations = the conversion that matters most
       var href = a.getAttribute('href') || '';
+
+      // Entering a tournament and starting a Classic game both leave via a
+      // wa.me / t.me / play. link, so without this every tournament entry
+      // was counted as a generic play_click and the section could never be
+      // shown to be working. Fires IN ADDITION to play_click below, so the
+      // existing funnel numbers are unchanged.
+      if (a.hasAttribute('data-tour')) {
+        window.wutTrack('tournament_enter_click', {
+          tournament_id: a.getAttribute('data-tour'),
+          platform: a.getAttribute('data-plat') || 'unknown'
+        });
+      }
+
       if (/play\.whatsuptrivia\.com\.ng/.test(href)) {
         window.wutTrack('play_click', { platform: 'web' });
       } else if (/wa\.me\//.test(href)) {
@@ -1471,6 +1551,9 @@ window.PAGE_CONTENT = {
   "home.platforms.eyebrow": "One game · three doors",
   "home.platforms.title": "Play it wherever you already are",
   "home.modes.title": "Warm up free. Compete for real. Chase the pool.",
+  "home.tournaments.eyebrow": "Open for entry",
+  "home.tournaments.title": "Tournaments",
+  "home.tournaments.lede": "Bigger pools, ranked across all three platforms, only your best game counts. Enter wherever you already play.",
   "home.cta.title": "The ladder is waiting."
   /* …full key list shipped in CONTENT-KEYS.md; abbreviated here
      because the markup itself carries every default string. */
@@ -1639,6 +1722,114 @@ document.body.setAttribute('data-ticker', 'on');
   }).catch(function () {
     tour.innerHTML = '<p class="pulse-empty">Tournament info is unavailable at the moment \u2014 check the <a href="/leaderboards">leaderboards</a>.</p>' + socialRow;
   });
+})();
+
+/* ---------------- TOURNAMENTS (real API) ----------------
+   Reads /api/public/tournaments/showcase, which returns running AND
+   upcoming tournaments. The old /tournaments/active endpoint required
+   status='active' AND start_date <= NOW(), while the admin panel creates
+   tournaments with status 'upcoming' — so nothing published from the
+   dashboard ever reached this page. See the endpoint's own comment.
+
+   Entry links are built server-side (deeplink.service.buildTournamentLinks)
+   so the bot username and WhatsApp number stay in one place. */
+(function () {
+  var box = $('#tourList');
+  if (!box) return;
+
+  var lastVersion = null;
+
+  function countdown(iso) {
+    var ms = new Date(iso) - Date.now();
+    if (ms <= 0) return null;
+    var mins = Math.floor(ms / 60000);
+    var days = Math.floor(mins / 1440);
+    var hrs = Math.floor((mins % 1440) / 60);
+    if (days >= 1) return days + (days === 1 ? ' day' : ' days') + (hrs ? ' ' + hrs + 'h' : '');
+    if (hrs >= 1) return hrs + 'h ' + (mins % 60) + 'm';
+    return mins + ' min';
+  }
+
+  function shortDate(iso) {
+    return new Date(iso).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+  }
+
+  function card(t) {
+    var status = t.isLive
+      ? '<span class="tour-status live"><span class="dot"></span>Live now</span>'
+      : '<span class="tour-status soon">Opens in ' + esc(countdown(t.startsAt) || 'moments') + '</span>';
+
+    var seats = t.maxParticipants
+      ? Number(t.participants).toLocaleString() + ' / ' + Number(t.maxParticipants).toLocaleString()
+      : Number(t.participants).toLocaleString();
+
+    var facts =
+      '<dl class="tour-facts">' +
+        '<div><dt>Entry</dt><dd' + (t.isFree ? ' class="free"' : '') + '>' +
+          (t.isFree ? 'Free' : fmtNaira(t.entryFee)) + '</dd></div>' +
+        '<div><dt>Entered</dt><dd>' + esc(seats) + '</dd></div>' +
+        '<div><dt>' + (t.isLive ? 'Closes' : 'Starts') + '</dt><dd>' +
+          esc(shortDate(t.isLive ? t.endsAt : t.startsAt)) + '</dd></div>' +
+        '<div><dt>Runs until</dt><dd>' + esc(shortDate(t.endsAt)) + '</dd></div>' +
+      '</dl>';
+
+    /* A full tournament still shows — people want to see what they missed —
+       but the buttons come off rather than taking an entry fee for a seat
+       that does not exist. */
+    var action = t.isFull
+      ? '<p class="tour-full">Every place is taken. Follow us so you catch the next one earlier.</p>'
+      : '<p class="tour-enter-label">' + (t.isLive ? 'Enter and play on' : 'Register on') + '</p>' +
+        '<div class="tour-enter">' +
+          '<a class="e-wa"  href="' + esc(t.enter.whatsapp) + '" data-tour="' + t.id + '" data-plat="whatsapp">WhatsApp</a>' +
+          '<a class="e-tg"  href="' + esc(t.enter.telegram) + '" data-tour="' + t.id + '" data-plat="telegram">Telegram</a>' +
+          '<a class="e-web" href="' + esc(t.enter.web) + '" data-tour="' + t.id + '" data-plat="web">Web</a>' +
+        '</div>';
+
+    return '<article class="card tour-card' + (t.isLive ? ' live' : '') + '">' +
+      status +
+      '<h3 class="tour-name">' + esc(t.name) + '</h3>' +
+      (t.sponsor ? '<div class="tour-sponsor">Sponsored by ' + esc(t.sponsor) + '</div>' : '') +
+      '<div class="tour-pool">' + fmtNaira(t.prizePool) + '</div>' +
+      '<div class="tour-pool-label">prize pool</div>' +
+      facts + action +
+    '</article>';
+  }
+
+  function empty() {
+    var S = window.WUT_CONFIG.SOCIAL;
+    return '<p class="tour-empty">No tournament is open for entry right now. ' +
+      'New ones are announced on ' +
+      '<a href="' + S.instagram + '" target="_blank" rel="noopener">Instagram</a>, ' +
+      '<a href="' + S.facebook + '" target="_blank" rel="noopener">Facebook</a> and ' +
+      '<a href="' + S.x + '" target="_blank" rel="noopener">X</a> before they start \u2014 ' +
+      'or play <a href="/how-to-play">Classic Mode</a> in the meantime.</p>';
+  }
+
+  function load() {
+    apiGet('/api/public/tournaments/showcase?limit=6').then(function (res) {
+      var list = (res && res.tournaments) || [];
+      var version = (res && res.version) || 'empty';
+      if (version === lastVersion) return;      // nothing moved; leave the DOM alone
+      lastVersion = version;
+
+      box.innerHTML = list.length
+        ? '<div class="tour-grid">' + list.map(card).join('') + '</div>'
+        : empty();
+    }).catch(function () {
+      /* Only replace a spinner with an error. If cards are already on screen
+         a failed refresh should leave them there rather than blanking a
+         working section. */
+      if (lastVersion === null) {
+        box.innerHTML = '<p class="tour-empty">Tournament information isn\u2019t loading right now. ' +
+          'The <a href="/leaderboards">leaderboards</a> are still up.</p>';
+      }
+    });
+  }
+
+  load();
+  // Participant counts move during a live event; the section should not need
+  // a refresh to stay honest.
+  setInterval(load, 90000);
 })();
 
 /* ---------------- HOME REVIEWS (approved only, flag-gated) ---------------- */
@@ -2545,5 +2736,6 @@ document.body.setAttribute('data-ticker', 'on');
 })();
 
 </script>
+<script defer src="/ticker.js"></script>
 </body>
 </html>

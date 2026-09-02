@@ -112,6 +112,10 @@ router.get('/content', (req, res) => {
 });
 
 // Feature toggles — per mode, per platform
+router.get('/announcements', (req, res) => {
+  res.sendFile('admin-announcements.html', { root: './src/views' });
+});
+
 router.get('/toggles', (req, res) => {
   res.sendFile('admin-toggles.html', { root: './src/views' });
 });
@@ -9253,6 +9257,189 @@ router.delete('/api/toggles/:key', authenticateAdmin, async (req, res) => {
   } catch (error) {
     logger.error(`Error clearing toggle: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to clear toggle' });
+  }
+});
+
+
+// ============================================
+// ANSWER CLOCK (per mode, per platform)
+//
+// Lives on the toggles page rather than in its own section: it is the same
+// category of control — a runtime value changed without a deploy — and it
+// reads alongside the mode grid it modifies.
+//
+// The service clamps to 5-30 seconds and refuses anything outside it. 5 is
+// the anti-cheat floor (TURBO_MODE_CONFIG.CLUSTERING.MINIMUM_TIMEOUT_MS);
+// letting an admin set a base clock tighter than the punishment clock would
+// mean honest players routinely playing under conditions the fraud model
+// reads as adversarial.
+// ============================================
+const gameSettingsService = require('../services/game-settings.service');
+
+router.get('/api/game-settings/answer-time', authenticateAdmin, async (req, res) => {
+  try {
+    const grid = await gameSettingsService.getGrid();
+    res.json({ success: true, ...grid, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading answer-time settings: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load answer times' });
+  }
+});
+
+// PUT { mode, platform, seconds }
+router.put('/api/game-settings/answer-time', authenticateAdmin, async (req, res) => {
+  try {
+    const { mode, platform, seconds } = req.body || {};
+    const result = await gameSettingsService.setAnswerSeconds(
+      mode, platform, seconds, req.adminSession.username
+    );
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+
+    // Logged as its own action, not lumped in with toggles: changing how long
+    // every player gets to answer is a competitive-integrity decision and the
+    // audit trail should be able to answer "who shortened the clock, and when"
+    // without reading through unrelated switch flips.
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'answer_time_set',
+      { mode, platform, seconds: result.seconds },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true, seconds: result.seconds });
+  } catch (error) {
+    logger.error(`Error setting answer time: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to set answer time' });
+  }
+});
+
+// Clearing hands the clock back to the built-in progressive ladder, which is
+// different from setting it to 12.
+router.delete('/api/game-settings/answer-time/:mode/:platform', authenticateAdmin, async (req, res) => {
+  try {
+    const { mode, platform } = req.params;
+    const removed = await gameSettingsService.clearAnswerSeconds(
+      mode, platform, req.adminSession.username
+    );
+    if (!removed) return res.status(404).json({ success: false, error: 'No override set for that combination' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'answer_time_cleared',
+      { mode, platform },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error clearing answer time: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to clear answer time' });
+  }
+});
+
+
+// ============================================
+// ANNOUNCEMENTS — the rolling news bar on the marketing site
+//
+// Full CRUD rather than the key-value shape site-content uses, because an
+// announcement is a list item with an order and a lifetime. See the header
+// of announcements.service.js for why it is not folded into site content.
+// ============================================
+const announcementsService = require('../services/announcements.service');
+
+router.get('/api/announcements', authenticateAdmin, async (req, res) => {
+  try {
+    const announcements = await announcementsService.adminList();
+    res.json({ success: true, announcements, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading announcements: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load announcements' });
+  }
+});
+
+router.post('/api/announcements', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await announcementsService.create(req.body || {}, req.adminSession.username);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'announcement_created',
+      { id: result.id, body: String(req.body.body || '').slice(0, 120) },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true, id: result.id });
+  } catch (error) {
+    logger.error(`Error creating announcement: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to create announcement' });
+  }
+});
+
+router.put('/api/announcements/:id(\\d+)', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await announcementsService.update(id, req.body || {}, req.adminSession.username);
+    if (!result.ok) {
+      const code = result.error === 'Announcement not found' ? 404 : 400;
+      return res.status(code).json({ success: false, error: result.error });
+    }
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'announcement_updated',
+      { id },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error updating announcement: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update announcement' });
+  }
+});
+
+// The control an admin reaches for mid-incident: take it off the site now,
+// keep the text for later. Separate from DELETE on purpose — pulling a notice
+// down in a hurry should not destroy what it said.
+router.post('/api/announcements/:id(\\d+)/visibility', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const active = req.body && req.body.active === true;
+    const result = await announcementsService.setActive(id, active, req.adminSession.username);
+    if (!result.ok) return res.status(404).json({ success: false, error: result.error });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      active ? 'announcement_shown' : 'announcement_hidden',
+      { id },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true, active: result.active });
+  } catch (error) {
+    logger.error(`Error changing announcement visibility: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update announcement' });
+  }
+});
+
+router.delete('/api/announcements/:id(\\d+)', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const removed = await announcementsService.remove(id, req.adminSession.username);
+    if (!removed) return res.status(404).json({ success: false, error: 'Announcement not found' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'announcement_deleted',
+      { id },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error deleting announcement: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to delete announcement' });
   }
 });
 

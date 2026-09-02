@@ -73,6 +73,25 @@
   .toast.ok { border-color: rgba(0,214,143,.5); }
   .toast.err { border-color: rgba(255,59,92,.5); }
   .loading { text-align: center; color: var(--text-dim); padding: 40px 0; }
+
+  /* answer clock */
+  .clock-note { background: rgba(59,130,246,.09); border: 1px solid rgba(59,130,246,.3);
+    border-radius: 10px; padding: 11px 14px; font-size: 12.5px; color: #a9c4ee;
+    line-height: 1.6; margin: 0 0 16px; }
+  .clock-note b { color: #d6e5ff; }
+  .clk { display: flex; align-items: center; gap: 7px; justify-content: center; }
+  .clk input { width: 62px; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 8px; font-size: 14px; font-family: 'JetBrains Mono', monospace;
+    text-align: center; }
+  .clk input:focus { outline: none; border-color: var(--blue); }
+  .clk input.set { border-color: rgba(255,194,51,.6); color: var(--amber); }
+  .clk .unit { font-size: 11.5px; color: var(--text-dim); }
+  .clk-clear { border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 2px 4px; font-family: inherit; }
+  .clk-clear:hover { color: var(--red); }
+  .clk-src { display: block; font-size: 10px; color: #5c5c72; margin-top: 5px;
+    font-family: 'JetBrains Mono', monospace; }
+  .clk-src.override { color: var(--amber); }
   @media (max-width: 640px) { th, td { padding: 9px 6px; font-size: 13px; } .sw { width: 40px; height: 23px; } }
 </style>
 </head>
@@ -93,6 +112,22 @@
 
   <div class="banner warn" id="allOffBanner"></div>
   <div id="content"><div class="loading">Loading toggles…</div></div>
+
+  <div class="card" id="clockCard">
+    <h2>Answer clock</h2>
+    <div class="hint">
+      How long players get on each question. Leave a cell on <b>Default</b> and the game
+      uses its built-in ladder — 12 seconds for questions 1–5, 11 for 6–10, 10 for 11–15.
+      Set a number and it becomes <b>flat</b>: the same clock on every question of the round.
+    </div>
+    <div class="clock-note">
+      Anti-cheat still wins. Turbo mode, watchlist timers and penalty clocks are all shorter
+      and all override this — loosening the clock here does not give a flagged account its
+      time back. Changes apply from each player's <b>next question</b>, so nobody mid-round
+      has the timer moved under them.
+    </div>
+    <div id="clockContent"><div class="loading">Loading answer clock…</div></div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -229,8 +264,107 @@ async function clearToggle(key) {
   else { toast((r && r.error) || 'Failed to clear', false); load(); }
 }
 
+// ============================================
+// ANSWER CLOCK
+// Same page as the toggles because it is the same kind of control: a
+// runtime value changed without a deploy, read alongside the mode grid it
+// modifies. Different endpoint and different table — the toggle rows are
+// booleans and a clock is not.
+// ============================================
+const CLOCK_MODES = [
+  ['classic',    'Classic Mode',  'One credit per round, real rewards'],
+  ['tournament', 'Tournaments',   'Sponsored events, ranked'],
+  ['practice',   'Practice Mode', 'Free, unlimited, no rewards']
+];
+let clockBounds = { min: 5, max: 30 };
+
+function renderClock(grid) {
+  clockBounds = grid.bounds || clockBounds;
+
+  let html = `<table>
+    <thead><tr><th>Mode</th>
+    ${PLATFORMS.map(([, l]) => `<th class="ctr">${l}</th>`).join('')}</tr></thead><tbody>`;
+
+  CLOCK_MODES.forEach(([m, label, sub]) => {
+    html += `<tr><td><span class="mode-name">${label}</span><br><span class="mode-sub">${sub}</span></td>`;
+    PLATFORMS.forEach(([p]) => {
+      const cell = grid.matrix[m][p];
+      const set = cell.source === 'override';
+      html += `<td class="ctr">
+        <div class="clk">
+          <input type="number" class="${set ? 'set' : ''}"
+            min="${clockBounds.min}" max="${clockBounds.max}" step="1"
+            value="${set ? cell.seconds : ''}" placeholder="—"
+            aria-label="${label} on ${p}, seconds per question"
+            onchange="setClock('${m}','${p}', this.value, this)">
+          <span class="unit">sec</span>
+          ${set ? `<button class="clk-clear" title="Back to the default ladder"
+            onclick="clearClock('${m}','${p}')">×</button>` : ''}
+        </div>
+        <span class="clk-src ${set ? 'override' : ''}">${set ? 'flat ' + cell.seconds + 's' : 'default ladder'}</span>
+      </td>`;
+    });
+    html += `</tr>`;
+  });
+
+  html += `</tbody></table>`;
+  document.getElementById('clockContent').innerHTML = html;
+}
+
+async function loadClock(force) {
+  // The 30-second poll re-renders this table. A switch can be redrawn under
+  // someone harmlessly; a half-typed "1" in a number box cannot — it would
+  // vanish, or worse, be replaced mid-keystroke. Skip the scheduled refresh
+  // while a field here has focus.
+  if (!force) {
+    const active = document.activeElement;
+    const box = document.getElementById('clockContent');
+    if (active && box && box.contains(active)) return;
+  }
+
+  const r = await apiCall('/game-settings/answer-time');
+  if (!r || !r.success) {
+    document.getElementById('clockContent').innerHTML =
+      '<div class="loading">Could not load the answer clock. Refresh to retry.</div>';
+    return;
+  }
+  renderClock(r);
+}
+
+async function setClock(mode, platform, value, el) {
+  // Emptying the box means "back to the default", which is the clear
+  // endpoint rather than a save of nothing.
+  const raw = String(value == null ? '' : value).trim();
+  if (raw === '') return clearClock(mode, platform);
+
+  const seconds = parseInt(raw, 10);
+  if (!Number.isInteger(seconds) || seconds < clockBounds.min || seconds > clockBounds.max) {
+    toast(`Answer time must be between ${clockBounds.min} and ${clockBounds.max} seconds`, false);
+    loadClock(true);   // forced: revert the rejected value rather than leaving it on screen
+    return;
+  }
+
+  if (el) el.disabled = true;
+  const r = await apiCall('/game-settings/answer-time',
+    { method: 'PUT', body: JSON.stringify({ mode, platform, seconds }) });
+  if (el) el.disabled = false;
+
+  if (r && r.success) toast(`${mode} on ${platform} → ${r.seconds}s on every question`);
+  else toast((r && r.error) || 'Could not save that', false);
+  loadClock(true);
+}
+
+async function clearClock(mode, platform) {
+  const r = await apiCall(`/game-settings/answer-time/${mode}/${platform}`, { method: 'DELETE' });
+  // A 404 here just means it was already on the default — re-rendering is
+  // the honest response, not an error the admin has to think about.
+  if (r && r.success) toast(`${mode} on ${platform} → back to the default ladder`);
+  loadClock(true);
+}
+
 load();
-setInterval(load, 30000);
+loadClock();
+setInterval(() => { load(); loadClock(); }, 30000);
 </script>
 <script src="/admin-nav.js"></script>
 </body>
