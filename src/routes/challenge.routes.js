@@ -273,6 +273,12 @@ router.post('/:code/start', requireChallengeAuth, requireChallengesEnabled, asyn
                 text: question.text,
                 options: question.options,
                 timeoutMs: question.timeoutMs,
+                // The route builds a FRESH object, so anything getQuestion()
+                // returns must be copied across explicitly. This flag was
+                // computed, returned, then silently dropped here \u2014 the
+                // client's q.fiftyFiftyAvailable was always undefined, so the
+                // lifeline button never appeared on web in either mode.
+                fiftyFiftyAvailable: question.fiftyFiftyAvailable === true,
                 // Pace only, never correctness — a ghost that shows whether they
                 // were right is a ghost that leaks the answer.
                 ghostMs: ghost ? (ghost[1] || null) : null
@@ -339,6 +345,7 @@ router.post('/:code/answer', requireChallengeAuth, requireChallengesEnabled, asy
                 text: next.text,
                 options: next.options,
                 timeoutMs: next.timeoutMs,
+                fiftyFiftyAvailable: next.fiftyFiftyAvailable === true,
                 ghostMs: ghost ? (ghost[next.position] || null) : null
             } : null
         });

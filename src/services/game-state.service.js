@@ -269,9 +269,41 @@ class GameStateService {
                           }).filter(Boolean)
                         : null;
 
+                    // THE PUZZLE, not the label.
+                    //
+                    // displayQuestion is a one-line summary \u2014 "Count \ud83d\udd25 in mixed
+                    // grid" \u2014 written for a log line, not for a player. Sending
+                    // it as the body meant the grid never rendered: the player
+                    // saw the summary, had nothing to count, and timed out of a
+                    // game they were winning.
+                    //
+                    // The full text is in data.question. It carries chat
+                    // scaffolding (header, the "reply with" line, the timer),
+                    // so it is stripped exactly as game.service does for the
+                    // live event \u2014 if the two ever diverge, a reconnect renders
+                    // something different from the first paint.
+                    const capBody = data && data.question
+                        ? String(data.question)
+                            .split('\n')
+                            .filter(line => {
+                                const t = line.trim();
+                                if (!t) return true;
+                                if (/SECURITY CHECK/i.test(t)) return false;
+                                if (/^reply with/i.test(t.replace(/[*_]/g, ''))) return false;
+                                if (/^\u23f1|seconds\b/i.test(t.replace(/[*_]/g, ''))) return false;
+                                if (capOptions && capOptions.length &&
+                                    /^[1-9](\uFE0F?\u20E3|[.)])/.test(t)) return false;
+                                return true;
+                            })
+                            .join('\n')
+                            .replace(/[*_]/g, '')
+                            .replace(/\n{3,}/g, '\n\n')
+                            .trim()
+                        : '';
+
                     return {
                         ...base,
-                        body: data ? (data.displayQuestion || null) : null,
+                        body: capBody || (data ? (data.displayQuestion || null) : null),
                         summary: data ? (data.displayQuestion || null) : null,
                         options: capOptions,
                         phase: 'captcha',

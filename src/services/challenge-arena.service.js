@@ -360,9 +360,12 @@ class ChallengeArenaService {
         // clock starts a few milliseconds apart. The loop already covers every
         // round including the first.
         let question = null;
-        for (const round of state.rounds.values()) {
-            const served = await challengeRoundService.getQuestion(challenge, round, state.position);
-            if (!question) question = served;
+        const served = new Map();
+        for (const [userId, round] of state.rounds) {
+            const q = await challengeRoundService.getQuestion(challenge, round, state.position);
+            if (!question) question = q;
+            // Each player's own lifeline state, keyed by user.
+            served.set(userId, !!(q && q.fiftyFiftyAvailable));
         }
         if (!question) return this._endMatch(challenge);
 
@@ -373,14 +376,22 @@ class ChallengeArenaService {
         // ONE frame per player. expiresAt is an absolute epoch time sent ONCE;
         // the browser counts down locally rather than being told the number
         // every second.
-        gameEvents.emitRoom(challenge.id, 'challenge.question', {
-            challengeId: challenge.id,
-            position: state.position,
-            total: QUESTIONS_PER_ROUND,
-            text: question.text,
-            options: question.options,
-            expiresAt: state.expiresAt
-        });
+        // PER PLAYER, because the lifeline flag is per player. emitRoom()
+        // already loops and sends one frame each, so this costs no extra
+        // frames \u2014 it just lets each frame carry that player's own state.
+        // A single room-wide payload could not, which is why the button never
+        // appeared in the arena either.
+        for (const [userId, round] of state.rounds) {
+            gameEvents.emit(userId, 'challenge.question', {
+                challengeId: challenge.id,
+                position: state.position,
+                total: QUESTIONS_PER_ROUND,
+                text: question.text,
+                options: question.options,
+                expiresAt: state.expiresAt,
+                fiftyFiftyAvailable: served.get(userId) === true
+            });
+        }
 
         const existing = this.timers.get(challenge.id);
         if (existing) clearTimeout(existing);
