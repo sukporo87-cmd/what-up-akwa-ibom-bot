@@ -39,7 +39,11 @@ const PROMPTS = {
     'challenge_create:format':     { expects: 'choice', title: 'Who are you challenging?' },
     'challenge_create:size':       { expects: 'text',   title: 'How many players?' },
     'challenge_create:categories': { expects: 'text',   title: 'Pick up to 3 categories' },
-    'challenge_create:entry':      { expects: 'choice', title: 'How do people get in?' },
+    // 'entry' is gone \u2014 challenges are free or paid globally now, so asking a
+    // creator to pick a funding model was asking about a decision already made
+    // for them.
+    'challenge_create:prize':      { expects: 'text',   title: 'Put up a prize?' },
+    'challenge_create:gateway':    { expects: 'choice', title: 'How would you like to pay?' },
     'challenge_create:startdate':  { expects: 'choice', title: 'What day?' },
     'challenge_create:starttime':  { expects: 'text',   title: 'What time? (WAT)' },
 

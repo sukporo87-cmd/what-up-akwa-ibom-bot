@@ -39,6 +39,11 @@ const STATE_PREFIX = 'challenge_create';
 // check, from one constant, so the two can never drift apart.
 const MIN_LEAD_MINUTES = 10;
 
+// Prize bounds. Matched to the validator in challenge.service so the chat flow
+// cannot accept an amount that creation then rejects.
+const PRIZE_MIN = 1000;
+const PRIZE_MAX = 100000;
+
 // How long a challenge round may sit half-finished before its Redis key stops
 // answering for the player. Was two hours, which is far longer than any round
 // takes and long enough for a stale key to hijack a completely different game.
@@ -119,6 +124,24 @@ const STRINGS = {
             : '') +
         'Reply with a number between 2 and 20.',
 
+    pickPrize: () =>
+        'Want to put up a cash prize for the winner?\n\n' +
+        `Reply with an amount between *\u20a6${PRIZE_MIN.toLocaleString()}* and ` +
+        `*\u20a6${PRIZE_MAX.toLocaleString()}*, or *NO* for bragging rights.`,
+
+    badPrize: () =>
+        `A prize has to be between \u20a6${PRIZE_MIN.toLocaleString()} and ` +
+        `\u20a6${PRIZE_MAX.toLocaleString()}. Reply with an amount, or *NO* to skip it.`,
+
+    // Stated the moment the amount is given, and again in the quote before
+    // payment. A fee that first appears on an invoice is a surprise.
+    prizeAccepted: (prize, fee, bps) =>
+        `\ud83c\udfc6 Prize: *\u20a6${prize.toLocaleString()}* for the winner.\n\n` +
+        `We add a ${(bps / 100)}% administrative fee of \u20a6${fee.toLocaleString()}, so ` +
+        `you'll pay *\u20a6${(prize + fee).toLocaleString()}* for the prize.\n\n` +
+        `_If the challenge never completes, the \u20a6${prize.toLocaleString()} prize comes ` +
+        'back to you in full. The fee and any setup charge do not._',
+
     pickCategories: (list) =>
         'Pick up to 3 categories.\n\n' + list + '\n\n' +
         'Reply with the numbers, separated by commas \u2014 like *1,3*.',
@@ -192,25 +215,42 @@ const STRINGS = {
         'Your invite link appears the moment the payment clears. ' +
         'Nothing is sent out before then.',
 
+    pickGateway: (names, total) =>
+        (total ? `\ud83d\udcb3 *\u20a6${total.toLocaleString()}*\n\n` : '') +
+        'How would you like to pay?\n\n' +
+        names.map((n, i) => `*${i + 1}* \u2014 ${n.charAt(0).toUpperCase() + n.slice(1)}`).join('\n') +
+        `\n\nReply with a number.`,
+
     payFailed:
         "Couldn't start that payment. Reply *PAY* to try again.",
 
     alreadyPaid:
         'That one is already paid for. Reply *MYCHALLENGES* to find it.',
 
-    created: (categories, startLabel) =>
-        '\u2705 *Challenge created.*\n\n' +
-        `${categories} \u00b7 15 questions \u00b7 10 seconds each\n` +
+    // ONE message for the creator. Everything they need to act: what they
+    // made, their entry code, and how to call it off.
+    created: (categories, startLabel, code, entryCode, mode) =>
+        '\u2705 *Challenge created.*\n' +
+        '15 questions \u00b7 10 seconds each\n\n' +
+        `${categories}\n\n` +
         (startLabel
-            ? `Starts ${startLabel} \u00b7 everyone plays at once, in the browser\n\n`
-            : '\n') +
-        (startLabel
-            ? 'The invite is below \u2014 forward it to whoever you want to beat.\n\n' +
-              '*You play in the browser too* \u2014 open your own link before the ' +
-              'start time. Reply *MY CODE* for your entry code.'
-            : '*Reply PLAYCHALLENGE to set your score first* \u2014 whoever you invite races ' +
-              'the pace you set.\n\nThe invite is below \u2014 forward it to whoever ' +
-              'you want to beat.'),
+            ? `\u23f0 Starts ${startLabel} \u00b7 everyone plays at once, in the browser\n\n`
+            : '') +
+        'The invite is below \u2014 forward it to whoever you want to beat.\n\n' +
+        (entryCode
+            ? '*You play in the browser too*\n' +
+              `\ud83d\udd11 *Your code to play: ${entryCode.split('').join(' ')}*\n\n` +
+              'Open your challenge link, choose *Play as my WhatsApp or Telegram ' +
+              'account*, then enter your username and this code.\n\n' +
+              `It works only for this one challenge (${code}) and expires in 10 minutes.\n` +
+              "Don't share this code \u2014 it isn't part of the invite.\n" +
+              'Reply *MY CODE* if it expires.\n\n'
+            : (mode === 'live' ? '' :
+               '*Reply PLAYCHALLENGE to set your score first* \u2014 whoever you invite ' +
+               'races the pace you set.\n\n')) +
+        'You can cancel this challenge any time until someone joins or pays. ' +
+        'After that it\u2019s final \u2014 it runs, or it expires.\n\n' +
+        '_Reply *CANCEL CHALLENGE* to call it off._',
 
     // The forwardable one. Deliberately self-contained: someone who receives
     // this with no context should understand what it is and how to play.
@@ -222,24 +262,29 @@ const STRINGS = {
     // people, and an invite that does not say so gets treated as a duel.
     invite: (displayName, links, categories, startLabel, seats) =>
         `\u2694\ufe0f *${displayName} has challenged you to a game of trivia!*\n\n` +
-        `\ud83c\udfaf *What's Up Trivia* \u2014 ${categories}\n` +
-        (seats && seats > 2
-            ? `\ud83d\udc65 Up to *${seats} players* \u2014 forward this to whoever else should be in\n`
-            : '') +
-        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
-        (startLabel ? `\u23f0 Starts ${startLabel}\n` : '') +
-        // A LIVE challenge is played in the browser and nowhere else, so
-        // offering a WhatsApp and a Telegram link is offering two dead ends.
-        // Async genuinely is playable on all three, so it lists all three.
+        "\ud83c\udfaf *What's Up Trivia*\n" +
+        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n\n' +
+        `${categories}\n\n` +
+        // Only for a group: a 1v1 does not need telling it is a 1v1, and an
+        // invite to a 10-player challenge is something you forward on.
+        (seats && seats > 2 ? `\ud83d\udc65 Up to *${seats} players*\n\n` : '') +
+        (startLabel ? `\u23f0 Starts ${startLabel}\n\n` : '') +
         (startLabel
-            ? `\n\ud83c\udf10 *Play here:*\n${links.web}\n\n` +
-              '_Everyone plays at once, in the browser. Open the link before ' +
-              'the start time to join the lobby._'
-            : '\n*Tap the link for the platform you play on:*\n\n' +
+            // Live is browser-only, so listing a WhatsApp and a Telegram link
+            // would be listing two dead ends.
+            ? `\ud83c\udf10 *Play here:*\n${links.web}\n\n` +
+              '_Everyone plays at once, in the browser. Open the link at least ' +
+              '5 minutes before the start time to join the lobby._ ' +
+              'The challenge starts right on time.\n\n'
+            : '*Tap the link for the platform you play on:*\n\n' +
               `\ud83d\udcac WhatsApp: ${links.whatsapp}\n\n` +
               `\u2708\ufe0f Telegram: ${links.telegram}\n\n` +
               `\ud83c\udf10 Web: ${links.web}\n\n` +
-              '_You have 48 hours to accept._'),
+              '_You have 48 hours to accept._\n\n') +
+        // The recipient may have no account at all, and an invite that does not
+        // say so reads as "this is not for me".
+        "Don't have a What's Up Trivia account? Not an issue \u2014 tap the link, " +
+        'sign up, and carry straight on into the challenge.',
 
     // ---- receiving an invite ----
     inviteFound: (from, categories, entryLine) =>
@@ -336,6 +381,10 @@ const STRINGS = {
     cancelTooLate:
         "Someone has already joined, so this one has to run its course. It " +
         'expires on its own if nobody finishes.',
+
+    cancelDraft:
+        'Stopped. Nothing was created, so nothing was charged.\n\n' +
+        'Reply *NEW CHALLENGE* whenever you want to start one.',
 
     cancelNothing:
         "You don't have a challenge waiting to be cancelled.",
@@ -611,7 +660,7 @@ class ChallengeChatService {
         ));
         await messagingService.sendMessage(identifier, STRINGS.invite(
             this.displayName(user), created.links,
-            this._categoryList(previous.categories), null,
+            this._categoryBlock(previous.categories), null,
             previous.max_participants
         ));
         return true;
@@ -640,8 +689,42 @@ class ChallengeChatService {
             return true;
         }
 
+        // OFFER THE CHOICE when more than one gateway is live, exactly as
+        // Classic and tournaments already do. Challenges were silently taking
+        // the default, which meant a player whose card only works on one
+        // provider had no way to reach it.
+        const gatewayManager = require('./payment-gateway-manager');
+        let choices = [];
+        try {
+            choices = await gatewayManager.getEnabledGatewaysForPicker();
+        } catch (error) {
+            logger.error('Could not list gateways for the challenge picker:', error.message);
+        }
+
+        if (choices.length > 1) {
+            await userService.setUserState(identifier, `${STATE_PREFIX}:gateway`, {
+                code: challenge.code,
+                gateways: choices.map(g => g.getName())
+            });
+            await messagingService.sendMessage(identifier, STRINGS.pickGateway(
+                choices.map(g => g.getName()),
+                Number(challenge.total_charged) || 0
+            ));
+            return true;
+        }
+
+        return this._startPayment(identifier, challenge, user, platform, null);
+    }
+
+    /**
+     * Opens the gateway and hands back the link. Split out so the picker and
+     * the single-gateway path cannot drift apart.
+     */
+    async _startPayment(identifier, challenge, user, platform, gatewayName) {
         const challengeSponsorshipService = require('./challenge-sponsorship.service');
-        const started = await challengeSponsorshipService.initiate(challenge, user, platform);
+        const started = await challengeSponsorshipService.initiate(
+            challenge, user, platform, gatewayName
+        );
 
         if (!started.ok) {
             await messagingService.sendMessage(identifier, STRINGS.payFailed);
@@ -653,11 +736,43 @@ class ChallengeChatService {
         return true;
     }
 
+    /**
+     * Where the flow goes once the prize question is answered.
+     *
+     * Shared by both branches of that step so a live challenge cannot skip the
+     * date question by taking the "no prize" path \u2014 which is exactly the kind
+     * of gap that let live challenges reach validateCreation with no start
+     * time and fall through to the main menu.
+     */
+    async _afterPrize(identifier, data, user, platform) {
+        if (data.mode === 'live') {
+            data.dayOptions = this.startDayOptions();
+            await this._advance(identifier, 'startdate', data,
+                STRINGS.pickStartDate(this._numberedDays(data.dayOptions)));
+            return true;
+        }
+        return this._finish(identifier, data, user, platform);
+    }
+
     // ============================================
     // CANCEL
     // ============================================
 
     async handleCancel(identifier, user, platform) {
+        // A CHALLENGE BEING BUILT COUNTS AS ONE.
+        //
+        // Someone halfway through the questions who types CANCEL CHALLENGE
+        // means "stop this", and answering "you have no challenge to cancel"
+        // while they are visibly in the middle of making one reads as the bot
+        // losing track. Clearing the flow IS the cancellation at that point:
+        // no row exists yet, so there is nothing else to undo.
+        const inFlight = await userService.getUserState(identifier);
+        if (inFlight && String(inFlight.state || '').startsWith(STATE_PREFIX)) {
+            await userService.clearUserState(identifier);
+            await messagingService.sendMessage(identifier, STRINGS.cancelDraft);
+            return true;
+        }
+
         const open = await pool.query(`
             SELECT c.code
             FROM challenges c
@@ -798,35 +913,63 @@ class ChallengeChatService {
                     return true;
                 }
                 data.categories = unique;
-                await this._advance(identifier, 'entry', data, STRINGS.pickEntry);
+                // Entry model is gone: a challenge is free or paid globally
+                // now, and asking a creator to choose between three funding
+                // models they no longer control was asking about a decision
+                // that had already been made for them.
+                await this._advance(identifier, 'prize', data, STRINGS.pickPrize());
                 return true;
             }
 
-            case 'entry':
-                if (!['1', '2', '3'].includes(input)) {
-                    await messagingService.sendMessage(identifier, STRINGS.pickEntry);
+            case 'gateway': {
+                const list = data.gateways || [];
+                const pick = parseInt(input, 10);
+                if (!(pick >= 1 && pick <= list.length)) {
+                    await messagingService.sendMessage(identifier,
+                        STRINGS.pickGateway(list, 0));
                     return true;
                 }
-                data.entryModel = input === '1' ? 'credit' : input === '2' ? 'prepaid' : 'free';
+                await userService.clearUserState(identifier);
+                const challengeForPay = await challengeService.getByCode(data.code);
+                if (!challengeForPay) {
+                    await messagingService.sendMessage(identifier, STRINGS.payFailed);
+                    return true;
+                }
+                return this._startPayment(
+                    identifier, challengeForPay, user, platform, list[pick - 1]
+                );
+            }
 
-                if (data.entryModel === 'prepaid') {
-                    // Prepaid takes payment, which is stage 10's flow. Until
-                    // then say so plainly rather than half-building it.
-                    data.entryModel = 'free';
+            case 'prize': {
+                const raw = input.replace(/[,\s\u20a6]/g, '');
+
+                // NO is the common answer, so it is the cheapest to type.
+                if (/^(NO|NONE|SKIP|0)$/i.test(raw)) {
+                    data.prizeAmount = 0;
+                    return this._afterPrize(identifier, data, user, platform);
                 }
 
-                // A live challenge needs a start time, and nothing was asking
-                // for one — validateCreation rejected every live challenge
-                // created from chat with "A live challenge needs a start time",
-                // which then fell through to the main menu.
-                if (data.mode === 'live') {
-                    data.dayOptions = this.startDayOptions();
-                    await this._advance(identifier, 'startdate', data,
-                        STRINGS.pickStartDate(this._numberedDays(data.dayOptions)));
+                const amount = parseInt(raw, 10);
+                if (!Number.isFinite(amount) || amount < PRIZE_MIN || amount > PRIZE_MAX) {
+                    await messagingService.sendMessage(identifier, STRINGS.badPrize());
                     return true;
                 }
 
-                return this._finish(identifier, data, user, platform);
+                data.prizeAmount = amount;
+
+                // THE FEE IS SHOWN HERE, before anything is owed, and again in
+                // the quote before payment. A sponsor fee that first appears
+                // on an invoice is a surprise; one stated twice before payment
+                // is a price.
+                const challengePricingService = require('./challenge-pricing.service');
+                const pricingNow = await challengePricingService.getPricing();
+                const fee = challengePricingService.prizeFeeFor(amount, pricingNow);
+
+                await messagingService.sendMessage(identifier,
+                    STRINGS.prizeAccepted(amount, fee, pricingNow.prizeFeeBps));
+
+                return this._afterPrize(identifier, data, user, platform);
+            }
 
             case 'startdate': {
                 const options = data.dayOptions || this.startDayOptions();
@@ -919,7 +1062,7 @@ class ChallengeChatService {
             ? this.watLabel(data.scheduledStartAt)
             : null;
 
-        const categoryLabel = this._categoryList(data.categories);
+        const categoryLabel = this._categoryBlock(data.categories);
 
         // ANYTHING OWED HOLDS THE INVITE BACK.
         //
@@ -936,11 +1079,32 @@ class ChallengeChatService {
             return true;
         }
 
-        await messagingService.sendMessage(identifier,
-            STRINGS.created(categoryLabel, startLabel));
+        // TWO MESSAGES, NOT FOUR.
+        //
+        // Everything the CREATOR needs \u2014 what they made, their entry code, how
+        // to cancel \u2014 is one message. The invite is the second, and it stays
+        // separate for one reason: it is built to be forwarded, and the entry
+        // code must never travel inside a forwarded message.
+        //
+        // The code is issued BEFORE the first message so it can be printed in
+        // it rather than arriving separately a moment later.
+        let initiatorCode = null;
+        if (!String(identifier).startsWith('web_')) {
+            try {
+                const challengeAuthService = require('./challenge-auth.service');
+                const issued = await challengeAuthService.issueCode(
+                    result.challenge, user, { deliver: false }
+                );
+                if (issued.ok) initiatorCode = issued.code;
+            } catch (error) {
+                logger.error('Could not issue initiator challenge code:', error.message);
+            }
+        }
 
-        // Sent separately so it can be forwarded on its own, without the
-        // challenger's own instructions riding along.
+        await messagingService.sendMessage(identifier, STRINGS.created(
+            categoryLabel, startLabel, result.challenge.code, initiatorCode, data.mode
+        ));
+
         await messagingService.sendMessage(identifier,
             STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel,
                            result.challenge.max_participants));
@@ -968,22 +1132,6 @@ class ChallengeChatService {
                 });
             } catch (error) {
                 logger.error('Could not push challenge.created to web:', error.message);
-            }
-        }
-
-        await messagingService.sendMessage(identifier,
-            STRINGS.cancellationNotice + '\n\n' + STRINGS.cancelHint);
-
-        // A live challenge is played in the browser, so the initiator needs a
-        // way in as THIS account. Sent as its own message, never appended to
-        // the invite: the invite is built to be forwarded, and a code inside a
-        // forwarded message is a code given away.
-        if (data.mode === 'live' && !String(identifier).startsWith('web_')) {
-            try {
-                const challengeAuthService = require('./challenge-auth.service');
-                await challengeAuthService.issueCode(result.challenge, user);
-            } catch (error) {
-                logger.error('Could not issue initiator challenge code:', error.message);
             }
         }
 
@@ -1592,6 +1740,26 @@ class ChallengeChatService {
 
     _categoryList(categories) {
         return (categories || []).map(c => this._label(c)).join(', ');
+    }
+
+    /**
+     * The same categories as a numbered block:
+     *
+     *   Categories:
+     *   1. Nigerian History
+     *   2. Word Power
+     *
+     * Used wherever the list is the point rather than an aside. Three
+     * categories on one comma-separated line is fine in a sentence and hard to
+     * scan at the top of an invite, which is where a recipient decides in two
+     * seconds whether this is for them.
+     */
+    _categoryBlock(categories) {
+        const list = categories || [];
+        if (list.length === 0) return '';
+        if (list.length === 1) return `Category: ${this._label(list[0])}`;
+        return 'Categories:\n' +
+            list.map((c, i) => `${i + 1}. ${this._label(c)}`).join('\n');
     }
 
     /**
