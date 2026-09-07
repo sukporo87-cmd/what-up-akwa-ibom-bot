@@ -5390,6 +5390,17 @@ router.get('/api/financials/overview', authenticateAdmin, requireFinancialAccess
 });
 
 // Token Revenue Breakdown
+router.get('/api/financials/challenge-revenue', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await financialService.getChallengeRevenue(startDate, endDate);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error fetching challenge revenue:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/api/financials/token-revenue', authenticateAdmin, requireFinancialAccess, async (req, res) => {
   try {
     const { start_date, end_date } = req.query;

@@ -61,11 +61,32 @@ class FinancialService {
         ${dateFilter ? `AND ${dateFilter}` : ''}
       `);
       
-      const grossRevenue = parseFloat(tokenRevenue.rows[0].total) + parseFloat(tournamentRevenue.rows[0].total);
+      // Challenge revenue was missing entirely, while challenge PRIZE payouts
+      // were already being subtracted below \u2014 so challenges reduced profit
+      // without ever adding to it. Both halves are corrected here.
+      const challenge = await this.getChallengeRevenue(startDate, endDate);
+
+      const grossRevenue = parseFloat(tokenRevenue.rows[0].total)
+                         + parseFloat(tournamentRevenue.rows[0].total)
+                         + challenge.total_revenue;
+
+      // A sponsored prize paid to a winner is the sponsor's money passing
+      // through us, so it is neither our revenue nor our cost. Leaving it in
+      // the payout total understated profit by the whole prize pool.
+      const passThroughPaid = await pool.query(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM transactions
+        WHERE transaction_type IN ('challenge_prize', 'challenge_refund')
+          AND payout_status IN ('paid', 'confirmed')
+        ${dateFilter ? `AND ${dateFilter}` : ''}
+      `);
+
       const totalPayouts = parseFloat(payouts.rows[0].total);
-      const netRevenue = grossRevenue - totalPayouts;
+      const challengePassThrough = parseFloat(passThroughPaid.rows[0].total) || 0;
+      const housePayouts = totalPayouts - challengePassThrough;
+      const netRevenue = grossRevenue - housePayouts;
       const profitMargin = grossRevenue > 0 ? ((netRevenue / grossRevenue) * 100).toFixed(2) : 0;
-      const payoutRatio = grossRevenue > 0 ? ((totalPayouts / grossRevenue) * 100).toFixed(2) : 0;
+      const payoutRatio = grossRevenue > 0 ? ((housePayouts / grossRevenue) * 100).toFixed(2) : 0;
       
       return {
         gross_revenue: grossRevenue,
@@ -73,7 +94,17 @@ class FinancialService {
         token_transactions: parseInt(tokenRevenue.rows[0].transaction_count),
         tournament_revenue: parseFloat(tournamentRevenue.rows[0].total),
         tournament_transactions: parseInt(tournamentRevenue.rows[0].transaction_count),
+        challenge_revenue: challenge.total_revenue,
+        challenge_setup_revenue: challenge.setup_revenue,
+        challenge_fee_revenue: challenge.fee_revenue,
+        challenge_paid_count: challenge.paid_challenges,
+        // Pass-through, kept out of the profit figures above.
+        challenge_prize_held: challenge.prize_held,
+        challenge_prize_awarded: challenge.prize_awarded,
+        challenge_pass_through: challengePassThrough,
         total_payouts: totalPayouts,
+        // Payouts that are genuinely ours \u2014 Classic and tournament prizes.
+        house_payouts: housePayouts,
         payout_count: parseInt(payouts.rows[0].payout_count),
         pending_payouts: parseFloat(pendingPayouts.rows[0].total),
         pending_count: parseInt(pendingPayouts.rows[0].pending_count),
@@ -92,6 +123,87 @@ class FinancialService {
   // TOKEN REVENUE BREAKDOWN
   // ============================================
   
+  /**
+   * Challenge revenue: the setup charges and prize fees we KEEP.
+   *
+   * A SPONSORED PRIZE IS NOT REVENUE. The creator pays it in, the winner takes
+   * it out, and we hold it in between. Counting the money in would inflate
+   * revenue by an amount we are contractually obliged to hand over; counting
+   * the money out as a cost would then understate profit by the same figure.
+   * It nets to zero and belongs nowhere near the P&L, so it is reported
+   * separately as pass-through.
+   *
+   * What we actually earn is the setup charge plus the administrative fee \u2014
+   * and only once the payment has settled. A challenge sitting in
+   * awaiting_sponsorship has been quoted, not paid.
+   */
+  async getChallengeRevenue(startDate = null, endDate = null) {
+    try {
+      const dateFilter = this.buildDateFilter(startDate, endDate, 'c.created_at');
+
+      const earned = await pool.query(`
+        SELECT
+          COALESCE(SUM(c.setup_charge), 0)                       AS setup_revenue,
+          COALESCE(SUM(c.prize_fee), 0)                          AS fee_revenue,
+          COUNT(*) FILTER (WHERE c.setup_charge > 0)::int        AS paid_challenges,
+          COUNT(*) FILTER (WHERE c.prize_amount > 0)::int        AS sponsored_challenges
+        FROM challenges c
+        JOIN challenge_sponsorships s ON s.challenge_id = c.id
+        WHERE s.payment_status IN ('settled', 'awarded', 'withheld', 'refunded')
+        ${dateFilter ? `AND ${dateFilter}` : ''}
+      `);
+
+      // Pass-through, reported so the money is visible without polluting the
+      // profit figures.
+      const passThrough = await pool.query(`
+        SELECT
+          COALESCE(SUM(c.prize_amount), 0)                                        AS prize_collected,
+          COALESCE(SUM(c.prize_amount) FILTER (WHERE s.payment_status = 'awarded'), 0)  AS prize_awarded,
+          COALESCE(SUM(s.refund_amount), 0)                                       AS prize_refunded,
+          COALESCE(SUM(c.prize_amount) FILTER (WHERE s.payment_status = 'withheld'), 0) AS prize_withheld
+        FROM challenges c
+        JOIN challenge_sponsorships s ON s.challenge_id = c.id
+        WHERE s.payment_status IN ('settled', 'awarded', 'withheld', 'refunded')
+        ${dateFilter ? `AND ${dateFilter}` : ''}
+      `);
+
+      const e = earned.rows[0] || {};
+      const p = passThrough.rows[0] || {};
+
+      const setup = parseFloat(e.setup_revenue) || 0;
+      const fee = parseFloat(e.fee_revenue) || 0;
+      const collected = parseFloat(p.prize_collected) || 0;
+      const awarded = parseFloat(p.prize_awarded) || 0;
+      const refunded = parseFloat(p.prize_refunded) || 0;
+
+      return {
+        setup_revenue: setup,
+        fee_revenue: fee,
+        total_revenue: setup + fee,
+        paid_challenges: parseInt(e.paid_challenges) || 0,
+        sponsored_challenges: parseInt(e.sponsored_challenges) || 0,
+
+        prize_collected: collected,
+        prize_awarded: awarded,
+        prize_refunded: refunded,
+        prize_withheld: parseFloat(p.prize_withheld) || 0,
+        // What we are still holding on somebody else's behalf. A liability,
+        // not a balance.
+        prize_held: collected - awarded - refunded
+      };
+    } catch (error) {
+      // A missing challenge_sponsorships or pricing column must not take the
+      // whole financials page down.
+      logger.error('Error getting challenge revenue:', error.message);
+      return {
+        setup_revenue: 0, fee_revenue: 0, total_revenue: 0,
+        paid_challenges: 0, sponsored_challenges: 0,
+        prize_collected: 0, prize_awarded: 0, prize_refunded: 0,
+        prize_withheld: 0, prize_held: 0
+      };
+    }
+  }
+
   async getTokenRevenueBreakdown(startDate = null, endDate = null) {
     try {
       const dateFilter = this.buildDateFilter(startDate, endDate, 'pt.created_at');

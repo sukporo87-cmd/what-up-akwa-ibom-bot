@@ -653,8 +653,11 @@ class ChallengeChatService {
             format: previous.format,
             maxParticipants: previous.max_participants,
             categories: previous.categories,
-            entryModel: previous.entry_model === 'free' ? 'free' : 'credit',
+            entryModel: 'free',
             rounds: 1,
+            // Deliberately 0, unlike creation: a rematch that silently expected
+            // another \u20a650,000 would be a bill, not a rematch. If they want a
+            // prize on it they can put one up through a normal challenge.
             prizeAmount: 0,
             scheduledStartAt: null
         }, platform);
@@ -1083,7 +1086,14 @@ class ChallengeChatService {
             entryModel: 'free',
             scheduledStartAt: data.scheduledStartAt || null,
             rounds: 1,
-            prizeAmount: 0
+            // THE PRIZE THE CREATOR ACTUALLY ENTERED.
+            //
+            // This was hardcoded to 0 from when prizes were unreachable, and
+            // adding the prize step did not change it \u2014 so the amount was
+            // collected, confirmed back to the player with the full \u20a61,650
+            // arithmetic, and then thrown away. The quote and the payment link
+            // both came out at the setup charge alone.
+            prizeAmount: data.prizeAmount || 0
         }, platform);
 
         if (!result.ok) {

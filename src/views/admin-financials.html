@@ -40,18 +40,52 @@
     .date-inputs input { padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: 6px; font-size: 13px; }
     .apply-btn { padding: 8px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
     .apply-btn:hover { background: var(--primary-dark); }
-    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .overview-card { background: white; border-radius: 12px; padding: 20px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
-    .overview-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+    /* HIERARCHY, not a wall of equal boxes.
+       Eight identically-sized cards made the reader do the ranking. Three
+       numbers actually matter at a glance — what came in, what is left, and
+       the margin — so those are the hero row and everything else is a
+       secondary strip beneath it. Same data, a tenth of the effort to read. */
+    .hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                 gap: 18px; margin-bottom: 18px; }
+    .hero-card { background: white; border-radius: 16px; padding: 26px 28px;
+                 box-shadow: var(--shadow); border: 1px solid var(--gray-200);
+                 position: relative; overflow: hidden; }
+    .hero-card::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; }
+    .hero-card.gross::after { background: var(--primary-light); }
+    .hero-card.net::after   { background: var(--success); }
+    .hero-card.margin::after{ background: var(--info); }
+    .hero-card .label { font-size: 12px; font-weight: 600; color: var(--gray-500);
+                        text-transform: uppercase; letter-spacing: .6px; }
+    .hero-card .value { font-size: 40px; font-weight: 700; color: var(--gray-900);
+                        letter-spacing: -1px; margin-top: 6px; line-height: 1.1; }
+    .hero-card .value.currency::before { content: '₦'; font-size: 24px;
+                        color: var(--gray-400); font-weight: 600; margin-right: 2px; }
+    .hero-card .sub-value { font-size: 13px; color: var(--gray-500); margin-top: 8px; }
+
+    /* Where the money came from, and where it went. Grouped under headings so
+       revenue lines are never read as costs. */
+    .strip-title { font-size: 11px; font-weight: 700; color: var(--gray-500);
+                   text-transform: uppercase; letter-spacing: .8px; margin: 22px 0 10px; }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 4px; }
+    .overview-card { background: white; border-radius: 12px; padding: 16px 18px;
+                     box-shadow: var(--shadow); border: 1px solid var(--gray-200);
+                     position: relative; overflow: hidden; transition: transform .12s ease, box-shadow .12s ease; }
+    .overview-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .overview-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
     .overview-card.revenue::before { background: var(--success); }
     .overview-card.payout::before { background: var(--danger); }
     .overview-card.net::before { background: var(--primary); }
     .overview-card.pending::before { background: var(--warning); }
     .overview-card.margin::before { background: var(--info); }
-    .overview-card .label { font-size: 12px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-    .overview-card .value { font-size: 28px; font-weight: 700; color: var(--gray-900); }
-    .overview-card .value.currency::before { content: '₦'; font-size: 18px; color: var(--gray-500); }
+    .overview-card.neutral::before { background: var(--gray-300); }
+    .overview-card .label { font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .overview-card .value { font-size: 23px; font-weight: 700; color: var(--gray-900); letter-spacing: -.3px; }
+    .overview-card .value.currency::before { content: '₦'; font-size: 15px; color: var(--gray-400); }
     .overview-card .sub-value { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+    /* Money we are holding for somebody else. Muted on purpose: it is a
+       liability, and it must never be mistaken for a balance. */
+    .overview-card.passthrough { background: var(--gray-50); }
+    .overview-card.passthrough .value { color: var(--gray-600); font-size: 20px; }
     .overview-card .change { font-size: 12px; font-weight: 500; margin-top: 8px; }
     .overview-card .change.positive { color: var(--success); }
     .overview-card .change.negative { color: var(--danger); }
@@ -150,15 +184,46 @@
       </div>
     </div>
 
+    <!-- The three numbers that answer "how are we doing?" -->
+    <div class="hero-grid">
+      <div class="hero-card gross">
+        <div class="label">Gross Revenue</div>
+        <div class="value currency" id="grossRevenue">0</div>
+        <div class="sub-value">Tokens, tournaments, challenges and Love Quest</div>
+      </div>
+      <div class="hero-card net">
+        <div class="label">Net Revenue</div>
+        <div class="value currency" id="netRevenue">0</div>
+        <div class="sub-value" id="netSub">after prizes paid</div>
+      </div>
+      <div class="hero-card margin">
+        <div class="label">Profit Margin</div>
+        <div class="value" id="profitMargin">0%</div>
+        <div class="sub-value" id="payoutRatioSub">&mdash;</div>
+      </div>
+    </div>
+
+    <div class="strip-title">Where it came from</div>
     <div class="overview-grid">
-      <div class="overview-card revenue"><div class="label">Gross Revenue</div><div class="value currency" id="grossRevenue">0</div></div>
-      <div class="overview-card revenue"><div class="label">Token Revenue</div><div class="value currency" id="tokenRevenue">0</div><div class="sub-value" id="tokenTransactions">0 transactions</div></div>
-      <div class="overview-card revenue"><div class="label">Tournament Revenue</div><div class="value currency" id="tournamentRevenue">0</div><div class="sub-value" id="tournamentTransactions">0 entries</div></div>
-      <div class="overview-card revenue" style="border-top: 3px solid #ec4899;"><div class="label">💘 Love Quest Revenue</div><div class="value currency" id="loveQuestRevenue">0</div><div class="sub-value" id="loveQuestCount">0 bookings</div></div>
-      <div class="overview-card payout"><div class="label">Total Payouts</div><div class="value currency" id="totalPayouts">0</div><div class="sub-value" id="payoutCount">0 payouts</div></div>
+      <div class="overview-card revenue"><div class="label">Tokens</div><div class="value currency" id="tokenRevenue">0</div><div class="sub-value" id="tokenTransactions">0 transactions</div></div>
+      <div class="overview-card revenue"><div class="label">Tournaments</div><div class="value currency" id="tournamentRevenue">0</div><div class="sub-value" id="tournamentTransactions">0 entries</div></div>
+      <!-- Challenge setup charges and prize fees. This stream existed for
+           weeks with no line on this page, while its prize payouts were
+           already being deducted — so challenges reduced profit without ever
+           adding to it. -->
+      <div class="overview-card revenue"><div class="label">Challenges</div><div class="value currency" id="challengeRevenue">0</div><div class="sub-value" id="challengeSub">setup + fees</div></div>
+      <div class="overview-card revenue" style="border-top: 3px solid #ec4899;"><div class="label">💘 Love Quest</div><div class="value currency" id="loveQuestRevenue">0</div><div class="sub-value" id="loveQuestCount">0 bookings</div></div>
+    </div>
+
+    <div class="strip-title">Where it went</div>
+    <div class="overview-grid">
+      <div class="overview-card payout"><div class="label">Prizes Paid</div><div class="value currency" id="totalPayouts">0</div><div class="sub-value" id="payoutCount">0 payouts</div></div>
       <div class="overview-card pending"><div class="label">Pending Payouts</div><div class="value currency" id="pendingPayouts">0</div><div class="sub-value" id="pendingCount">0 pending</div></div>
-      <div class="overview-card net"><div class="label">Net Revenue</div><div class="value currency" id="netRevenue">0</div></div>
-      <div class="overview-card margin"><div class="label">Profit Margin</div><div class="value" id="profitMargin">0%</div></div>
+      <!-- NOT ours. A sponsor's prize passing through us is neither revenue
+           nor cost, so it is shown apart from the figures above and styled
+           down: it is a liability, not a balance. -->
+      <div class="overview-card passthrough"><div class="label">Sponsor Prizes Held</div><div class="value currency" id="challengeHeld">0</div><div class="sub-value">held for winners &mdash; not ours</div></div>
+      <div class="overview-card passthrough"><div class="label">Sponsor Prizes Paid</div><div class="value currency" id="challengePassThrough">0</div><div class="sub-value">passed through to winners</div></div>
     </div>
 
     <!-- ============================================
@@ -348,9 +413,40 @@
     let lqRevenue=0;
     try{const lqr=await apiCall('/love-quest-revenue');if(lqr?.success)lqRevenue=parseFloat(lqr.data.total_revenue)||0;}catch(e){}
     const totalGross=parseFloat(d.gross_revenue||0)+lqRevenue;
-    const totalNet=totalGross-parseFloat(d.total_payouts||0);
+
+    /* house_payouts excludes sponsor prizes. Those are the sponsor's money
+       moving through us — counting them as a cost understated profit by the
+       whole prize pool, which is what this page was doing. Falls back to
+       total_payouts so an older API response still renders. */
+    const housePayouts=parseFloat(d.house_payouts ?? d.total_payouts ?? 0);
+    const totalNet=totalGross-housePayouts;
     const margin=totalGross>0?((totalNet/totalGross)*100).toFixed(1):0;
-    document.getElementById('grossRevenue').textContent=fmt(totalGross);document.getElementById('tokenRevenue').textContent=fmt(d.token_revenue);document.getElementById('tokenTransactions').textContent=d.token_transactions+' txns';document.getElementById('tournamentRevenue').textContent=fmt(d.tournament_revenue);document.getElementById('tournamentTransactions').textContent=d.tournament_transactions+' entries';document.getElementById('totalPayouts').textContent=fmt(d.total_payouts);document.getElementById('payoutCount').textContent=d.payout_count+' payouts';document.getElementById('pendingPayouts').textContent=fmt(d.pending_payouts);document.getElementById('pendingCount').textContent=d.pending_count+' pending';document.getElementById('netRevenue').textContent=fmt(totalNet);document.getElementById('profitMargin').textContent=margin+'%'}
+    const payoutRatio=totalGross>0?((housePayouts/totalGross)*100).toFixed(1):0;
+
+    const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+
+    set('grossRevenue',fmt(totalGross));
+    set('netRevenue',fmt(totalNet));
+    set('profitMargin',margin+'%');
+    set('netSub','after ₦'+fmt(housePayouts)+' in prizes');
+    set('payoutRatioSub',payoutRatio+'% of revenue paid out');
+
+    set('tokenRevenue',fmt(d.token_revenue));
+    set('tokenTransactions',d.token_transactions+' txns');
+    set('tournamentRevenue',fmt(d.tournament_revenue));
+    set('tournamentTransactions',d.tournament_transactions+' entries');
+
+    set('challengeRevenue',fmt(d.challenge_revenue||0));
+    set('challengeSub',(d.challenge_paid_count||0)+' paid · ₦'+
+        fmt(d.challenge_fee_revenue||0)+' in fees');
+
+    set('totalPayouts',fmt(housePayouts));
+    set('payoutCount',d.payout_count+' payouts');
+    set('pendingPayouts',fmt(d.pending_payouts));
+    set('pendingCount',d.pending_count+' pending');
+
+    set('challengeHeld',fmt(d.challenge_prize_held||0));
+    set('challengePassThrough',fmt(d.challenge_pass_through||0));}
     async function loadKPIs(){const r=await apiCall('/kpis');if(!r?.success)return;const d=r.data;document.getElementById('kpiARPU').textContent='₦'+fmt(d.arpu);document.getElementById('kpiARPPU').textContent='₦'+fmt(d.arppu);document.getElementById('kpiLTV').textContent='₦'+fmt(d.net_revenue_per_user ?? d.ltv);document.getElementById('kpiConversion').textContent=d.conversion_rate+'%';document.getElementById('kpiPayingUsers').textContent=fmt(d.paying_users);document.getElementById('kpiPayoutRatio').textContent=(d.total_revenue>0?((d.total_payouts/d.total_revenue)*100).toFixed(1):0)+'%'}
     async function loadTokenRevenue(){const r=await apiCall('/token-revenue');if(!r?.success)return;const p=r.data.by_package,tb=document.getElementById('tokenPackageTable');if(!p.length){tb.innerHTML='<tr><td colspan="5" class="empty-state">No sales</td></tr>';return}tb.innerHTML=p.map(x=>'<tr><td><strong>'+x.package_name+'</strong></td><td>₦'+fmt(x.price)+'</td><td>'+x.games_count+'</td><td class="text-right">'+fmt(x.sales_count)+'</td><td class="text-right amount positive">₦'+fmt(x.total_revenue)+'</td></tr>').join('')+'<tr style="background:var(--gray-50);font-weight:600"><td colspan="3">Total</td><td class="text-right">'+fmt(r.data.total_sales)+'</td><td class="text-right amount positive">₦'+fmt(r.data.total_revenue)+'</td></tr>';renderPkgChart(p)}
     function renderPkgChart(p){const ctx=document.getElementById('packagePieChart').getContext('2d');if(charts.pkg)charts.pkg.destroy();charts.pkg=new Chart(ctx,{type:'doughnut',data:{labels:p.map(x=>x.package_name),datasets:[{data:p.map(x=>parseFloat(x.total_revenue)),backgroundColor:['#10b981','#3b82f6','#f59e0b'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}})}
