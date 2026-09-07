@@ -45,9 +45,19 @@ class ChallengeSponsorshipService {
     // INITIATE
     // ============================================
 
+    /**
+     * Collects everything the creator owes in ONE payment: setup charge, prize
+     * and prize fee together.
+     *
+     * One payment, not three, because three means three gateway fees, three
+     * ways to half-succeed, and a challenge that is two-thirds paid for. The
+     * challenge row already carries the itemised figures, so a single
+     * settlement can be reconciled against them afterwards.
+     */
     async initiate(challenge, user, platform, gatewayName = null) {
-        if (Number(challenge.prize_amount) <= 0) {
-            return { ok: false, reason: 'not_sponsored' };
+        const owed = Number(challenge.total_charged) || Number(challenge.prize_amount) || 0;
+        if (owed <= 0) {
+            return { ok: false, reason: 'nothing_to_pay' };
         }
         if (challenge.creator_user_id !== user.id) {
             return { ok: false, reason: 'not_yours' };
@@ -72,7 +82,7 @@ class ChallengeSponsorshipService {
 
         const initResult = await gateway.initialize({
             reference,
-            amount: challenge.prize_amount,
+            amount: owed,
             email: user.email || `${user.phone_number}@whatsuptrivia.com`,
             callbackUrl: `${process.env.APP_URL}/payment/callback`,
             customerName: user.full_name,
@@ -80,7 +90,12 @@ class ChallengeSponsorshipService {
                 user_id: user.id,
                 challenge_id: challenge.id,
                 challenge_code: challenge.code,
-                prize_amount: challenge.prize_amount,
+                // Itemised in the gateway record too, so a dispute months
+                // later can be answered without joining back to our tables.
+                setup_charge: Number(challenge.setup_charge) || 0,
+                prize_amount: Number(challenge.prize_amount) || 0,
+                prize_fee: Number(challenge.prize_fee) || 0,
+                total_charged: owed,
                 platform,
                 description: `Challenge prize: ${challenge.code}`
             }
@@ -95,7 +110,7 @@ class ChallengeSponsorshipService {
                     gateway = EXCLUDED.gateway,
                     payment_status = 'pending',
                     updated_at = NOW()
-        `, [challenge.id, user.id, challenge.prize_amount, gateway.getName(), reference]);
+        `, [challenge.id, user.id, owed, gateway.getName(), reference]);
 
         logger.info(`Challenge sponsorship initialised via ${gateway.getName()}: ${reference}`);
 
@@ -271,7 +286,18 @@ class ChallengeSponsorshipService {
             return { ok: true, refunded: false, reason: 'never_settled' };
         }
 
-        const split = challengeService.refundSplit(row.amount);
+        // THE SPLIT COMES FROM THE CHALLENGE, NOT FROM A PERCENTAGE.
+        //
+        // The fee is now collected UP FRONT and disclosed before payment, so a
+        // non-completed challenge returns the PRIZE IN FULL and keeps the
+        // setup charge and the fee \u2014 both of which were charged for setting
+        // the thing up, and it was set up. Recomputing 15% here would take the
+        // fee twice.
+        // Unconditional: the prize comes back, the setup charge and fee do not.
+        // No "did anyone join" test, because a rule that depends on timing is a
+        // rule people argue about.
+        const challengePricingService = require('./challenge-pricing.service');
+        const split = challengePricingService.refundFor(challenge);
 
         const transaction = await pool.query(`
             INSERT INTO transactions
@@ -284,9 +310,11 @@ class ChallengeSponsorshipService {
                 challengeId: challenge.id,
                 challengeCode: challenge.code,
                 sponsorshipId: row.id,
-                gross: split.gross,
+                gross: Number(challenge.total_charged) || row.amount,
                 retained: split.retained,
-                reason: 'challenge_did_not_complete'
+                setupCharge: Number(challenge.setup_charge) || 0,
+                prizeFee: Number(challenge.prize_fee) || 0,
+                reason: split.reason
             })
         ]);
 
@@ -305,16 +333,18 @@ class ChallengeSponsorshipService {
         `, [challenge.id]);
 
         logger.info(
-            `Challenge ${challenge.code} void: \u20a6${split.gross} in, \u20a6${split.refund} refundable, ` +
-            `\u20a6${split.retained} retained`
+            `Challenge ${challenge.code} void (${split.reason}): ` +
+            `\u20a6${Number(challenge.total_charged) || row.amount} in, ` +
+            `\u20a6${split.refund} refundable, \u20a6${split.retained} retained`
         );
 
         return {
             ok: true,
             refunded: true,
-            gross: split.gross,
+            gross: Number(challenge.total_charged) || row.amount,
             refund: split.refund,
             retained: split.retained,
+            reason: split.reason,
             transactionId: transaction.rows[0].id
         };
     }

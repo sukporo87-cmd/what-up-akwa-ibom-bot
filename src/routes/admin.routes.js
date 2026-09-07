@@ -5827,6 +5827,38 @@ router.get('/api/challenges/bandwidth', authenticateAdmin, async (req, res) => {
 // ============================================
 // Registered before /api/challenges/:id so the literal paths are not read as
 // ids. Express matches the first registration.
+// ============================================
+// CHALLENGE PRICING
+// ============================================
+// Editing these NEVER changes an existing challenge. Every challenge carries
+// the price it was created under, so a band raised today cannot alter what a
+// challenge created yesterday refunds.
+router.get('/api/challenges/pricing', authenticateAdmin, async (req, res) => {
+  try {
+    const challengePricingService = require('../services/challenge-pricing.service');
+    const pricing = await challengePricingService.getPricing({ fresh: true });
+    res.json({ success: true, pricing });
+  } catch (error) {
+    logger.error('Error loading challenge pricing:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/api/challenges/pricing', authenticateAdmin, async (req, res) => {
+  try {
+    const challengePricingService = require('../services/challenge-pricing.service');
+    const result = await challengePricingService.updatePricing(
+      req.body || {},
+      req.adminSession ? req.adminSession.admin_id : null
+    );
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true, pricing: result.pricing });
+  } catch (error) {
+    logger.error('Error updating challenge pricing:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/api/challenges/list', authenticateAdmin, async (req, res) => {
   try {
     const limit = Math.min(200, parseInt(req.query.limit, 10) || 50);

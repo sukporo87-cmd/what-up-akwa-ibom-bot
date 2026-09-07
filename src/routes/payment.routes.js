@@ -98,16 +98,37 @@ async function handleChallengeSponsorshipWebhook(reference) {
 
         const links = deepLinkService.buildLinks(result.code);
 
-        // No "confirming" message was ever sent, so this is the first thing
-        // the initiator hears — and it is the thing they actually want, which
-        // is the link.
-        const body =
-            `\u2705 Prize confirmed \u2014 \u20a6${Number(result.amount).toLocaleString()} is held.\n\n` +
-            `Your challenge is live. Send this to whoever you want to beat:\n` +
-            `${links.web}\n\n` +
-            `At least two people have to finish for the prize to be won.`;
+        // Settlement now covers setup, prize and fee together, so the message
+        // has to describe whichever of those actually applied. A paid-mode
+        // challenge with no prize must not be told a prize is held.
+        const detail = await pool.query(
+            `SELECT setup_charge, prize_amount, prize_fee, total_charged
+             FROM challenges WHERE id = $1`,
+            [result.challengeId]
+        );
+        const c = detail.rows[0] || {};
+        const prize = Number(c.prize_amount) || 0;
+        const setup = Number(c.setup_charge) || 0;
 
-        await messagingService.sendMessage(user.phone_number, body);
+        const lines = ['\u2705 *Payment confirmed.*', ''];
+        if (setup) lines.push(`Setup \u2014 \u20a6${setup.toLocaleString()}`);
+        if (prize) {
+            lines.push(`Prize held \u2014 \u20a6${prize.toLocaleString()}`);
+            if (Number(c.prize_fee)) lines.push(`Fee \u2014 \u20a6${Number(c.prize_fee).toLocaleString()}`);
+        }
+        lines.push('', 'Your challenge is live. Send this to whoever you want to beat:',
+                   links.web, '');
+        lines.push(prize
+            ? 'At least two people have to finish for the prize to be won.'
+            : 'At least two people have to finish for it to count.');
+
+        await messagingService.sendMessage(user.phone_number, lines.join('\n'));
+
+        // They are no longer waiting on money, so PAY should stop responding.
+        try {
+            const redisClient = require('../config/redis');
+            await redisClient.del(`challenge_awaiting_payment:${user.phone_number}`);
+        } catch (e) { /* a missing key is the desired state */ }
     } catch (error) {
         // The money is settled and the challenge is open. A failed message is
         // not a failed payment, and must not look like one.

@@ -75,6 +75,9 @@
 
   .note { font-size: 12px; color: var(--text-dim); line-height: 1.6; margin-top: 10px; }
   .empty { color: var(--text-dim); font-size: 14px; padding: 18px 0; }
+  input.pr { background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+             border-radius: 6px; padding: 5px 8px; width: 110px; text-align: right;
+             font-family: 'JetBrains Mono', monospace; }
 </style>
 </head>
 <body>
@@ -128,6 +131,51 @@
       The sponsor pays it in and we hand it on, so gross in and paid out are
       reported as a matched pair. The only figure the business actually keeps
       is the 15% retained on challenges that did not complete.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Pricing</h2>
+    <p class="note" style="margin-top:0">
+      Changes apply to <strong>new</strong> challenges only. Every challenge
+      carries the price it was created under, so raising a band today cannot
+      alter what a challenge created yesterday refunds.
+    </p>
+
+    <table style="margin-top:10px">
+      <tr>
+        <td>Mode</td>
+        <td class="num">
+          <select id="prMode" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px">
+            <option value="free">Free — nobody is charged</option>
+            <option value="paid">Paid — creator pays a setup charge</option>
+          </select>
+        </td>
+      </tr>
+      <tr><td>1v1 (2 seats)</td><td class="num">₦ <input id="prBand2" type="number" min="0" class="pr"></td></tr>
+      <tr><td>3–5 seats</td><td class="num">₦ <input id="prBand5" type="number" min="0" class="pr"></td></tr>
+      <tr><td>6–10 seats</td><td class="num">₦ <input id="prBand10" type="number" min="0" class="pr"></td></tr>
+      <tr><td>11–15 seats</td><td class="num">₦ <input id="prBand15" type="number" min="0" class="pr"></td></tr>
+      <tr><td>16–20 seats</td><td class="num">₦ <input id="prBand20" type="number" min="0" class="pr"></td></tr>
+      <tr>
+        <td>Sponsor fee</td>
+        <td class="num"><input id="prFee" type="number" min="0" max="100" step="0.5" class="pr"> %</td>
+      </tr>
+    </table>
+
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button onclick="savePricing()"
+        style="background:var(--accent);border:none;color:#1a1a23;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600">
+        Save pricing
+      </button>
+      <span id="prStatus" style="font-size:12px;color:var(--text-dim)"></span>
+    </div>
+
+    <p class="note">
+      Bands round <strong>up</strong>: a 4-seat challenge pays the 5-seat rate,
+      7 pays the 10-seat rate. Charged on the seats chosen at creation, not on
+      who turns up. In paid mode participants spend no tokens — the setup
+      charge covers the room.
     </p>
   </div>
 
@@ -465,9 +513,60 @@
 
   document.getElementById('showRematches').addEventListener('change', loadList);
 
+  // ---- pricing ----
+  async function loadPricing() {
+    try {
+      var r = await fetch('/admin/api/challenges/pricing', { headers: H() });
+      var d = await r.json();
+      if (!d.success) return;
+      var p = d.pricing;
+      document.getElementById('prMode').value = p.mode;
+      var byCeiling = {};
+      (p.bands || []).forEach(function (b) { byCeiling[b.upTo] = b.charge; });
+      document.getElementById('prBand2').value  = byCeiling[2];
+      document.getElementById('prBand5').value  = byCeiling[5];
+      document.getElementById('prBand10').value = byCeiling[10];
+      document.getElementById('prBand15').value = byCeiling[15];
+      document.getElementById('prBand20').value = byCeiling[20];
+      // Shown as a percentage, stored as basis points: integer maths end to
+      // end means no fraction of a naira for one screen to round differently.
+      document.getElementById('prFee').value = (p.prizeFeeBps / 100);
+    } catch (e) { /* the panel below is the important half */ }
+  }
+
+  window.savePricing = async function () {
+    var mode = document.getElementById('prMode').value;
+    var status = document.getElementById('prStatus');
+
+    if (mode === 'paid' && !confirm(
+      'Switch challenges to PAID?\n\nEvery new challenge will charge its creator ' +
+      'a setup fee before the invite link works. Existing challenges are unaffected.'
+    )) return;
+
+    status.textContent = 'Saving…';
+    try {
+      var r = await fetch('/admin/api/challenges/pricing', {
+        method: 'PUT',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, H()),
+        body: JSON.stringify({
+          mode: mode,
+          band_2:  document.getElementById('prBand2').value,
+          band_5:  document.getElementById('prBand5').value,
+          band_10: document.getElementById('prBand10').value,
+          band_15: document.getElementById('prBand15').value,
+          band_20: document.getElementById('prBand20').value,
+          prize_fee_bps: Math.round(parseFloat(document.getElementById('prFee').value) * 100)
+        })
+      });
+      var d = await r.json();
+      status.textContent = d.success ? 'Saved — applies to new challenges.' : (d.error || 'Failed');
+    } catch (e) { status.textContent = 'Could not save.'; }
+  };
+
   load();
   loadBandwidth();
   loadList();
+  loadPricing();
 </script>
 </body>
 </html>

@@ -240,7 +240,23 @@ class ChallengeService {
         const now = new Date();
         const sponsored = normalised.prizeAmount > 0;
 
-        const status = sponsored ? STATUS.AWAITING_SPONSORSHIP : STATUS.OPEN;
+        // PRICE IT ONCE, HERE, AND WRITE THE NUMBERS ONTO THE ROW.
+        //
+        // Every later step \u2014 refunds, reconciliation, the financial report \u2014
+        // reads the challenge, never the live price list. Raising the 5-seat
+        // band on Tuesday must not change what a challenge created on Monday
+        // refunds.
+        const challengePricingService = require('./challenge-pricing.service');
+        const quote = await challengePricingService.quote({
+            seats: normalised.maxParticipants,
+            prizeAmount: normalised.prizeAmount
+        });
+
+        // Anything owed \u2014 setup, prize or fee \u2014 holds the challenge closed
+        // until the gateway confirms. Same rule sponsorship already used: the
+        // webhook is the receipt, and nothing opens on an intent to pay.
+        const owesMoney = quote.total > 0;
+        const status = owesMoney ? STATUS.AWAITING_SPONSORSHIP : STATUS.OPEN;
         const inviteExpiresAt = this.inviteExpiryFor(normalised.mode, normalised.scheduledStartAt, now);
 
         // Codes are generated, not derived, so a collision is possible and
@@ -256,15 +272,19 @@ class ChallengeService {
                         code, creator_user_id, mode, format, rounds, speed_level,
                         categories, entry_model, prepaid_slots, max_participants,
                         prize_amount, status, question_bank_id,
-                        scheduled_start_at, opened_at, invite_expires_at, created_platform
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                        scheduled_start_at, opened_at, invite_expires_at, created_platform,
+                        is_paid, setup_charge, prize_fee, prize_fee_bps, total_charged
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                              $18,$19,$20,$21,$22)
                     RETURNING *
                 `, [
                     code, user.id, normalised.mode, normalised.format, normalised.rounds,
                     normalised.speedLevel, normalised.categories, normalised.entryModel,
                     normalised.prepaidSlots, normalised.maxParticipants, normalised.prizeAmount,
                     status, questionBankId, normalised.scheduledStartAt,
-                    sponsored ? null : now, inviteExpiresAt, platform
+                    owesMoney ? null : now, inviteExpiresAt, platform,
+                    quote.paidMode, quote.setupCharge, quote.prizeFee,
+                    quote.prizeFeeBps, quote.total
                 ]);
                 challenge = result.rows[0];
             } catch (error) {
@@ -289,13 +309,18 @@ class ChallengeService {
 
         await this.recordEvent(challenge.id, user.id, 'created', platform, {
             mode: normalised.mode, format: normalised.format,
-            entryModel: normalised.entryModel, sponsored
+            entryModel: normalised.entryModel, sponsored,
+            paid: quote.paidMode, setupCharge: quote.setupCharge, total: quote.total
         });
 
         return {
             ok: true,
             challenge,
             links: deepLinkService.buildLinks(challenge.code),
+            // Itemised so the surfaces can show the breakdown BEFORE payment.
+            // A total with no explanation is where "why was I charged this?"
+            // comes from.
+            quote,
             // A sponsored challenge is not shareable yet and the caller must
             // not render a link that would 404 for whoever it is sent to.
             shareable: !sponsored
@@ -432,7 +457,22 @@ class ChallengeService {
         let entryMethod = challenge.entry_model;
         let creditConsumed = false;
 
-        if (challenge.entry_model === 'prepaid') {
+        // PAID CHALLENGES CHARGE NOBODY A TOKEN.
+        //
+        // The creator's setup charge buys the whole room, so taking a token
+        // from each joiner as well would be charging twice for the same round.
+        // Read from the CHALLENGE, not from the current toggle: a challenge
+        // created while paid mode was on stays paid even if the toggle flips
+        // an hour later, because its creator has already been charged.
+        //
+        // Recorded as 'free' rather than a new 'covered' value: entry_method
+        // may carry a CHECK constraint that could not be verified from here,
+        // and inventing an enum value that the database then rejects is
+        // exactly how the game_type 23514 failure happened. challenges.is_paid
+        // already distinguishes "free mode" from "paid, entry covered".
+        if (challenge.is_paid) {
+            entryMethod = 'free';
+        } else if (challenge.entry_model === 'prepaid') {
             const used = await pool.query(`
                 SELECT COUNT(*)::int AS n FROM challenge_participants
                 WHERE challenge_id = $1 AND entry_method = 'prepaid'

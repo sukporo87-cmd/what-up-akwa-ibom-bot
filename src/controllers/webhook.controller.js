@@ -214,6 +214,15 @@ class WebhookController {
       // the space; the parser should not care.
       const chInput = input.replace(/[\s_-]+/g, '');
 
+      // PAY only does something when a challenge is actually waiting on money;
+      // otherwise it falls through untouched, like every other shared word.
+      if (chInput === 'PAY' || chInput === 'PAYCHALLENGE') {
+        const payUser = await userService.getUserByPhone(phone);
+        if (payUser && await challengeChatService.handlePay(phone, payUser, incomingPlatform)) {
+          return;
+        }
+      }
+
       if (chInput === 'REMATCH' || chInput === 'REMATCHCHALLENGE') {
         const rematchUser = await userService.getUserByPhone(phone);
         if (rematchUser && await challengeChatService.handleRematch(phone, rematchUser, incomingPlatform)) {

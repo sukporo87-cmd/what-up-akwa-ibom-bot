@@ -107,8 +107,16 @@ const STRINGS = {
         '*2* \u2014 A group (up to 20)\n\n' +
         'Reply 1 or 2.',
 
-    pickGroupSize:
+    // In paid mode the size IS the price, so the bands are shown before the
+    // number is chosen. Picking 6 and only then discovering it costs the same
+    // as 10 is the kind of surprise that turns into a refund request.
+    pickGroupSize: (bands) =>
         'How many players, including you?\n\n' +
+        (bands
+            ? bands + '\n\n' +
+              '_You are charged for the band, not the exact number \u2014 6 players ' +
+              'costs the same as 10._\n\n'
+            : '') +
         'Reply with a number between 2 and 20.',
 
     pickCategories: (list) =>
@@ -157,6 +165,39 @@ const STRINGS = {
     //
     // Before this, the only thing worth copying was a bare URL, which meant
     // every invite arrived with no branding and no explanation of what it was.
+    // THE PRICE, ITEMISED, BEFORE PAYMENT.
+    //
+    // A total with no breakdown is where "why was I charged this?" comes from,
+    // and the sponsor fee in particular has to be visible BEFORE the player
+    // pays rather than discovered at refund time. Same money either way; only
+    // one of them generates a complaint.
+    quote: (q, seats) =>
+        '\ud83d\udcb3 *Before you send it out*\n\n' +
+        (q.setupCharge
+            ? `Setup (${seats} players) \u2014 \u20a6${q.setupCharge.toLocaleString()}\n` : '') +
+        (q.prizeAmount
+            ? `Prize \u2014 \u20a6${q.prizeAmount.toLocaleString()}\n` +
+              `Prize fee (${(q.prizeFeeBps / 100)}%) \u2014 \u20a6${q.prizeFee.toLocaleString()}\n`
+            : '') +
+        `\n*Total: \u20a6${q.total.toLocaleString()}*\n\n` +
+        (q.prizeAmount
+            ? `If nobody finishes, the \u20a6${q.prizeAmount.toLocaleString()} prize comes back to you ` +
+              'in full. The setup charge and the fee do not \u2014 getting your ' +
+              'friends to play is on you.\n\n'
+            : 'Slots you don\u2019t fill are not refunded. Getting your friends in is on you.\n\n') +
+        'Reply *PAY* to continue, or *MENU* to drop it.',
+
+    payLink: (url, total) =>
+        `\ud83d\udcb3 *\u20a6${total.toLocaleString()}*\n\nPay here:\n${url}\n\n` +
+        'Your invite link appears the moment the payment clears. ' +
+        'Nothing is sent out before then.',
+
+    payFailed:
+        "Couldn't start that payment. Reply *PAY* to try again.",
+
+    alreadyPaid:
+        'That one is already paid for. Reply *MYCHALLENGES* to find it.',
+
     created: (categories, startLabel) =>
         '\u2705 *Challenge created.*\n\n' +
         `${categories} \u00b7 15 questions \u00b7 10 seconds each\n` +
@@ -176,9 +217,15 @@ const STRINGS = {
     // NAME FIRST, handle in brackets. Someone who has never used the platform
     // has no idea what @final_obongowo is, and an unexplained link from an
     // unknown handle reads as spam \u2014 which is exactly what gets it ignored.
-    invite: (displayName, links, categories, startLabel) =>
+    // `seats` is null for a 1v1. For a group it matters to the RECIPIENT: an
+    // invite to a 10-player challenge is something you forward on to other
+    // people, and an invite that does not say so gets treated as a duel.
+    invite: (displayName, links, categories, startLabel, seats) =>
         `\u2694\ufe0f *${displayName} has challenged you to a game of trivia!*\n\n` +
         `\ud83c\udfaf *What's Up Trivia* \u2014 ${categories}\n` +
+        (seats && seats > 2
+            ? `\ud83d\udc65 Up to *${seats} players* \u2014 forward this to whoever else should be in\n`
+            : '') +
         '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n' +
         (startLabel ? `\u23f0 Starts ${startLabel}\n` : '') +
         // A LIVE challenge is played in the browser and nowhere else, so
@@ -564,8 +611,45 @@ class ChallengeChatService {
         ));
         await messagingService.sendMessage(identifier, STRINGS.invite(
             this.displayName(user), created.links,
-            this._categoryList(previous.categories), null
+            this._categoryList(previous.categories), null,
+            previous.max_participants
         ));
+        return true;
+    }
+
+    // ============================================
+    // PAY
+    // ============================================
+    // Continues a challenge that is waiting on money. Kept separate from
+    // creation so a player who walks away and comes back later can still pay
+    // for it rather than starting over.
+
+    async handlePay(identifier, user, platform) {
+        const code = await redis.get(`challenge_awaiting_payment:${identifier}`).catch(() => null);
+        if (!code) return false;   // not waiting on anything; hand PAY back
+
+        const challenge = await challengeService.getByCode(code);
+        if (!challenge || challenge.creator_user_id !== user.id) {
+            await redis.del(`challenge_awaiting_payment:${identifier}`).catch(() => {});
+            return false;
+        }
+
+        if (challenge.status !== 'awaiting_sponsorship') {
+            await redis.del(`challenge_awaiting_payment:${identifier}`).catch(() => {});
+            await messagingService.sendMessage(identifier, STRINGS.alreadyPaid);
+            return true;
+        }
+
+        const challengeSponsorshipService = require('./challenge-sponsorship.service');
+        const started = await challengeSponsorshipService.initiate(challenge, user, platform);
+
+        if (!started.ok) {
+            await messagingService.sendMessage(identifier, STRINGS.payFailed);
+            return true;
+        }
+
+        await messagingService.sendMessage(identifier,
+            STRINGS.payLink(started.authorizationUrl, Number(challenge.total_charged) || 0));
         return true;
     }
 
@@ -685,13 +769,15 @@ class ChallengeChatService {
                     return this._askCategories(identifier, data);
                 }
                 data.format = 'group';
-                await this._advance(identifier, 'size', data, STRINGS.pickGroupSize);
+                await this._advance(identifier, 'size', data,
+                    STRINGS.pickGroupSize(await this._bandTable()));
                 return true;
 
             case 'size': {
                 const size = parseInt(input, 10);
                 if (!(size >= 2 && size <= 20)) {
-                    await messagingService.sendMessage(identifier, STRINGS.pickGroupSize);
+                    await messagingService.sendMessage(identifier,
+                        STRINGS.pickGroupSize(await this._bandTable()));
                     return true;
                 }
                 data.maxParticipants = size;
@@ -835,13 +921,29 @@ class ChallengeChatService {
 
         const categoryLabel = this._categoryList(data.categories);
 
+        // ANYTHING OWED HOLDS THE INVITE BACK.
+        //
+        // The challenge exists but is 'awaiting_sponsorship' until the gateway
+        // confirms, so the link would 404 for whoever it was sent to. Showing
+        // the itemised price and stopping here is the whole point: the webhook
+        // is the receipt, exactly as it already was for sponsored prizes.
+        if (result.quote && result.quote.total > 0) {
+            await messagingService.sendMessage(identifier,
+                STRINGS.quote(result.quote, data.maxParticipants || 2));
+            await redis.setex(
+                `challenge_awaiting_payment:${identifier}`, 3600, result.challenge.code
+            );
+            return true;
+        }
+
         await messagingService.sendMessage(identifier,
             STRINGS.created(categoryLabel, startLabel));
 
         // Sent separately so it can be forwarded on its own, without the
         // challenger's own instructions riding along.
         await messagingService.sendMessage(identifier,
-            STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel));
+            STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel,
+                           result.challenge.max_participants));
 
         // WEB NEEDS THE INVITE AS DATA, not as chat text.
         //
@@ -859,7 +961,8 @@ class ChallengeChatService {
                     categories: categoryLabel,
                     startLabel,
                     inviteText: STRINGS.invite(
-                        this.displayName(user), result.links, categoryLabel, startLabel
+                        this.displayName(user), result.links, categoryLabel, startLabel,
+                        result.challenge.max_participants
                     ),
                     shareable: result.shareable
                 });
@@ -1500,6 +1603,36 @@ class ChallengeChatService {
         const handle = user.username ? `@${user.username}` : 'A player';
         const full = (user.full_name || '').trim();
         return full ? `${full} (${handle})` : handle;
+    }
+
+    /**
+     * The price bands as a readable list, or null in free mode.
+     *
+     * Built from the live price list rather than hard-coded, so an admin who
+     * changes a band does not leave the chat flow quoting the old number \u2014
+     * which is the sort of mismatch nobody notices until a player screenshots
+     * it.
+     */
+    async _bandTable() {
+        try {
+            const challengePricingService = require('./challenge-pricing.service');
+            const pricing = await challengePricingService.getPricing();
+            if (pricing.mode !== 'paid') return null;
+
+            let previous = 2;
+            return pricing.bands.map(band => {
+                const range = band.upTo === 2
+                    ? '2 players'
+                    : `${previous + 1}\u2013${band.upTo} players`;
+                previous = band.upTo;
+                return `\u2022 ${range} \u2014 \u20a6${band.charge.toLocaleString()}`;
+            }).join('\n');
+        } catch (error) {
+            // Never block creation on the price list. The quote before payment
+            // is the authoritative figure anyway.
+            logger.error('Could not build the band table:', error.message);
+            return null;
+        }
     }
 
     _label(category) {
