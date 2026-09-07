@@ -1077,7 +1077,10 @@ class ChallengeChatService {
             format: data.format,
             maxParticipants: data.maxParticipants,
             categories: data.categories,
-            entryModel: data.entryModel,
+            // No participant spends a token in either mode: paid is covered by
+            // the setup charge, free is free. Passed explicitly rather than
+            // relying on the validator's default so the two cannot disagree.
+            entryModel: 'free',
             scheduledStartAt: data.scheduledStartAt || null,
             rounds: 1,
             prizeAmount: 0

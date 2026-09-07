@@ -154,8 +154,21 @@ class ChallengeService {
             errors.push('Choose between 1 and 3 categories');
         }
 
-        n.entryModel = String(input.entryModel || '').toLowerCase();
-        if (!ENTRY_MODELS.includes(n.entryModel)) errors.push('Pick how people get in');
+        // ENTRY MODEL IS NO LONGER A CHOICE, so its absence is not an error.
+        //
+        // Challenges are free or paid globally now: in paid mode the setup
+        // charge covers the room, and in free mode nobody is charged at all.
+        // Either way no participant spends a token, which is exactly what
+        // 'free' means here.
+        //
+        // This used to reject a missing value with 'Pick how people get in'.
+        // When the entry step was removed from the creation flow, every single
+        // challenge began failing validation on that line, and the error text
+        // was sent back to the player as though it were a prompt \u2014 a message
+        // asking them to pick something they were never offered, on every
+        // platform, with no way forward.
+        n.entryModel = String(input.entryModel || 'free').toLowerCase();
+        if (!ENTRY_MODELS.includes(n.entryModel)) n.entryModel = 'free';
 
         n.maxParticipants = parseInt(input.maxParticipants, 10) || (n.format === 'direct' ? 2 : 0);
         if (n.format === 'direct') {
