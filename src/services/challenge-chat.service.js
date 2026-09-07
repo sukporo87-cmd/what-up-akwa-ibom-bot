@@ -106,9 +106,12 @@ const STRINGS = {
         (earliestLabel ? `The earliest you can pick today is *${earliestLabel}*.\n\n` : '') +
         'Reply with a later time, or *MENU* to start again.',
 
-    pickFormat:
+    // The 1v1 price belongs HERE, next to the option it applies to. It was
+    // appearing in the group band table as "2 players \u2014 \u20a6500", which is both
+    // the wrong place and the wrong words: two players is a duel, not a group.
+    pickFormat: (duelPrice) =>
         'Who are you challenging?\n\n' +
-        '*1* \u2014 One friend\n' +
+        `*1* \u2014 One friend${duelPrice ? ` \u2014 \u20a6${duelPrice.toLocaleString()}` : ''}\n` +
         '*2* \u2014 A group (up to 20)\n\n' +
         'Reply 1 or 2.',
 
@@ -127,7 +130,8 @@ const STRINGS = {
     pickPrize: () =>
         'Want to put up a cash prize for the winner?\n\n' +
         `Reply with an amount between *\u20a6${PRIZE_MIN.toLocaleString()}* and ` +
-        `*\u20a6${PRIZE_MAX.toLocaleString()}*, or *NO* for bragging rights.`,
+        `*\u20a6${PRIZE_MAX.toLocaleString()}*, or *NO* for no sponsored prize, ` +
+        'just bragging rights.',
 
     badPrize: () =>
         `A prize has to be between \u20a6${PRIZE_MIN.toLocaleString()} and ` +
@@ -135,23 +139,26 @@ const STRINGS = {
 
     // Stated the moment the amount is given, and again in the quote before
     // payment. A fee that first appears on an invoice is a surprise.
-    prizeAccepted: (prize, fee, bps) =>
+    // The full arithmetic, shown once, before anything is owed.
+    //
+    // Prize plus fee is only part of what they will pay \u2014 the setup charge is
+    // the other part, and a message that names one without the other invites
+    // "you said \u20a61,150" when the invoice reads \u20a61,650.
+    prizeAccepted: (prize, fee, bps, setup) =>
         `\ud83c\udfc6 Prize: *\u20a6${prize.toLocaleString()}* for the winner.\n\n` +
         `We add a ${(bps / 100)}% administrative fee of \u20a6${fee.toLocaleString()}, so ` +
-        `you'll pay *\u20a6${(prize + fee).toLocaleString()}* for the prize.\n\n` +
-        `_If the challenge never completes, the \u20a6${prize.toLocaleString()} prize comes ` +
-        'back to you in full. The fee and any setup charge do not._',
+        `you'll pay *\u20a6${(prize + fee).toLocaleString()}* for the prize` +
+        (setup ? ' in addition to the setup fee.\n\n' +
+                 `\u20a6${(prize + fee).toLocaleString()} + \u20a6${setup.toLocaleString()} ` +
+                 `= *\u20a6${(prize + fee + setup).toLocaleString()}*\n\n`
+               : '.\n\n') +
+        '_Setup and admin fees are non-refundable. If the challenge never ' +
+        `completes, the \u20a6${prize.toLocaleString()} prize comes back to you in full._`,
 
     pickCategories: (list) =>
         'Pick up to 3 categories.\n\n' + list + '\n\n' +
         'Reply with the numbers, separated by commas \u2014 like *1,3*.',
 
-    pickEntry:
-        'How do people get in?\n\n' +
-        '*1* \u2014 Everyone uses one of their own credits\n' +
-        '*2* \u2014 You pay for everyone\n' +
-        '*3* \u2014 Free for everyone\n\n' +
-        'Reply 1, 2 or 3.',
 
     // §14.1 — the no-refund warning, before any money moves
     prepaidWarning: (slots, each, total) =>
@@ -381,6 +388,10 @@ const STRINGS = {
     cancelTooLate:
         "Someone has already joined, so this one has to run its course. It " +
         'expires on its own if nobody finishes.',
+
+    flowMoved:
+        'That challenge setup is out of date \u2014 we changed the questions since ' +
+        'you started.\n\nReply *NEW CHALLENGE* to start again. Nothing was charged.',
 
     cancelDraft:
         'Stopped. Nothing was created, so nothing was charged.\n\n' +
@@ -870,12 +881,14 @@ class ChallengeChatService {
                     return true;
                 }
                 data.mode = input === '1' ? 'async' : 'live';
-                await this._advance(identifier, 'format', data, STRINGS.pickFormat);
+                await this._advance(identifier, 'format', data,
+                    STRINGS.pickFormat(await this._duelPrice()));
                 return true;
 
             case 'format':
                 if (!['1', '2'].includes(input)) {
-                    await messagingService.sendMessage(identifier, STRINGS.pickFormat);
+                    await messagingService.sendMessage(identifier,
+                        STRINGS.pickFormat(await this._duelPrice()));
                     return true;
                 }
                 if (input === '1') {
@@ -965,8 +978,17 @@ class ChallengeChatService {
                 const pricingNow = await challengePricingService.getPricing();
                 const fee = challengePricingService.prizeFeeFor(amount, pricingNow);
 
-                await messagingService.sendMessage(identifier,
-                    STRINGS.prizeAccepted(amount, fee, pricingNow.prizeFeeBps));
+                // The setup charge for the seats they already chose, so the
+                // total shown here is the total they will actually be asked
+                // for.
+                const setupNow = pricingNow.mode === 'paid'
+                    ? challengePricingService.setupChargeFor(
+                        data.maxParticipants || 2, pricingNow)
+                    : 0;
+
+                await messagingService.sendMessage(identifier, STRINGS.prizeAccepted(
+                    amount, fee, pricingNow.prizeFeeBps, setupNow
+                ));
 
                 return this._afterPrize(identifier, data, user, platform);
             }
@@ -1020,8 +1042,17 @@ class ChallengeChatService {
             }
 
             default:
+                // A STEP THAT NO LONGER EXISTS.
+                //
+                // Anyone halfway through creating a challenge when a deploy
+                // lands is holding a state name the new code has never heard
+                // of \u2014 'entry' after that step was removed, for instance.
+                // Silently clearing it dropped them at the main menu with no
+                // idea what happened. Say so and offer the way back.
+                logger.info(`Challenge flow state "${state}" no longer exists; restarting`);
                 await userService.clearUserState(identifier);
-                return false;
+                await messagingService.sendMessage(identifier, STRINGS.flowMoved);
+                return true;
         }
     }
 
@@ -1781,20 +1812,40 @@ class ChallengeChatService {
      * which is the sort of mismatch nobody notices until a player screenshots
      * it.
      */
+    /**
+     * The 1v1 setup charge, or null in free mode.
+     *
+     * Read live rather than hard-coded so an admin changing the 2-seat band
+     * does not leave the format step quoting the old number.
+     */
+    async _duelPrice() {
+        try {
+            const challengePricingService = require('./challenge-pricing.service');
+            const pricing = await challengePricingService.getPricing();
+            if (pricing.mode !== 'paid') return null;
+            return challengePricingService.setupChargeFor(2, pricing);
+        } catch (error) {
+            logger.error('Could not read the duel price:', error.message);
+            return null;
+        }
+    }
+
     async _bandTable() {
         try {
             const challengePricingService = require('./challenge-pricing.service');
             const pricing = await challengePricingService.getPricing();
             if (pricing.mode !== 'paid') return null;
 
+            // The 2-seat band is skipped: it is the duel price, and it is shown
+            // at the format step next to "One friend" where it belongs.
             let previous = 2;
-            return pricing.bands.map(band => {
-                const range = band.upTo === 2
-                    ? '2 players'
-                    : `${previous + 1}\u2013${band.upTo} players`;
-                previous = band.upTo;
-                return `\u2022 ${range} \u2014 \u20a6${band.charge.toLocaleString()}`;
-            }).join('\n');
+            return pricing.bands
+                .filter(band => band.upTo > 2)
+                .map(band => {
+                    const range = `${previous + 1}\u2013${band.upTo} players`;
+                    previous = band.upTo;
+                    return `\u2022 ${range} \u2014 \u20a6${band.charge.toLocaleString()}`;
+                }).join('\n');
         } catch (error) {
             // Never block creation on the price list. The quote before payment
             // is the authoritative figure anyway.
