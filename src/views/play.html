@@ -76,6 +76,15 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .opt:not(:disabled):hover{border-color:var(--line)}
 .opt:disabled{cursor:default}
 .opt.pick{border-color:var(--paper);background:var(--raise)}
+/* REMOVED BY 50:50.
+   `animation:none` is the load-bearing part. .opt runs `rise ... forwards`,
+   and an animation's filled value beats an inline style in the cascade \u2014 so
+   setting b.style.opacity='.35' was silently overridden by the keyframe's
+   opacity:1. The button really was disabled; it just looked untouched, which
+   read as the lifeline doing nothing at all. */
+.opt.gone{animation:none;opacity:.3;filter:grayscale(1);
+          background:var(--slate);border-color:transparent;cursor:default}
+.opt.gone .k{opacity:.5}
 .opt.right{border-color:var(--mint);background:rgba(53,211,154,.13)}
 .opt.right .k{background:var(--mint);color:#08150f}
 .opt.wrong{border-color:var(--ember);background:rgba(255,107,91,.11)}
@@ -1170,9 +1179,11 @@ async function arenaFiftyFifty(){
     const d=await r.json();
     if(!d.success){ $('aqLifelines').style.display='none'; return; }
     sfx.lock();
+    /* A CLASS, not an inline opacity: .opt is mid-animation and the keyframe
+       wins over the style attribute. See .opt.gone. */
     [...$('aqOpts').children].forEach(b=>{
-      const letter=b.textContent.charAt(0);
-      if(!d.remaining.includes(letter)){ b.disabled=true; b.style.opacity='.35'; }
+      const letter=b.textContent.trim().charAt(0);
+      if(!d.remaining.includes(letter)){ b.disabled=true; b.classList.add('gone'); }
     });
     $('aqLifelines').style.display='none';
     /* The server moved the deadline; recount from the new one or the local
@@ -1593,8 +1604,8 @@ async function chalFiftyFifty(){
     if(!d.success){ $('cqLifelines').style.display='none'; return; }
     sfx.lock();
     [...$('cqOpts').children].forEach(b=>{
-      const letter=b.textContent.charAt(0);
-      if(!d.remaining.includes(letter)){ b.disabled=true; b.style.opacity='.35'; }
+      const letter=b.textContent.trim().charAt(0);
+      if(!d.remaining.includes(letter)){ b.disabled=true; b.classList.add('gone'); }
     });
     $('cqLifelines').style.display='none';
     if(d.expiresAt){
@@ -2183,6 +2194,17 @@ function stream(){
   es.addEventListener('challenge.started',    e=>arenaStarted(JSON.parse(e.data)));
   es.addEventListener('challenge.question',   e=>arenaQuestion(JSON.parse(e.data)));
   es.addEventListener('challenge.locked',     ()=>arenaLocked());
+  /* Somebody used a 50:50, so the whole question's clock moved. Everyone
+     recounts from the same deadline. */
+  es.addEventListener('challenge.extended_clock', e=>{
+    const d=JSON.parse(e.data);
+    if(d.position!==arena.position || !d.expiresAt) return;
+    const span=Math.max(1,d.expiresAt-Date.now());
+    arenaCountdown(d.expiresAt,$('asecs'),$('abar'),span,()=>{
+      arena.locked=true;
+      [...$('aqOpts').children].forEach(b=>b.disabled=true);
+    });
+  });
   es.addEventListener('challenge.reveal',     e=>arenaReveal(JSON.parse(e.data)));
   es.addEventListener('challenge.finished',   e=>arenaFinished(JSON.parse(e.data)));
   es.addEventListener('challenge.abandoned',  e=>arenaAbandoned(JSON.parse(e.data)));
