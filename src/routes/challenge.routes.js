@@ -619,12 +619,12 @@ router.post('/:code/auth/request', requireChallengesEnabled, async (req, res) =>
 
         if (!result.ok) return res.status(429).json({ success: false, reason: result.reason });
 
-        // The SAME response whether the username exists or not. Anything else
-        // turns this into a way to test which usernames are real — and
-        // usernames are printed on every result card.
+        // Honest about whether a code actually went out. Pretending otherwise
+        // left a player staring at a phone that was never going to buzz.
         res.json({
             success: true,
-            sent: true,
+            sent: result.delivered === true,
+            reason: result.delivered ? null : (result.reason || 'not_sent'),
             hint: result.hint || null,
             alreadyJoined: result.alreadyJoined || false
         });

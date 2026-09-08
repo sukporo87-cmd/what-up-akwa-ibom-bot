@@ -82,6 +82,65 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
 }
 
 // ============================================
+// CHALLENGE PAYMENT CALLBACK
+// ============================================
+// The browser landing back after checkout. The WEBHOOK is what settles a
+// challenge, so this page decides nothing \u2014 it reports where the sponsorship
+// has got to and sends the player somewhere useful.
+async function handleChallengeCallback(reference, req, res) {
+    const page = (title, colour, heading, body, link) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title}</title>
+<style>body{font-family:system-ui,Arial,sans-serif;text-align:center;padding:44px 20px;background:#14101f;color:#e9e4f5}
+.card{background:#1d1730;max-width:460px;margin:0 auto;padding:34px 26px;border-radius:16px;border:1px solid #2e2545}
+h1{color:${colour};font-size:22px;margin:0 0 10px}p{color:#b3a9c9;line-height:1.55}
+a{display:inline-block;margin-top:20px;padding:13px 26px;background:#f0b429;color:#1a1226;
+text-decoration:none;border-radius:10px;font-weight:600}</style></head>
+<body><div class="card"><h1>${heading}</h1><p>${body}</p>${link}</div></body></html>`;
+
+    const playUrl = process.env.PLAY_URL || 'https://play.whatsuptrivia.com.ng';
+
+    try {
+        const found = await pool.query(
+            `SELECT s.payment_status, c.code
+             FROM challenge_sponsorships s
+             JOIN challenges c ON c.id = s.challenge_id
+             WHERE s.payment_reference = $1`,
+            [reference]
+        );
+
+        const row = found.rows[0];
+        if (!row) {
+            return res.send(page('Payment', '#f0b429', '\u23f3 Checking\u2026',
+                'We have not matched this payment yet. If it went through, your challenge ' +
+                'will open on its own within a minute.',
+                `<a href="${playUrl}">Back to the game</a>`));
+        }
+
+        if (row.payment_status === 'settled' || row.payment_status === 'awarded') {
+            return res.send(page('Payment received', '#3ddc97', '\u2705 Payment received',
+                'Your challenge is live. Your invite is waiting \u2014 send it to whoever ' +
+                'you want to beat.',
+                `<a href="${playUrl}/c/${row.code}">Open my challenge</a>`));
+        }
+
+        // Still pending: the gateway redirected before the webhook landed,
+        // which is normal and is NOT a failure.
+        return res.send(page('Payment processing', '#f0b429', '\u23f3 Almost there',
+            'Your bank is still confirming. This usually takes under a minute, and your ' +
+            'challenge opens by itself when it clears.',
+            `<a href="${playUrl}/c/${row.code}">Open my challenge</a>`));
+
+    } catch (error) {
+        logger.error('Challenge payment callback error:', error.message);
+        return res.send(page('Payment', '#f0b429', '\u23f3 Checking\u2026',
+            'We could not confirm this right away. If the payment went through, your ' +
+            'challenge will open on its own.',
+            `<a href="${playUrl}">Back to the game</a>`));
+    }
+}
+
+// ============================================
 // CHALLENGE SPONSORSHIP WEBHOOK
 // ============================================
 async function handleChallengeSponsorshipWebhook(reference) {
@@ -138,6 +197,36 @@ async function handleChallengeSponsorshipWebhook(reference) {
                 challenge.max_participants,
                 prize
             ));
+
+        // A WEB CREATOR IS STARING AT A CHECKOUT SCREEN.
+        //
+        // The messages above go to their chat identifier, which for a web user
+        // renders as a transient prompt \u2014 so the payment cleared and the
+        // screen still said "Waiting for payment\u2026" with no way forward. The
+        // share screen is what they actually need: the invite, ready to copy.
+        if (String(user.phone_number || '').startsWith('web_')) {
+            try {
+                const gameEvents = require('../services/game-events.service');
+                gameEvents.emit(user.id, 'challenge.created', {
+                    code: result.code,
+                    links,
+                    categories: challengeChatService._categoryBlock(challenge.categories),
+                    startLabel: challenge.mode === 'live' && challenge.scheduled_start_at
+                        ? challengeChatService.watLabel(challenge.scheduled_start_at) : null,
+                    inviteText: challengeChatService.STRINGS.invite(
+                        challengeChatService.displayName(user),
+                        links,
+                        challengeChatService._categoryBlock(challenge.categories),
+                        challenge.mode === 'live' && challenge.scheduled_start_at
+                            ? challengeChatService.watLabel(challenge.scheduled_start_at) : null,
+                        challenge.max_participants,
+                        prize
+                    )
+                });
+            } catch (error) {
+                logger.error('Could not push the share screen after payment:', error.message);
+            }
+        }
 
         // They are no longer waiting on money, so PAY should stop responding.
         try {
@@ -400,6 +489,19 @@ router.get('/callback', async (req, res) => {
         return res.status(400).send('No reference provided');
     }
     
+    // A CHALLENGE PAYMENT IS NOT A TOKEN PAYMENT.
+    //
+    // Two things below assume the token reference format
+    // {WUAIB|KOR}-{user_id}-{timestamp}-{random}: the user id is read from
+    // position 1, and verifyPayment() looks the reference up in `transactions`.
+    // A challenge reference is CHS-{challengeId}-{userId}-{timestamp} and its
+    // record lives in challenge_sponsorships \u2014 so position 1 returned the
+    // CHALLENGE id, the lookup found nothing, and a payment that had genuinely
+    // succeeded rendered "Payment Failed".
+    if (reference.startsWith('CHS-')) {
+        return handleChallengeCallback(reference, req, res);
+    }
+
     // Resolve the player BEFORE verifying. Every exit path — success, still
     // processing, outright failure — needs to know where to send them, and on
     // the failure paths verifyPayment has already thrown.

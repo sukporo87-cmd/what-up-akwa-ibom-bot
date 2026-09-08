@@ -135,18 +135,33 @@ class ChallengeAuthService {
         );
         const user = result.rows[0];
 
-        // A WRONG USERNAME AND A CORRECT ONE MUST LOOK THE SAME. Saying "no
-        // such player" turns this endpoint into a way to test whether a
-        // username exists, and usernames appear on every result card.
-        if (!user) return { ok: true, delivered: false };
+        // I ORIGINALLY HID WHETHER THE USERNAME EXISTED, and it was the wrong
+        // call. The idea was to stop this endpoint being used to test which
+        // usernames are real \u2014 but usernames are already printed on every
+        // result card and the public leaderboard, so it protected almost
+        // nothing. What it did do was make a typo indistinguishable from
+        // success: the player was told a code had been sent, none arrived, and
+        // neither they nor we could tell which had happened. That stopped a
+        // real player joining a real challenge.
+        //
+        // Bulk enumeration is held off by the rate limits, which is what was
+        // actually doing that job all along.
+        if (!user) {
+            logger.info(`Challenge code requested for unknown username "${clean}"`);
+            return { ok: true, delivered: false, reason: 'no_such_username' };
+        }
 
         // Web accounts log in normally; there is nowhere to deliver a code to.
+        // Web accounts sign in normally; there is nowhere to deliver a code to.
         if (String(user.phone_number || '').startsWith('web_')) {
-            return { ok: true, delivered: false };
+            return { ok: true, delivered: false, reason: 'web_account' };
         }
 
         const userCount = await this._bump(this._userRateKey(user.id));
-        if (userCount > MAX_REQUESTS_PER_USER) return { ok: true, delivered: false };
+        if (userCount > MAX_REQUESTS_PER_USER) {
+            logger.warn(`Challenge code rate limit hit for user ${user.id}`);
+            return { ok: true, delivered: false, reason: 'rate_limited' };
+        }
 
         const participant = await pool.query(
             `SELECT 1 FROM challenge_participants WHERE challenge_id = $1 AND user_id = $2`,
@@ -172,9 +187,12 @@ class ChallengeAuthService {
                 user.phone_number,
                 this.codeMessage(code, challenge) + this.unsolicitedNote()
             );
+            // Logged on the way out too. Without both halves, "no code
+            // arrived" is unanswerable from the server side.
+            logger.info(`Challenge code delivered to user ${user.id} for ${challenge.code}`);
         } catch (error) {
             logger.error(`Could not deliver challenge auth code: ${error.message}`);
-            return { ok: true, delivered: false };
+            return { ok: true, delivered: false, reason: 'delivery_failed' };
         }
 
         return {

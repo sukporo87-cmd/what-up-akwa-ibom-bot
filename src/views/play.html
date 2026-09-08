@@ -1783,11 +1783,19 @@ async function chalAuthRequest(){
     /* Deliberately the same message whether or not that username exists.
        Anything else turns this box into a way to test which usernames are
        real, and usernames are printed on every result card. */
+    /* Say what actually happened. "If that username exists..." meant a typo
+       looked exactly like success, and a player waited for a code that was
+       never going to arrive. */
     $('chalAuthNote').textContent = !d.success
       ? (d.reason==='rate_limited' ? 'Too many attempts. Try again in an hour.'
                                    : 'Could not send a code right now.')
-      : (d.hint ? 'Code sent to your '+d.hint+'. Enter it above.'
-                : 'If that username exists, a code has been sent to it.');
+      : d.sent ? ('Code sent to your '+(d.hint||'phone')+'. Enter it above.')
+      : ({
+          no_such_username:'No player with that username. Check the spelling — it\'s the @name the bot calls you, not your phone name.',
+          web_account:'That account signs in with email. Use "Play as my web account" instead.',
+          rate_limited:'Too many code requests. Try again in an hour.',
+          delivery_failed:'We could not deliver a code to that account. Try again in a moment.'
+        }[d.reason] || 'No code was sent. Check the username and try again.');
   }catch(e){ $('chalAuthNote').textContent='Could not send a code right now.'; }
   finally{ $('chalAuthSend').disabled=false; }
 }
