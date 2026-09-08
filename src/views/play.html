@@ -1364,7 +1364,10 @@ function showChallengeShare(d){
   $('csInvite').textContent=d.inviteText||'';
   /* A sponsored challenge is not shareable until the money settles, so the
      buttons must not offer a link that would be a dead end. */
-  $('csPlay').style.display=d.startLabel?'none':'inline-block';
+  /* A live challenge shows the lobby button instead of hiding the control
+     entirely \u2014 the creator has to get in too. */
+  $('csPlay').textContent = d.startLabel ? 'Enter the lobby' : 'Play my round';
+  $('csPlay').style.display='inline-block';
   closeAsk();
   view('vChalShare');
   sfx.lock();
@@ -1482,6 +1485,10 @@ async function openChallengeDetail(code){
   $('cdCard').style.display='none';
   $('cdShare').style.display='none';
   $('cdDownload').style.display='none';
+  /* "Play my round" describes async: you play alone, whenever. A live
+     challenge has a lobby you wait in, so the button has to say so or it
+     promises something the next screen does not deliver. */
+  $('cdPlay').textContent = live ? 'Enter the lobby' : 'Play my round';
   $('cdPlay').style.display=c.waitingForYou?'inline-block':'none';
   /* Cancellable only while it is yours, open, and nobody else has joined \u2014
      the same rule cancelChallenge() enforces server-side. */
@@ -2187,6 +2194,9 @@ function stream(){
      absolute expiresAt and the countdown runs locally from there.
      --------------------------------------------------------------------- */
   es.addEventListener('challenge.created',    e=>showChallengeShare(JSON.parse(e.data)));
+  /* Reuses the existing checkout screen \u2014 the tab opens from the player's own
+     tap, which is what gets past the popup blocker. */
+  es.addEventListener('challenge.payment',    e=>showCheckout(JSON.parse(e.data)));
   es.addEventListener('challenge.lobby',      e=>arenaLobby(JSON.parse(e.data)));
   es.addEventListener('challenge.extended',   e=>arenaExtended(JSON.parse(e.data)));
   es.addEventListener('challenge.wait_or_start', e=>arenaAskInitiator(JSON.parse(e.data)));

@@ -6056,6 +6056,26 @@ router.post('/api/challenges/clear-stuck', authenticateAdmin, async (req, res) =
   }
 });
 
+// Records a sponsorship that was settled by hand \u2014 after a crash, or any
+// other time the money moved outside the system. It moves no money; it makes
+// the books match the bank, and refuses without a payment reference.
+router.post('/api/challenges/:id(\\d+)/reconcile', authenticateAdmin, requireFinancialAccess, async (req, res) => {
+  try {
+    const challengeSponsorshipService = require('../services/challenge-sponsorship.service');
+    const result = await challengeSponsorshipService.reconcile(parseInt(req.params.id, 10), {
+      outcome: req.body && req.body.outcome,
+      reference: req.body && req.body.reference,
+      note: req.body && req.body.note,
+      adminId: req.adminSession ? req.adminSession.admin_id : null
+    });
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    logger.error('Error reconciling a challenge sponsorship:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/api/challenges/:id/detail', authenticateAdmin, async (req, res) => {
   try {
     const challengeService = require('../services/challenge.service');

@@ -783,8 +783,36 @@ class ChallengeChatService {
             return true;
         }
 
-        await messagingService.sendMessage(identifier,
-            STRINGS.payLink(started.authorizationUrl, Number(challenge.total_charged) || 0));
+        const total = Number(challenge.total_charged) || 0;
+
+        // WEB GETS A CHECKOUT SCREEN, NOT A CHAT LINK.
+        //
+        // On web a chat message renders in the transient prompt overlay and is
+        // gone a few seconds later, so the payment link simply disappeared
+        // before it could be tapped. play.html already has a checkout screen
+        // that solves the popup-blocker problem by opening the tab from the
+        // player's own tap; challenge payments go through the same one rather
+        // than inventing a second.
+        if (platform === 'web') {
+            try {
+                const gameEvents = require('./game-events.service');
+                gameEvents.emit(user.id, 'challenge.payment', {
+                    amount: total,
+                    title: 'Challenge ' + challenge.code,
+                    subtitle: Number(challenge.prize_amount) > 0
+                        ? 'Setup, prize and fee' : 'Challenge setup',
+                    gateway: started.gateway,
+                    authorizationUrl: started.authorizationUrl,
+                    note: 'Your invite link appears the moment the payment clears.'
+                });
+                return true;
+            } catch (error) {
+                logger.error('Could not push challenge.payment to web:', error.message);
+                // Fall through to the text link rather than leaving them stuck.
+            }
+        }
+
+        await messagingService.sendMessage(identifier, STRINGS.payLink(started.authorizationUrl, total));
         return true;
     }
 

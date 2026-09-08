@@ -609,6 +609,25 @@ class ChallengeArenaService {
     // ============================================
 
     async _endMatch(challenge) {
+        try {
+            return await this._endMatchInner(challenge);
+        } catch (error) {
+            // Same reasoning as _reveal: this runs from a setTimeout chain, so
+            // a throw here is an unhandled rejection and the process exits \u2014
+            // which is exactly what froze both players on question 15. At the
+            // very least, tell the room it is over.
+            logger.error(`Challenge ${challenge.code} could not finish:`, error.message);
+            try {
+                gameEvents.emitRoom(challenge.id, 'challenge.abandoned', {
+                    challengeId: challenge.id, reason: 'error'
+                });
+                this._teardown(challenge.id);
+            } catch (e) { /* nothing further to do */ }
+            return { ok: false, error: error.message };
+        }
+    }
+
+    async _endMatchInner(challenge) {
         const state = this.matches.get(challenge.id);
         if (!state) return { ok: false };
 

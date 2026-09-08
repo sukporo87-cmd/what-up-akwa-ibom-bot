@@ -689,8 +689,34 @@ class ChallengeRoundService {
             );
             const winner = await challengeService.getWinner(challenge.id);
             if (fresh.rows[0] && winner) {
-                const challengeSponsorshipService = require('./challenge-sponsorship.service');
-                award = await challengeSponsorshipService.award(fresh.rows[0], winner.user_id);
+                try {
+                    const challengeSponsorshipService = require('./challenge-sponsorship.service');
+                    award = await challengeSponsorshipService.award(fresh.rows[0], winner.user_id);
+                } catch (error) {
+                    // THE PRIZE MUST NEVER TAKE THE RESULT WITH IT.
+                    //
+                    // award() threw on a bad column name, the rejection was
+                    // unhandled, and the process died between "everyone has
+                    // finished" and "here is the result" \u2014 so two players who
+                    // had just played fifteen questions saw nothing at all, no
+                    // winner, no card, and the money stayed held.
+                    //
+                    // The money is recoverable from the admin panel; a lost
+                    // result is not. Log it, flag the row, and let the result
+                    // through.
+                    logger.error(
+                        `Could not award the prize on ${challenge.code}: ${error.message}`
+                    );
+                    award = { ok: false, reason: 'award_failed', error: error.message };
+                    try {
+                        await pool.query(
+                            `UPDATE challenge_sponsorships
+                             SET withheld_reason = $1, updated_at = NOW()
+                             WHERE challenge_id = $2 AND payment_status = 'settled'`,
+                            [`award_failed: ${String(error.message).slice(0, 160)}`, challenge.id]
+                        );
+                    } catch (e) { /* the log is the record of last resort */ }
+                }
             }
         }
 

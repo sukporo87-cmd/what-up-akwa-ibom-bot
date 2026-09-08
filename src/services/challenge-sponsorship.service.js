@@ -213,7 +213,7 @@ class ChallengeSponsorshipService {
 
         const transaction = await pool.query(`
             INSERT INTO transactions
-                (user_id, amount, transaction_type, status, payout_status,
+                (user_id, amount, transaction_type, payment_status, payout_status,
                  payout_hold, hold_reason, platform, win_data)
             VALUES ($1, $2, 'challenge_prize', 'success', 'pending', $3, $4, $5, $6)
             RETURNING id
@@ -252,6 +252,104 @@ class ChallengeSponsorshipService {
             amount: row.amount,
             transactionId: transaction.rows[0].id
         };
+    }
+
+    // ============================================
+    // RECONCILE A SPONSORSHIP SETTLED OUTSIDE THE SYSTEM
+    // ============================================
+    // When a match dies mid-flight the money is real but the row still says
+    // 'settled', so the dashboard keeps reporting it as held \u2014 correctly,
+    // because nothing has told it otherwise. Paying the sponsor back by hand
+    // fixes the bank and leaves the books wrong.
+    //
+    // This records what actually happened. It does NOT move money: it is the
+    // bookkeeping entry for a transfer that has already been made, which is
+    // why it demands a reference and refuses to run twice.
+
+    async reconcile(challengeId, { outcome, reference, adminId, note = '' }) {
+        if (!['refunded', 'awarded'].includes(outcome)) {
+            return { ok: false, error: "outcome must be 'refunded' or 'awarded'" };
+        }
+        if (!String(reference || '').trim()) {
+            // Without a reference this is an unauditable adjustment to a money
+            // row, which is the one thing a financial record must never allow.
+            return { ok: false, error: 'A payment reference is required' };
+        }
+
+        const found = await pool.query(
+            `SELECT s.*, c.code, c.setup_charge, c.prize_fee, c.total_charged, c.prize_amount
+             FROM challenge_sponsorships s
+             JOIN challenges c ON c.id = s.challenge_id
+             WHERE s.challenge_id = $1`,
+            [challengeId]
+        );
+
+        const row = found.rows[0];
+        if (!row) return { ok: false, error: 'No sponsorship on that challenge' };
+
+        // Already reconciled? Say so rather than paying twice on paper.
+        if (['refunded', 'awarded'].includes(row.payment_status)) {
+            return { ok: false, error: `Already recorded as ${row.payment_status}` };
+        }
+        if (row.payment_status !== 'settled' && row.payment_status !== 'withheld') {
+            return { ok: false, error: `Nothing to reconcile (status: ${row.payment_status})` };
+        }
+
+        const prize = Number(row.prize_amount) || 0;
+        const retained = (Number(row.setup_charge) || 0) + (Number(row.prize_fee) || 0);
+        const recipient = outcome === 'refunded' ? row.user_id : null;
+
+        let winnerId = recipient;
+        if (outcome === 'awarded') {
+            const winner = await pool.query(
+                `SELECT user_id FROM challenge_participants
+                 WHERE challenge_id = $1 AND rank = 1 LIMIT 1`,
+                [challengeId]
+            );
+            if (!winner.rows[0]) return { ok: false, error: 'No winner recorded on that challenge' };
+            winnerId = winner.rows[0].user_id;
+        }
+
+        // Recorded as ALREADY PAID, because it was. Leaving it pending would
+        // put it back in the payout queue and invite a second, real transfer.
+        const tx = await pool.query(`
+            INSERT INTO transactions
+                (user_id, amount, transaction_type, payment_status, payout_status,
+                 platform, win_data)
+            VALUES ($1, $2, $3, 'success', 'paid', $4, $5)
+            RETURNING id
+        `, [
+            winnerId, prize,
+            outcome === 'refunded' ? 'challenge_refund' : 'challenge_prize',
+            'admin',
+            JSON.stringify({
+                challengeId, challengeCode: row.code,
+                reconciledOutsideSystem: true,
+                reference: String(reference).trim(),
+                note: String(note || '').slice(0, 500),
+                adminId: adminId || null
+            })
+        ]);
+
+        await pool.query(`
+            UPDATE challenge_sponsorships
+            SET payment_status = $1,
+                refunded_at = CASE WHEN $1 = 'refunded' THEN NOW() ELSE refunded_at END,
+                refund_amount = CASE WHEN $1 = 'refunded' THEN $2 ELSE refund_amount END,
+                retained_amount = CASE WHEN $1 = 'refunded' THEN $3 ELSE retained_amount END,
+                awarded_transaction_id = CASE WHEN $1 = 'awarded' THEN $4 ELSE awarded_transaction_id END,
+                refund_transaction_id = CASE WHEN $1 = 'refunded' THEN $4 ELSE refund_transaction_id END,
+                withheld_reason = NULL,
+                updated_at = NOW()
+            WHERE id = $5
+        `, [outcome, prize, retained, tx.rows[0].id, row.id]);
+
+        logger.warn(
+            `Challenge ${row.code} sponsorship reconciled as ${outcome} by admin ` +
+            `${adminId} \u2014 \u20a6${prize}, ref ${reference}`
+        );
+
+        return { ok: true, outcome, amount: prize, retained, transactionId: tx.rows[0].id };
     }
 
     // ============================================
@@ -301,7 +399,7 @@ class ChallengeSponsorshipService {
 
         const transaction = await pool.query(`
             INSERT INTO transactions
-                (user_id, amount, transaction_type, status, payout_status, platform, win_data)
+                (user_id, amount, transaction_type, payment_status, payout_status, platform, win_data)
             VALUES ($1, $2, 'challenge_refund', 'success', 'pending', $3, $4)
             RETURNING id
         `, [
