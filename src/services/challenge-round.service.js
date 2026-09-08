@@ -446,7 +446,25 @@ class ChallengeRoundService {
         // No elimination: a wrong answer scores zero and play continues. A
         // TIMEOUT counts as wrong and costs the FULL clock, so stalling to
         // think is never free — the tiebreak is cumulative answer time.
-        const chosenLetter = timedOut ? null : String(chosen || '').toUpperCase();
+        // NO ANSWER MEANS NULL, NEVER AN EMPTY STRING.
+        //
+        // `timedOut` is false whenever the clock has not run out \u2014 including
+        // when the arena reveals EARLY because everyone else locked in. A
+        // player who never answered then produced String(null || '') = '',
+        // which challenge_answers_chosen_check rejects. The resulting 23514
+        // escaped as an unhandled rejection and killed the Node process
+        // mid-match, taking every other game on the server with it.
+        const picked = String(chosen || '').trim().toUpperCase();
+        const answered = ['A', 'B', 'C', 'D'].includes(picked);
+        const chosenLetter = answered ? picked : null;
+
+        // An unanswered question is a timeout whatever the clock says, and it
+        // costs the full clock \u2014 otherwise a player who never answered would
+        // record a fast non-answer and win the cumulative-time tiebreak.
+        if (!answered) {
+            timedOut = true;
+            answerMs = timeoutMs;
+        }
         const correct = await pool.query(`
             SELECT q.correct_answer, q.id
             FROM challenge_question_sets s
@@ -456,7 +474,7 @@ class ChallengeRoundService {
 
         if (!correct.rows[0]) return { ok: false, reason: 'no_such_question' };
 
-        const isCorrect = !timedOut &&
+        const isCorrect = answered &&
             chosenLetter === String(correct.rows[0].correct_answer || '').toUpperCase();
 
         await pool.query(`

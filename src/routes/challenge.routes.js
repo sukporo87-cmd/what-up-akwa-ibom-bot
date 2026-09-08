@@ -297,7 +297,13 @@ router.post('/:code/answer', requireChallengeAuth, requireChallengesEnabled, asy
     try {
         const code = String(req.params.code || '').toUpperCase();
         const position = parseInt(req.body && req.body.position, 10);
-        const chosen = String((req.body && req.body.answer) || '').toUpperCase();
+        // Validated at the door, not only deep inside submitAnswer. An empty
+        // or junk answer used to reach the INSERT and violate
+        // challenge_answers_chosen_check \u2014 a 23514 that killed the process.
+        const chosen = String((req.body && req.body.answer) || '').trim().toUpperCase();
+        if (!['A', 'B', 'C', 'D'].includes(chosen)) {
+            return res.status(400).json({ success: false, reason: 'bad_answer' });
+        }
 
         if (!(position >= 1 && position <= 15)) {
             return res.status(400).json({ success: false, reason: 'bad_position' });
@@ -380,12 +386,23 @@ router.post('/:code/fifty-fifty', requireChallengeAuth, requireChallengesEnabled
         );
         if (!result.ok) return res.status(409).json({ success: false, reason: result.reason });
 
+        // In LIVE mode the reveal runs on one timer for the whole room, so the
+        // per-player clock the round service moved is not the clock that
+        // matters. Move the room's, and hand back the deadline it produced.
+        let expiresAt = result.expiresAt;
+        if (challenge.mode === 'live') {
+            const extended = challengeArenaService.extendQuestion(
+                challenge.id, position, result.bonusMs
+            );
+            if (extended.ok && extended.expiresAt) expiresAt = extended.expiresAt;
+        }
+
         res.json({
             success: true,
             remaining: result.remaining,
             // The clock moved server-side; the client needs the new deadline or
             // its countdown would still expire at the original time.
-            expiresAt: result.expiresAt,
+            expiresAt,
             bonusMs: result.bonusMs
         });
     } catch (error) {
@@ -563,7 +580,13 @@ router.post('/:code/arena/answer', requireChallengeAuth, requireChallengesEnable
         if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
 
         const position = parseInt(req.body && req.body.position, 10);
-        const chosen = String((req.body && req.body.answer) || '').toUpperCase();
+        // Validated at the door, not only deep inside submitAnswer. An empty
+        // or junk answer used to reach the INSERT and violate
+        // challenge_answers_chosen_check \u2014 a 23514 that killed the process.
+        const chosen = String((req.body && req.body.answer) || '').trim().toUpperCase();
+        if (!['A', 'B', 'C', 'D'].includes(chosen)) {
+            return res.status(400).json({ success: false, reason: 'bad_answer' });
+        }
 
         const result = await challengeArenaService.submitAnswer(
             challenge, req.webUser, position, chosen

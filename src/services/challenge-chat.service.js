@@ -217,6 +217,26 @@ const STRINGS = {
             : 'Slots you don\u2019t fill are not refunded. Getting your friends in is on you.\n\n') +
         'Reply *PAY* to continue, or *MENU* to drop it.',
 
+    // Sent when a paid challenge settles. Short: what was taken, the entry
+    // code, and how to call it off. The invite follows as its own message.
+    paymentConfirmed: (money, code, entryCode) =>
+        '\u2705 *Payment confirmed.*\n\n' +
+        (money.setup ? `Setup \u2014 \u20a6${money.setup.toLocaleString()}\n` : '') +
+        (money.prize ? `Prize held \u2014 \u20a6${money.prize.toLocaleString()}\n` : '') +
+        (money.fee ? `Fee \u2014 \u20a6${money.fee.toLocaleString()}\n` : '') +
+        '\nYour invite message is below \u2014 send it to whoever you want to beat.\n\n' +
+        (entryCode
+            ? `\ud83d\udd11 *Your code to play: ${entryCode.split('').join(' ')}*\n\n` +
+              'Open your challenge link, choose *Play as my WhatsApp or Telegram ' +
+              'account*, then enter your username and this code.\n\n' +
+              `It works only for this one challenge (${code}).\n` +
+              "_Don't share this code \u2014 it isn't part of the invite._\n" +
+              '_Reply *MY CODE* for a new one if it expires._\n\n'
+            : '') +
+        'You can cancel this challenge any time until someone joins. ' +
+        'After that it\u2019s final \u2014 it runs, or it expires.\n' +
+        '_Reply *CANCEL CHALLENGE* to cancel._',
+
     payLink: (url, total) =>
         `\ud83d\udcb3 *\u20a6${total.toLocaleString()}*\n\nPay here:\n${url}\n\n` +
         'Your invite link appears the moment the payment clears. ' +
@@ -267,10 +287,14 @@ const STRINGS = {
     // `seats` is null for a 1v1. For a group it matters to the RECIPIENT: an
     // invite to a 10-player challenge is something you forward on to other
     // people, and an invite that does not say so gets treated as a duel.
-    invite: (displayName, links, categories, startLabel, seats) =>
+    invite: (displayName, links, categories, startLabel, seats, prize) =>
         `\u2694\ufe0f *${displayName} has challenged you to a game of trivia!*\n\n` +
         "\ud83c\udfaf *What's Up Trivia*\n" +
-        '15 questions \u00b7 10 seconds each \u00b7 highest score wins\n\n' +
+        '15 questions \u00b7 10 seconds each \u00b7 highest score wins' +
+        // The prize is the single strongest reason to accept, so it goes in
+        // the headline rather than being discovered after signing up.
+        (prize ? ` \u00b7 \ud83c\udfc6 *\u20a6${Number(prize).toLocaleString()} prize*` : '') +
+        '\n\n' +
         `${categories}\n\n` +
         // Only for a group: a 1v1 does not need telling it is a 1v1, and an
         // invite to a 10-player challenge is something you forward on.
@@ -422,8 +446,19 @@ const STRINGS = {
     waitingForThem:
         'Now we wait for them to play. You\u2019ll get the result as soon as they finish.',
 
-    resultWon: (me, them, opponent) =>
-        `\ud83c\udfc6 *You won.*\n\nYou ${me} \u00b7 ${opponent} ${them}`,
+    // A SPONSORED WIN HAS TO SAY HOW TO GET THE MONEY.
+    //
+    // The prize transaction is created with payout_status 'pending' and waits
+    // for the player to type CLAIM, exactly like a Classic or tournament
+    // prize. Nothing was telling the winner that, so a challenge prize would
+    // sit unclaimed until it was swept \u2014 the one outcome guaranteed to
+    // produce a complaint.
+    resultWon: (me, them, opponent, prize) =>
+        `\ud83c\udfc6 *You won.*\n\nYou ${me} \u00b7 ${opponent} ${them}` +
+        (prize
+            ? `\n\n\ud83d\udcb0 *You've won \u20a6${Number(prize).toLocaleString()}.*\n` +
+              'Reply *CLAIM* to collect it.'
+            : ''),
     // The offer goes to the LOSER, because they are the one who wants another
     // go. It is an offer, not an automatic challenge: creating one unasked
     // produced rows nobody joined.
@@ -437,6 +472,9 @@ const STRINGS = {
 
     rematchNothing:
         "You don't have a finished challenge to run back. Reply *NEW CHALLENGE* to start one.",
+
+    groupPrizeWon: (prize) =>
+        `\ud83d\udcb0 *You've won \u20a6${Number(prize).toLocaleString()}.*\nReply *CLAIM* to collect it.`,
 
     board: (rows) =>
         '\ud83d\udcca *So far*\n\n' +
@@ -1151,7 +1189,7 @@ class ChallengeChatService {
 
         await messagingService.sendMessage(identifier,
             STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel,
-                           result.challenge.max_participants));
+                           result.challenge.max_participants, result.challenge.prize_amount));
 
         // WEB NEEDS THE INVITE AS DATA, not as chat text.
         //
@@ -1170,7 +1208,7 @@ class ChallengeChatService {
                     startLabel,
                     inviteText: STRINGS.invite(
                         this.displayName(user), result.links, categoryLabel, startLabel,
-                        result.challenge.max_participants
+                        result.challenge.max_participants, result.challenge.prize_amount
                     ),
                     shareable: result.shareable
                 });
@@ -1517,11 +1555,17 @@ class ChallengeChatService {
 
         if (challenge.format === 'group') {
             await messagingService.sendMessage(identifier, STRINGS.board(board));
+            // The group winner needs the same instruction the 1v1 winner gets.
+            const top = board[0];
+            if (Number(challenge.prize_amount) > 0 && top && top.username === user.username) {
+                await messagingService.sendMessage(identifier,
+                    STRINGS.groupPrizeWon(challenge.prize_amount));
+            }
         } else if (mine && theirs) {
             const fmt = (r) => `${r.score}/15 \u00b7 ${(r.timeMs / 1000).toFixed(1)}s`;
             const won = mine.position < theirs.position;
             await messagingService.sendMessage(identifier, won
-                ? STRINGS.resultWon(fmt(mine), fmt(theirs), theirs.username)
+                ? STRINGS.resultWon(fmt(mine), fmt(theirs), theirs.username, challenge.prize_amount)
                 : STRINGS.resultLost(fmt(mine), fmt(theirs), theirs.username));
         }
 
@@ -1596,7 +1640,7 @@ class ChallengeChatService {
                             const fmt = (r) => `${r.score}/15 \u00b7 ${(r.timeMs / 1000).toFixed(1)}s`;
                             await messagingService.sendMessage(other.phone_number,
                                 theirs.position < them.position
-                                    ? STRINGS.resultWon(fmt(theirs), fmt(them), them.username)
+                                    ? STRINGS.resultWon(fmt(theirs), fmt(them), them.username, challenge.prize_amount)
                                     : STRINGS.resultLost(fmt(theirs), fmt(them), them.username));
                         }
                     }

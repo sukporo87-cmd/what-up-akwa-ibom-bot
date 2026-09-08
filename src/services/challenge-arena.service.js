@@ -325,6 +325,7 @@ class ChallengeArenaService {
         }
 
         state.phase = 'playing';
+        state.code = challenge.code;   // the reveal can be rescheduled by id alone
         state.position = 0;
         state.rounds = rounds;
         state.scores = new Map(players.map(u => [u, { correct: 0, totalMs: 0 }]));
@@ -402,6 +403,49 @@ class ChallengeArenaService {
         this.timers.set(challenge.id, timer);
 
         return { ok: true, position: state.position };
+    }
+
+    // ============================================
+    // 50:50 EXTENDS THE SHARED CLOCK
+    // ============================================
+    // A lifeline moved the player's own question_start in Redis, but the arena
+    // reveals on ONE timer for the whole room \u2014 so the reveal still fired at
+    // the original deadline and timed them out anyway. The five seconds existed
+    // on their screen and nowhere else.
+    //
+    // In a synchronised arena there is no private clock to extend, so the
+    // question's clock moves for EVERYONE and the room is told the new
+    // deadline. That is the only version of this that is fair, and it is capped
+    // at one extension per question so a room cannot be held open repeatedly.
+
+    extendQuestion(challengeId, position, bonusMs) {
+        const state = this.matches.get(challengeId);
+        if (!state || state.phase !== 'playing' || state.position !== position) {
+            return { ok: false, reason: 'not_current_question' };
+        }
+        if (state.extendedAt === position) {
+            return { ok: true, alreadyExtended: true, expiresAt: state.expiresAt };
+        }
+
+        state.extendedAt = position;
+        state.expiresAt += bonusMs;
+
+        const existing = this.timers.get(challengeId);
+        if (existing) clearTimeout(existing);
+
+        const timer = setTimeout(
+            () => this._reveal({ id: challengeId, code: state.code }, 'timeout'),
+            Math.max(0, state.expiresAt - Date.now()) + ANSWER_GRACE_MS
+        );
+        timer.unref?.();
+        this.timers.set(challengeId, timer);
+
+        gameEvents.emitRoom(challengeId, 'challenge.extended_clock', {
+            challengeId, position, expiresAt: state.expiresAt
+        });
+
+        logger.info(`Challenge ${state.code}: question ${position} extended by ${bonusMs}ms`);
+        return { ok: true, expiresAt: state.expiresAt };
     }
 
     // ============================================
@@ -483,6 +527,23 @@ class ChallengeArenaService {
     // ============================================
 
     async _reveal(challenge, trigger) {
+        try {
+            return await this._revealInner(challenge, trigger);
+        } catch (error) {
+            // Belt and braces. _reveal is invoked from setTimeout, so a throw
+            // here is an unhandled rejection and the process dies. A match
+            // that cannot reveal should end, not take the server with it.
+            logger.error(`Challenge ${challenge.code} reveal failed:`, error.message);
+            try {
+                gameEvents.emitRoom(challenge.id, 'challenge.abandoned', {
+                    challengeId: challenge.id, reason: 'error'
+                });
+                this._teardown(challenge.id);
+            } catch (e) { /* nothing further to do */ }
+        }
+    }
+
+    async _revealInner(challenge, trigger) {
         const state = this.matches.get(challenge.id);
         if (!state || state.phase !== 'playing' || state.revealing) return;
         state.revealing = true;
@@ -502,11 +563,24 @@ class ChallengeArenaService {
         // clock, so stalling is never free and the tiebreak stays honest.
         for (const [userId, round] of state.rounds) {
             if (state.locked.has(userId)) continue;
-            const timedOut = await challengeRoundService.submitAnswer(
-                challenge, round, state.position, null, { id: userId }
-            );
-            const score = state.scores.get(userId);
-            if (score && timedOut.ok) score.totalMs += timedOut.answerMs;
+            try {
+                const timedOut = await challengeRoundService.submitAnswer(
+                    challenge, round, state.position, null, { id: userId }
+                );
+                const score = state.scores.get(userId);
+                if (score && timedOut.ok) score.totalMs += timedOut.answerMs;
+            } catch (error) {
+                // ONE BAD ROW MUST NOT END THE MATCH \u2014 or the process.
+                //
+                // A constraint violation here threw out of _reveal, which is
+                // called from a setTimeout with nothing above it to catch:
+                // the rejection was unhandled and Node exited, taking every
+                // live challenge and every other game on the server with it.
+                logger.error(
+                    `Could not record a timeout for user ${userId} on ` +
+                    `${challenge.code} q${state.position}: ${error.message}`
+                );
+            }
         }
 
         // THE SCOREBOARD IS BATCHED IN HERE, once per question, never as its

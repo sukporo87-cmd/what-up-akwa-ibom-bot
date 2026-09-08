@@ -96,33 +96,48 @@ async function handleChallengeSponsorshipWebhook(reference) {
         const user = userResult.rows[0];
         if (!user || !result.code) return;
 
-        const links = deepLinkService.buildLinks(result.code);
+        // TWO MESSAGES, matching creation in free mode.
+        //
+        // The confirmation was carrying the bare link, so a paid challenge
+        // produced no forwardable invite at all \u2014 and no entry code for the
+        // creator, who cannot play their own challenge without one. Whoever
+        // paid ended up with a URL and nothing to send.
+        const challengeChatService = require('../services/challenge-chat.service');
+        const challengeService = require('../services/challenge.service');
 
-        // Settlement now covers setup, prize and fee together, so the message
-        // has to describe whichever of those actually applied. A paid-mode
-        // challenge with no prize must not be told a prize is held.
-        const detail = await pool.query(
-            `SELECT setup_charge, prize_amount, prize_fee, total_charged
-             FROM challenges WHERE id = $1`,
-            [result.challengeId]
-        );
-        const c = detail.rows[0] || {};
-        const prize = Number(c.prize_amount) || 0;
-        const setup = Number(c.setup_charge) || 0;
+        const challenge = await challengeService.getByCode(result.code);
+        const prize = Number(challenge && challenge.prize_amount) || 0;
+        const setup = Number(challenge && challenge.setup_charge) || 0;
+        const fee = Number(challenge && challenge.prize_fee) || 0;
 
-        const lines = ['\u2705 *Payment confirmed.*', ''];
-        if (setup) lines.push(`Setup \u2014 \u20a6${setup.toLocaleString()}`);
-        if (prize) {
-            lines.push(`Prize held \u2014 \u20a6${prize.toLocaleString()}`);
-            if (Number(c.prize_fee)) lines.push(`Fee \u2014 \u20a6${Number(c.prize_fee).toLocaleString()}`);
+        // The code is issued first so it can be printed in the confirmation
+        // rather than arriving separately.
+        let entryCode = null;
+        try {
+            const challengeAuthService = require('../services/challenge-auth.service');
+            const issued = await challengeAuthService.issueCode(challenge, user, { deliver: false });
+            if (issued.ok) entryCode = issued.code;
+        } catch (e) {
+            logger.error('Could not issue an entry code after payment:', e.message);
         }
-        lines.push('', 'Your challenge is live. Send this to whoever you want to beat:',
-                   links.web, '');
-        lines.push(prize
-            ? 'At least two people have to finish for the prize to be won.'
-            : 'At least two people have to finish for it to count.');
 
-        await messagingService.sendMessage(user.phone_number, lines.join('\n'));
+        await messagingService.sendMessage(user.phone_number,
+            challengeChatService.STRINGS.paymentConfirmed(
+                { setup, prize, fee }, result.code, entryCode
+            ));
+
+        // The forwardable invite, on its own so the entry code never travels
+        // inside a message built to be passed on.
+        await messagingService.sendMessage(user.phone_number,
+            challengeChatService.STRINGS.invite(
+                challengeChatService.displayName(user),
+                deepLinkService.buildLinks(result.code),
+                challengeChatService._categoryBlock(challenge.categories),
+                challenge.mode === 'live' && challenge.scheduled_start_at
+                    ? challengeChatService.watLabel(challenge.scheduled_start_at) : null,
+                challenge.max_participants,
+                prize
+            ));
 
         // They are no longer waiting on money, so PAY should stop responding.
         try {
