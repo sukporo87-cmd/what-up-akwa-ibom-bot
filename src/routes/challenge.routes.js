@@ -412,6 +412,57 @@ router.post('/:code/fifty-fifty', requireChallengeAuth, requireChallengesEnabled
 });
 
 // ============================================
+// GET /challenge/:code/invite
+// ============================================
+// THE INVITE, ON DEMAND, FOREVER.
+//
+// It used to exist only as an SSE push at the moment of creation. That is the
+// one moment it is least likely to arrive: the gateway opens a new tab, iOS
+// suspends the original one, the EventSource drops, and the push lands
+// nowhere. The creator was left having paid with nothing to send.
+//
+// Built server-side so the chat invite and the web invite are the same words \u2014
+// a client-side copy drifts the moment either changes.
+router.get('/:code/invite', requireChallengeAuth, async (req, res) => {
+    try {
+        const code = String(req.params.code || '').toUpperCase();
+        const challenge = await challengeService.getByCode(code);
+        if (!challenge) return res.status(404).json({ success: false, reason: 'not_found' });
+
+        // Only the creator: the invite names them, and anyone else holding it
+        // would be inviting people in somebody else's name.
+        if (challenge.creator_user_id !== req.webUser.id) {
+            return res.status(403).json({ success: false, reason: 'not_yours' });
+        }
+
+        const challengeChatService = require('../services/challenge-chat.service');
+        const links = deepLinkService.buildLinks(challenge.code);
+
+        res.json({
+            success: true,
+            code: challenge.code,
+            links,
+            status: challenge.status,
+            // False while a sponsorship is still settling: sending the link
+            // before then gives the recipient a dead end.
+            shareable: challenge.status === 'open' || challenge.status === 'lobby',
+            inviteText: challengeChatService.STRINGS.invite(
+                challengeChatService.displayName(req.webUser),
+                links,
+                challengeChatService._categoryBlock(challenge.categories),
+                challenge.mode === 'live' && challenge.scheduled_start_at
+                    ? challengeChatService.watLabel(challenge.scheduled_start_at) : null,
+                challenge.max_participants,
+                challenge.prize_amount
+            )
+        });
+    } catch (error) {
+        logger.error('Error building the challenge invite:', error);
+        res.status(500).json({ success: false, error: 'Could not build that invite' });
+    }
+});
+
+// ============================================
 // GET /challenge/:code/board
 // ============================================
 // The running leaderboard for group async: everyone who has FINISHED, not the

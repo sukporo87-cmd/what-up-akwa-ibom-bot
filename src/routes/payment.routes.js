@@ -165,6 +165,18 @@ async function handleChallengeSponsorshipWebhook(reference) {
         const challengeService = require('../services/challenge.service');
 
         const challenge = await challengeService.getByCode(result.code);
+        if (!challenge) {
+            logger.error(`Sponsorship settled for ${result.code} but the challenge is gone`);
+            return;
+        }
+
+        // Declared once and used by both the messages and the web push. It was
+        // missing from the push, which threw a ReferenceError that the catch
+        // swallowed as "Could not push the share screen after payment" \u2014 so the
+        // web creator's screen never updated and the log said only that
+        // something had failed.
+        const links = deepLinkService.buildLinks(result.code);
+
         const prize = Number(challenge && challenge.prize_amount) || 0;
         const setup = Number(challenge && challenge.setup_charge) || 0;
         const fee = Number(challenge && challenge.prize_fee) || 0;

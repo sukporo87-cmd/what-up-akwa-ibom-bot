@@ -682,6 +682,21 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     </div>
 
     <div class="msg" id="cdNote"></div>
+
+    <!-- THE INVITE, AVAILABLE WHENEVER YOU OPEN THE CHALLENGE.
+         It used to exist only as a push at the moment of creation \u2014 the one
+         moment it is least likely to arrive, because the gateway opens a new
+         tab and iOS suspends the original one, dropping the connection the
+         push needed. Fetched on demand instead. -->
+    <div id="cdInviteBox" style="display:none;margin-top:12px">
+      <div class="who">Your invite</div>
+      <div class="msg" id="cdInviteText" style="white-space:pre-wrap;font-size:13.5px"></div>
+      <div class="cardActs">
+        <button class="ghost" onclick="cdCopyInvite()">Copy invite</button>
+        <button class="ghost" onclick="cdShareInvite()">Share</button>
+      </div>
+    </div>
+
     <div id="cdBoard" style="margin-top:12px"></div>
     <div class="card" id="cdCard" style="display:none;margin-top:12px"></div>
 
@@ -691,7 +706,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
            rule already existed server-side; web players simply had no way to
            reach it. -->
       <button class="ghost" id="cdCancel" onclick="cdCancel()" style="display:none">Cancel</button>
-      <button class="ghost" id="cdInvite" onclick="cdReshare()" style="display:none">Copy invite</button>
+      <button class="ghost" id="cdInviteBtn" onclick="cdCopyInvite()" style="display:none">Copy invite</button>
       <button class="ghost" id="cdShare" onclick="cdShare()" style="display:none">Share</button>
       <a class="ghost" id="cdDownload" style="display:none" download="whatsup-trivia-challenge.png">Save image</a>
     </div>
@@ -1421,6 +1436,38 @@ async function csCancel(){
   }catch(e){ $('csSub').textContent='Could not cancel that challenge.'; }
 }
 
+let cdInvite=null;
+
+/* Copy and share use the SERVER's invite text, so the words a web player sends
+   are the same words a WhatsApp player sends. The old version rebuilt the
+   message in the client, which drifted the moment either side changed. */
+async function cdCopyInvite(){
+  if(!cdInvite)return;
+  try{
+    await navigator.clipboard.writeText(cdInvite.inviteText);
+    $('cdNote').textContent='Invite copied \u2014 paste it to whoever you want to beat.';
+    sfx.tap();
+  }catch(e){
+    /* Some in-app browsers block the clipboard. Select it so a long-press
+       copy still works rather than leaving them with nothing. */
+    const r=document.createRange(); r.selectNodeContents($('cdInviteText'));
+    const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $('cdNote').textContent='Selected \u2014 long-press to copy.';
+  }
+}
+
+async function cdShareInvite(){
+  if(!cdInvite)return;
+  try{
+    if(navigator.share){
+      await navigator.share({title:"What's Up Trivia",text:cdInvite.inviteText});
+      track('challenge_invite_shared',{platform:'web'});
+      return;
+    }
+  }catch(e){}
+  cdCopyInvite();
+}
+
 /* ---- CHALLENGE HUB ---------------------------------------------------
    The list a web player never had. Chat players scroll their thread to find
    a challenge; this is the equivalent, and it is also where result cards
@@ -1494,7 +1541,7 @@ async function openChallengeDetail(code){
      the same rule cancelChallenge() enforces server-side. */
   const cancellable=c.isMine && c.status==='open' && c.participants<=1;
   $('cdCancel').style.display=cancellable?'inline-block':'none';
-  $('cdInvite').style.display=(c.isMine && c.status==='open')?'inline-block':'none';
+  $('cdInviteBtn').style.display='none';   // the invite box below carries its own buttons
   chalIsLive=c.mode==='live';
 
   $('cdNote').textContent = c.waitingForYou
@@ -1504,6 +1551,22 @@ async function openChallengeDetail(code){
     : (CH_STATE_LABEL[c.status]||c.status);
 
   view('vChalDetail');
+
+  /* Anyone who created a challenge can get its invite back, any time, for as
+     long as it can still be joined. */
+  $('cdInviteBox').style.display='none';
+  cdInvite=null;
+  if(c.isMine){
+    try{
+      const r=await fetch('/challenge/'+code+'/invite',{headers:H()});
+      const d=await r.json();
+      if(d.success && d.shareable){
+        cdInvite=d;
+        $('cdInviteText').textContent=d.inviteText;
+        $('cdInviteBox').style.display='block';
+      }
+    }catch(e){}
+  }
 
   if(c.status==='completed'){
     try{
@@ -1551,23 +1614,6 @@ async function cdCancel(){
 }
 
 /* Re-fetch the invite so it can be sent again \u2014 people lose the message. */
-async function cdReshare(){
-  try{
-    const r=await fetch('/challenge/'+chal.code);
-    const d=await r.json();
-    if(!d.success)return;
-    const url=location.origin+'/c/'+chal.code;
-    const text='\u2694\ufe0f '+(d.challenge.createdBy?('@'+d.challenge.createdBy):'Someone')+
-      " has challenged you to a game of trivia on What's Up Trivia!\n\n"+
-      (d.challenge.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ')+
-      '\n15 questions \u00b7 10 seconds each\n\n'+url;
-    try{
-      if(navigator.share){ await navigator.share({title:"What's Up Trivia",text:text}); return; }
-      await navigator.clipboard.writeText(text);
-      $('cdNote').textContent='Invite copied.';
-    }catch(e){ $('cdNote').textContent=text; }
-  }catch(e){}
-}
 
 /* Starts the creation flow. It is the identical state machine chat uses, so
    the web client just sends the same keyword the bot would receive. */
