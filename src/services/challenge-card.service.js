@@ -68,6 +68,21 @@ class ChallengeCardService {
             categories: challenge.categories,
             isGroup: challenge.format === 'group',
             groupSize: finishers.length,
+
+            // THE WHOLE FIELD, not just the top two.
+            //
+            // The card only ever received winner and runner-up, so a
+            // three-player challenge printed two names and the third player
+            // \u2014 who had played the whole thing \u2014 did not appear at all. At 20
+            // players it would have shown 10% of the field.
+            //
+            // Everyone is passed through; the renderer decides how many fit.
+            standings: finishers.map((f, i) => ({
+                position: i + 1,
+                username: f.username,
+                score: f.final_score,
+                timeMs: f.total_answer_ms
+            })),
             // True when the tiebreak actually decided it. The card only
             // mentions speed when speed mattered.
             wonOnSpeed: winner.final_score === runnerUp.final_score

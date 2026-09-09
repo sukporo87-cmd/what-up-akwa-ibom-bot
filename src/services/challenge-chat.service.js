@@ -440,8 +440,12 @@ const STRINGS = {
     // completes. Before this only the person who happened to finish last saw
     // any result at all \u2014 the initiator, who played first and generated the
     // ghost, was told nothing.
-    opponentFinished: (who, categories) =>
-        `\ud83c\udfc1 *${who} has finished your challenge.*\n\n${categories}\n\nHere is how it went:`,
+    // "your challenge" only if it IS theirs. In a group, most recipients did
+    // not create it, and telling an invitee that somebody finished "her
+    // challenge" reads as the bot addressing the wrong person.
+    opponentFinished: (who, categories, isMine) =>
+        `\ud83c\udfc1 *${who} has finished ${isMine ? 'your challenge' : 'the challenge'}.*` +
+        `\n\n${categories}\n\nHere is how it went:`,
 
     waitingForThem:
         'Now we wait for them to play. You\u2019ll get the result as soon as they finish.',
@@ -1657,7 +1661,10 @@ class ChallengeChatService {
 
                 try {
                     await messagingService.sendMessage(other.phone_number,
-                        STRINGS.opponentFinished('@' + finisher.username, categories));
+                        STRINGS.opponentFinished(
+                            '@' + finisher.username, categories,
+                            other.id === challenge.creator_user_id
+                        ));
 
                     if (challenge.format === 'group') {
                         await messagingService.sendMessage(other.phone_number, STRINGS.board(board));

@@ -1062,7 +1062,7 @@ function showChallengeInvite(c){
    sends repeatedly — challenge.question carries an absolute expiresAt and
    the countdown runs from the local clock.
    --------------------------------------------------------------------- */
-let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15,userId:null};
+let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15,userId:null,inMatch:false};
 
 function arenaStopClock(){ if(arena.timer){clearInterval(arena.timer);arena.timer=null;} }
 
@@ -1096,7 +1096,7 @@ async function joinArena(code){
       return;
     }
     arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15,
-           userId:d.userId!==undefined?d.userId:null};
+           userId:d.userId!==undefined?d.userId:null,inMatch:!!d.resumed};
     clearChallenge();
     $('alWho').textContent='Waiting for players…';
     $('alExtend').style.display='none';
@@ -1151,15 +1151,34 @@ function arenaStarting(d){
   sfx.lock();
 }
 
+/* Silent: no view change, no sound. If the player is already looking at the
+   right question this changes nothing, which is the point. */
+async function rejoinArena(){
+  if(!arena.code)return;
+  try{
+    const r=await fetch('/challenge/'+arena.code+'/lobby',{method:'POST',headers:H()});
+    const d=await r.json();
+    if(d.success && d.userId!==undefined) arena.userId=d.userId;
+  }catch(e){}
+}
+
 function arenaStarted(d){
   track('challenge_round_started',{platform:'web',mode:'live',players:d.players});
+  arena.inMatch=true;
   arena.total=d.totalQuestions||15;
   $('aqBoard').innerHTML='';
   view('vArena');
 }
 
 function arenaQuestion(d){
-  arena.position=d.position; arena.locked=false;
+  /* A RESUMED question is the one already on screen. Re-rendering is fine \u2014
+     it is how a reconnecting player gets it \u2014 but it must not sound like a new
+     question or hand back an answer they have already locked in. */
+  const resumed=d.resumed===true;
+  const sameQuestion=resumed && arena.position===d.position;
+  arena.position=d.position;
+  arena.locked=sameQuestion ? arena.locked : false;
+  arena.inMatch=true;
   $('aqCount').textContent='Question '+d.position+' of '+(d.total||arena.total);
   $('aqText').textContent=d.text;
   $('aqVerdict').textContent='';
@@ -1292,6 +1311,7 @@ function arenaBoard(board){
 }
 
 function arenaFinished(d){
+  arena.inMatch=false;
   arenaStopClock();
   $('cbScore').textContent='Final';
   $('cbSub').textContent='Here is how it finished.';
@@ -1311,6 +1331,7 @@ function arenaFinished(d){
 }
 
 function arenaAbandoned(d){
+  arena.inMatch=false;
   arenaStopClock();
   $('chalNote').textContent={
     not_enough_players:'Not enough players turned up — a challenge needs at least two to finish.',
@@ -2194,6 +2215,27 @@ async function refresh(){
 function stream(){
   if(es)es.close();
   es=new EventSource('/web/game/stream?token='+encodeURIComponent(token));
+
+  /* RECOVER THE ARENA ON RECONNECT.
+     EventSource reconnects by itself, but nothing put the player back into the
+     match: a backgrounded tab or a network switch dropped them to the main
+     menu, their client stopped receiving questions, and every question they
+     could no longer see was recorded as a timeout. One player answered all
+     fifteen and finished 0/15.
+     The server treats an already-enrolled player as a reconnect and re-sends
+     whatever question is running, with the room's remaining time. */
+  es.onopen=()=>{ if(arena && arena.code && arena.inMatch) rejoinArena(); };
+
+  /* iOS suspends a backgrounded tab without necessarily firing onopen when it
+     returns, so the same recovery runs on the way back to the foreground. */
+  if(!window.__arenaVisibilityHooked){
+    window.__arenaVisibilityHooked=true;
+    document.addEventListener('visibilitychange',()=>{
+      if(document.visibilityState==='visible' && arena && arena.code && arena.inMatch){
+        rejoinArena();
+      }
+    });
+  }
   es.addEventListener('question.asked',e=>paint(JSON.parse(e.data)));
   es.addEventListener('answer.result',e=>reveal(JSON.parse(e.data)));
 
@@ -2625,6 +2667,19 @@ function relay(text){
     // guard exists to prevent. Verification screens are the one exception —
     // those must not be yanked out from under a photo or CAPTCHA.
     if(photoMode||capMode) return;
+    // AND NEITHER MAY A LIVE ARENA.
+    //
+    // A live challenge runs on a shared clock that does not stop because one
+    // player's screen changed. A stray menu-shaped message threw a player out
+    // at question 1, and every question she could no longer see was recorded
+    // as a timeout \u2014 she answered all fifteen and finished 0/15.
+    //
+    // She never asked to leave; a message merely looked like a menu. When a
+    // player really does want out, the arena has its own Leave button.
+    if(arena && arena.inMatch){
+      console.warn('Ignored a menu-shaped message during a live challenge');
+      return;
+    }
     closeAsk();
     $('over').classList.remove('on');
     view('vLobby');
@@ -2637,6 +2692,9 @@ function relay(text){
   // how it ended up as a chooser on top of the camera button.
   if(photoMode||$('vPhoto').classList.contains('on')) return;
   if(capMode||$('vCap').classList.contains('on')) return;
+  // An async challenge round is mid-flight too. No shared clock, but a
+  // question replaced by a menu is still a question they cannot answer.
+  if($('vChalPlay').classList.contains('on')) return;
   if($('vCard').classList.contains('on')) return;
   if($('vPay').classList.contains('on')) return;
 
@@ -3828,19 +3886,42 @@ function closeOver(){
      and had nowhere to enter the code we had just sent them. The invite screen
      has to come first: it is the thing that explains what the link is AND
      carries the username + code form. */
-  if(!token && pendingChallenge()){
-    /* Restore a challenge-scoped session across a refresh. Kept in
-       sessionStorage, not localStorage: it dies with the tab, which is the
-       lifetime a scoped session should have. */
+  /* RESTORE A CHALLENGE SESSION WHETHER OR NOT A CODE IS STILL PENDING.
+     This used to require pendingChallenge(), which is cleared the moment the
+     player joins \u2014 so a player who had already entered the lobby and whose
+     phone then locked came back to a page holding a perfectly valid session in
+     sessionStorage that nothing ever read. She was sent to ask for a new code
+     for a challenge she was already in.
+     Kept in sessionStorage rather than localStorage: it dies with the tab,
+     which is the right lifetime for a scoped session. */
+  if(!token){
     try{
       const saved=sessionStorage.getItem('wut_chal_token');
       if(saved){
         token=saved;
         const me=await(await fetch('/web/auth/me',{headers:H()})).json();
-        if(me.authenticated){ stream(); }
-        else { token=null; sessionStorage.removeItem('wut_chal_token'); }
+        if(me.authenticated){
+          stream();
+          /* Back into whatever they were in. The server treats an enrolled
+             player as a reconnect, so this lands them on the running question
+             or back in the lobby rather than at the front door. */
+          try{
+            const mine=await(await fetch('/challenge/mine',{headers:H()})).json();
+            const live=(mine.challenges||[]).find(c=>
+              c.mode==='live' && ['open','lobby','live'].includes(c.status));
+            if(live){ await joinArena(live.code); }
+          }catch(e){}
+        } else {
+          token=null;
+          sessionStorage.removeItem('wut_chal_token');
+        }
       }
     }catch(e){ token=null; }
+  }
+
+  if(!token && pendingChallenge()){
+    try{ await resumeChallenge(); }catch(e){}
+  } else if(pendingChallenge() && token){
     try{ await resumeChallenge(); }catch(e){}
   }
 })();

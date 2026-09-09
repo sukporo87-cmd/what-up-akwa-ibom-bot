@@ -234,7 +234,7 @@ class ImageService {
     const {
       winnerName, winnerScore, winnerTimeMs,
       loserName, loserScore, loserTimeMs,
-      categories, rematchUrl, isGroup, groupSize
+      categories, rematchUrl, isGroup, groupSize, standings
     } = cardData;
 
     const W = 1080, H = 1080;
@@ -291,44 +291,88 @@ class ImageService {
     const boxW = 900;
     const boxX = (W - boxW) / 2;
 
-    const scoreRow = (y, name, score, time, isWinner) => {
+    const scoreRow = (y, name, score, time, isWinner, compact = false, place = 0) => {
+      // The box must match the step used by the caller, or compact rows draw
+      // at full height and overlap the one below.
+      const h = compact ? Math.round(rowH * 0.62) : rowH;
+
       ctx.fillStyle = isWinner ? 'rgba(255,215,0,0.16)' : 'rgba(255,255,255,0.10)';
-      this.roundRect(ctx, boxX, y, boxW, rowH, 22);
+      this.roundRect(ctx, boxX, y, boxW, h, 22);
       ctx.fill();
 
       if (isWinner) {
         ctx.strokeStyle = ac;
         ctx.lineWidth = 3;
-        this.roundRect(ctx, boxX, y, boxW, rowH, 22);
+        this.roundRect(ctx, boxX, y, boxW, h, 22);
         ctx.stroke();
       }
 
+      // A compact row fits more of the field on the card: one line per player,
+      // with the position number doing the work the second line used to.
+      const nameSize = compact ? 32 : 42;
+      const scoreSize = compact ? 44 : 72;
+      const nameY = compact ? y + 46 : y + 62;
+
       ctx.textAlign = 'left';
       ctx.fillStyle = tx;
-      ctx.font = 'bold 42px Arial';
-      ctx.fillText('@' + String(name || 'player').slice(0, 18), boxX + 40, y + 62);
+      ctx.font = `bold ${nameSize}px Arial`;
+      const label = (compact && place ? `${place}. ` : '') +
+                    '@' + String(name || 'player').slice(0, compact ? 14 : 18);
+      ctx.fillText(label, boxX + 40, nameY);
 
-      ctx.fillStyle = isWinner ? ac : 'rgba(255,255,255,0.75)';
-      ctx.font = 'bold 26px Arial';
-      ctx.fillText(fmtTime(time), boxX + 40, y + 108);
+      if (!compact) {
+        ctx.fillStyle = isWinner ? ac : 'rgba(255,255,255,0.75)';
+        ctx.font = 'bold 26px Arial';
+        ctx.fillText(fmtTime(time), boxX + 40, y + 108);
+      }
 
       ctx.textAlign = 'right';
       ctx.fillStyle = isWinner ? ac : tx;
-      ctx.font = 'bold 72px Arial';
-      ctx.fillText(`${score}/15`, boxX + boxW - 40, y + 95);
+      ctx.font = `bold ${scoreSize}px Arial`;
+      ctx.fillText(`${score}/15`, boxX + boxW - 40, compact ? y + 50 : y + 95);
     };
 
-    scoreRow(rowY, winnerName, winnerScore, winnerTimeMs, true);
-    if (!isGroup || loserName) {
-      scoreRow(rowY + rowH + 24, loserName, loserScore, loserTimeMs, false);
+    // ─── THE FIELD ───
+    //
+    // A group card used to print two rows regardless, so the third player in a
+    // three-player challenge simply was not on it \u2014 having played the whole
+    // thing. Everyone is drawn, up to what fits; beyond that the rest are
+    // counted rather than dropped silently.
+    //
+    // Rows shrink as the field grows so a 20-player card stays legible instead
+    // of running off the bottom.
+    const field = (standings && standings.length)
+      ? standings
+      : [{ username: winnerName, score: winnerScore, timeMs: winnerTimeMs },
+         { username: loserName, score: loserScore, timeMs: loserTimeMs }].filter(r => r.username);
+
+    const MAX_ROWS = field.length <= 5 ? field.length : 5;
+    const compact = field.length > 2;
+    const stepH = compact ? Math.round(rowH * 0.62) + 14 : rowH + 24;
+
+    let drawnY = rowY;
+    for (let i = 0; i < MAX_ROWS; i++) {
+      scoreRow(drawnY, field[i].username, field[i].score, field[i].timeMs, i === 0, compact, i + 1);
+      drawnY += stepH;
+    }
+
+    if (field.length > MAX_ROWS) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
+      ctx.font = '26px Arial';
+      ctx.fillText(
+        `+ ${field.length - MAX_ROWS} more player${field.length - MAX_ROWS === 1 ? '' : 's'}`,
+        W / 2, drawnY + 34
+      );
+      drawnY += 52;
     }
 
     // ─── TIEBREAK NOTE, only when it actually decided the result ───
-    if (winnerScore === loserScore) {
+    if (field.length > 1 && field[0].score === field[1].score) {
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
       ctx.font = '24px Arial';
-      ctx.fillText('Same score \u2014 won on speed', W / 2, rowY + 2 * rowH + 78);
+      ctx.fillText('Same score \u2014 won on speed', W / 2, drawnY + 30);
     }
 
     // ─── CATEGORY CHIPS ───

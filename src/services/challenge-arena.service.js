@@ -91,9 +91,27 @@ class ChallengeArenaService {
 
         const state = this.matches.get(challenge.id);
         if (state && state.phase !== 'lobby') {
-            // No late entry once questions are running. With an identical set
-            // and a shared clock there is no fair way to admit someone at
-            // question six.
+            // ALREADY ENROLLED? THAT IS A RECONNECT, NOT A LATE ENTRY.
+            //
+            // The no-late-entry rule was written to stop somebody joining at
+            // question six. It was also refusing players who were IN the match
+            // and had simply lost their connection \u2014 a backgrounded tab, a
+            // network switch, an SSE drop. Their rounds still existed, so every
+            // question they could no longer see was recorded as a timeout, and
+            // a player who answered all fifteen finished 0/15.
+            //
+            // Someone already enrolled gets their seat back and the question
+            // that is running right now.
+            if (state.rounds && state.rounds.has(user.id)) {
+                gameEvents.joinRoom(challenge.id, user.id);
+                await this._resendCurrentQuestion(challenge, user.id, state);
+                return {
+                    ok: true, resumed: true,
+                    startsAt: state.startsAt,
+                    present: gameEvents.roomMembers(challenge.id).length
+                };
+            }
+
             return { ok: false, reason: 'already_started' };
         }
 
@@ -403,6 +421,46 @@ class ChallengeArenaService {
         this.timers.set(challenge.id, timer);
 
         return { ok: true, position: state.position };
+    }
+
+    /**
+     * Pushes whatever is on screen right now to one player.
+     *
+     * The clock is NOT restarted: expiresAt is the room's deadline, so a
+     * player who reconnects with three seconds left gets three seconds. Giving
+     * them a fresh ten would make dropping out worth doing.
+     */
+    async _resendCurrentQuestion(challenge, userId, state) {
+        try {
+            if (state.phase !== 'playing' || !state.position) return;
+
+            const round = state.rounds.get(userId);
+            if (!round) return;
+
+            const question = await challengeRoundService.getQuestion(
+                challenge, round, state.position
+            );
+            if (!question) return;
+
+            gameEvents.emit(userId, 'challenge.question', {
+                challengeId: challenge.id,
+                position: state.position,
+                total: QUESTIONS_PER_ROUND,
+                text: question.text,
+                options: question.options,
+                expiresAt: state.expiresAt,
+                fiftyFiftyAvailable: question.fiftyFiftyAvailable === true,
+                // So the client knows this is a catch-up rather than a new
+                // question, and does not replay the countdown sound.
+                resumed: true
+            });
+
+            logger.info(
+                `Challenge ${challenge.code}: user ${userId} rejoined at q${state.position}`
+            );
+        } catch (error) {
+            logger.error(`Could not resend the current question: ${error.message}`);
+        }
     }
 
     // ============================================
