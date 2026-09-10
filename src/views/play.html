@@ -1062,6 +1062,7 @@ function showChallengeInvite(c){
    sends repeatedly — challenge.question carries an absolute expiresAt and
    the countdown runs from the local clock.
    --------------------------------------------------------------------- */
+let chalOpenTimer=null, chalWaitCode=null, chalWillRemind=false;
 let arena={code:null,startsAt:0,position:0,locked:false,timer:null,total:15,userId:null,inMatch:false};
 
 function arenaStopClock(){ if(arena.timer){clearInterval(arena.timer);arena.timer=null;} }
@@ -1082,21 +1083,111 @@ function arenaCountdown(until,elSecs,elBar,span,onZero){
   arena.timer=setInterval(tick,200);
 }
 
+/* How long before the lobby opens we are willing to hold the tab.
+   Beyond this we deliberately do NOT wait: a page left counting down for five
+   days is a page the browser discards, and asking somebody to sit in a lobby
+   for a challenge that far off is asking for the exact failure we are trying
+   to avoid. Inside it, waiting is reasonable and we bring them in ourselves. */
+const LOBBY_WAIT_WINDOW_MS = 45 * 60 * 1000;
+
+/* Counts down to the moment the lobby opens, then goes in.
+   The countdown is not decoration: "hang tight" with nothing moving on screen
+   is indistinguishable from a page that has hung, and a player who thinks it
+   has hung leaves \u2014 which is the exact outcome the wording was changed to
+   avoid. */
+function waitForLobby(code, opensAt){
+  stopWaitingForLobby();
+
+  /* TOO FAR OUT TO HOLD A TAB.
+     Show them when it starts and let them go. This is honest rather than
+     defeatist: chat players get a message when the lobby opens, and the same
+     will be true for web once push lands. Holding the tab would not have
+     worked anyway \u2014 it would just have failed silently. */
+  if(opensAt-Date.now() > LOBBY_WAIT_WINDOW_MS){
+    const when=new Date(opensAt+5*60*1000);
+    const day=when.toDateString()===new Date().toDateString()
+      ? 'today'
+      : when.toLocaleDateString([], {weekday:'long', day:'numeric', month:'short'});
+    const at=day+' at '+when.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    /* Only promise a reminder if we can actually send one. A web-only player
+       has no channel until push notifications exist, and telling them we will
+       message them would be a lie they only discover by missing the game. */
+    $('chalNote').textContent = chalWillRemind
+      ? 'You\u2019re in. It starts '+at+' \u2014 we\u2019ll message you when the lobby opens, '
+        +'5 minutes before.'
+      : 'You\u2019re in. It starts '+at+'. Come back about 5 minutes before and '
+        +'we\u2019ll take you straight in.';
+    return;
+  }
+
+  const tick=async ()=>{
+    const left=opensAt-Date.now();
+
+    if(left<=0){
+      stopWaitingForLobby();
+      $('chalNote').textContent='Opening the lobby\u2026';
+      await joinArena(code);
+      return;
+    }
+
+    const mins=Math.floor(left/60000), secs=Math.floor((left%60000)/1000);
+    $('chalNote').textContent='You\u2019re in. The lobby opens in '
+      +(mins>0 ? mins+'m '+String(secs).padStart(2,'0')+'s' : secs+'s')
+      +' \u2014 stay here and we\u2019ll bring you straight in.';
+  };
+
+  tick();
+  chalOpenTimer=setInterval(tick,1000);
+
+  /* A throttled tab may have missed the moment entirely. Check the instant it
+     comes back rather than waiting for the next tick. */
+  if(!window.__lobbyWaitHooked){
+    window.__lobbyWaitHooked=true;
+    document.addEventListener('visibilitychange',()=>{
+      if(document.visibilityState==='visible' && chalOpenTimer && chalWaitCode){
+        joinArena(chalWaitCode);
+      }
+    });
+  }
+  chalWaitCode=code;
+}
+
+function stopWaitingForLobby(){
+  if(chalOpenTimer){ clearInterval(chalOpenTimer); chalOpenTimer=null; }
+  chalWaitCode=null;
+}
+
 async function joinArena(code){
   try{
     const r=await fetch('/challenge/'+code+'/lobby',{method:'POST',headers:H()});
     const d=await r.json();
     if(!d.success){
       $('chalNote').textContent={
-        too_early:'The lobby opens 5 minutes before the start time — come back then.',
+        // NOT "come back then". Telling somebody to leave is telling somebody
+        // to leave, and the lobby is meant to be where they wait — the screen
+        // we want holding their attention until the challenge starts.
+        too_early:'You’re in. The lobby opens 5 minutes before the start — hang tight, we’ll bring you in automatically.',
         already_started:'This one has already started — you can\'t join midway.',
         not_a_participant:'You need to accept this challenge first.',
         not_live:'This is an anytime challenge, not a live one.'
       }[d.reason]||'Could not join that lobby.';
+
+      /* WE SAID WE WOULD BRING THEM IN, SO BRING THEM IN.
+         A single setTimeout for the whole wait does NOT survive a mobile
+         browser: a tab backgrounded for two hours is throttled or discarded
+         and that timer may never fire at all. A short repeating check does \u2014
+         a throttled interval resumes when the tab comes forward, and worst
+         case the player is a few seconds late rather than absent. */
+      if(d.reason==='too_early' && d.opensAt){
+        chalWillRemind = d.willRemind === true;
+        waitForLobby(code, d.opensAt);
+      }
       return;
     }
+    stopWaitingForLobby();
     arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15,
            userId:d.userId!==undefined?d.userId:null,inMatch:!!d.resumed};
+    startArenaHeartbeat();
     clearChallenge();
     $('alWho').textContent='Waiting for players…';
     $('alExtend').style.display='none';
@@ -1106,6 +1197,7 @@ async function joinArena(code){
 }
 
 function arenaLobby(d){
+  arenaSawEvent();
   const names=(d.present||[]).map(p=>'@'+p.username);
   $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
   $('alWho').textContent=names.join(' · ')||'Waiting for players…';
@@ -1133,6 +1225,9 @@ async function arenaStartNow(){
   try{ await fetch('/challenge/'+arena.code+'/lobby/start',{method:'POST',headers:H()}); }catch(e){}
 }
 async function leaveArena(){
+  stopWaitingForLobby();
+  stopArenaHeartbeat();
+  stopArenaWatchdog();
   arenaStopClock();
   try{ await fetch('/challenge/'+arena.code+'/lobby/leave',{method:'POST',headers:H()}); }catch(e){}
   view('vLobby'); refresh();
@@ -1153,6 +1248,48 @@ function arenaStarting(d){
 
 /* Silent: no view change, no sound. If the player is already looking at the
    right question this changes nothing, which is the point. */
+/* A heartbeat WHILE WAITING ONLY, and a watchdog once play begins.
+   These are different problems and they need different answers.
+
+   Waiting: nothing is being sent for up to five minutes, so a dead
+   EventSource produces no symptom at all. onopen only fires if the browser
+   notices. Re-announcing every 20 seconds is ~15 small POSTs across a whole
+   lobby — a few KB — and it is the difference between being in the match and
+   watching it start without you.
+
+   Playing: the arena must NEVER poll. Questions arrive every ~14 seconds, so
+   silence is itself the signal: if nothing has arrived for 30 seconds the
+   connection is dead and we reconnect once. No traffic while it is healthy. */
+let arenaHeartbeat=null, arenaWatchdog=null, arenaLastEvent=0;
+
+function startArenaHeartbeat(){
+  stopArenaHeartbeat();
+  arenaHeartbeat=setInterval(()=>{
+    // Waiting only. Once the match starts the watchdog takes over.
+    if(arena && arena.code && !arena.inMatch) rejoinArena();
+  },20000);
+}
+function stopArenaHeartbeat(){
+  if(arenaHeartbeat){ clearInterval(arenaHeartbeat); arenaHeartbeat=null; }
+}
+
+function arenaSawEvent(){ arenaLastEvent=Date.now(); }
+
+function startArenaWatchdog(){
+  stopArenaWatchdog();
+  arenaSawEvent();
+  arenaWatchdog=setInterval(()=>{
+    if(!arena || !arena.inMatch) return;
+    if(Date.now()-arenaLastEvent > 30000){
+      arenaSawEvent();          // one attempt per silent window, not a loop
+      rejoinArena();
+    }
+  },5000);
+}
+function stopArenaWatchdog(){
+  if(arenaWatchdog){ clearInterval(arenaWatchdog); arenaWatchdog=null; }
+}
+
 async function rejoinArena(){
   if(!arena.code)return;
   try{
@@ -1165,12 +1302,15 @@ async function rejoinArena(){
 function arenaStarted(d){
   track('challenge_round_started',{platform:'web',mode:'live',players:d.players});
   arena.inMatch=true;
+  stopArenaHeartbeat();     // no polling once questions are flowing
+  startArenaWatchdog();
   arena.total=d.totalQuestions||15;
   $('aqBoard').innerHTML='';
   view('vArena');
 }
 
 function arenaQuestion(d){
+  arenaSawEvent();
   /* A RESUMED question is the one already on screen. Re-rendering is fine \u2014
      it is how a reconnecting player gets it \u2014 but it must not sound like a new
      question or hand back an answer they have already locked in. */
@@ -1268,6 +1408,7 @@ function arenaLocked(){
 }
 
 function arenaReveal(d){
+  arenaSawEvent();
   arenaStopClock();
   $('asecs').textContent='–';
   $('aqVerdict').textContent='Answer: '+d.correctAnswer;
@@ -1312,6 +1453,8 @@ function arenaBoard(board){
 
 function arenaFinished(d){
   arena.inMatch=false;
+  stopArenaHeartbeat();
+  stopArenaWatchdog();
   arenaStopClock();
   $('cbScore').textContent='Final';
   $('cbSub').textContent='Here is how it finished.';
@@ -1332,6 +1475,8 @@ function arenaFinished(d){
 
 function arenaAbandoned(d){
   arena.inMatch=false;
+  stopArenaHeartbeat();
+  stopArenaWatchdog();
   arenaStopClock();
   $('chalNote').textContent={
     not_enough_players:'Not enough players turned up — a challenge needs at least two to finish.',
@@ -2224,14 +2369,19 @@ function stream(){
      fifteen and finished 0/15.
      The server treats an already-enrolled player as a reconnect and re-sends
      whatever question is running, with the room's remaining time. */
-  es.onopen=()=>{ if(arena && arena.code && arena.inMatch) rejoinArena(); };
+  /* THE LOBBY COUNTS TOO. This only recovered a running match, so a stream
+     that dropped during the five-minute wait was never restored \u2014 the player
+     sat on "waiting for players" while the match started without her. Waiting
+     is exactly when a connection is most likely to lapse: nothing is being
+     sent, the screen may be off, and there is no answer to force a round trip. */
+  es.onopen=()=>{ if(arena && arena.code) rejoinArena(); };
 
   /* iOS suspends a backgrounded tab without necessarily firing onopen when it
      returns, so the same recovery runs on the way back to the foreground. */
   if(!window.__arenaVisibilityHooked){
     window.__arenaVisibilityHooked=true;
     document.addEventListener('visibilitychange',()=>{
-      if(document.visibilityState==='visible' && arena && arena.code && arena.inMatch){
+      if(document.visibilityState==='visible' && arena && arena.code){
         rejoinArena();
       }
     });

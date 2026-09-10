@@ -75,6 +75,8 @@ class ChallengeArenaService {
         this.timers = new Map();
         /** @type {Map<number, NodeJS.Timeout>} */
         this.presenceTimers = new Map();
+        /** @type {Map<number, NodeJS.Timeout>} one lobby reminder per challenge */
+        this.reminders = new Map();
     }
 
     // ============================================
@@ -86,7 +88,16 @@ class ChallengeArenaService {
 
         const startsAt = new Date(challenge.scheduled_start_at).getTime();
         if (Date.now() < startsAt - LOBBY_OPEN_MS) {
-            return { ok: false, reason: 'too_early', opensAt: startsAt - LOBBY_OPEN_MS };
+            return {
+                ok: false, reason: 'too_early',
+                opensAt: startsAt - LOBBY_OPEN_MS,
+                startsAt,
+                // Whether we can actually reach them when the lobby opens.
+                // Promising a reminder to a web-only player would be a lie
+                // until push notifications exist.
+                willRemind: !!(user.phone_number &&
+                               !String(user.phone_number).startsWith('web_'))
+            };
         }
 
         const state = this.matches.get(challenge.id);
@@ -115,17 +126,35 @@ class ChallengeArenaService {
             return { ok: false, reason: 'already_started' };
         }
 
+        // Was this a real arrival, or the client re-announcing itself?
+        //
+        // The lobby heartbeat POSTs here every 20 seconds per player, and an
+        // idle lobby is supposed to emit only on CHANGE. Without this, three
+        // players waiting would produce a roster frame every few seconds for
+        // five minutes \u2014 exactly the per-second traffic the whole design
+        // avoids.
+        const wasAlreadyIn = gameEvents.roomMembers(challenge.id).includes(user.id);
         gameEvents.joinRoom(challenge.id, user.id);
 
-        await pool.query(
-            `UPDATE challenge_participants SET status = 'in_lobby'
-             WHERE challenge_id = $1 AND user_id = $2 AND status IN ('joined','in_lobby')`,
-            [challenge.id, user.id]
-        );
+        // ONLY ON A REAL ARRIVAL. The lobby heartbeat calls this every 20
+        // seconds per player, and both of these are writes: three players
+        // waiting five minutes would have run 45 UPDATEs and inserted 45
+        // joined_lobby rows \u2014 turning a funnel metric into a measure of how
+        // long people waited, and paying for it in database calls.
+        //
+        // Re-announcing is meant to be cheap: a membership check and a small
+        // JSON reply.
+        if (!wasAlreadyIn) {
+            await pool.query(
+                `UPDATE challenge_participants SET status = 'in_lobby'
+                 WHERE challenge_id = $1 AND user_id = $2 AND status IN ('joined','in_lobby')`,
+                [challenge.id, user.id]
+            );
 
-        await challengeService.recordEvent(challenge.id, user.id, 'joined_lobby', 'web', {});
-
-        this._schedulePresence(challenge);
+            await challengeService.recordEvent(challenge.id, user.id, 'joined_lobby', 'web', {});
+            this._schedulePresence(challenge);
+            this._scheduleLobbyReminder(challenge);
+        }
         this._ensureStartTimer(challenge);
 
         return {
@@ -178,6 +207,82 @@ class ChallengeArenaService {
             [memberIds]
         );
         return result.rows.map(r => ({ userId: r.id, username: r.username }));
+    }
+
+    // ============================================
+    // LOBBY-OPEN REMINDER
+    // ============================================
+    // THE ONE GAP NO CLIENT-SIDE RECOVERY CAN CLOSE.
+    //
+    // Everything else here assumes the page still exists. Data saver, battery
+    // saver and ordinary memory pressure all DISCARD a backgrounded tab: no
+    // timer survives, no EventSource reconnects, no visibilitychange fires,
+    // because there is nothing left to fire it. A player who tabs away three
+    // minutes before the start may simply never come back.
+    //
+    // A message on the platform they came from does survive that, so chat
+    // participants get one when the lobby opens. Web-only participants cannot
+    // be reached this way \u2014 that needs push notifications, which is separate
+    // work and is the honest limit of what this covers.
+    //
+    // Scheduled ONCE per challenge, when the first person joins.
+
+    _scheduleLobbyReminder(challenge) {
+        if (this.reminders.has(challenge.id)) return;
+
+        const startsAt = new Date(challenge.scheduled_start_at).getTime();
+        const fireAt = startsAt - LOBBY_OPEN_MS;
+        const delay = fireAt - Date.now();
+
+        // Already open, or so close that a reminder would land after the
+        // start. Either way there is nothing useful to send.
+        if (delay < 5000) return;
+
+        const timer = setTimeout(() => {
+            this.reminders.delete(challenge.id);
+            this._sendLobbyReminder(challenge).catch(error =>
+                logger.error(`Lobby reminder failed for ${challenge.code}:`, error.message));
+        }, delay);
+
+        timer.unref?.();
+        this.reminders.set(challenge.id, timer);
+    }
+
+    async _sendLobbyReminder(challenge) {
+        const people = await pool.query(`
+            SELECT u.id, u.phone_number
+            FROM challenge_participants p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.challenge_id = $1 AND p.status IN ('joined','in_lobby')
+        `, [challenge.id]);
+
+        const deepLinkService = require('./deeplink.service');
+        const challengeChatService = require('./challenge-chat.service');
+        const link = deepLinkService.buildLinks(challenge.code).web;
+
+        let sent = 0;
+        for (const person of people.rows) {
+            // Web-only accounts have no chat identifier to message.
+            if (!person.phone_number || String(person.phone_number).startsWith('web_')) continue;
+
+            // Already sitting in the lobby with a live connection? They can see
+            // the countdown; a message would just be noise.
+            if (gameEvents.isConnected(person.id)) continue;
+
+            try {
+                const MessagingService = require('./messaging.service');
+                const messagingService = new MessagingService();
+                await messagingService.sendMessage(
+                    person.phone_number,
+                    challengeChatService.STRINGS.lobbyOpen(link)
+                );
+                sent++;
+            } catch (error) {
+                logger.error(`Could not remind user ${person.id}:`, error.message);
+            }
+        }
+
+        logger.info(`Challenge ${challenge.code}: lobby-open reminder sent to ${sent} player(s)`);
     }
 
     // ============================================
@@ -287,21 +392,31 @@ class ChallengeArenaService {
     async startMatch(challenge) {
         const state = this.matches.get(challenge.id) || { challengeId: challenge.id };
 
-        // ONLY PLAYERS WITH A LIVE CONNECTION.
+        // EVERYONE IN THE ROOM PLAYS. Connection state is not membership.
         //
-        // Room membership is set when someone POSTs to the lobby; it says
-        // nothing about whether their event stream is open. A member with no
-        // stream receives no questions, answers nothing, and is recorded as
-        // fifteen timeouts \u2014 which then TIED on score with everyone else who
-        // struggled and won the tiebreak on time. Somebody who never saw a
-        // question was declared the winner.
-        const members = gameEvents.roomMembers(challenge.id);
-        const players = members.filter(id => gameEvents.isConnected(id));
+        // This used to filter on isConnected(), added to stop a phantom player
+        // \u2014 in the room but never watching \u2014 tying on zero and winning the
+        // time tiebreak. It solved that and created something worse: a real
+        // player whose stream blipped during the five-minute wait was silently
+        // left out of the match she had joined, sat on "waiting for players",
+        // and could not be rescued, because the reconnect path only restores
+        // players who have a round.
+        //
+        // The tiebreak problem is already fixed properly: an unanswered
+        // question costs the FULL clock, so somebody who never saw a question
+        // records 15 timeouts and cannot beat anyone who answered. Excluding
+        // them was solving a problem that no longer exists.
+        //
+        // A dropped stream is a reconnect waiting to happen. Enrol them, and
+        // let them back in when they return.
+        const players = gameEvents.roomMembers(challenge.id);
 
-        if (players.length < members.length) {
-            logger.warn(
-                `Challenge ${challenge.code}: ${members.length - players.length} lobby ` +
-                `member(s) had no open stream and were left out of the match`
+        const watching = players.filter(id => gameEvents.isConnected(id)).length;
+        if (watching < players.length) {
+            logger.info(
+                `Challenge ${challenge.code}: ${players.length - watching} of ` +
+                `${players.length} player(s) have no open stream right now \u2014 enrolled ` +
+                `anyway, they will be caught up when they reconnect`
             );
         }
 
@@ -310,7 +425,7 @@ class ChallengeArenaService {
                 challengeId: challenge.id, reason: 'not_enough_players'
             });
             await this._expire(challenge);
-            return { ok: false, reason: 'not_enough_connected' };
+            return { ok: false, reason: 'not_enough_players' };
         }
 
         // The screen must change the moment the clock hits zero. Building the
@@ -733,6 +848,10 @@ class ChallengeArenaService {
         const presence = this.presenceTimers.get(challengeId);
         if (presence) clearTimeout(presence);
         this.presenceTimers.delete(challengeId);
+
+        const reminder = this.reminders.get(challengeId);
+        if (reminder) clearTimeout(reminder);
+        this.reminders.delete(challengeId);
 
         this.matches.delete(challengeId);
         gameEvents.closeRoom(challengeId);

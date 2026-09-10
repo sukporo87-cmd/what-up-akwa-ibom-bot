@@ -485,6 +485,13 @@ const STRINGS = {
         rows.map(r => `${r.position}. ${r.username} \u2014 ${r.score}/15 \u00b7 ${(r.timeMs / 1000).toFixed(1)}s`)
             .join('\n'),
 
+    // Sent when the lobby opens, to chat players who are NOT already watching.
+    // The one channel a discarded browser tab cannot take away.
+    lobbyOpen: (link) =>
+        '\u23f0 *Your challenge starts in 5 minutes.*\n\n' +
+        `The lobby is open \u2014 come in now:\n${link}\n\n` +
+        '_It starts on time, with or without everyone._',
+
     livePlayIsWeb: (link, startLabel) =>
         '\u2694\ufe0f *This is a live challenge* \u2014 everyone plays at the same time, ' +
         'in the browser.\n\n' +
