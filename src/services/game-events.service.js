@@ -12,6 +12,34 @@ const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 
 const HEARTBEAT_MS = 25000;   // Render idles out quiet connections; keep them warm
+
+// ============================================
+// ONE STREAM PER LIVE GAME
+// ============================================
+// Every open stream for a user used to receive every question. A second phone
+// or tab signed into the same account could watch the game live while someone
+// else answered, and nothing noticed.
+//
+// The rule: while a CLASSIC game is live, the NEWEST stream wins and every
+// older one is closed. It runs when a Classic question is delivered
+// (emitQuestion) and when a stream connects mid-game (web-game.routes).
+//
+// CHALLENGE MODE IS NEVER TOUCHED. This does not run for:
+//   * any arena event — challenge.question is not a trigger;
+//   * a user in an arena room, from lobby entry to match end;
+//   * a user the claim guard excludes (web-game.routes registers it: not a
+//     web account, or in a challenge chat flow or round).
+// A user who is doing anything in challenge mode keeps every stream they
+// have, exactly as before this existed.
+//
+// A closed stream would simply reconnect: EventSource does that by itself, and
+// the reconnect would then be the newest and kick the other back. Two devices
+// would trade the game every three seconds. So a replaced stream's connection
+// id is remembered, and when that same id reconnects the route answers 204 —
+// the one status that tells EventSource to stop retrying. Taking the game back
+// is a deliberate act on that device ("Play here"), which opens a stream with
+// a fresh id and becomes the newest in turn.
+const DISPLACED_TTL_MS = 30 * 60 * 1000;
 const SNAPSHOT_TTL = 3600;
 
 class GameEventsService {
@@ -20,6 +48,13 @@ class GameEventsService {
         this.connections = new Map();
         /** @type {Map<number, Set<number>>} challengeId -> userIds */
         this.rooms = new Map();
+        /** @type {Map<string, number>} "userId:cid" -> expiry epoch ms */
+        this.displaced = new Map();
+        /** Called as fn({ userId, closed, reason, type, payload, kept }) */
+        this.replacedListeners = [];
+        /** async (userId, phone) => boolean. false = leave this user's streams alone. */
+        this.claimGuard = null;
+        this._streamSeq = 0;
 
         setInterval(() => this._heartbeat(), HEARTBEAT_MS).unref?.();
     }
@@ -28,8 +63,18 @@ class GameEventsService {
     // CONNECTION REGISTRY
     // ============================================
 
-    subscribe(userId, res) {
+    subscribe(userId, res, info = {}) {
         if (!this.connections.has(userId)) this.connections.set(userId, new Set());
+        // Order of arrival decides "newest", so it is recorded rather than
+        // inferred from Set iteration order.
+        try {
+            res.__wutStream = {
+                seq: ++this._streamSeq,
+                cid: info.cid || null,
+                phone: info.phone || null,
+                openedAt: Date.now()
+            };
+        } catch (e) { /* a frozen or odd res still gets subscribed */ }
         this.connections.get(userId).add(res);
         logger.info(`🔌 SSE connected: user ${userId} (${this.connections.get(userId).size} open)`);
     }
@@ -44,6 +89,103 @@ class GameEventsService {
 
     isConnected(userId) {
         return (this.connections.get(userId)?.size || 0) > 0;
+    }
+
+    connectionCount(userId) {
+        return this.connections.get(userId)?.size || 0;
+    }
+
+    /**
+     * Close every stream for this user except the newest. Returns how many
+     * were closed. Safe to call on every question: with one stream it is a
+     * size check and nothing else.
+     */
+    enforceSingleStream(userId, reason = 'live_game', context = {}) {
+        const set = this.connections.get(userId);
+        if (!set || set.size <= 1) return 0;
+        // Belt and braces: whoever calls this, an arena player is left alone.
+        if (this.isInArenaRoom(userId)) return 0;
+
+        const seqOf = r => (r && r.__wutStream && r.__wutStream.seq) || 0;
+        const all = [...set];
+        const newest = all.reduce((a, b) => (seqOf(b) > seqOf(a) ? b : a));
+
+        let closed = 0;
+        for (const res of all) {
+            if (res === newest) continue;
+            const cid = res.__wutStream && res.__wutStream.cid;
+            if (cid) this.displaced.set(`${userId}:${cid}`, Date.now() + DISPLACED_TTL_MS);
+            try {
+                res.write(`event: stream.replaced\ndata: ${JSON.stringify({
+                    type: 'stream.replaced', reason, at: Date.now()
+                })}\n\n`);
+            } catch (e) { /* already gone */ }
+            try { res.end(); } catch (e) { /* already gone */ }
+            set.delete(res);
+            closed++;
+        }
+
+        if (closed > 0) {
+            logger.warn(`🔌 Single stream: user ${userId} — closed ${closed} older stream(s) (${reason})`);
+            for (const fn of this.replacedListeners) {
+                try {
+                    fn({
+                        userId, closed, reason,
+                        type: context.type || null,
+                        payload: context.payload || null,
+                        kept: newest.__wutStream || null
+                    });
+                } catch (e) { /* a listener must never break delivery */ }
+            }
+        }
+        return closed;
+    }
+
+    /** True if this connection id was replaced and must not reconnect. */
+    isDisplaced(userId, cid) {
+        if (!cid) return false;
+        const key = `${userId}:${cid}`;
+        const until = this.displaced.get(key);
+        if (!until) return false;
+        if (until < Date.now()) { this.displaced.delete(key); return false; }
+        return true;
+    }
+
+    onStreamReplaced(fn) {
+        if (typeof fn === 'function') this.replacedListeners.push(fn);
+    }
+
+    setClaimGuard(fn) {
+        this.claimGuard = typeof fn === 'function' ? fn : null;
+    }
+
+    /** In any arena room — lobby or match. Read-only look at the registry. */
+    isInArenaRoom(userId) {
+        if (!this.rooms) return false;
+        for (const members of this.rooms.values()) {
+            if (members.has(userId)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The only entry point that closes streams because of a Classic game.
+     * Returns how many were closed; 0 whenever challenge mode is involved or
+     * the guard cannot answer.
+     */
+    async claimForClassic(userId, reason = 'live_game', context = {}) {
+        const set = this.connections.get(userId);
+        if (!set || set.size <= 1) return 0;
+        if (this.isInArenaRoom(userId)) return 0;
+        if (!this.claimGuard) return 0;
+
+        const phone = [...set].map(r => r.__wutStream && r.__wutStream.phone).find(Boolean) || null;
+        let allowed = false;
+        try { allowed = (await this.claimGuard(userId, phone)) === true; }
+        catch (e) { allowed = false; }   // unsure means hands off
+        if (!allowed) return 0;
+
+        return this.enforceSingleStream(userId, reason, context);
     }
 
     // ============================================
@@ -111,6 +253,7 @@ class GameEventsService {
         const set = this.connections.get(userId);
         if (!set || set.size === 0) return false;
 
+
         const frame = `event: ${type}\ndata: ${JSON.stringify({ type, ...payload, at: Date.now() })}\n\n`;
         let delivered = 0;
 
@@ -140,6 +283,11 @@ class GameEventsService {
         } catch (e) {
             logger.error('Could not snapshot question:', e.message);
         }
+        // Classic only: challenge rounds never come through here. A question
+        // goes to one stream. See ONE STREAM PER LIVE GAME at the top.
+        try {
+            await this.claimForClassic(userId, 'live_game', { type: 'question.asked', payload });
+        } catch (e) { /* delivery must not depend on this */ }
         return this.emit(userId, 'question.asked', payload);
     }
 
@@ -169,6 +317,11 @@ class GameEventsService {
     // ============================================
 
     _heartbeat() {
+        // Forget replaced connection ids once they can no longer matter.
+        const now = Date.now();
+        for (const [key, until] of this.displaced) {
+            if (until < now) this.displaced.delete(key);
+        }
         for (const [userId, set] of this.connections) {
             for (const res of [...set]) {
                 try {

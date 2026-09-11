@@ -55,6 +55,16 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .ladderMeta .fig{font-size:15px;color:var(--brass)}
 
 /* ---------- question ---------- */
+/* NO SELECTION, NO LONG-PRESS MENU on the CLASSIC question, options and flag.
+   By id, not by the shared .qtext/.opts/.qimg classes: the arena and async
+   challenge screens use those classes too, and challenge mode is left exactly
+   as it is. Selection is what feeds copy, iOS "Look Up" and Android's
+   "Search" chips; the callout is iOS's long-press menu, including "Save
+   Image" on a flag. A screenshot, Circle to Search or a second phone still
+   work — this stops the one-thumb shortcuts, not a determined player. */
+#qText,#qOpts,#qOpts .opt,#qImg,#qImg img{
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#qImg img{-webkit-user-drag:none}
 .qwrap{flex:1;display:flex;flex-direction:column}
 .qtext{font-size:clamp(20px,5.4vw,25px);line-height:1.3;font-weight:500;
        margin:0 0 22px;letter-spacing:-.015em}
@@ -393,6 +403,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <button class="tile" onclick="openStats()">
       <strong>Your stats</strong>
       <span>Games, wins and streaks</span>
+    </button>
+
+    <button class="tile" onclick="openReview()">
+      <strong>⭐ Review &amp; feedback</strong>
+      <span>Tell others what you think — shows as verified</span>
     </button>
 
     <div class="stats">
@@ -831,7 +846,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="hero" style="padding:18px 0 12px">
       <span class="fig" style="font-size:26px" id="capTitle">Quick check</span>
-      <p>Just confirming there's a person here. This doesn't affect your winnings.</p>
+      <p>Just confirming there's a person here. Failing it ends the game without winnings.</p>
     </div>
 
     <div class="countdown" id="capClock"></div>
@@ -2357,9 +2372,79 @@ async function refresh(){
 }
 
 /* ---------- stream ---------- */
-function stream(){
+/* ONE STREAM PER LIVE GAME. Each deliberate stream() gets a fresh connection
+   id. EventSource's own reconnects reuse the URL, so they keep the id — which
+   is how the server recognises a replaced stream trying to come back and
+   answers 204, the one status that stops EventSource retrying. Without that,
+   two devices would take the game from each other every three seconds. */
+let streamReplaced=false, streamDormantT=null;
+/* Challenge screens. Single-stream never closes a stream the server knows is
+   involved in challenge mode, but a page can be sitting on the challenge hub
+   while the same account plays Classic elsewhere. That page must look and
+   behave exactly as before: no overlay, and its stream back before challenge
+   mode needs it. */
+const CHALLENGE_VIEWS=['vArenaLobby','vArena','vChalPlay','vChalBoard','vChalShare','vChalHub','vChalDetail','vChal'];
+function onChallengeScreen(){
+  return CHALLENGE_VIEWS.some(id=>{ const el=$(id); return !!(el && el.classList.contains('on')); });
+}
+/* Try to come back every 10s with a PASSIVE stream. The server refuses a
+   passive stream (204) while a Classic game is live on another screen, unless
+   the account is in an arena room, so trying can never take the game from the
+   other device. It gets through the moment Classic ends or an arena starts. */
+function streamDormant(){
+  if(streamDormantT) return;
+  streamDormantT=setInterval(()=>{ if(!es) stream({passive:true}); },10000);
+}
+function newStreamCid(){
+  const a=new Uint8Array(12);
+  (window.crypto||window.msCrypto).getRandomValues(a);
+  return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
+}
+function showStreamReplaced(lost){
+  streamReplaced=true;
+  clearInterval(tick);
+  if(lost){
+    overlay('📡','Connection lost',
+      'This screen stopped receiving the game. If it is open on another device or tab, '
+      +'reconnecting here moves it back to this one.',
+      'Reconnect',
+      ()=>{ streamReplaced=false; stream(); refresh(); });
+    return;
+  }
+  overlay('📱','Playing somewhere else',
+    'This game was opened on another device or tab, so it stopped here. '
+    +'Only one screen can follow a live game at a time.',
+    'Play here instead',
+    ()=>{ streamReplaced=false; stream(); refresh(); });
+}
+function stream(opts){
+  const passive=!!(opts && opts.passive);
   if(es)es.close();
-  es=new EventSource('/web/game/stream?token='+encodeURIComponent(token));
+  streamReplaced=false;
+  if(!passive && streamDormantT){ clearInterval(streamDormantT); streamDormantT=null; }
+  es=new EventSource('/web/game/stream?token='+encodeURIComponent(token)+'&cid='+newStreamCid()+(passive?'&passive=1':''));
+  /* A separate listener, so the existing onopen below is left as it was. */
+  es.addEventListener('open',()=>{
+    if(streamDormantT){ clearInterval(streamDormantT); streamDormantT=null; }
+  });
+
+  es.addEventListener('stream.replaced',()=>{
+    try{ es.close(); }catch(e){}
+    es=null;
+    if(onChallengeScreen()){ streamReplaced=true; streamDormant(); return; }
+    showStreamReplaced();
+  });
+  /* CLOSED means EventSource has given up: a 204 because this stream was
+     replaced and the notice never arrived, or a server that answered with an
+     error during a restart. Either way nothing more will come, and saying so
+     beats a screen that silently stops updating. */
+  es.onerror=()=>{
+    /* A refused passive retry: stay quiet and let the next try come round. */
+    if(passive && es && es.readyState===2){ es=null; return; }
+    /* On a challenge screen this stays exactly as it was: silent. */
+    if(!es || es.readyState!==2 || streamReplaced || onChallengeScreen()) return;
+    showStreamReplaced(true);
+  };
 
   /* RECOVER THE ARENA ON RECONNECT.
      EventSource reconnects by itself, but nothing put the player back into the
@@ -2950,6 +3035,40 @@ function info(text){
 }
 
 /* ---------- stats ---------- */
+/* ---------- review & feedback ----------
+   Gets a single-use link tied to this account and opens the public reviews
+   page with it, so the review is verified. The link is fetched on the tap,
+   then opened from the overlay's button: browsers (iOS Safari especially)
+   block a new tab opened after an await, but not one opened by a tap. */
+async function openReview(){
+  try{
+    const d=await(await fetch('/web/game/review-link',{method:'POST',headers:H()})).json();
+    if(d.success && d.alreadyReviewed){
+      overlay('⭐','Thank you!','You have already left us a review. We really appreciate it.','OK',()=>{});
+      return;
+    }
+    if(!d.success || !d.url){
+      overlay('⭐','Not just now',d.error||"We couldn't create your review link. Please try again shortly.",'OK',()=>{});
+      return;
+    }
+    overlay('⭐','Leave a review',
+      'Your link is ready. Your review will show as a verified player, and our team checks every review before it goes public.',
+      'Write my review',
+      ()=>{
+        /* Not window.open(url,'_blank','noopener'): with that feature the
+           spec says it returns null even when the tab opened, which would
+           send web-play itself to the reviews page as well. Open normally,
+           then cut the link back to this page. Only a real block falls back
+           to navigating here. */
+        const w=window.open(d.url,'_blank');
+        if(w){ try{ w.opener=null; }catch(e){} }
+        else location.href=d.url;
+      });
+  }catch(e){
+    overlay('⭐','Not just now',"We couldn't create your review link. Please check your connection and try again.",'OK',()=>{});
+  }
+}
+
 async function openStats(){
   view('vStats');
   $('mStats').textContent='';
@@ -3847,6 +3966,7 @@ function paint(q){
   if(q.imageUrl){
     const el=new Image();
     el.alt='Flag for this question';
+    el.draggable=false;
     el.onerror=()=>{ img.innerHTML='<p class="miss">The image for this question didn\'t load. '
       +'Use Skip if you can\'t answer it.</p>'; };
     el.src=q.imageUrl;
@@ -3872,6 +3992,7 @@ function paint(q){
   $('cSkip').disabled=!q.lifelines?.skip;
   ladder(q.questionNumber);
   clock(q.expiresAt,q.timerSeconds);
+  try{ integrity.onQuestion(); }catch(e){}   /* reporting must never break a question */
 }
 function pick(k,btn){
   if(answered)return; answered=true; sfx.tap();
@@ -3929,7 +4050,9 @@ async function go(text){
   catch(e){}
 }
 async function quit(){
-  if(!confirm('End this game? Your current winnings will be settled.'))return;
+  /* Quitting pays NOTHING — not the current amount, not a safe point. The
+     server zeroes the score before settling; this must say so before they tap. */
+  if(!confirm('Quit this game? Quitting forfeits any winnings from this game, including safe-point winnings.'))return;
   try{await fetch('/web/game/abandon',{method:'POST',headers:H()});}catch(e){}
   clearInterval(tick); banked=0; view('vLobby'); refresh();
 }
@@ -3965,6 +4088,100 @@ function overlay(fig,title,body,actLabel,actFn,opts){
 function closeOver(){
   $('over').classList.remove('on'); banked=0; view('vLobby'); refresh();
 }
+
+/* ---------- play integrity: copy attempts and automation checks ----------
+   CLASSIC ONLY. Every check is scoped to the Classic game screen (#vGame) and
+   its own elements; nothing here listens on, reports from or changes an arena
+   or challenge screen. Everything reports to POST /web/game/signal, which logs
+   it against the live Classic game. The server decides what counts: it ignores signals when no game is
+   live, judges "phone" by the user agent IT received, and raises a user flag
+   only for the automation checks. This page can be edited by anyone with
+   DevTools, so none of it is proof on its own; it catches the crude setups and
+   leaves a trail for review. Reporting never blocks or delays play. */
+const integrity=(()=>{
+  const QUESTION_ZONE='#qText,#qOpts,#qImg';
+  const UA=navigator.userAgent||'';
+  const PHONE_UA=/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(UA);
+  const TOUCH_POINTS=navigator.maxTouchPoints||0;
+  const TOUCH_EVENTS=('ontouchstart' in window);
+  const sent=new Set();   // one report per kind per question on screen
+  let shown=0;            // questions rendered on this page, any mode
+  let lastPointer=null;
+
+  /* A Classic question on screen, or null. Nothing else counts. */
+  function context(){
+    const el=$('vGame');
+    return (el && el.classList.contains('on')) ? {context:'classic'} : null;
+  }
+  function inZone(t){ return !!(t && t.closest && t.closest(QUESTION_ZONE)); }
+
+  function report(kind, extra){
+    const c=context(); if(!c) return;
+    const once=kind+'|'+shown;
+    if(sent.has(once)) return;
+    sent.add(once);
+    const body=Object.assign({kind, context:c.context,
+      touchPoints:TOUCH_POINTS, touchEvents:TOUCH_EVENTS}, extra||{});
+    try{
+      fetch('/web/game/signal',{method:'POST',headers:H(),body:JSON.stringify(body),keepalive:true})
+        .catch(()=>{});
+    }catch(e){}
+  }
+
+  /* ---- COPY ATTEMPTS ----
+     Selection is already off in CSS; these stop what CSS cannot and write down
+     that someone tried. */
+  document.addEventListener('selectstart',e=>{ if(inZone(e.target)) e.preventDefault(); },true);
+  document.addEventListener('contextmenu',e=>{
+    if(!inZone(e.target)) return;
+    e.preventDefault();
+    report('long_press',{via:'contextmenu'});
+  },true);
+  ['copy','cut'].forEach(type=>document.addEventListener(type,e=>{
+    if(!context()) return;
+    e.preventDefault();
+    try{ e.clipboardData && e.clipboardData.setData('text/plain',''); }catch(err){}
+    report(type);
+  },true));
+
+  /* iOS Safari does not fire contextmenu for a long press, so time the touch
+     instead. Passive and never prevented: a normal tap on an option must
+     behave exactly as before. */
+  let pressT=null;
+  const cancelPress=()=>{ if(pressT){ clearTimeout(pressT); pressT=null; } };
+  document.addEventListener('touchstart',e=>{
+    if(!inZone(e.target) || e.touches.length!==1) return;
+    cancelPress();
+    pressT=setTimeout(()=>{ pressT=null; report('long_press',{via:'touch'}); },600);
+  },{passive:true,capture:true});
+  ['touchend','touchmove','touchcancel'].forEach(t=>
+    document.addEventListener(t,cancelPress,{passive:true,capture:true}));
+
+  /* ---- AUTOMATION CHECKS ---- */
+  /* How an option was pressed. pointerdown carries pointerType in every
+     current mobile browser; the click that follows may not. */
+  document.addEventListener('pointerdown',e=>{
+    if(e.target && e.target.closest && e.target.closest('#qOpts .opt')){
+      lastPointer={type:e.pointerType||'', at:Date.now()};
+    }
+  },true);
+  document.addEventListener('click',e=>{
+    if(!(e.target && e.target.closest && e.target.closest('#qOpts .opt'))) return;
+    if(!context()) return;
+    if(PHONE_UA && lastPointer && lastPointer.type==='mouse' && Date.now()-lastPointer.at<2000){
+      report('mouse_on_phone',{pointerType:'mouse'});
+    }
+  },true);
+
+  /* Environment checks, once per question shown. The server records each
+     against the game and flags the user once per game. */
+  function onQuestion(){
+    shown++;
+    if(navigator.webdriver===true) report('webdriver');
+    if(PHONE_UA && TOUCH_POINTS===0 && !TOUCH_EVENTS) report('phone_ua_no_touch');
+  }
+  return {onQuestion};
+})();
 
 /* ---------- boot ---------- */
 (async()=>{

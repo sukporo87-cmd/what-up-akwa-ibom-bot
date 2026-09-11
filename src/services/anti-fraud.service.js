@@ -123,12 +123,19 @@ class AntiFraudService {
                 avgTime < THRESHOLDS.SUSPICIOUS_AVG_TIME_MS ||
                 fastAnswers >= THRESHOLDS.SUSPICIOUS_FAST_COUNT;
             
-            // Update session in database
+            // Update session in database.
+            //
+            // suspicious_flag is OR-ed, never overwritten. This runs inside
+            // completeGame, after turbo mode has already set the flag. Writing
+            // isSuspicious straight in reset it to false whenever the average
+            // was above 2.5s — exactly the profile of someone looking
+            // answers up in 4-5 seconds. This test can add a flag; it has no
+            // standing to remove one.
             await pool.query(`
                 UPDATE game_sessions 
                 SET avg_response_time_ms = $1,
                     fastest_response_ms = $2,
-                    suspicious_flag = $3,
+                    suspicious_flag = (COALESCE(suspicious_flag, false) OR $3),
                     response_times = $4
                 WHERE id = $5
             `, [avgTime, fastestTime, isSuspicious, JSON.stringify(times), sessionId]);

@@ -65,8 +65,13 @@ const TURBO_MODE_CONFIG = {
         MIN_SAMPLES: 4,                 // Need 4+ answers to detect
         MAX_RANGE_MS: 2000,             // All answers within 2s window
         OFFSET_BELOW_MIN_MS: 1000,      // Timer = fastest - 1s
-        MINIMUM_TIMEOUT_MS: 5000,       // Floor: 5 seconds
-        MINIMUM_TIMEOUT_SECONDS: 5,
+        // Floor: 4 seconds (was 5). The formula is fastest - 1s, and the floor
+        // is what decides it for anyone quick: a player whose fastest answer
+        // was 4.5s got 5s, which a 4.2s look-up routine beat seven times out
+        // of seven. Admin clocks stay at a 5s minimum (game-settings), so the
+        // enforced clock is still tighter than anything an admin can set.
+        MINIMUM_TIMEOUT_MS: 4000,
+        MINIMUM_TIMEOUT_SECONDS: 4,
         TURBO_QUESTIONS: 3,
     },
     // --- Trigger 3: CONSISTENCY (low std deviation) ---
@@ -545,7 +550,7 @@ class GameService {
         // things below would silently break that:
         //
         //   * DIFFICULTY_TIMERS: Q1-5 12s, Q6-10 11s, Q11-15 10s
-        //   * turbo mode: drops to 5-8s for three questions
+        //   * turbo mode: drops to 4-8s for three questions
         //   * watchlist shortened timers: 8/7/6s for flagged users
         //
         // Player A racing a 10s clock while player B gets 7s from question six
@@ -890,7 +895,7 @@ class GameService {
                         'Good lighting — no dark photos',
                         'Live capture, not a gallery upload'
                     ],
-                    warning: 'Failing this ends the game and may forfeit winnings.',
+                    warning: 'Failing or missing this ends the game and forfeits all winnings from it.',
                     secondsAllowed: PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS,
                     expiresAt: photoExpiresAt
                 });
@@ -922,7 +927,7 @@ class GameService {
             `• Your face clearly visible\n` +
             `• Good lighting (no dark photos)\n` +
             `• Live capture (no gallery uploads)\n\n` +
-            `⚠️ Failed verification ends the game and may forfeit winnings.\n\n` +
+            `⚠️ Failing or missing verification ends the game and forfeits all winnings from it.\n\n` +
             `⏱️ You have *${PHOTO_VERIFICATION_CONFIG.TIMEOUT_SECONDS} seconds* to send your selfie.`;
 
         // web has this as photo.required, with the requirements as real list items
@@ -1146,12 +1151,15 @@ class GameService {
             WHERE session_id = $3 AND user_id = $4 AND passed IS NULL
         `, [reason, reason === 'timeout' ? 'Did not send photo within 20 seconds' : reason, session.id, user.id]);
 
-        const guaranteedAmount = this.getGuaranteedAmount(session.current_question);
-        session.current_score = guaranteedAmount;
+        // A failed or missed photo check pays NOTHING, at any question — the
+        // same rule as a failed CAPTCHA. It used to pay the safe checkpoint,
+        // which made the photo the one security check a player could fail and
+        // still leave with ₦10,000. Tournament scores follow the same rule.
+        session.current_score = 0;
 
         const message = reason === 'timeout'
-            ? `⏱️ *VERIFICATION TIMEOUT*\n\nYou didn't send a photo in time.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦${guaranteedAmount.toLocaleString()}`
-            : `❌ *VERIFICATION FAILED*\n\n🎮 GAME OVER\n\n💰 Final Score: ₦${guaranteedAmount.toLocaleString()}`;
+            ? `⏱️ *VERIFICATION TIMEOUT*\n\nYou didn't send a photo in time.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
+            : `❌ *VERIFICATION FAILED*\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`;
 
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false, 'photo_verification_failed');
@@ -2243,7 +2251,12 @@ class GameService {
                         captchaType: captcha.type,
                         title: 'Security check',
                         body,
-                        summary: captcha.displayQuestion || null,
+                        // No `summary`. displayQuestion is the audit label, and
+                        // for two types it IS the answer: odd_one_out writes
+                        // "Find the odd one out (position 2)", emoji_sequence
+                        // writes "Complete the pattern (❓ = 🔵)". play.html
+                        // never displayed it, but it sat in the EventStream
+                        // frame for anyone with DevTools open.
                         options: opts && opts.length ? opts : null,
                         questionNumber,
                         secondsAllowed: Math.round(QUESTION_TIMEOUT_MS / 1000),
@@ -2303,7 +2316,7 @@ class GameService {
             const isCorrect = captchaService.validateAnswer(captcha, answer);
             
             await captchaService.logCaptchaAttempt(user.id, session.id, questionNumber, captcha, answer, isCorrect, responseTimeMs);
-            await auditService.logCaptchaResponse(session.id, user.id, questionNumber, captcha.type, answer, captcha.answer || captcha.correctAnswer, isCorrect, responseTimeMs);
+            await auditService.logCaptchaResponse(session.id, user.id, questionNumber, captcha.type, answer, captcha.answer || captcha.correctAnswer, isCorrect, responseTimeMs, { webInput: true });
             
             if (isCorrect) {
                 await messagingService.sendMessage(user.phone_number, '✅ Verified! Here comes your question...');
@@ -2322,9 +2335,13 @@ class GameService {
 
     async handleCaptchaFailure(session, user, reason) {
         try {
+            // ₦0, because that is what this ending pays: no transaction is
+            // written and web's game.over already reports amountWon 0. It used
+            // to print session.current_score, telling a chat player
+            // "Final Score: ₦3,000" for a game that paid nothing.
             const message = reason === 'timeout' 
-                ? `⏱️ *TIME'S UP!*\n\nYou didn't complete the security check in time.\n\nYour game has ended.\n\n💰 Final Score: ₦${session.current_score.toLocaleString()}`
-                : `❌ *VERIFICATION FAILED*\n\nYou didn't pass the security check.\n\nYour game has ended.\n\n💰 Final Score: ₦${session.current_score.toLocaleString()}`;
+                ? `⏱️ *TIME'S UP!*\n\nYou didn't complete the security check in time.\n\nYour game has ended.\n\n💰 Final Score: ₦0`
+                : `❌ *VERIFICATION FAILED*\n\nYou didn't pass the security check.\n\nYour game has ended.\n\n💰 Final Score: ₦0`;
             
             await messagingService.sendMessage(user.phone_number, message);
 
@@ -2523,7 +2540,7 @@ class GameService {
             await this.updateSession(session);
             await this.logQuestionHistory(user.id, question.id);
             
-            await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount, timeoutConfig.isTurboMode);
+            await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount, timeoutConfig.isTurboMode, timeoutConfig);
             await antiFraudService.setQuestionStartTime(session.session_key, questionNumber);
             
             let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
@@ -2698,7 +2715,7 @@ class GameService {
                 const isCorrect = answer === question.correct_answer;
                 const prizeAmount = PRIZE_LADDER[questionNumber];
             
-                await auditService.logAnswer(session.id, user.id, questionNumber, answer, question.correct_answer, isCorrect, isCorrect ? prizeAmount : session.current_score, responseTimeMs);
+                await auditService.logAnswer(session.id, user.id, questionNumber, answer, question.correct_answer, isCorrect, isCorrect ? prizeAmount : session.current_score, responseTimeMs, { webInput: true });
 
                 // Track answer pattern for fraud analysis
                 try {

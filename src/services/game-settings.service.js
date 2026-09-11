@@ -47,11 +47,11 @@ const REFRESH_MS = 15000;
 const MODES = ['practice', 'classic', 'tournament'];
 const PLATFORMS = ['whatsapp', 'telegram', 'web'];
 
-// 5 is not an arbitrary floor. TURBO_MODE_CONFIG.CLUSTERING.MINIMUM_TIMEOUT_MS
-// is 5000: five seconds is the tightest clock the anti-cheat system will
-// impose on anyone. Letting an admin set a base clock below the punishment
-// clock would mean every honest player was already playing under conditions
-// the fraud model reads as adversarial.
+// 5 is not an arbitrary floor. It must stay ABOVE the tightest clock the
+// anti-cheat system imposes — TURBO_MODE_CONFIG.CLUSTERING.MINIMUM_TIMEOUT_MS,
+// now 4000. Letting an admin set a base clock at or below the punishment clock
+// would mean every honest player was already playing under conditions the
+// fraud model reads as adversarial, and turbo would have nothing left to take.
 const MIN_SECONDS = 5;
 
 // 30 is where the chat surfaces break down. "⏱️ 45 seconds..." on WhatsApp

@@ -28,6 +28,16 @@ const MAX_PROMPTS = 2;           // lifetime, per player
 const MIN_DAYS_BETWEEN = 14;     // never nag
 const TOKEN_TTL_DAYS = 30;       // an unused invite expires
 
+// A link the PLAYER asked for (REVIEW on WhatsApp/Telegram, the lobby button
+// on web-play). Kept apart from the automatic tournament prompt: asking for a
+// link must not use up one of the two prompts we are allowed to send, or push
+// the next one 14 days away.
+const PLAYER_REQUEST_TRIGGER = 'player_request';
+// Hand back the same unused link rather than minting a new one per request —
+// someone typing REVIEW five times gets one link, not five. Two days short of
+// expiry so a reused link is never about to die in the player's hands.
+const REUSE_WITHIN_DAYS = TOKEN_TTL_DAYS - 2;
+
 const SITE = process.env.SITE_URL || 'https://whatsuptrivia.com.ng';
 
 class ReviewInviteService {
@@ -73,11 +83,13 @@ class ReviewInviteService {
     return r.via_invite === true || r.via_email === true;
   }
 
+  // Automatic prompts only. Links a player asked for are not prompts.
   async promptCount(userId) {
     const result = await pool.query(
       `SELECT COUNT(*) AS n, MAX(sent_at) AS last_sent
-       FROM review_invites WHERE user_id = $1`,
-      [userId]
+       FROM review_invites
+       WHERE user_id = $1 AND trigger IS DISTINCT FROM $2`,
+      [userId, PLAYER_REQUEST_TRIGGER]
     );
     return {
       count: parseInt(result.rows[0].n) || 0,
@@ -115,7 +127,54 @@ class ReviewInviteService {
        VALUES ($1, $2, $3, $4)`,
       [userId, token, platform || null, trigger || null]
     );
-    return { token, url: `${SITE}/reviews?r=${token}` };
+    return { token, url: this.urlFor(token) };
+  }
+
+  urlFor(token) {
+    return `${SITE}/reviews?r=${token}`;
+  }
+
+  // --------------------------------------------
+  // ON REQUEST: the player asked for a review link.
+  //
+  // Returns one of:
+  //   { ok: true,  url, reused }             a verified single-use link
+  //   { ok: false, reason: 'already_reviewed' }
+  //   { ok: false, reason: 'error' }
+  //
+  // Same verification as the tournament invite — the token is what makes
+  // the review verified, so the page, the moderation queue and the badge are
+  // all exactly as they already are. Never throws.
+  // --------------------------------------------
+  async linkOnRequest(user, platform) {
+    try {
+      if (!user || !user.id) return { ok: false, reason: 'error' };
+      await this.ensureSchema();
+
+      if (await this.hasReviewed(user.id)) {
+        return { ok: false, reason: 'already_reviewed' };
+      }
+
+      const existing = await pool.query(
+        `SELECT token FROM review_invites
+         WHERE user_id = $1
+           AND used_at IS NULL
+           AND sent_at > NOW() - ($2::int * INTERVAL '1 day')
+         ORDER BY sent_at DESC
+         LIMIT 1`,
+        [user.id, REUSE_WITHIN_DAYS]
+      );
+      if (existing.rows.length) {
+        return { ok: true, url: this.urlFor(existing.rows[0].token), reused: true };
+      }
+
+      const invite = await this.createInvite(user.id, platform || user.platform || null, PLAYER_REQUEST_TRIGGER);
+      logger.info(`Review link issued on request to user ${user.id} (${platform || user.platform || 'unknown'})`);
+      return { ok: true, url: invite.url, reused: false };
+    } catch (error) {
+      logger.warn(`Review link on request failed for user ${user && user.id}: ${error.message}`);
+      return { ok: false, reason: 'error' };
+    }
   }
 
   // --------------------------------------------
@@ -206,3 +265,4 @@ class ReviewInviteService {
 }
 
 module.exports = new ReviewInviteService();
+module.exports.PLAYER_REQUEST_TRIGGER = PLAYER_REQUEST_TRIGGER;

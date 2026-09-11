@@ -8,10 +8,120 @@
 
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
+const { AsyncLocalStorage } = require('async_hooks');
+
+// ============================================
+// WEB INPUT ATTRIBUTION
+// ============================================
+// Who sent this answer, from where, with how many streams open. A web answer
+// travels route -> routeMessage -> processAnswer -> logAnswer, and threading a
+// request through every signature in between would touch the shared chat
+// router. AsyncLocalStorage carries it down the awaited chain instead: the
+// route wraps the call, logAnswer reads it.
+//
+// THE TRAP, and the two guards against it. Node hands the store to anything
+// scheduled inside the chain, timers included. An answer schedules the next
+// question; the next question schedules its timeout. So a timer callback can
+// run holding an OLD request's metadata. That is why:
+//   * only answer events read it (ANSWER_GIVEN, CAPTCHA_PASSED/FAILED), which
+//     are reached from an input and never from a timer;
+//   * it is ignored unless it belongs to the same user AND is recent;
+//   * the CALLER must ask for it ({ webInput: true }). Only Classic's answer
+//     and CAPTCHA paths do. Challenge rounds call logAnswer too, and web-play's
+//     /input also carries challenge chat commands, so without the opt-in a
+//     challenge answer could pick up this field. Challenge mode is out of
+//     scope for anti-cheat work: its audit rows stay exactly as they were.
+// A missing field is honest. A wrong one would be evidence against someone.
+const webInputStore = new AsyncLocalStorage();
+const WEB_INPUT_MAX_AGE_MS = 30000;
 
 class AuditService {
     constructor() {
         this.startAuditCleanup();
+    }
+
+    // What one web request looks like, for the audit trail.
+    //
+    // ip is the first X-Forwarded-For entry, read the same way web-auth.routes
+    // reads it for sessions. That entry can be supplied by the client, so the
+    // whole chain is kept beside it: a first hop that disagrees with the rest
+    // is itself worth seeing.
+    //
+    // open_connections counts this user's SSE streams on THIS server process,
+    // which is where the streams live. Two means two tabs or two devices
+    // watching the same game.
+    static describeWebRequest(req, userId) {
+        const headers = (req && req.headers) || {};
+        const chain = String(headers['x-forwarded-for'] || '');
+        const ip = chain.split(',')[0].trim()
+            || (req && req.socket && req.socket.remoteAddress)
+            || null;
+
+        let openConnections = null;
+        try {
+            const gameEvents = require('./game-events.service');
+            const map = gameEvents.connections;
+            // Keyed by whatever type subscribe() was given; a string id from one
+            // path and a number from another must not read as zero streams.
+            const set = map && (map.get(userId) || map.get(Number(userId)) || map.get(String(userId)));
+            openConnections = set ? set.size : 0;
+        } catch (e) { openConnections = null; }
+
+        return {
+            userId: String(userId),
+            ip,
+            ip_chain: chain ? chain.slice(0, 200) : null,
+            user_agent: headers['user-agent'] ? String(headers['user-agent']).slice(0, 300) : null,
+            open_connections: openConnections,
+            receivedAt: Date.now()
+        };
+    }
+
+    // Run fn with this request's metadata available to the answer loggers.
+    // Returns whatever fn returns, so a promise chain is unchanged.
+    runWithWebInput(req, userId, fn) {
+        let meta = null;
+        try { meta = AuditService.describeWebRequest(req, userId); } catch (e) { meta = null; }
+        if (!meta) return fn();
+        return webInputStore.run(meta, fn);
+    }
+
+    // The metadata for this user's current input, or null. See THE TRAP above.
+    webInputFor(userId) {
+        const meta = webInputStore.getStore();
+        if (!meta) return null;
+        if (meta.userId !== String(userId)) return null;
+        if (Date.now() - meta.receivedAt > WEB_INPUT_MAX_AGE_MS) return null;
+        return {
+            ip: meta.ip,
+            ip_chain: meta.ip_chain,
+            user_agent: meta.user_agent,
+            open_connections: meta.open_connections,
+            received_at: new Date(meta.receivedAt).toISOString()
+        };
+    }
+
+    // Seconds on the clock this question was actually served with.
+    // Classic's getSessionTimeout returns timeoutSeconds; the challenge bypass
+    // returns `seconds`; timeoutMs is on both.
+    static clockSeconds(cfg, isTurboMode = false) {
+        if (cfg) {
+            if (Number.isFinite(cfg.timeoutSeconds)) return cfg.timeoutSeconds;
+            if (Number.isFinite(cfg.seconds)) return cfg.seconds;
+            if (Number.isFinite(cfg.timeoutMs)) return Math.round(cfg.timeoutMs / 1000);
+        }
+        return isTurboMode ? 10 : 12;
+    }
+
+    // Which rule set the clock, in getSessionTimeout's own priority order.
+    static clockSource(cfg) {
+        if (!cfg) return 'unrecorded';
+        if (cfg.source === 'challenge' || cfg.source === 'challenge_fallback') return cfg.source;
+        if (cfg.isTurboMode) return cfg.isWatchlist ? 'turbo_watchlist' : 'turbo';
+        if (cfg.isWatchlist) return 'watchlist';
+        if (cfg.isPenaltyMode) return 'penalty';
+        if (cfg.isAdminOverride) return 'admin';
+        return 'ladder';
     }
 
     // ============================================
@@ -78,7 +188,14 @@ class AuditService {
         }
     }
 
-    async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount, isTurboMode = false) {
+    // timeoutConfig is what getSessionTimeout resolved for this question.
+    // Without it the log wrote `isTurboMode ? 10 : 12`, which was wrong for
+    // every clock that mattered: clustering turbo serves 5s, the admin flat
+    // clock 8s, watchlist and penalty their own. Review read "12s" for
+    // questions served on 8s and "10s" for questions served on 5s.
+    // Challenge rounds pass six arguments and get exactly the row they always
+    // got: same timeout_seconds, no new fields.
+    async logQuestionAsked(sessionId, userId, questionNumber, question, prizeAmount, isTurboMode = false, timeoutConfig = null) {
         try {
             const redis = require('../config/redis');
             const questionStartTime = Date.now();
@@ -106,7 +223,15 @@ class AuditService {
                     prize_at_stake: prizeAmount,
                     question_start_time: questionStartTime,
                     turbo_mode: isTurboMode,
-                    timeout_seconds: isTurboMode ? 10 : 12,
+                    timeout_seconds: AuditService.clockSeconds(timeoutConfig, isTurboMode),
+                    // Only when a clock was passed, which only Classic does.
+                    // A challenge round's QUESTION_ASKED row is byte-for-byte
+                    // what it was before this change.
+                    ...(timeoutConfig ? {
+                        timeout_ms: Number.isFinite(timeoutConfig.timeoutMs) ? timeoutConfig.timeoutMs : null,
+                        clock_source: AuditService.clockSource(timeoutConfig),
+                        turbo_type: timeoutConfig.turboType || null
+                    } : {}),
                     times_seen_by_user: question.user_times_seen || 0,
                     is_safe_point: isSafePoint,
                     safe_point_note: isSafePoint ? `Q${questionNumber} is a safe checkpoint` : null
@@ -117,7 +242,7 @@ class AuditService {
         }
     }
 
-    async logAnswer(sessionId, userId, questionNumber, userAnswer, correctAnswer, isCorrect, prizeWon, responseTimeMs = null) {
+    async logAnswer(sessionId, userId, questionNumber, userAnswer, correctAnswer, isCorrect, prizeWon, responseTimeMs = null, opts = {}) {
         try {
             const redis = require('../config/redis');
 
@@ -128,6 +253,8 @@ class AuditService {
             }
             
             await redis.del(`audit_q_start:${sessionId}:${questionNumber}`);
+
+            const webInput = (opts && opts.webInput === true) ? this.webInputFor(userId) : null;
             
             await pool.query(`
                 INSERT INTO game_audit_logs 
@@ -136,6 +263,7 @@ class AuditService {
             `, [
                 sessionId, userId,
                 JSON.stringify({
+                    ...(webInput ? { web_input: webInput } : {}),
                     question_number: questionNumber,
                     user_answer: userAnswer,
                     correct_answer: correctAnswer,
@@ -252,10 +380,12 @@ class AuditService {
         }
     }
 
-    async logCaptchaResponse(sessionId, userId, questionNumber, captchaType, userAnswer, correctAnswer, isCorrect, responseTimeMs) {
+    async logCaptchaResponse(sessionId, userId, questionNumber, captchaType, userAnswer, correctAnswer, isCorrect, responseTimeMs, opts = {}) {
         try {
             const redis = require('../config/redis');
             await redis.del(`audit_captcha_start:${sessionId}:${questionNumber}`);
+
+            const webInput = (opts && opts.webInput === true) ? this.webInputFor(userId) : null;
             
             await pool.query(`
                 INSERT INTO game_audit_logs 
@@ -265,6 +395,7 @@ class AuditService {
                 sessionId, userId,
                 isCorrect ? 'CAPTCHA_PASSED' : 'CAPTCHA_FAILED',
                 JSON.stringify({
+                    ...(webInput ? { web_input: webInput } : {}),
                     question_number: questionNumber,
                     captcha_type: captchaType,
                     user_answer: userAnswer,

@@ -307,8 +307,15 @@ class GameStateService {
 
                     return {
                         ...base,
-                        body: capBody || (data ? (data.displayQuestion || null) : null),
-                        summary: data ? (data.displayQuestion || null) : null,
+                        // The puzzle or nothing. Never displayQuestion — not as
+                        // `summary` and not as a fallback body. It is the audit
+                        // label, and for odd_one_out and emoji_sequence it
+                        // contains the answer. This state is pushed over SSE on
+                        // every message and served by GET /web/game/state, so
+                        // the leak did not even need the live event. An empty
+                        // body already renders play.html's "couldn't load this
+                        // check" fallback.
+                        body: capBody || null,
                         options: capOptions,
                         phase: 'captcha',
                         expects: 'captcha',

@@ -38,6 +38,7 @@ const victoryCardsService = require('../services/victory-cards.service');
 const antiFraudService = require('../services/anti-fraud.service');
 const auditService = require('../services/audit.service');
 const loveQuestService = require('../services/love-quest.service');
+const reviewInvites = require('../services/review-invite.service');
 const { logger } = require('../utils/logger');
 
 const messagingService = new MessagingService();
@@ -548,6 +549,18 @@ class WebhookController {
       // ===================================
       if (input === 'HELP' || input === 'COMMANDS') {
         await this.sendHelpMenu(user.phone_number);
+        return;
+      }
+
+      // ===================================
+      // PRIORITY 8.75: REVIEW — a verified review link, on request
+      // Same place as CLAIM and HELP, and for the same reason: every state
+      // that collects typed text (registration, bank details, promo codes,
+      // challenge chat) is handled above, so a player whose name or answer
+      // happens to be "review" is never interrupted by this.
+      // ===================================
+      if (input === 'REVIEW' || input === 'REVIEWS') {
+        await this.handleReviewRequest(user);
         return;
       }
 
@@ -3535,6 +3548,50 @@ Type the code, or type SKIP to continue:`
   // HELP MENU
   // ============================================
 
+  // ============================================
+  // REVIEW — send the player their verified review link
+  // ============================================
+  // The link carries a single-use token tied to this account, so the review
+  // it produces is verified without an email. Same page, same moderation
+  // queue, same badge as the automatic tournament invite.
+  async handleReviewRequest(user) {
+    try {
+      // Not in the middle of a question: a link arriving under a live
+      // question pushes it off screen while the clock runs.
+      const active = await gameService.getActiveSession(user.id);
+      if (active) {
+        await messagingService.sendMessage(user.phone_number,
+          `⭐ You're in a game right now.\n\nFinish it first, then send *REVIEW* and we'll send your review link.`);
+        return;
+      }
+
+      const result = await reviewInvites.linkOnRequest(user, platformOf(user));
+
+      if (!result.ok && result.reason === 'already_reviewed') {
+        await messagingService.sendMessage(user.phone_number,
+          `⭐ You've already left us a review — thank you! 🙏`);
+        return;
+      }
+      if (!result.ok) {
+        await messagingService.sendMessage(user.phone_number,
+          `Sorry, we couldn't create your review link just now. Please try again in a few minutes.`);
+        return;
+      }
+
+      await messagingService.sendMessage(user.phone_number,
+        `⭐ *LEAVE A REVIEW*\n\n` +
+        `Thanks for taking a moment! This link is yours alone, so your review ` +
+        `will show as a *verified player*:\n\n${result.url}\n\n` +
+        `It works once and lasts 30 days. Every review is checked by our team before it goes public.`);
+    } catch (error) {
+      logger.error(`Review request failed for user ${user && user.id}:`, error);
+      try {
+        await messagingService.sendMessage(user.phone_number,
+          `Sorry, we couldn't create your review link just now. Please try again in a few minutes.`);
+      } catch (e) { /* nothing more to do */ }
+    }
+  }
+
   async sendHelpMenu(phone) {
     let message = `❓ *HELP & COMMANDS* ❓\n\n`;
     
@@ -3563,6 +3620,7 @@ Type the code, or type SKIP to continue:`
     message += `🔧 *OTHER*\n`;
     message += `• *SHARE* — Generate your victory card\n`;
     message += `• *REFERRAL* — Get your referral code\n`;
+    message += `• *REVIEW* — Leave a verified review\n`;
     message += `• *RESET* — Reset your game session\n`;
     message += `• *MENU* — Return to main menu\n`;
     message += `• *HELP* — Show this menu\n\n`;
