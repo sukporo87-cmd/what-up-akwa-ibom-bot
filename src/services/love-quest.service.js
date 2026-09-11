@@ -757,7 +757,11 @@ class LoveQuestService {
                     } else {
                         // Small delay then send next question
                         setTimeout(async () => {
-                            await this.sendQuestion(session, booking, messagingService);
+                            try {
+                                await this.sendQuestion(session, booking, messagingService);
+                            } catch (error) {
+                                logger.error(`Love Quest: could not send the next question for booking ${booking.id}:`, error);
+                            }
                         }, 2000);
                     }
                 }
@@ -822,7 +826,11 @@ class LoveQuestService {
                     await messagingService.sendMessage(session.player_phone, message);
                     
                     setTimeout(async () => {
-                        await this.sendQuestion(session, booking, messagingService);
+                        try {
+                            await this.sendQuestion(session, booking, messagingService);
+                        } catch (error) {
+                            logger.error(`Love Quest: could not send the next question for booking ${booking.id}:`, error);
+                        }
                     }, 2000);
                     
                     return;
@@ -879,7 +887,11 @@ class LoveQuestService {
             );
             
             setTimeout(async () => {
-                await this.sendQuestion(session, booking, messagingService);
+                try {
+                    await this.sendQuestion(session, booking, messagingService);
+                } catch (error) {
+                    logger.error(`Love Quest: could not send the next question for booking ${booking.id}:`, error);
+                }
             }, 2000);
             
         } catch (error) {

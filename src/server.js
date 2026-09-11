@@ -2,6 +2,42 @@
 // FILE: src/server.js - UPDATED VERSION
 // Multi-platform support (WhatsApp + Telegram)
 // ============================================
+
+// ============================================
+// CRASH SAFETY — first, before any service loads
+// ============================================
+// 11 Sep: Meta returned a 500 for one WhatsApp message, the error escaped an
+// unguarded timer, and Node exited. Every game in progress lost its timers,
+// every web stream dropped, and Node's crash print put the WhatsApp access
+// token in the logs.
+//
+//  * axios errors are made safe at the source (utils/redact.js), so no error
+//    object in this process carries a request header again.
+//  * an unhandled promise rejection is logged — safely — and the process
+//    keeps running. It means one operation failed; tearing down everyone's
+//    game over it is the worse outcome.
+//  * a synchronous uncaught exception still exits, as Node intends: after
+//    one, the process may be in a state nobody reasoned about. It is logged
+//    safely first, and Render restarts a clean process.
+const axios = require('axios');
+const { installAxiosRedaction, summarizeError } = require('./utils/redact');
+const { logger: crashLogger } = require('./utils/logger');
+installAxiosRedaction(axios);
+
+process.on('unhandledRejection', (reason) => {
+  crashLogger.error('⚠️ Unhandled promise rejection — logged, process kept running', {
+    error: summarizeError(reason)
+  });
+});
+
+process.on('uncaughtException', (error, origin) => {
+  crashLogger.error(`💥 Uncaught exception (${origin}) — exiting so Render restarts a clean process`, {
+    error: summarizeError(error)
+  });
+  // A moment for the log line to flush.
+  setTimeout(() => process.exit(1), 200);
+});
+
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');

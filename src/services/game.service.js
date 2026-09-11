@@ -34,6 +34,7 @@ const deviceTrackingService = require('./device-tracking.service');
 const kycService = require('./kyc.service');
 const behavioralAnalysisService = require('./behavioral-analysis.service');
 const { logger } = require('../utils/logger');
+const { summarizeError } = require('../utils/redact');
 const activityService = require('./activity.service');
 const reviewInvites = require('./review-invite.service');
 const WhatsAppService = require('./whatsapp.service');
@@ -125,6 +126,10 @@ const PRIZE_LADDER = {
 };
 
 const SAFE_CHECKPOINTS = [5, 10];
+
+// Undeliverable questions: one retry, a short pause between.
+const QUESTION_DELIVERY_ATTEMPTS = 2;
+const QUESTION_RETRY_DELAY_MS = 1500;
 const activeTimeouts = new Map();
 
 class GameService {
@@ -487,9 +492,13 @@ class GameService {
             );
             
             setTimeout(async () => {
-                const activeSession = await this.getActiveSession(user.id);
-                if (activeSession && activeSession.id === session.id) {
-                    await this.sendQuestionOrCaptcha(activeSession, user);
+                try {
+                    const activeSession = await this.getActiveSession(user.id);
+                    if (activeSession && activeSession.id === session.id) {
+                        await this.sendQuestionOrCaptcha(activeSession, user);
+                    }
+                } catch (error) {
+                    logger.error(`Could not continue after turbo GO for session ${session.id}:`, error);
                 }
             }, 2000);
             
@@ -1124,9 +1133,13 @@ class GameService {
 
             // Continue the game
             setTimeout(async () => {
-                const activeSession = await this.getActiveSession(user.id);
-                if (activeSession && activeSession.id === session.id) {
-                    await this.sendQuestionOrCaptcha(activeSession, user);
+                try {
+                    const activeSession = await this.getActiveSession(user.id);
+                    if (activeSession && activeSession.id === session.id) {
+                        await this.sendQuestionOrCaptcha(activeSession, user);
+                    }
+                } catch (error) {
+                    logger.error(`Could not continue after photo verification for session ${session.id}:`, error);
                 }
             }, 1500);
 
@@ -1225,6 +1238,195 @@ class GameService {
             if (tid) { clearTimeout(tid); activeTimeouts.delete(key); cleared++; }
         }
         if (cleared > 0) logger.info(`Cleared ${cleared} timeouts for session ${sessionKey}`);
+    }
+
+    // ============================================
+    // UNDELIVERABLE QUESTIONS
+    // ============================================
+
+    // One attempt is the existing behaviour: a flag question tries the image
+    // and falls back to text; anything else is text. It is retried once after
+    // a short pause. Returns { ok: true } or { ok: false, error }.
+    async deliverQuestionToChat(user, question, message) {
+        const sendOnce = async () => {
+            if (question.image_type === 'flag' && question.image_data) {
+                const flagBaseUrl = process.env.FLAG_BASE_URL;
+                if (flagBaseUrl) {
+                    const flagUrl = `${flagBaseUrl}${question.image_data}.png`;
+                    try {
+                        await messagingService.sendImageByUrl(user.phone_number, flagUrl, message);
+                        return;
+                    } catch (imgError) {
+                        logger.error('Error sending flag image, falling back to text:', imgError.message);
+                    }
+                } else {
+                    logger.warn('FLAG_BASE_URL not set, sending flag question as text');
+                }
+            }
+            await messagingService.sendMessage(user.phone_number, message);
+        };
+
+        let lastError = null;
+        for (let attempt = 1; attempt <= QUESTION_DELIVERY_ATTEMPTS; attempt++) {
+            try {
+                await sendOnce();
+                if (attempt > 1) logger.info(`📨 Question delivered to user ${user.id} on attempt ${attempt}`);
+                return { ok: true };
+            } catch (error) {
+                lastError = error;
+                logger.warn(`📵 Question send attempt ${attempt} failed for user ${user.id}: ${error && error.message}`);
+                if (attempt < QUESTION_DELIVERY_ATTEMPTS) {
+                    await new Promise(resolve => setTimeout(resolve, QUESTION_RETRY_DELAY_MS));
+                }
+            }
+        }
+        return { ok: false, error: lastError };
+    }
+
+    // Was the failure on the provider's side or ours — something a player
+    // cannot cause? A 5xx, Meta's generic #131000, or a request that never got
+    // an answer (timeout, reset). A 4xx is the recipient's side: they blocked
+    // the number, left WhatsApp, or the 24-hour window closed.
+    static isServerSideSendFailure(error) {
+        if (!error) return false;
+        const response = error.response || null;
+        const status = error.status || (response && (response.status || response.statusCode)) || null;
+        const metaCode = response && response.data && response.data.error && response.data.error.code;
+        if (metaCode === 131000) return true;
+        if (status) return status >= 500;
+        return true;
+    }
+
+    // THE RULES when a question cannot be delivered after the retry:
+    //
+    //   Q1 (nothing played yet) — the game is CANCELLED, as RESET would, and
+    //     the game credit or tournament token it took is returned, whatever
+    //     the cause. The player saw no question, so there is nothing to gain.
+    //
+    //   Q2 and later — the game ENDS AND PAYS NOTHING: no safe checkpoint, no
+    //     credit or token back, whatever the cause. A tournament keeps the
+    //     questions reached for the leaderboard. Founder ruling, 11 Sep: an
+    //     automatic payout or refund here is abusable (block the bot on a hard
+    //     question), so any compensation is an admin decision made on a
+    //     complaint. The audit row records the provider's error so that
+    //     decision has the facts.
+    //
+    // Practice takes nothing, so returns nothing. Every ending is audited as
+    // QUESTION_UNDELIVERABLE. Never throws.
+    async endUndeliverableGame(session, user, error) {
+        try {
+            const lock = await redis.set(`lock:undeliverable:${session.id}`, '1', 'NX', 'EX', 60);
+            if (!lock) return { handled: false, reason: 'already_handled' };
+
+            const questionNumber = session.current_question;
+            const isPractice = session.game_mode === 'practice' || session.game_type === 'practice';
+            const isTournament = !!session.is_tournament_game;
+            const serverSide = GameService.isServerSideSendFailure(error);
+            const nothingPlayed = questionNumber === 1;
+            const summary = summarizeError(error);
+
+            logger.error(`📵 Question ${questionNumber} undeliverable to user ${user.id} (session ${session.id}) after ${QUESTION_DELIVERY_ATTEMPTS} attempts`, { error: summary });
+
+            let refund = { refunded: false };
+            let guaranteed = 0;
+
+            if (nothingPlayed) {
+                await pool.query(
+                    `UPDATE game_sessions SET status = 'cancelled', completed_at = NOW()
+                     WHERE id = $1 AND status = 'active'`,
+                    [session.id]
+                );
+                this.clearAllSessionTimeouts(session.session_key);
+                await redis.del(`game_ready:${user.id}`);
+                await redis.del(`session:${session.session_key}`);
+                await redis.del(`asked_questions:${session.session_key}`);
+                if (!isPractice) refund = await this.returnGameEntry(session, user, { fullReversal: true });
+            } else {
+                // Nothing paid, nothing returned. completeGame still records
+                // tournament progress (questions reached), as it does for any
+                // ending; with a score of 0 there is no prize transaction.
+                session.current_score = 0;
+                if (isPractice) session._practiceOutcome = { reason: 'undeliverable' };
+                await this.completeGame(session, user, false, 'undeliverable');
+            }
+
+            await auditService.logEvent(session.id, user.id, 'QUESTION_UNDELIVERABLE', {
+                question_number: questionNumber,
+                attempts: QUESTION_DELIVERY_ATTEMPTS,
+                server_side: serverSide,
+                status: summary.status || null,
+                code: summary.code || null,
+                provider_code: (summary.data && summary.data.error && summary.data.error.code) || null,
+                ending: nothingPlayed ? 'cancelled' : 'ended_unpaid',
+                paid_checkpoint: guaranteed,
+                refunded: refund.refunded === true,
+                refund_kind: refund.kind || null
+            });
+
+            // Tell them, if the channel has come back. This can fail too.
+            try {
+                const returned = refund.refunded
+                    ? (refund.kind === 'tournament_token' ? 'your tournament token has been returned' : 'your game credit has been returned')
+                    : null;
+                let text;
+                if (nothingPlayed) {
+                    text = `⚠️ We couldn't deliver your first question, so this game has been cancelled` +
+                        (returned ? ` and ${returned}.` : `.`) +
+                        `\n\nSorry about that. Type *MENU* to play again.`;
+                } else {
+                    text = `⚠️ We couldn't deliver question ${questionNumber} after trying twice, so this game has ended.\n\n` +
+                        (isTournament ? `Your progress up to Q${questionNumber - 1} counts on the leaderboard.\n\n` : '') +
+                        `If you think this cost you, contact us and we'll look into it.\n\n` +
+                        `Type *MENU* to continue.`;
+                }
+                await messagingService.sendMessage(user.phone_number, text);
+            } catch (notifyError) {
+                logger.warn(`Could not tell user ${user.id} their game ended undelivered: ${notifyError && notifyError.message}`);
+            }
+
+            return { handled: true, ending: nothingPlayed ? 'cancelled' : 'ended_unpaid', serverSide, refund, guaranteed };
+        } catch (endError) {
+            logger.error(`Could not end undeliverable session ${session && session.id}:`, endError);
+            return { handled: false, reason: 'error' };
+        }
+    }
+
+    // Give back only what THIS session took, once. token_deducted is read from
+    // the row, not trusted from memory. A tournament token reverses the exact
+    // deduction; a cancelled attempt also stops counting as played.
+    async returnGameEntry(session, user, { fullReversal = false } = {}) {
+        try {
+            const row = await pool.query(
+                'SELECT token_deducted, is_tournament_game, tournament_id FROM game_sessions WHERE id = $1',
+                [session.id]
+            );
+            const s = row.rows[0];
+            if (!s || s.token_deducted !== true) return { refunded: false, reason: 'nothing_taken' };
+
+            const once = await redis.set(`refund:undeliverable:${session.id}`, '1', 'NX', 'EX', 7 * 24 * 3600);
+            if (!once) return { refunded: false, reason: 'already_refunded' };
+
+            if (s.is_tournament_game && s.tournament_id) {
+                const result = await pool.query(
+                    `UPDATE tournament_participants
+                     SET tokens_remaining = tokens_remaining + 1,
+                         tokens_used = GREATEST(tokens_used - 1, 0)
+                         ${fullReversal ? ', games_played_in_tournament = GREATEST(games_played_in_tournament - 1, 0)' : ''}
+                     WHERE user_id = $1 AND tournament_id = $2
+                     RETURNING tokens_remaining`,
+                    [user.id, s.tournament_id]
+                );
+                const refunded = result.rowCount > 0;
+                if (refunded) logger.info(`🎟️ Tournament token returned to user ${user.id} (session ${session.id}, undeliverable question)`);
+                return { refunded, kind: 'tournament_token' };
+            }
+
+            const credit = await paymentService.refundGameCredit(user.id, 'question_undeliverable');
+            return { refunded: credit.refunded === true, kind: 'game_credit' };
+        } catch (error) {
+            logger.error(`Could not return the game entry for session ${session && session.id}:`, error);
+            return { refunded: false, reason: 'error' };
+        }
     }
 
     getGuaranteedAmount(questionNumber) {
@@ -1642,6 +1844,12 @@ class GameService {
 
             // Only count real winnings (not practice mode) in total_winnings
             const winningsToAdd = session.game_type !== 'practice' ? finalScore : 0;
+
+            // The question they got to, capped at the last one. After a correct
+            // Q15 the counter has already moved on to 16, and writing that
+            // raw made every grand-prize winner "Reached Q16" — a question
+            // that does not exist.
+            const questionReached = Math.min(session.current_question, Object.keys(PRIZE_LADDER).length);
             
             await pool.query(`
                 UPDATE users
@@ -1650,7 +1858,7 @@ class GameService {
                     highest_question_reached = GREATEST(highest_question_reached, $2),
                     last_active = NOW()
                 WHERE id = $3
-            `, [winningsToAdd, session.current_question, user.id]);
+            `, [winningsToAdd, questionReached, user.id]);
 
             // Social proof event (site ticker). Every completed game counts,
             // practice included — a busy practice mode is still evidence the
@@ -2320,7 +2528,10 @@ class GameService {
             
             if (isCorrect) {
                 await messagingService.sendMessage(user.phone_number, '✅ Verified! Here comes your question...');
-                setTimeout(async () => { await this.sendQuestion(session, user); }, 500);
+                setTimeout(async () => {
+                    try { await this.sendQuestion(session, user); }
+                    catch (error) { logger.error(`Could not send the question after a CAPTCHA for session ${session.id}:`, error); }
+                }, 500);
             } else {
                 await this.handleCaptchaFailure(session, user, 'wrong_answer');
             }
@@ -2607,22 +2818,17 @@ class GameService {
 
             if (webPlayer) {
                 require('./game-state.service').schedule(user.phone_number);
-            } else if (question.image_type === 'flag' && question.image_data) {
-                const flagBaseUrl = process.env.FLAG_BASE_URL;
-                if (flagBaseUrl) {
-                    const flagUrl = `${flagBaseUrl}${question.image_data}.png`;
-                    try {
-                        await messagingService.sendImageByUrl(user.phone_number, flagUrl, message);
-                    } catch (imgError) {
-                        logger.error('Error sending flag image, falling back to text:', imgError.message);
-                        await messagingService.sendMessage(user.phone_number, message);
-                    }
-                } else {
-                    logger.warn('FLAG_BASE_URL not set, sending flag question as text');
-                    await messagingService.sendMessage(user.phone_number, message);
-                }
             } else {
-                await messagingService.sendMessage(user.phone_number, message);
+                // Chat delivery can fail on the provider's side (11 Sep: Meta
+                // returned 500 / #131000). The question is retried once; if it
+                // still cannot be delivered the game ends cleanly instead of
+                // leaving the player waiting for a question that never comes,
+                // with no clock running to move the game on.
+                const delivery = await this.deliverQuestionToChat(user, question, message);
+                if (!delivery.ok) {
+                    await this.endUndeliverableGame(session, user, delivery.error);
+                    return;
+                }
             }
             
             await redis.setex(timeoutKey, Math.ceil(currentTimeoutMs / 1000) + 3, (Date.now() + currentTimeoutMs).toString());
@@ -2815,10 +3021,16 @@ class GameService {
                         
                         if (turboActivated) return; // Wait for GO input
                         
+                        // The busiest timer in the game: every correct answer
+                        // schedules the next question here.
                         setTimeout(async () => {
-                            const activeSession = await this.getActiveSession(user.id);
-                            if (activeSession && activeSession.id === session.id) {
-                                await this.sendQuestionOrCaptcha(session, user);
+                            try {
+                                const activeSession = await this.getActiveSession(user.id);
+                                if (activeSession && activeSession.id === session.id) {
+                                    await this.sendQuestionOrCaptcha(session, user);
+                                }
+                            } catch (error) {
+                                logger.error(`Could not send the next question for session ${session.id}:`, error);
                             }
                         }, 3000);
                     }
@@ -3107,8 +3319,12 @@ class GameService {
                 await this.updateSession(currentSession);
                 
                 setTimeout(async () => {
-                    const as = await this.getActiveSession(user.id);
-                    if (as && as.id === currentSession.id) { await this.sendQuestionOrCaptcha(currentSession, user); }
+                    try {
+                        const as = await this.getActiveSession(user.id);
+                        if (as && as.id === currentSession.id) { await this.sendQuestionOrCaptcha(currentSession, user); }
+                    } catch (error) {
+                        logger.error(`Could not send the question after skip for session ${currentSession.id}:`, error);
+                    }
                 }, 1500);
             }
         } catch (error) {

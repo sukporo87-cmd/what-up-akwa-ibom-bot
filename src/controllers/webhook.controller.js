@@ -3246,8 +3246,15 @@ Type the code, or type SKIP to continue:`
         '🎮 LET\'S GO! 🎮\n\nStarting in 3... 2... 1...'
       );
 
+      // Guarded: this callback runs outside any request, so an error thrown
+      // here has nobody to catch it. On 11 Sep one failed WhatsApp send
+      // escaped from exactly this line and took the whole server down.
       setTimeout(async () => {
-        await gameService.sendQuestion(session, user);
+        try {
+          await gameService.sendQuestion(session, user);
+        } catch (error) {
+          logger.error(`Could not send the first question for session ${session.id}:`, error);
+        }
       }, 2000);
 
       return;
@@ -4085,7 +4092,11 @@ You can now claim your prize! 💰
       }
       
       setTimeout(async () => {
-        await loveQuestService.sendQuestion(session, booking, messagingService);
+        try {
+          await loveQuestService.sendQuestion(session, booking, messagingService);
+        } catch (error) {
+          logger.error(`Love Quest: could not send the first question for booking ${booking.id}:`, error);
+        }
       }, 3000);
       
     } catch (error) {

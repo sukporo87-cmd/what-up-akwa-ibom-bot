@@ -280,7 +280,11 @@ body.home{background:var(--navy-deep)}
 .hr-agg .n{font-family:var(--font-data);font-weight:800;font-size:26px;color:var(--gold-bright)}
 .hr-card{text-align:left}
 .hr-card .stars{font-size:14px;margin-bottom:8px}
-.hr-card .hr-body{font-size:14px;color:var(--d-text);margin-bottom:12px}
+.hr-card{display:flex;flex-direction:column}
+.hr-card .hr-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:6px}
+/* Full text: keep the player's own paragraph breaks, and let the name row sit
+   at the bottom of every card so a row of different-length reviews lines up. */
+.hr-card .hr-body{font-size:14px;color:var(--d-text);margin-bottom:12px;white-space:pre-line;overflow-wrap:anywhere;flex:1}
 .hr-card .hr-who{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--d-muted);flex-wrap:wrap}
 .hr-card .hr-who b{color:#fff}
 .hr-verified{font-size:10.5px;font-weight:700;color:#5ee79a;border:1px solid rgba(37,211,102,.4);border-radius:999px;padding:2px 8px}
@@ -1841,7 +1845,8 @@ document.body.setAttribute('data-ticker', 'on');
     for (var i = 1; i <= 5; i++) s += '<span class="' + (i <= n ? '' : 'off') + '">★</span>';
     return '<span class="stars">' + s + '</span>';
   }
-  apiGet('/api/public/reviews?limit=3&sort=top').then(function (res) {
+  // Nine reviews, in full. The cards used to cut every body at 150 characters.
+  apiGet('/api/public/reviews?limit=9&sort=top').then(function (res) {
     var reviews = (res && res.reviews) || [];
     if (!reviews.length) return; // teaser remains until real reviews exist
     var a = res.aggregate || {};
@@ -1852,7 +1857,8 @@ document.body.setAttribute('data-ticker', 'on');
       '<div class="grid grid-3">' +
       reviews.map(function (r) {
         return '<div class="card hr-card rv in">' + starRow(r.rating) +
-          '<p class="hr-body">\u201C' + esc(r.body.length > 150 ? r.body.slice(0, 147) + '\u2026' : r.body) + '\u201D</p>' +
+          (r.title ? '<p class="hr-title">' + esc(r.title) + '</p>' : '') +
+          '<p class="hr-body">\u201C' + esc(r.body) + '\u201D</p>' +
           '<div class="hr-who"><b>' + esc(r.display_name) + '</b>' + platformChip(r.platform) +
           (r.verified ? '<span class="hr-verified">\u2713 Verified</span>' : '') + '</div></div>';
       }).join('') +

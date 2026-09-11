@@ -29,6 +29,18 @@ const PRIZE_LADDER = {
   11: 20000, 12: 25000, 13: 30000, 14: 40000, 15: 50000
 };
 
+// The public line under a verified review: "Games played: Over 35".
+// Rounded DOWN to the nearest 5 and always strictly below the real count, so
+// "Over" is true and the exact figure is never published: 39 → Over 35,
+// 40 → Over 35, 41 → Over 40. Ten games or fewer gets no line.
+const GAMES_STEP = 5;
+const GAMES_MIN_LINE = 10;
+function gamesPlayedLine(gamesPlayed) {
+  const n = parseInt(gamesPlayed) || 0;
+  const over = Math.floor((n - 1) / GAMES_STEP) * GAMES_STEP;
+  return over >= GAMES_MIN_LINE ? `Games played: Over ${over.toLocaleString('en-NG')}` : null;
+}
+
 const RATE_LIMIT_PER_HOUR = 3;        // POST submissions per IP per hour
 const DUPLICATE_WINDOW_DAYS = 30;     // one review per email / IP per window
 
@@ -227,7 +239,9 @@ class ReviewsService {
   // --------------------------------------------
   // One human-readable line, ≤ 60 chars, from the player's best result.
   achievementFor(bestQuestion) {
-    const bestQ = parseInt(bestQuestion) || 0;
+    // Capped at 15: rows written before the completeGame fix hold 16 for a
+    // grand-prize winner.
+    const bestQ = Math.min(parseInt(bestQuestion) || 0, 15);
     const line = bestQ >= 1
       ? `Reached Q${bestQ} \u00b7 \u20A6${(PRIZE_LADDER[Math.min(bestQ, 15)] || 0).toLocaleString()} tier`
       : 'Verified player';
@@ -273,7 +287,8 @@ class ReviewsService {
                 r.verified, r.verified_achievement,
                 -- platform: prefer the verified account's platform, else as submitted
                 COALESCE(u.platform, r.platform) AS platform,
-                u.platform AS account_platform
+                u.platform AS account_platform,
+                COALESCE(u.total_games_played, 0) AS games_played
          FROM reviews r
          LEFT JOIN users u ON u.id = r.user_id
          WHERE r.status = 'approved'
@@ -293,9 +308,13 @@ class ReviewsService {
       body: r.body,
       created_at: new Date(r.created_at).toISOString(),
       verified: r.verified,
+      // The public line is games played, live from the account and rounded
+      // down. It used to be the best question reached ("Reached Q16 · ₦50,000
+      // tier"), snapshotted at submission. verified_achievement is still
+      // stored and still shown to moderators; it is just not published.
       verified_badge: r.verified ? {
         platform: r.account_platform || r.platform,
-        achievement: r.verified_achievement || 'Verified player'
+        achievement: gamesPlayedLine(r.games_played)
       } : null
     }));
 
@@ -458,3 +477,4 @@ class ReviewsService {
 }
 
 module.exports = ReviewsService;
+module.exports.gamesPlayedLine = gamesPlayedLine;

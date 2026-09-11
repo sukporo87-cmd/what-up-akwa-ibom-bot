@@ -380,6 +380,239 @@ router.post('/review-link', requireWebAuth, async (req, res) => {
 });
 
 // ============================================
+// RECENT GAMES  (look back over a finished game)
+// ============================================
+// WhatsApp and Telegram players scroll up to see every question, their
+// answer, the right answer and the fun fact. Web-play drew each of those once
+// and moved on. This rebuilds a finished game from the audit log.
+//
+// THE RULES
+//   * Your own finished Classic, tournament and practice games, from the last
+//     72 hours. Never a challenge round (challenge_id IS NULL), never a game
+//     still in progress, never a cancelled one.
+//   * The correct answer and fun fact are shown only for a question you
+//     actually answered — exactly what the game showed you at the time. A
+//     timeout, a skipped question or the question on screen when a game ended
+//     shows no answer, as it does on chat.
+//   * No response times.
+//   * Rate-limited: a player looking back does a handful of requests; a
+//     script walking the question bank does not get far.
+//
+// The audit log is kept for 7 days, so the 72-hour window always has its data.
+const REVIEW_WINDOW_HOURS = 72;
+const REVIEW_RATE_PER_MINUTE = 30;
+const REVIEW_TOTAL_QUESTIONS = 15;
+
+async function reviewRateLimited(userId) {
+    const key = `review_rate:${userId}`;
+    const n = await redis.incr(key);
+    if (n === 1) await redis.expire(key, 60);
+    return n > REVIEW_RATE_PER_MINUTE;
+}
+
+function reviewKind(row) {
+    if (row.game_type === 'practice') return 'practice';
+    if (row.is_tournament_game) return 'tournament';
+    return 'classic';
+}
+
+function reviewSummary(row) {
+    const kind = reviewKind(row);
+    const reached = Math.min(Number(row.current_question) || 1, REVIEW_TOTAL_QUESTIONS + 1);
+    return {
+        sessionId: row.id,
+        kind,
+        tournamentName: row.tournament_name || null,
+        endedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+        correctAnswers: Math.max(0, reached - 1),
+        totalQuestions: REVIEW_TOTAL_QUESTIONS,
+        // Practice pays nothing; its notional score is not money.
+        amountWon: kind === 'practice' ? 0 : (Number(row.final_score) || 0)
+    };
+}
+
+// Turn one session's audit events into the questions as the player met them.
+// Exported for tests. Pure: no database, no clock.
+function buildGameReview(events, questionRows = []) {
+    const byId = new Map(questionRows.map(q => [Number(q.id), q]));
+    const flagBase = process.env.FLAG_BASE_URL || null;
+    const items = [];
+    let outcome = null;
+
+    const openItemFor = (n) => {
+        for (let i = items.length - 1; i >= 0; i--) {
+            if (items[i].number === n && !items[i].resolved) return items[i];
+        }
+        return null;
+    };
+
+    for (const ev of events) {
+        const d = typeof ev.event_data === 'string' ? JSON.parse(ev.event_data) : (ev.event_data || {});
+        const n = Number(d.question_number);
+        switch (ev.event_type) {
+            case 'QUESTION_ASKED': {
+                const bank = byId.get(Number(d.question_id)) || {};
+                items.push({
+                    number: n,
+                    questionId: Number(d.question_id) || null,
+                    text: d.question_text || '',
+                    options: { A: d.option_a, B: d.option_b, C: d.option_c, D: d.option_d },
+                    imageUrl: (bank.image_type === 'flag' && bank.image_data && flagBase)
+                        ? `${flagBase}${bank.image_data}.png` : null,
+                    _correct: d.correct_answer || null,
+                    _funFact: bank.fun_fact || null,
+                    status: 'not_answered',
+                    chosen: null,
+                    removedOptions: [],
+                    resolved: false
+                });
+                break;
+            }
+            case 'LIFELINE_USED': {
+                const item = openItemFor(n);
+                if (!item) break;
+                if (d.lifeline_type === '50:50' && d.result && Array.isArray(d.result.removed_options)) {
+                    item.removedOptions = d.result.removed_options.slice(0, 3);
+                } else if (d.lifeline_type === 'Skip') {
+                    item.status = 'skipped';
+                    item.resolved = true;
+                }
+                break;
+            }
+            case 'ANSWER_GIVEN': {
+                const item = openItemFor(n);
+                if (!item) break;
+                item.chosen = d.user_answer || null;
+                item.status = d.is_correct ? 'correct' : 'wrong';
+                item.resolved = true;
+                break;
+            }
+            case 'TIMEOUT': {
+                const item = openItemFor(n);
+                if (!item) break;
+                item.status = 'timed_out';
+                item.resolved = true;
+                break;
+            }
+            case 'GAME_END':
+                outcome = d.outcome || null;
+                break;
+            default:
+                break;
+        }
+    }
+
+    const questions = items.map(item => {
+        const answered = item.status === 'correct' || item.status === 'wrong';
+        return {
+            number: item.number,
+            text: item.text,
+            options: item.options,
+            imageUrl: item.imageUrl,
+            status: item.status,
+            chosen: item.chosen,
+            removedOptions: item.removedOptions,
+            // Only what the game already showed them.
+            correctAnswer: answered ? item._correct : null,
+            funFact: answered ? item._funFact : null
+        };
+    });
+
+    return { outcome, questions };
+}
+
+router.get('/recent-games', requireWebAuth, async (req, res) => {
+    try {
+        const user = req.webUser;
+        if (await reviewRateLimited(user.id)) {
+            return res.status(429).json({ success: false, error: 'Too many requests. Try again in a minute.' });
+        }
+        const result = await pool.query(`
+            SELECT gs.id, gs.game_type, gs.is_tournament_game, gs.final_score,
+                   gs.current_question, gs.completed_at, t.tournament_name
+            FROM game_sessions gs
+            LEFT JOIN tournaments t ON t.id = gs.tournament_id
+            WHERE gs.user_id = $1
+              AND gs.challenge_id IS NULL
+              AND gs.status = 'completed'
+              AND gs.completed_at > NOW() - ($2::int * INTERVAL '1 hour')
+            ORDER BY gs.completed_at DESC
+            LIMIT 30
+        `, [user.id, REVIEW_WINDOW_HOURS]);
+
+        res.json({
+            success: true,
+            windowHours: REVIEW_WINDOW_HOURS,
+            games: result.rows.map(reviewSummary)
+        });
+    } catch (error) {
+        logger.error('Recent games error:', error);
+        res.status(500).json({ success: false, error: 'Could not load your recent games.' });
+    }
+});
+
+router.get('/recent-games/:sessionId(\\d+)', requireWebAuth, async (req, res) => {
+    try {
+        const user = req.webUser;
+        if (await reviewRateLimited(user.id)) {
+            return res.status(429).json({ success: false, error: 'Too many requests. Try again in a minute.' });
+        }
+        const sessionId = parseInt(req.params.sessionId, 10);
+
+        const found = await pool.query(`
+            SELECT gs.id, gs.game_type, gs.is_tournament_game, gs.final_score,
+                   gs.current_question, gs.completed_at, t.tournament_name
+            FROM game_sessions gs
+            LEFT JOIN tournaments t ON t.id = gs.tournament_id
+            WHERE gs.id = $1
+              AND gs.user_id = $2
+              AND gs.challenge_id IS NULL
+              AND gs.status = 'completed'
+              AND gs.completed_at > NOW() - ($3::int * INTERVAL '1 hour')
+        `, [sessionId, user.id, REVIEW_WINDOW_HOURS]);
+
+        if (!found.rows.length) {
+            return res.status(404).json({
+                success: false,
+                error: `This game can't be reviewed. Games stay here for ${REVIEW_WINDOW_HOURS} hours after they finish.`
+            });
+        }
+
+        const events = await pool.query(`
+            SELECT event_type, event_data
+            FROM game_audit_logs
+            WHERE session_id = $1 AND user_id = $2
+              AND event_type IN ('QUESTION_ASKED', 'ANSWER_GIVEN', 'TIMEOUT', 'LIFELINE_USED', 'GAME_END')
+            ORDER BY created_at ASC, id ASC
+        `, [sessionId, user.id]);
+
+        const ids = [...new Set(events.rows
+            .filter(e => e.event_type === 'QUESTION_ASKED')
+            .map(e => {
+                const d = typeof e.event_data === 'string' ? JSON.parse(e.event_data) : (e.event_data || {});
+                return parseInt(d.question_id, 10);
+            })
+            .filter(Number.isInteger))];
+
+        const bank = ids.length
+            ? await pool.query(
+                'SELECT id, fun_fact, image_type, image_data FROM questions WHERE id = ANY($1::int[])',
+                [ids])
+            : { rows: [] };
+
+        const review = buildGameReview(events.rows, bank.rows);
+        res.json({
+            success: true,
+            game: { ...reviewSummary(found.rows[0]), outcome: review.outcome },
+            questions: review.questions
+        });
+    } catch (error) {
+        logger.error('Game review error:', error);
+        res.status(500).json({ success: false, error: 'Could not load this game.' });
+    }
+});
+
+// ============================================
 // STATE  (for first load and reconnects)
 // ============================================
 
@@ -670,7 +903,8 @@ router.get('/stats', requireWebAuth, async (req, res) => {
               COUNT(*)                                                  AS played,
               COUNT(CASE WHEN final_score > 0 THEN 1 END)               AS won,
               COALESCE(MAX(final_score), 0)                             AS best,
-              COALESCE(MAX(current_question), 0)                        AS furthest
+              -- Capped at 15: after a correct Q15 the counter already reads 16.
+              COALESCE(MAX(LEAST(current_question, 15)), 0)             AS furthest
             FROM game_sessions
             WHERE user_id = $1 AND status = 'completed'
             GROUP BY 1
@@ -784,3 +1018,4 @@ router.post('/checkout/dismiss', requireWebAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildGameReview = buildGameReview;

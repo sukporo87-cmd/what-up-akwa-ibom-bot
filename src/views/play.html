@@ -238,6 +238,46 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
            background:linear-gradient(150deg,rgba(53,211,154,.16),var(--slate))!important}
 .claimTile strong{color:var(--mint)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+
+/* ---------- recent games + game review ----------
+   Reads like the game did: the same option rows, the same mint for right and
+   ember for wrong, the same fact rule. Its own class names, never .opt —
+   reveal() marks every .opt on the page, and a review must not be repainted
+   by a live question. */
+.recent{margin-top:18px}
+.recent h2{font-family:var(--display);font-size:18px;margin:0 0 2px}
+.recent .note{font-size:13px;color:var(--mute);margin:0 0 10px}
+.recentGame{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  background:var(--slate);border:1px solid var(--line);border-radius:13px;padding:12px 14px;margin-bottom:8px}
+.recentGame:hover{border-color:var(--mute)}
+.recentGame:focus-visible,.rvBack:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.recentGame .what{flex:1;min-width:0}
+.recentGame .what b{display:block;font-size:15px}
+.recentGame .what span{font-size:13px;color:var(--mute)}
+.recentGame .won{font-family:var(--display);font-weight:700;color:var(--brass);white-space:nowrap}
+.recentGame .won.none{color:var(--mute);font-weight:500;font-family:var(--body);font-size:13px}
+.rvHead{padding:18px 0 14px}
+.rvHead .fig{font-size:28px;display:block}
+.rvHead p{margin:4px 0 0;color:var(--mute);font-size:14px}
+.rvQ{border-top:1px solid var(--line);padding:18px 0 6px}
+.rvQ .num{font-size:13px;color:var(--mute);margin:0 0 4px}
+.rvQ .txt{font-size:17px;line-height:1.35;margin:0 0 12px}
+.rvQ .img{display:block;max-width:180px;border-radius:8px;margin:0 0 12px;border:1px solid var(--line)}
+.rvOpt{display:flex;align-items:center;gap:11px;border:1.5px solid var(--line);border-radius:11px;
+  padding:9px 12px;margin-bottom:7px;font-size:15px}
+.rvOpt .k{width:26px;height:26px;flex:none;border-radius:7px;background:var(--raise);color:var(--brass);
+  display:grid;place-items:center;font-size:13px;font-weight:700}
+.rvOpt .v{flex:1;min-width:0}
+.rvOpt .tag{font-size:12px;color:var(--mute);white-space:nowrap}
+.rvOpt.right{border-color:var(--mint);background:rgba(53,211,154,.13)}
+.rvOpt.right .k{background:var(--mint);color:#08150f}
+.rvOpt.wrong{border-color:var(--ember);background:rgba(255,107,91,.11)}
+.rvOpt.wrong .k{background:var(--ember);color:#2a0d09}
+.rvOpt.removed{opacity:.4}
+.rvState{font-size:14px;font-weight:600;margin:10px 0 0}
+.rvState.good{color:var(--mint)} .rvState.bad{color:var(--ember)} .rvState.flat{color:var(--mute)}
+.rvQ .fact{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
+  font-size:13.5px;color:var(--mute);line-height:1.55}
 .cell{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:15px 16px}
 .cell .n{display:block;font-family:var(--display);font-weight:700;font-size:22px;
          letter-spacing:-.02em;margin-bottom:3px}
@@ -515,6 +555,27 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <div class="grid2" id="statsGrid"></div>
     </div>
     <div class="msg" id="mStats" style="margin-top:10px"></div>
+
+    <div class="recent" id="recentBox">
+      <h2>Recent games</h2>
+      <p class="note">Go back over any game from the last 72 hours.</p>
+      <div id="recentList"></div>
+    </div>
+  </section>
+
+  <!-- ============ GAME REVIEW ============ -->
+  <section class="view" id="vReview">
+    <div class="bar">
+      <button class="back rvBack" id="rvBack">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+    <div class="rvHead">
+      <span class="fig" id="rvTitle">Game review</span>
+      <p id="rvSub"></p>
+    </div>
+    <div class="spin" id="rvSpin">Loading…</div>
+    <div id="rvList"></div>
+    <div class="msg" id="mReview" style="margin-top:10px"></div>
   </section>
 
   <!-- ============ ARENA LOBBY ============ -->
@@ -2852,7 +2913,11 @@ function endGame(g){
     else if(g.perfect){ sfx.fanfare(); celebrate(1.2); }
     else { sfx.bust(); }
 
-    overlay(g.isPractice?`${reached}/${total}`:naira(won), title, body, null, null, g.menu||[]);
+    // Look back over it: every question, your answer, the right answer and
+    // the fun fact — what chat players get by scrolling up.
+    const review = g.sessionId ? ()=>openGameReview(g.sessionId,'lobby') : null;
+    overlay(g.isPractice?`${reached}/${total}`:naira(won), title, body,
+            review?'Review this game':null, review, g.menu||[]);
   },800);
 }
 
@@ -3069,8 +3134,106 @@ async function openReview(){
   }
 }
 
+/* ---------- recent games + game review ---------- */
+function reviewKindLabel(g){
+  if(g.kind==='practice') return 'Practice';
+  if(g.kind==='tournament') return g.tournamentName||'Tournament';
+  return 'Classic';
+}
+function reviewAgo(iso){
+  if(!iso) return '';
+  const mins=Math.max(1,Math.round((Date.now()-new Date(iso).getTime())/60000));
+  if(mins<60) return mins+' min ago';
+  const h=Math.round(mins/60);
+  return h+(h===1?' hour ago':' hours ago');
+}
+async function loadRecentGames(){
+  const list=$('recentList'); list.innerHTML='';
+  const note=document.createElement('p'); note.className='note'; note.textContent='Loading…';
+  list.appendChild(note);
+  try{
+    const d=await(await fetch('/web/game/recent-games',{headers:H()})).json();
+    list.innerHTML='';
+    if(!d.success){ const p=document.createElement('p'); p.className='note'; p.textContent=d.error||'Could not load your recent games.'; list.appendChild(p); return; }
+    if(!d.games.length){
+      const p=document.createElement('p'); p.className='note';
+      p.textContent='No games in the last 72 hours. Finish a game and you can go back over it here.';
+      list.appendChild(p); return;
+    }
+    d.games.forEach(g=>{
+      const b=document.createElement('button'); b.className='recentGame';
+      b.innerHTML='<span class="what"><b></b><span></span></span><span class="won"></span>';
+      b.querySelector('b').textContent=reviewKindLabel(g);
+      b.querySelector('.what span').textContent=`${g.correctAnswers} of ${g.totalQuestions} correct, ${reviewAgo(g.endedAt)}`;
+      const w=b.querySelector('.won');
+      if(g.kind!=='practice' && g.amountWon>0){ w.textContent=naira(g.amountWon); }
+      else { w.textContent='Review'; w.classList.add('none'); }
+      b.onclick=()=>{ sfx.tap(); openGameReview(g.sessionId,'stats'); };
+      list.appendChild(b);
+    });
+  }catch(e){
+    list.innerHTML='';
+    const p=document.createElement('p'); p.className='note'; p.textContent='Could not load your recent games. Check your connection.';
+    list.appendChild(p);
+  }
+}
+
+async function openGameReview(sessionId, from){
+  view('vReview');
+  $('rvBack').onclick=()=>{ if(from==='stats') openStats(); else { view('vLobby'); refresh(); } };
+  $('rvTitle').textContent='Game review'; $('rvSub').textContent='';
+  $('rvList').innerHTML=''; $('mReview').textContent=''; $('rvSpin').style.display='block';
+  try{ window.scrollTo(0,0); }catch(e){}
+  try{
+    const d=await(await fetch('/web/game/recent-games/'+encodeURIComponent(sessionId),{headers:H()})).json();
+    $('rvSpin').style.display='none';
+    if(!d.success){ $('mReview').textContent=d.error||'Could not load this game.'; return; }
+    const g=d.game;
+    $('rvTitle').textContent=reviewKindLabel(g);
+    $('rvSub').textContent=`${g.correctAnswers} of ${g.totalQuestions} correct`
+      +(g.kind!=='practice'&&g.amountWon>0?`, ${naira(g.amountWon)} banked`:'')
+      +(g.endedAt?`. Finished ${reviewAgo(g.endedAt)}.`:'.');
+    if(!d.questions.length){ $('mReview').textContent='There are no questions to show for this game.'; return; }
+    d.questions.forEach(q=>$('rvList').appendChild(renderReviewQuestion(q)));
+  }catch(e){
+    $('rvSpin').style.display='none';
+    $('mReview').textContent='Could not load this game. Check your connection and try again.';
+  }
+}
+
+function renderReviewQuestion(q){
+  const box=document.createElement('article'); box.className='rvQ';
+  const num=document.createElement('p'); num.className='num'; num.textContent='Question '+q.number; box.appendChild(num);
+  const txt=document.createElement('p'); txt.className='txt'; txt.textContent=q.text; box.appendChild(txt);
+  if(q.imageUrl){
+    const img=new Image(); img.className='img'; img.alt='Flag shown with this question'; img.src=q.imageUrl;
+    img.onerror=()=>img.remove(); box.appendChild(img);
+  }
+  ['A','B','C','D'].forEach(k=>{
+    if(q.options[k]===undefined||q.options[k]===null) return;
+    const row=document.createElement('div'); row.className='rvOpt';
+    row.innerHTML='<span class="k"></span><span class="v"></span><span class="tag"></span>';
+    row.querySelector('.k').textContent=k;
+    row.querySelector('.v').textContent=q.options[k];
+    const tag=row.querySelector('.tag');
+    if(q.correctAnswer && k===q.correctAnswer){ row.classList.add('right'); tag.textContent=k===q.chosen?'Your answer':'Right answer'; }
+    else if(q.chosen && k===q.chosen){ row.classList.add('wrong'); tag.textContent='Your answer'; }
+    else if((q.removedOptions||[]).includes(k)){ row.classList.add('removed'); tag.textContent='Removed by 50:50'; }
+    box.appendChild(row);
+  });
+  const st=document.createElement('p'); st.className='rvState';
+  const words={
+    correct:['Correct','good'], wrong:['Wrong','bad'], timed_out:['Time ran out','flat'],
+    skipped:['Skipped','flat'], not_answered:['Not answered. The game ended here.','flat']
+  }[q.status]||['Not answered','flat'];
+  st.textContent=words[0]; st.classList.add(words[1]); box.appendChild(st);
+  if(q.funFact){ const f=document.createElement('div'); f.className='fact'; f.textContent=q.funFact; box.appendChild(f); }
+  return box;
+}
+
 async function openStats(){
   view('vStats');
+  loadRecentGames();
   $('mStats').textContent='';
   $('statsSpin').style.display='block';
   $('statsBody').style.display='none';
