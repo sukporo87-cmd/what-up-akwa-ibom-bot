@@ -568,6 +568,32 @@ router.get('/site-content', async (req, res) => {
 });
 
 // ============================================
+// LOBBY BOARD — what the live challenge lobby is showing
+// ============================================
+// Read by play.html while players wait for a live challenge to start. Public
+// and unauthenticated on purpose: it is marketing, the same for everybody,
+// and it must never be the reason a lobby fails to draw.
+//
+// It lives here rather than under /challenge so the board can be changed
+// without touching any challenge route.
+const LobbyContentService = require('../services/lobby-content.service');
+const lobbyContentService = new LobbyContentService();
+
+// GET /api/public/lobby-content
+router.get('/lobby-content', async (req, res) => {
+    try {
+        const payload = await lobbyContentService.getLive();
+        res.header('Cache-Control', 'public, max-age=60');
+        res.json({ success: true, ...payload });
+    } catch (error) {
+        logger.error(`Error fetching lobby content: ${error.message}`);
+        // An empty board, never an error: the lobby still has its countdown
+        // and its players, and a broken board must not look like a broken game.
+        res.json({ success: true, slides: [], version: 'error' });
+    }
+});
+
+// ============================================
 // LIVE ACTIVITY — public surface (API-SPEC.md §3)
 // Social proof for the website ticker. actor = the player's public
 // USERNAME (the same handle shown on every leaderboard) — never a

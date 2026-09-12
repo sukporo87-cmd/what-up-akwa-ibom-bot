@@ -227,6 +227,73 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
          background:rgba(53,211,154,.16);color:var(--mint);font-size:11px;font-weight:600;
          letter-spacing:.04em;text-transform:uppercase}
 
+/* ---------- lobby stage: Tiva and the board ----------
+   The lobby is the screen people look at for five minutes before a live
+   challenge, and it was a number and two names on an empty field. Tiva stands
+   at the left holding a whiteboard; the board carries whatever marketing is
+   running. Her entrance is one moment, not a set of effects: she arrives, the
+   board swings up beside her, and then nothing moves except the content.
+
+   Sized by HEIGHT, not width. Her render is 259x810, so giving her a height
+   and letting the width follow keeps her proportions exact on every screen,
+   and the board simply takes the rest of the row. Sizing by width instead
+   made the board short and wide on a phone — the opposite of a whiteboard. */
+.stage{display:flex;align-items:flex-end;gap:10px;margin:16px 0 6px;
+       height:clamp(290px,50vh,430px)}
+/* [hidden] comes from the browser's own stylesheet, and any author rule beats
+   it. Without this the stage would show even while empty. */
+.stage[hidden]{display:none}
+.stage .tiva{height:100%;width:auto;flex:none;display:block;
+  filter:drop-shadow(0 14px 18px rgba(0,0,0,.5));
+  -webkit-user-select:none;user-select:none;-webkit-user-drag:none;pointer-events:none}
+/* A gold frame standing on two short legs, on the same floor she is on.
+   overflow lives on the screen, not the frame, so the legs are not clipped
+   away by their own parent. */
+.stage .board{flex:1;min-width:0;height:94%;position:relative;
+  border:3px solid var(--brass);border-radius:18px;background:var(--slate);
+  box-shadow:0 10px 26px rgba(0,0,0,.45)}
+.stage .board .screen{position:absolute;inset:0;border-radius:15px;overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:18px 15px;gap:9px}
+/* Text is drawn on white: the board should read as a real whiteboard, and
+   dark on white is what stays legible in a bright room. */
+.stage .board .screen.text{background:#fff;color:#1a1424}
+.stage .board .screen.media{background:#000;padding:0}
+.stage .board .screen h3{font-family:var(--display);font-size:clamp(15px,4.2vw,19px);
+  line-height:1.2;margin:0;letter-spacing:-.01em}
+.stage .board .screen p{margin:0;font-size:clamp(12.5px,3.3vw,14px);line-height:1.45;color:#4a4056}
+.stage .board .screen .cta{margin-top:2px;padding:6px 13px;border-radius:999px;
+  background:#2e2540;color:var(--brass);font-size:12px;font-weight:700}
+.stage .board .screen img,.stage .board .screen video{width:100%;height:100%;object-fit:cover;display:block}
+.stage .board .legs{position:absolute;left:0;right:0;bottom:-9px;display:flex;
+  justify-content:space-between;padding:0 18px;pointer-events:none}
+.stage .board .legs i{width:16px;height:9px;border-radius:0 0 4px 4px;background:var(--brass);opacity:.85}
+/* Which slide is up. Dots only while there are few enough to read at a
+   glance; past that the row is noise and stays empty. */
+.ticks{display:flex;gap:5px;justify-content:center;margin-top:16px;min-height:5px}
+.ticks[hidden]{display:none}
+.ticks i{width:5px;height:5px;border-radius:50%;background:var(--line);transition:background .25s}
+.ticks i.on{background:var(--brass)}
+
+/* THE ENTRANCE. One constant drives it: --walk-ms. Today she slides in and
+   settles, because a single still render cannot walk and pretending for six
+   seconds is worse than arriving in one. When a real walk cycle exists this
+   becomes its length and these keyframes become its frames — nothing else
+   in the lobby changes. */
+.stage.walking .tiva{animation:tivaIn var(--walk-ms,1500ms) cubic-bezier(.22,.61,.36,1) both}
+.stage.walking .board{animation:boardUp 460ms cubic-bezier(.34,1.36,.64,1) both;
+  animation-delay:calc(var(--walk-ms,1500ms) - 120ms)}
+@keyframes tivaIn{from{transform:translateX(-160%)}60%{transform:translateX(4%)}to{transform:translateX(0)}}
+@keyframes boardUp{from{opacity:0;transform:translateY(16px) scaleY(.82)}to{opacity:1;transform:none}}
+.stage .board{transform-origin:bottom}
+/* Straight to the board: someone who asked for less motion, or who joined with
+   seconds to spare, should not sit through a performance. */
+.stage.settled .tiva,.stage.settled .board{animation:none}
+/* No prefers-reduced-motion rule here: the page already kills every animation
+   globally under that setting. The JS check below matters anyway, because the
+   board must appear at once rather than sit invisible waiting for an
+   animation that will never run. */
+
 /* ---------- claim tile + stats ---------- */
 .who{background:var(--slate);border:1px solid var(--line);border-radius:14px;
      padding:16px 17px;margin-bottom:10px}
@@ -595,6 +662,18 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="msg" id="alWho">Waiting for players…</div>
     <div class="msg" id="alNote" style="margin-top:8px"></div>
+
+    <!-- Tiva and the board. Hidden until there is something to show: an empty
+         gold frame is worse than the plain countdown this replaced. -->
+    <div class="stage" id="alStage" hidden>
+      <img class="tiva" id="alTiva" alt="" aria-hidden="true"
+           src="/media/tiva.webp" onerror="this.src='/media/tiva.png';this.onerror=null">
+      <div class="board" id="alBoard">
+        <div class="screen" id="alScreen" aria-live="polite"></div>
+        <div class="legs"><i></i><i></i></div>
+      </div>
+    </div>
+    <div class="ticks" id="alTicks" hidden></div>
 
     <div class="cardActs">
       <button class="ghost" id="alExtend" onclick="arenaExtend()" style="display:none">+5 minutes</button>
@@ -1269,6 +1348,7 @@ async function joinArena(code){
     $('alExtend').style.display='none';
     view('vArenaLobby');
     arenaCountdown(d.startsAt,$('alSecs'),null,null,null);
+    boardStart(d.startsAt);
   }catch(e){ $('chalNote').textContent='Could not join that lobby.'; }
 }
 
@@ -1277,6 +1357,125 @@ function arenaLobby(d){
   const names=(d.present||[]).map(p=>'@'+p.username);
   $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
   $('alWho').textContent=names.join(' · ')||'Waiting for players…';
+}
+
+/* ---------- the lobby board ----------
+   Tiva arrives, the board goes up beside her, and slides rotate until the
+   match starts. Everything here is decoration over the countdown: if the
+   content request fails, the slides are empty or an image 404s, the lobby is
+   exactly the lobby it was before, countdown and names intact. Nothing in
+   this block talks to a challenge endpoint or touches arena state. */
+
+/* How long the entrance runs. A still render cannot walk, so today this is a
+   short arrival. Swap in a real walk cycle and raise this to its length —
+   it is the only number that changes. */
+const LOBBY_WALK_MS = 1500;
+/* Under this much wait, skip the entrance. Sitting through an arrival when
+   the match is about to start costs a player the thing they came for. */
+const LOBBY_WALK_MIN_WAIT_MS = 30 * 1000;
+/* Slides are refetched this often, so a slide published mid-lobby appears
+   without anyone reloading. The server caches for 60s behind this. */
+const LOBBY_CONTENT_REFRESH_MS = 90 * 1000;
+
+let board={slides:[],version:null,i:0,slideT:null,refreshT:null,shown:false};
+
+function boardStop(){
+  clearTimeout(board.slideT); board.slideT=null;
+  clearInterval(board.refreshT); board.refreshT=null;
+  const v=$('alScreen').querySelector('video');
+  if(v){ try{ v.pause(); }catch(e){} }
+}
+
+function boardReset(){
+  boardStop();
+  board={slides:[],version:null,i:0,slideT:null,refreshT:null,shown:false};
+  $('alStage').hidden=true;
+  $('alStage').className='stage';
+  $('alScreen').className='screen';
+  $('alScreen').innerHTML='';
+  $('alTicks').innerHTML='';
+  $('alTicks').hidden=true;
+}
+
+/* Called once when the lobby opens. startsAt decides whether she walks. */
+function boardStart(startsAt){
+  boardReset();
+  const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const wait=Math.max(0,(startsAt||0)-Date.now());
+  const walk=!reduce && wait>LOBBY_WALK_MIN_WAIT_MS;
+
+  $('alStage').style.setProperty('--walk-ms',LOBBY_WALK_MS+'ms');
+  boardLoad(walk);
+  board.refreshT=setInterval(()=>boardLoad(false),LOBBY_CONTENT_REFRESH_MS);
+}
+
+async function boardLoad(walk){
+  try{
+    const d=await(await fetch('/api/public/lobby-content')).json();
+    const slides=(d&&d.slides)||[];
+    if(!slides.length){
+      /* Nothing to show, so show nothing. The stage stays hidden and the
+         lobby looks exactly as it did before the board existed. */
+      if(!board.shown) $('alStage').hidden=true;
+      return;
+    }
+    if(board.shown && d.version===board.version) return;   /* unchanged */
+    board.slides=slides; board.version=d.version;
+
+    $('alTicks').innerHTML='';
+    const dots = slides.length>1 && slides.length<=6;
+    if(dots) slides.forEach(()=>$('alTicks').appendChild(document.createElement('i')));
+    $('alTicks').hidden=!dots;
+
+    const first=!board.shown;
+    board.shown=true; board.i=0;
+    $('alStage').hidden=false;
+    if(first) $('alStage').className='stage '+(walk?'walking':'settled');
+    boardShow(0);
+  }catch(e){ /* the lobby does not depend on this */ }
+}
+
+function boardShow(index){
+  clearTimeout(board.slideT);
+  if(!board.slides.length) return;
+  board.i=((index%board.slides.length)+board.slides.length)%board.slides.length;
+  const s=board.slides[board.i];
+  const screen=$('alScreen');
+
+  const old=screen.querySelector('video');
+  if(old){ try{ old.pause(); old.removeAttribute('src'); old.load(); }catch(e){} }
+  screen.innerHTML='';
+  screen.className='screen '+((s.kind==='image'||s.kind==='video')?'media':'text');
+
+  let seconds=s.seconds||9;
+
+  if(s.kind==='image'){
+    const img=new Image(); img.alt=s.title||''; img.src=s.mediaUrl;
+    img.onerror=()=>boardShow(board.i+1);      /* a dead link must not stall the board */
+    screen.appendChild(img);
+  } else if(s.kind==='video'){
+    const v=document.createElement('video');
+    v.muted=true; v.defaultMuted=true; v.autoplay=true; v.loop=true;
+    v.playsInline=true; v.setAttribute('playsinline','');   /* iOS: play in place, never fullscreen */
+    v.preload='auto'; v.src=s.mediaUrl;
+    v.onerror=()=>boardShow(board.i+1);
+    screen.appendChild(v);
+    v.play&&v.play().catch(()=>{});            /* refused autoplay still shows the first frame */
+  } else {
+    if(s.title){ const h=document.createElement('h3'); h.textContent=s.title; screen.appendChild(h); }
+    if(s.body){ const p=document.createElement('p'); p.textContent=s.body; screen.appendChild(p); }
+    if(s.cta){ const c=document.createElement('span'); c.className='cta'; c.textContent=s.cta; screen.appendChild(c); }
+  }
+
+  /* A slide with a link is tappable. Opened in a new tab so nobody leaves a
+     lobby they are about to be pulled into. */
+  screen.onclick = s.url ? ()=>{ const w=window.open(s.url,'_blank'); if(w){ try{ w.opener=null; }catch(e){} } } : null;
+  screen.style.cursor = s.url ? 'pointer' : '';
+
+  const ticks=$('alTicks').children;
+  for(let i=0;i<ticks.length;i++) ticks[i].classList.toggle('on',i===board.i);
+
+  if(board.slides.length>1) board.slideT=setTimeout(()=>boardShow(board.i+1),seconds*1000);
 }
 
 function arenaExtended(d){
@@ -1305,6 +1504,7 @@ async function leaveArena(){
   stopArenaHeartbeat();
   stopArenaWatchdog();
   arenaStopClock();
+  boardStop();
   try{ await fetch('/challenge/'+arena.code+'/lobby/leave',{method:'POST',headers:H()}); }catch(e){}
   view('vLobby'); refresh();
 }
@@ -1377,6 +1577,9 @@ async function rejoinArena(){
 
 function arenaStarted(d){
   track('challenge_round_started',{platform:'web',mode:'live',players:d.players});
+  /* The match is what they came for: stop the board before the first question,
+     so no timer and no video are running behind a live round. */
+  boardStop();
   arena.inMatch=true;
   stopArenaHeartbeat();     // no polling once questions are flowing
   startArenaWatchdog();
@@ -1387,6 +1590,7 @@ function arenaStarted(d){
 
 function arenaQuestion(d){
   arenaSawEvent();
+  boardStop();   /* also covers a reconnect that lands straight in a question */
   /* A RESUMED question is the one already on screen. Re-rendering is fine \u2014
      it is how a reconnecting player gets it \u2014 but it must not sound like a new
      question or hand back an answer they have already locked in. */

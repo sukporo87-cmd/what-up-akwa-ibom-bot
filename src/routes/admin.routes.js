@@ -120,6 +120,11 @@ router.get('/toggles', (req, res) => {
   res.sendFile('admin-toggles.html', { root: './src/views' });
 });
 
+// The board in the live challenge lobby
+router.get('/lobby', (req, res) => {
+  res.sendFile('admin-lobby.html', { root: './src/views' });
+});
+
 router.get('/challenges', (req, res) => {
   res.sendFile('admin-challenges.html', { root: './src/views' });
 });
@@ -9400,6 +9405,100 @@ router.delete('/api/game-settings/answer-time/:mode/:platform', authenticateAdmi
   }
 });
 
+
+// ============================================
+// LOBBY BOARD — slides shown while players wait for a live challenge
+// ============================================
+// Content only. Nothing here touches a challenge, a lobby timer or a match;
+// it edits rows that play.html reads through /api/public/lobby-content.
+const LobbyContentService = require('../services/lobby-content.service');
+const lobbyContentService = new LobbyContentService();
+
+router.get('/api/lobby-content', authenticateAdmin, async (req, res) => {
+  try {
+    const slides = await lobbyContentService.adminList();
+    res.json({ success: true, slides, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error(`Error loading lobby content: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to load lobby slides' });
+  }
+});
+
+router.post('/api/lobby-content', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await lobbyContentService.create(req.body || {}, req.adminSession.username);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      'lobby_slide_created',
+      { id: result.id, kind: String((req.body || {}).kind || 'text') },
+      getIpAddress(req),
+      req.headers['user-agent']
+    );
+    res.json({ success: true, id: result.id });
+  } catch (error) {
+    logger.error(`Error creating lobby slide: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to create slide' });
+  }
+});
+
+router.put('/api/lobby-content/:id(\\d+)', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await lobbyContentService.update(id, req.body || {}, req.adminSession.username);
+    if (!result.ok) {
+      return res.status(result.error === 'Slide not found' ? 404 : 400)
+                .json({ success: false, error: result.error });
+    }
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id, 'lobby_slide_updated', { id },
+      getIpAddress(req), req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error updating lobby slide: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update slide' });
+  }
+});
+
+router.post('/api/lobby-content/:id(\\d+)/visibility', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const active = req.body && req.body.active === true;
+    const result = await lobbyContentService.setActive(id, active, req.adminSession.username);
+    if (!result.ok) return res.status(404).json({ success: false, error: result.error });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id,
+      active ? 'lobby_slide_shown' : 'lobby_slide_hidden',
+      { id },
+      getIpAddress(req), req.headers['user-agent']
+    );
+    res.json({ success: true, active: result.active });
+  } catch (error) {
+    logger.error(`Error changing lobby slide visibility: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update slide' });
+  }
+});
+
+router.delete('/api/lobby-content/:id(\\d+)', authenticateAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const removed = await lobbyContentService.remove(id, req.adminSession.username);
+    if (!removed) return res.status(404).json({ success: false, error: 'Slide not found' });
+
+    await adminAuthService.logActivity(
+      req.adminSession.admin_id, 'lobby_slide_deleted', { id },
+      getIpAddress(req), req.headers['user-agent']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error deleting lobby slide: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to delete slide' });
+  }
+});
 
 // ============================================
 // ANNOUNCEMENTS — the rolling news bar on the marketing site
