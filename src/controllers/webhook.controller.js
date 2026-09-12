@@ -2350,31 +2350,14 @@ Type the code, or type SKIP to continue:`
 
     // ============================================
     // REGULAR MAIN MENU HANDLING
-    // Payment ENABLED:
-    //   1️⃣ Play Now | 2️⃣ How to Play | 3️⃣ Leaderboard | 4️⃣ Buy Games | 5️⃣ Stats
-    // Payment DISABLED:
-    //   1️⃣ Play Now | 2️⃣ How to Play | 3️⃣ Leaderboard | 4️⃣ Stats
+    // Both the numbers and the words come from mainMenuItems(), so what the
+    // player was offered and what this accepts are the same list.
     // ============================================
-    if (input === '1' || input.includes('PLAY')) {
-      await this.showGameModeMenu(user);
-    } else if (input === '2' || input.includes('HOW')) {
-      await this.sendHowToPlay(user.phone_number);
-    } else if (input === '3' || input.includes('LEADERBOARD')) {
-      await this.sendLeaderboardMenu(user.phone_number);
-    } else if (input === '4') {
-      // Option 4 depends on payment mode
-      if (isPaymentEnabled) {
-        await this.handleBuyGames(user);
-      } else {
-        await this.handleStatsRequest(user);
-      }
-    } else if (input === '5') {
-      // Option 5 is Stats (only when payment is enabled)
-      if (isPaymentEnabled) {
-        await this.handleStatsRequest(user);
-      } else {
-        await this.sendMainMenu(user.phone_number);
-      }
+    const menu = this.mainMenuItems(isPaymentEnabled);
+    const chosen = menu.find(item => input === item.number) ||
+                   menu.find(item => item.match && item.match(input));
+    if (chosen) {
+      await this.runMainMenuItem(chosen.key, user);
     } else if (input === 'RESET' || input === 'RESTART') {
       await this.handleReset(user);
     } else if (input === 'STREAK' || input === 'STREAKS') {
@@ -3424,6 +3407,68 @@ Type the code, or type SKIP to continue:`
   // MENU SENDERS
   // ============================================
 
+  // ============================================
+  // THE MAIN MENU, IN ONE PLACE
+  // ============================================
+  // EVERY NUMBER HERE IS FIXED AND PERMANENT. It is written on the item, not
+  // taken from its position in the list, so an option can be added, hidden or
+  // reordered without any other number moving underneath a player who has
+  // learned it. 6 is Challenge a Friend and 7 is Leave a Review, always.
+  //
+  // A hidden item leaves its number UNUSED rather than letting the next one
+  // slide up into it. A gap in the list is a small cost; a number that means
+  // two different things on two different days is how a player ends up buying
+  // credits when they meant to see their stats.
+  //
+  // These numbers belong to the main menu alone. Other numbered prompts — the
+  // bank list, game modes, tournaments — are parked states handled long before
+  // this code runs, so they cannot collide with these.
+  //
+  // The menu text and the number handler are both built from this list, so the
+  // menu can never offer an option the handler does not know.
+  MAIN_MENU() {
+    return [
+      { n: '1', key: 'play',        label: 'Play Now',            match: i => i.includes('PLAY') },
+      { n: '2', key: 'how',         label: 'How to Play',         match: i => i.includes('HOW') },
+      { n: '3', key: 'leaderboard', label: 'View Leaderboard',    match: i => i.includes('LEADERBOARD') },
+      // Shown only while payments are on. With them off, 4 is simply not
+      // offered and 5 still means My Stats.
+      { n: '4', key: 'buy',         label: 'Buy Games',           match: i => i === 'BUY', paidOnly: true },
+      { n: '5', key: 'stats',       label: 'My Stats',            match: i => i === 'STATS' || i === 'MY STATS' },
+      { n: '6', key: 'challenge',   label: 'Challenge a Friend',  match: () => false },
+      { n: '7', key: 'review',      label: 'Leave a Review',      match: () => false }
+    ];
+  }
+
+  mainMenuItems(isPaymentEnabled) {
+    const KEYCAPS = { '1':'1️⃣','2':'2️⃣','3':'3️⃣','4':'4️⃣','5':'5️⃣','6':'6️⃣','7':'7️⃣','8':'8️⃣','9':'9️⃣','10':'🔟' };
+    return this.MAIN_MENU()
+      .filter(item => isPaymentEnabled || !item.paidOnly)
+      .map(item => ({ ...item, number: item.n, emoji: KEYCAPS[item.n] || item.n }));
+  }
+
+  // Run a main-menu choice. Returns false if nothing matched, so the caller
+  // can fall back to showing the menu again.
+  async runMainMenuItem(key, user) {
+    switch (key) {
+      case 'play':        await this.showGameModeMenu(user); return true;
+      case 'how':         await this.sendHowToPlay(user.phone_number); return true;
+      case 'leaderboard': await this.sendLeaderboardMenu(user.phone_number); return true;
+      case 'buy':         await this.handleBuyGames(user); return true;
+      case 'stats':       await this.handleStatsRequest(user); return true;
+      case 'review':      await this.handleReviewRequest(user); return true;
+      case 'challenge':
+        // The challenge flow owns its own state machine. If it refuses to
+        // start, say so rather than dropping the player back at the menu with
+        // no explanation.
+        if (await challengeChatService.start(user.phone_number, platformOf(user))) return true;
+        await messagingService.sendMessage(user.phone_number,
+          `⚔️ Couldn't start a challenge just now. Please try again in a moment.`);
+        return true;
+      default: return false;
+    }
+  }
+
   async sendMainMenu(phone) {
     // Clear post-game state when showing main menu
     const user = await userService.getUserByPhone(phone);
@@ -3463,15 +3508,8 @@ Type the code, or type SKIP to continue:`
     }
 
     message += 'What would you like to do?\n\n';
-    message += '1️⃣ Play Now\n';
-    message += '2️⃣ How to Play\n';
-    message += '3️⃣ View Leaderboard\n';
-
-    if (isPaymentEnabled) {
-      message += '4️⃣ Buy Games\n';
-      message += '5️⃣ My Stats\n';
-    } else {
-      message += '4️⃣ My Stats\n';
+    for (const item of this.mainMenuItems(isPaymentEnabled)) {
+      message += `${item.emoji} ${item.label}\n`;
     }
 
     message += '\nType STREAK to see streak leaderboard 🔥\n';
@@ -3627,6 +3665,7 @@ Type the code, or type SKIP to continue:`
     message += `🔧 *OTHER*\n`;
     message += `• *SHARE* — Generate your victory card\n`;
     message += `• *REFERRAL* — Get your referral code\n`;
+    message += `• *CHALLENGE* — Challenge a friend to a game\n`;
     message += `• *REVIEW* — Leave a verified review\n`;
     message += `• *RESET* — Reset your game session\n`;
     message += `• *MENU* — Return to main menu\n`;

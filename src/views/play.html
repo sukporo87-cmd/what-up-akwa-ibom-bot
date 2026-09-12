@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#16121f">
 <title>What's Up Trivia — Play</title>
+<!-- INSTALLABLE. Worth it on its own for a home-screen icon and a standalone
+     window with no browser chrome eating the screen. It is also the only route
+     to push on iPhone: a normal Safari tab cannot receive web push at all,
+     only an installed PWA can. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/media/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WUT Trivia">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -226,6 +237,19 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .trn .in{display:inline-block;margin-top:7px;padding:3px 9px;border-radius:7px;
          background:rgba(53,211,154,.16);color:var(--mint);font-size:11px;font-weight:600;
          letter-spacing:.04em;text-transform:uppercase}
+
+/* ---------- add to home screen ----------
+   A card, not a banner across the top: the lobby's first screenful is the
+   credit count and the play buttons, and nothing should push those down. */
+.install{border:1px solid var(--line);background:var(--slate);border-radius:14px;
+  padding:14px 16px;margin:0 0 12px}
+.install[hidden]{display:none}
+.install .txt{display:block;margin-bottom:10px}
+.install .txt b{display:block;font-size:15px;margin-bottom:2px}
+.install .txt span{font-size:13px;color:var(--mute);line-height:1.45}
+.install .acts{display:flex;gap:8px}
+.install .acts .ghost{flex:1;padding:9px 12px;font-size:14px}
+.install .acts .quiet{flex:0 0 auto;color:var(--mute);border-color:transparent}
 
 /* ---------- waiting for a lobby to open ----------
    One number, big enough to be the answer to "is this thing working?" from
@@ -520,6 +544,19 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <div class="hero">
       <span class="fig" id="lobbyCredits">0</span>
       <p><span id="lobbyName">player</span> — game credits available</p>
+    </div>
+
+    <!-- Shown only when the app is not already installed and the browser can
+         actually do it. Hidden by default so it never flashes on screen. -->
+    <div class="install" id="installCard" hidden>
+      <div class="txt">
+        <b id="installTitle">Add to your home screen</b>
+        <span id="installBody">Opens full screen, starts faster, and no more hunting for the link.</span>
+      </div>
+      <div class="acts">
+        <button class="ghost" id="installGo">Install</button>
+        <button class="ghost quiet" id="installNo">Not now</button>
+      </div>
     </div>
 
     <button class="tile primary" onclick="startMode('2')">
@@ -2795,6 +2832,10 @@ async function refresh(){
     $('lobbyCredits').textContent=d.user.gamesRemaining??0;
     $('stStreak').textContent=d.user.currentStreak??0;
     $('stBest').textContent=d.user.longestStreak??0;
+    /* Offered on the lobby, after a signed-in player has something to look at
+       — not on the login screen, where it would be the first thing a stranger
+       sees. showInstallCard() decides whether there is anything to offer. */
+    showInstallCard();
 
     // A checkout that never reached the player — the event can be lost to a
     // reconnect, and the text carrying the link is suppressed on web.
@@ -4790,9 +4831,110 @@ const integrity=(()=>{
   return {onQuestion};
 })();
 
+/* ---------- add to home screen ----------
+   Two different jobs behind one card, because the two platforms work
+   differently and neither can be faked:
+
+     ANDROID / desktop Chrome  the browser hands us an install prompt object
+       when it decides the app qualifies. Tapping Install shows the real
+       system dialog. If the browser never offers it, we never show the card.
+
+     iOS SAFARI  there is no API at all. Installing is Share -> Add to Home
+       Screen, done by hand, so the card explains that instead of pretending
+       there is a button. This is not a detail we can skip: an iPhone cannot
+       receive web push until the app is on the home screen, so on iOS this
+       card is the entire route to being reachable.
+
+   Nothing shows once the app is already installed, and a dismissal is
+   remembered so it is asked once, not every visit. */
+let installPrompt=null;
+
+function isStandalone(){
+  return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+}
+
+function isIosSafari(){
+  const ua=navigator.userAgent;
+  const ios=/iPad|iPhone|iPod/.test(ua)
+    /* iPadOS 13+ reports itself as a Mac; a touch-capable "Mac" is an iPad. */
+    || (navigator.platform==='MacIntel' && (navigator.maxTouchPoints||0)>1);
+  /* Chrome and Firefox on iOS cannot install to the home screen at all. */
+  const safari=!/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  return ios && safari;
+}
+
+function installDismissed(){
+  try{ return localStorage.getItem('wut_install_dismissed')==='1'; }catch(e){ return false; }
+}
+
+function dismissInstall(){
+  try{ localStorage.setItem('wut_install_dismissed','1'); }catch(e){}
+  $('installCard').hidden=true;
+}
+
+function showInstallCard(){
+  if(isStandalone() || installDismissed()) return;
+  /* Only on the lobby: an install card over a live question or a countdown is
+     an interruption, not an offer. */
+  if(!$('vLobby').classList.contains('on')) return;
+
+  if(installPrompt){
+    $('installTitle').textContent='Add to your home screen';
+    $('installBody').textContent='Opens full screen, starts faster, and no more hunting for the link.';
+    $('installGo').hidden=false;
+    $('installGo').textContent='Install';
+    $('installGo').onclick=async()=>{
+      const p=installPrompt; installPrompt=null;
+      $('installCard').hidden=true;
+      try{
+        p.prompt();
+        const r=await p.userChoice;
+        track('pwa_install_prompt',{outcome:r&&r.outcome});
+        if(r&&r.outcome!=='accepted') dismissInstall();
+      }catch(e){}
+    };
+    $('installCard').hidden=false;
+    return;
+  }
+
+  if(isIosSafari()){
+    $('installTitle').textContent='Add to your home screen';
+    $('installBody').textContent='Tap the Share button below, then “Add to Home Screen”. '
+      +'It opens full screen — and it is the only way iPhone can alert you when a challenge is about to start.';
+    $('installGo').hidden=true;
+    $('installCard').hidden=false;
+  }
+}
+
+window.addEventListener('beforeinstallprompt',e=>{
+  /* Keep the event: without preventDefault the browser shows its own bar, and
+     without holding the object we cannot prompt from our own button later. */
+  e.preventDefault();
+  installPrompt=e;
+  showInstallCard();
+});
+
+window.addEventListener('appinstalled',()=>{
+  installPrompt=null;
+  $('installCard').hidden=true;
+  track('pwa_installed',{});
+});
+
+/* The worker is the shell cache and, later, the push receiver. Registration
+   failing is not an error worth showing anyone — the site works without it. */
+function registerWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  });
+}
+
 /* ---------- boot ---------- */
 (async()=>{
   console.log('What\'s Up Trivia — web build', BUILD);
+  registerWorker();
+  $('installNo').onclick=()=>{ sfx.tap(); dismissInstall(); };
   const qs=new URLSearchParams(location.search);
 
   // We are the checkout tab: hand the reference to the app tab and get out of

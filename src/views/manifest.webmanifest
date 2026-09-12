@@ -1,0 +1,43 @@
+{
+  "name": "What's Up Trivia",
+  "short_name": "WUT Trivia",
+  "description": "Play trivia for real prizes. Classic games, tournaments and head-to-head challenges.",
+  "id": "/",
+  "start_url": "/?src=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#16121f",
+  "theme_color": "#16121f",
+  "lang": "en-NG",
+  "dir": "ltr",
+  "categories": ["games", "entertainment", "trivia"],
+  "icons": [
+    {
+      "src": "/media/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/media/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/media/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Challenges",
+      "short_name": "Challenges",
+      "url": "/?src=pwa&go=challenges",
+      "icons": [{ "src": "/media/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
