@@ -227,6 +227,18 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
          background:rgba(53,211,154,.16);color:var(--mint);font-size:11px;font-weight:600;
          letter-spacing:.04em;text-transform:uppercase}
 
+/* ---------- waiting for a lobby to open ----------
+   One number, big enough to be the answer to "is this thing working?" from
+   across a room. It replaces a sentence of grey text that looked like an error
+   message on a blank screen. */
+.waitBox{display:flex;flex-direction:column;align-items:center;text-align:center;
+  gap:2px;margin:34px 0 26px}
+.waitBox[hidden]{display:none}
+.waitBox .lead{font-size:13px;color:var(--mute);letter-spacing:.04em;text-transform:uppercase}
+.waitBox .fig{font-family:var(--display);font-size:clamp(56px,17vw,84px);line-height:1.02;
+  color:var(--brass);font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.waitBox .tail{font-size:13.5px;color:var(--mute);max-width:22em}
+
 /* ---------- lobby stage: Tiva and the board ----------
    The lobby is the screen people look at for five minutes before a live
    challenge, and it was a number and two names on an empty field. Tiva stands
@@ -289,6 +301,39 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 /* Straight to the board: someone who asked for less motion, or who joined with
    seconds to spare, should not sit through a performance. */
 .stage.settled .tiva,.stage.settled .board{animation:none}
+
+/* SHE IS NOT A PHOTOGRAPH.
+   Once she has arrived, a slow breath and a weight shift keep her alive
+   without pulling attention off the board. Both are whole-image transforms:
+   this is one flat render, so an arm cannot move on its own. Real pose
+   changes need more drawings \u2014 see poseSwap below, which cross-fades between
+   them the moment they exist. */
+.stage.settled .tiva,.stage.walking .tiva{will-change:transform}
+.stage .tiva.alive{animation:tivaBreathe 4.6s ease-in-out infinite}
+@keyframes tivaBreathe{
+  0%,100%{transform:translateY(0) scale(1)}
+  28%{transform:translateY(-1.5px) scale(1.006)}
+  55%{transform:translateY(0) scale(1)}
+  72%{transform:translateY(-.5px) scale(1.002) rotate(.25deg)}
+}
+/* The push: she leans into the board as the old slide leaves. */
+.stage .tiva.push{animation:tivaPush 620ms cubic-bezier(.36,.07,.19,.97)}
+@keyframes tivaPush{
+  0%{transform:translateX(0) rotate(0)}
+  30%{transform:translateX(5px) rotate(1.1deg)}
+  60%{transform:translateX(2px) rotate(.4deg)}
+  100%{transform:translateX(0) rotate(0)}
+}
+
+/* THE BOARD SWAP. The old slide is pushed off to the left and the next one
+   is dragged in from the right, so the board reads as a physical thing being
+   changed rather than a panel whose contents blink. */
+.stage .board .screen{transition:transform 260ms cubic-bezier(.55,.06,.68,.19),opacity 200ms ease}
+.stage .board .screen.out{transform:translateX(-112%) rotate(-1.5deg);opacity:0}
+.stage .board .screen.in{transform:translateX(112%) rotate(1.5deg);opacity:0;transition:none}
+/* No reduced-motion block: the page already kills every animation AND every
+   transition globally under that setting. The JS check in boardShow still
+   matters \u2014 it skips the 260ms swap delay so the slide changes at once. */
 /* No prefers-reduced-motion rule here: the page already kills every animation
    globally under that setting. The JS check below matters anyway, because the
    board must appear at once rather than sit invisible waiting for an
@@ -885,6 +930,14 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="msg" id="chalNote" style="margin-top:6px"></div>
 
+    <!-- The wait before the lobby opens. It was a line of grey text on an
+         otherwise empty screen, which reads as nothing happening. -->
+    <div class="waitBox" id="chalWait" hidden>
+      <span class="lead">Lobby opens in</span>
+      <span class="fig" id="chalWaitClock">—</span>
+      <span class="tail" id="chalWaitTail">We'll take you straight in.</span>
+    </div>
+
     <div class="cardActs">
       <button class="ghost" id="chalAccept" onclick="acceptChallenge()">Accept</button>
     </div>
@@ -1143,6 +1196,7 @@ const CHAL_STATE_COPY={
 };
 
 function showChallengeInvite(c){
+  hideWaitClock();          /* a clock from a previous wait must not linger */
   const cats=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
   const blocked=CHAL_STATE_COPY[c.status];
   /* "Full" is about people who have NOT joined yet. Someone already in the
@@ -1267,11 +1321,11 @@ function waitForLobby(code, opensAt){
     /* Only promise a reminder if we can actually send one. A web-only player
        has no channel until push notifications exist, and telling them we will
        message them would be a lie they only discover by missing the game. */
-    $('chalNote').textContent = chalWillRemind
-      ? 'You\u2019re in. It starts '+at+' \u2014 we\u2019ll message you when the lobby opens, '
-        +'5 minutes before.'
-      : 'You\u2019re in. It starts '+at+'. Come back about 5 minutes before and '
-        +'we\u2019ll take you straight in.';
+    showWaitClock(when.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}),
+      chalWillRemind
+        ? 'Starts '+at+'. We\u2019ll message you when the lobby opens, 5 minutes before.'
+        : 'Starts '+at+'. Come back about 5 minutes before and we\u2019ll take you straight in.');
+    $('chalNote').textContent='You\u2019re in.';
     return;
   }
 
@@ -1286,9 +1340,9 @@ function waitForLobby(code, opensAt){
     }
 
     const mins=Math.floor(left/60000), secs=Math.floor((left%60000)/1000);
-    $('chalNote').textContent='You\u2019re in. The lobby opens in '
-      +(mins>0 ? mins+'m '+String(secs).padStart(2,'0')+'s' : secs+'s')
-      +' \u2014 stay here and we\u2019ll bring you straight in.';
+    showWaitClock(mins>0 ? mins+':'+String(secs).padStart(2,'0') : secs+'s',
+                  'Stay on this screen. We\u2019ll take you straight in.');
+    $('chalNote').textContent='You\u2019re in.';
   };
 
   tick();
@@ -1310,6 +1364,51 @@ function waitForLobby(code, opensAt){
 function stopWaitingForLobby(){
   if(chalOpenTimer){ clearInterval(chalOpenTimer); chalOpenTimer=null; }
   chalWaitCode=null;
+  hideWaitClock();
+}
+
+/* The button STAYS while the countdown runs.
+   It was hidden at first, on the reasoning that a tap which changes nothing
+   looks broken. That was wrong twice over. The tap is not useless: a
+   backgrounded mobile tab has its timers throttled, and tapping re-checks the
+   lobby immediately \u2014 the same reason the visibilitychange hook exists. And
+   taking the control away mid-wait is itself the thing that reads as broken.
+   So it stays, and the tap answers back. */
+let waitTail=null, waitTailUntil=0;
+
+function showWaitClock(text,tail){
+  $('chalWaitClock').textContent=text;
+  $('chalWaitTail').textContent=(waitTail && waitTailUntil>Date.now()) ? waitTail : (tail||'');
+  $('chalWait').hidden=false;
+}
+
+/* Answer a tap that could not do anything yet. The ticker repaints the tail
+   every second, so the reply is held for a few seconds rather than written
+   once and immediately overwritten. */
+function flashWaitTail(msg,ms){
+  waitTail=msg; waitTailUntil=Date.now()+(ms||4000);
+  $('chalWaitTail').textContent=msg;
+}
+
+function hideWaitClock(){
+  $('chalWait').hidden=true;
+  waitTail=null; waitTailUntil=0;
+}
+
+/* Put the player on the waiting screen before saying anything to them.
+   joinArena writes its answer into #chalNote, which lives on vChal. Tapping
+   "Enter the lobby" from the share screen or the challenge detail called it
+   from a screen where that element is not visible, so a creator who was early
+   got NOTHING: no message, no countdown, no clue whether the tap registered.
+   Everyone now lands on the same screen with the same countdown. */
+async function showLobbyWaitScreen(code){
+  if($('vChal').classList.contains('on')) return true;
+  try{
+    const r=await fetch('/challenge/'+code,{headers:H()});
+    const d=await r.json();
+    if(d.success && d.challenge){ showChallengeInvite(d.challenge); return true; }
+  }catch(e){}
+  return false;
 }
 
 async function joinArena(code){
@@ -1317,6 +1416,7 @@ async function joinArena(code){
     const r=await fetch('/challenge/'+code+'/lobby',{method:'POST',headers:H()});
     const d=await r.json();
     if(!d.success){
+      await showLobbyWaitScreen(code);
       $('chalNote').textContent={
         // NOT "come back then". Telling somebody to leave is telling somebody
         // to leave, and the lobby is meant to be where they wait — the screen
@@ -1334,8 +1434,16 @@ async function joinArena(code){
          a throttled interval resumes when the tab comes forward, and worst
          case the player is a few seconds late rather than absent. */
       if(d.reason==='too_early' && d.opensAt){
+        /* Already counting down and they tapped again: acknowledge it. The
+           check itself has just run, so this is a real answer, not a
+           placebo. */
+        const alreadyWaiting = !!chalOpenTimer;
         chalWillRemind = d.willRemind === true;
         waitForLobby(code, d.opensAt);
+        if(alreadyWaiting){
+          flashWaitTail('Not open yet \u2014 we just checked. You\u2019ll go straight in the moment it opens.');
+          sfx.tap();
+        }
       }
       return;
     }
@@ -1389,10 +1497,13 @@ const LOBBY_DEFAULT_SLIDES=[
   {kind:'text',title:'Stay on this screen',body:'We start the moment the countdown hits zero. Leave now and you miss the first question.',seconds:9}
 ];
 
-let board={slides:[],version:null,i:0,slideT:null,refreshT:null,shown:false};
+let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,aliveT:null,shown:false,painted:false};
 
 function boardStop(){
   clearTimeout(board.slideT); board.slideT=null;
+  clearTimeout(board.swapT); board.swapT=null;
+  clearTimeout(board.aliveT); board.aliveT=null;
+  $('alTiva').classList.remove('alive','push');
   clearInterval(board.refreshT); board.refreshT=null;
   const v=$('alScreen').querySelector('video');
   if(v){ try{ v.pause(); }catch(e){} }
@@ -1400,8 +1511,9 @@ function boardStop(){
 
 function boardReset(){
   boardStop();
-  board={slides:[],version:null,i:0,slideT:null,refreshT:null,shown:false};
+  board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,aliveT:null,shown:false,painted:false};
   $('alStage').hidden=true;
+  $('alScreen').classList.remove('in','out');
   $('alStage').className='stage';
   $('alScreen').className='screen';
   $('alScreen').innerHTML='';
@@ -1441,14 +1553,40 @@ async function boardLoad(walk){
     const first=!board.shown;
     board.shown=true; board.i=0;
     $('alStage').hidden=false;
-    if(first) $('alStage').className='stage '+(walk?'walking':'settled');
-    boardShow(0);
+    if(first){
+      $('alStage').className='stage '+(walk?'walking':'settled');
+      /* Breathing starts only once she has stopped arriving \u2014 two transform
+         animations on one element fight, and the last one declared wins. */
+      clearTimeout(board.aliveT);
+      board.aliveT=setTimeout(()=>$('alTiva').classList.add('alive'), walk?LOBBY_WALK_MS+80:60);
+    }
+    boardShow(0, first);
   }catch(e){ /* the lobby does not depend on this */ }
 }
 
-function boardShow(index){
+/* Change the board the way a person would: push the old one off, drag the
+   next one on. `instant` skips it for the very first slide, which has nothing
+   to push away. */
+function boardShow(index, instant){
   clearTimeout(board.slideT);
+  clearTimeout(board.swapT);
   if(!board.slides.length) return;
+  const screen=$('alScreen');
+  const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  if(!instant && !reduce && board.painted){
+    $('alTiva').classList.add('push');
+    screen.classList.add('out');
+    board.swapT=setTimeout(()=>{
+      $('alTiva').classList.remove('push');
+      boardPaint(index);
+    },260);
+    return;
+  }
+  boardPaint(index);
+}
+
+function boardPaint(index){
   board.i=((index%board.slides.length)+board.slides.length)%board.slides.length;
   const s=board.slides[board.i];
   const screen=$('alScreen');
@@ -1485,6 +1623,13 @@ function boardShow(index){
 
   const ticks=$('alTicks').children;
   for(let i=0;i<ticks.length;i++) ticks[i].classList.toggle('on',i===board.i);
+
+  /* Drag it in: park it off to the right with no transition, then release on
+     the next frame so the browser animates the move back to centre. */
+  screen.classList.remove('out');
+  screen.classList.add('in');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>screen.classList.remove('in')));
+  board.painted=true;
 
   if(board.slides.length>1) board.slideT=setTimeout(()=>boardShow(board.i+1),seconds*1000);
 }
@@ -2808,6 +2953,16 @@ function stream(opts){
     const t=JSON.parse(e.data).text||'';
     if(!t.trim())return;
     textBuf.push(t);
+
+    /* A choice prompt is waiting for exactly this. Render it now rather than
+       after the buffer's own delay \u2014 the options ARE these words. */
+    if(pendingChoice){
+      clearTimeout(pendingChoiceT); clearTimeout(textT);
+      const st=pendingChoice; pendingChoice=null;
+      applyState(st, flushText());
+      return;
+    }
+
     clearTimeout(textT);
     textT=setTimeout(()=>{ const all=flushText(); if(all) relay(all); },340);
   });
@@ -2877,6 +3032,9 @@ function stream(opts){
 }
 
 let textBuf=[], textT=null, gstate=null;
+/* A state that wants a CHOICE but arrived before the words carrying the
+   choices. See applyState's 'prompt' case. */
+let pendingChoice=null, pendingChoiceT=null;
 
 /* Filter per message, THEN join. Testing the joined batch meant a single
    suppressible part ("Classic Mode selected!") discarded everything sent with
@@ -2952,6 +3110,28 @@ function applyState(st, text){
         const m=pendingMode; pendingMode=null; go(m); return;
       }
       if(st.expects==='text' && st.field){ askField(st,text); return; }
+
+      /* THE OPTIONS LIVE IN THE WORDS, NOT IN THE STATE.
+         game.state says "this step wants a choice"; the numbered list is in
+         the message that comes with it. The two are separate SSE frames, and
+         when state won the race we opened a sheet titled "What day?" with a
+         bare text box \u2014 then the words arrived and a SECOND sheet appeared
+         with the actual days. Two prompts for one question.
+         So: if this wants a choice and we have no choices to show, hold it
+         until the words arrive. The timer is the escape hatch, so a prompt
+         whose message never comes still renders as a text box rather than
+         leaving the player facing nothing. */
+      if(st.expects==='choice' && !(st.actions||[]).length && !parseOpts((text||'').replace(/[*_]/g,'')).length){
+        pendingChoice=st;
+        clearTimeout(pendingChoiceT);
+        pendingChoiceT=setTimeout(()=>{
+          if(!pendingChoice) return;
+          const held=pendingChoice; pendingChoice=null;
+          ask(flushText()||held.title||'', held.actions);
+        },1200);
+        return;
+      }
+      pendingChoice=null; clearTimeout(pendingChoiceT);
       ask(text||st.title||'', st.actions);
       return;
 
