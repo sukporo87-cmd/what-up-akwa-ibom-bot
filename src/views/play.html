@@ -1377,6 +1377,18 @@ const LOBBY_WALK_MIN_WAIT_MS = 30 * 1000;
    without anyone reloading. The server caches for 60s behind this. */
 const LOBBY_CONTENT_REFRESH_MS = 90 * 1000;
 
+/* WHAT THE BOARD SHOWS WHEN NOBODY HAS PUBLISHED ANYTHING.
+   The first version hid Tiva and the board entirely when the slide list came
+   back empty, which meant a fresh deploy looked exactly like the blank lobby
+   it was meant to replace. An empty content table is the NORMAL state on day
+   one, not an error, so the board carries its own words until marketing fills
+   it. Admin slides replace these completely \u2014 they are never mixed. */
+const LOBBY_DEFAULT_SLIDES=[
+  {kind:'text',title:'Starting soon',body:'Everyone answers the same 15 questions at the same time. Fastest correct answers win.',seconds:9},
+  {kind:'text',title:'Speed counts',body:'Every question is timed. If two of you tie on score, the quicker one takes it.',seconds:9},
+  {kind:'text',title:'Stay on this screen',body:'We start the moment the countdown hits zero. Leave now and you miss the first question.',seconds:9}
+];
+
 let board={slides:[],version:null,i:0,slideT:null,refreshT:null,shown:false};
 
 function boardStop(){
@@ -1410,17 +1422,16 @@ function boardStart(startsAt){
 }
 
 async function boardLoad(walk){
+  let slides=LOBBY_DEFAULT_SLIDES, version='default';
   try{
     const d=await(await fetch('/api/public/lobby-content')).json();
-    const slides=(d&&d.slides)||[];
-    if(!slides.length){
-      /* Nothing to show, so show nothing. The stage stays hidden and the
-         lobby looks exactly as it did before the board existed. */
-      if(!board.shown) $('alStage').hidden=true;
-      return;
-    }
-    if(board.shown && d.version===board.version) return;   /* unchanged */
-    board.slides=slides; board.version=d.version;
+    if(d && d.slides && d.slides.length){ slides=d.slides; version=d.version; }
+  }catch(e){
+    /* The board keeps its own words. A failed request is not a blank lobby. */
+  }
+  try{
+    if(board.shown && version===board.version) return;   /* unchanged */
+    board.slides=slides; board.version=version;
 
     $('alTicks').innerHTML='';
     const dots = slides.length>1 && slides.length<=6;
@@ -1817,12 +1828,35 @@ function chalRenderQuestion(q){
 /* ---- CHALLENGE CREATED: the invite, as something you can actually send ---- */
 let csState=null;
 
-function showChallengeShare(d){
+async function showChallengeShare(d){
   csState=d;
   chal.code=d.code;
   chalIsLive=!!d.startLabel;
   $('csSub').textContent=d.categories+(d.startLabel?(' \u00b7 starts '+d.startLabel):'');
-  $('csInvite').textContent=d.inviteText||'';
+  $('csInvite').textContent=d.inviteText||'Getting your invite\u2026';
+
+  /* The invite arrives on a single SSE frame, and that frame is sent at the
+     one moment it is least likely to land: a payment tab has just taken the
+     foreground, or the stream reconnected a second ago. When it is missing,
+     ask for it \u2014 /challenge/:code/invite exists for exactly this, and it is
+     the same words the chat invite uses. The creator must never be left on
+     this screen with nothing to send. */
+  if(!d.inviteText && d.code){
+    try{
+      const r=await fetch('/challenge/'+d.code+'/invite',{headers:H()});
+      const inv=await r.json();
+      if(inv.success && inv.inviteText){
+        csState={...d, inviteText:inv.inviteText};
+        $('csInvite').textContent=inv.inviteText;
+      } else {
+        $('csInvite').textContent='';
+        $('csSub').textContent='Your challenge is created. Open it from Challenges to get the invite.';
+      }
+    }catch(e){
+      $('csInvite').textContent='';
+      $('csSub').textContent='Your challenge is created. Open it from Challenges to get the invite.';
+    }
+  }
   /* A sponsored challenge is not shareable until the money settles, so the
      buttons must not offer a link that would be a dead end. */
   /* A live challenge shows the lobby button instead of hiding the control
@@ -1835,7 +1869,10 @@ function showChallengeShare(d){
 }
 
 async function copyInvite(){
-  if(!csState)return;
+  if(!csState || !csState.inviteText){
+    $('csSub').textContent='The invite is not ready yet. Open it from Challenges in a moment.';
+    return;
+  }
   try{
     await navigator.clipboard.writeText(csState.inviteText);
     $('csSub').textContent='Copied \u2014 paste it to whoever you want to beat.';
@@ -1850,7 +1887,7 @@ async function copyInvite(){
 }
 
 async function shareInvite(){
-  if(!csState)return;
+  if(!csState || !csState.inviteText) return copyInvite();
   try{
     if(navigator.share){
       await navigator.share({title:"What's Up Trivia",text:csState.inviteText});
@@ -1943,6 +1980,25 @@ async function openChallengeHub(){
   }catch(e){ $('chHubList').innerHTML='<div class="msg">Could not load your challenges.</div>'; }
 }
 
+/* What the row says. A live challenge is not "your turn" \u2014 there is nothing
+   to take a turn at until the lobby opens, and the word makes people tap
+   expecting a question. Say what tapping will actually do. */
+function chalRowLabel(c){
+  const isLive=c.mode==='live';
+  if(c.waitingForYou && isLive){
+    if(c.status==='lobby'||c.status==='live') return 'ENTER LOBBY';
+    if(c.scheduledStartAt){
+      const t=new Date(c.scheduledStartAt);
+      const when=isNaN(t.getTime())?null:t.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+      return when?('LIVE · '+when):'LIVE CHALLENGE';
+    }
+    return 'LIVE CHALLENGE';
+  }
+  if(c.waitingForYou) return 'YOUR TURN';
+  if(c.waitingForThem) return 'Waiting for them';
+  return CH_STATE_LABEL[c.status]||c.status;
+}
+
 function renderChallengeHub(){
   if(!chHub.length){
     $('chHubList').innerHTML='<div class="msg">No challenges yet. Start one above.</div>';
@@ -1956,9 +2012,7 @@ function renderChallengeHub(){
   $('chHubList').innerHTML=sorted.map(c=>{
     const cats=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
     const who=c.isMine?'You started it':('@'+c.createdBy);
-    const state=c.waitingForYou?'YOUR TURN'
-      :c.waitingForThem?'Waiting for them'
-      :(CH_STATE_LABEL[c.status]||c.status);
+    const state=chalRowLabel(c);
     const score=c.myScore!==null&&c.myScore!==undefined?(' · you scored '+c.myScore+'/15'):'';
     return '<button class="tile" onclick="openChallengeDetail(\''+c.code+'\')">'
       +'<strong>'+state+(c.hasCard?' 🏅':'')+'</strong>'
@@ -1971,6 +2025,7 @@ async function openChallengeDetail(code){
   const c=chHub.find(x=>x.code===code);
   if(!c)return;
   chal.code=code;
+  const isLive=c.mode==='live';
 
   $('cdTitle').textContent=c.isMine?'Your challenge':('@'+c.createdBy+' challenged you');
   $('cdSub').textContent=(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', ');
@@ -1981,17 +2036,22 @@ async function openChallengeDetail(code){
   /* "Play my round" describes async: you play alone, whenever. A live
      challenge has a lobby you wait in, so the button has to say so or it
      promises something the next screen does not deliver. */
-  $('cdPlay').textContent = live ? 'Enter the lobby' : 'Play my round';
+  /* `live` was never defined in this function \u2014 the const of that name lives
+     in showChallengeInvite(). Reading it threw a ReferenceError on the very first
+     line that touched it, so opening ANY challenge from the hub did nothing at
+     all: no detail screen, no play button, and no invite box. Nothing after
+     this line in the function ever ran. */
+  $('cdPlay').textContent = isLive ? 'Enter the lobby' : 'Play my round';
   $('cdPlay').style.display=c.waitingForYou?'inline-block':'none';
   /* Cancellable only while it is yours, open, and nobody else has joined \u2014
      the same rule cancelChallenge() enforces server-side. */
   const cancellable=c.isMine && c.status==='open' && c.participants<=1;
   $('cdCancel').style.display=cancellable?'inline-block':'none';
   $('cdInviteBtn').style.display='none';   // the invite box below carries its own buttons
-  chalIsLive=c.mode==='live';
+  chalIsLive=isLive;
 
   $('cdNote').textContent = c.waitingForYou
-    ? (c.mode==='live'?'Live challenge — open the lobby when it starts.':'Your round is waiting.')
+    ? (isLive?'Live challenge — open the lobby when it starts.':'Your round is waiting.')
     : c.waitingForThem ? "You've played. Waiting for the others to finish."
     : c.status==='completed' ? 'Finished.'
     : (CH_STATE_LABEL[c.status]||c.status);

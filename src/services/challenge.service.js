@@ -586,7 +586,20 @@ class ChallengeService {
     // "waitingForYou" is the only actionable state, so it is computed here
     // rather than inferred by each surface from four other fields.
 
+    // How long a finished challenge stays on the player's Challenges screen.
+    // Nothing is deleted — these rows still exist for the admin panel, the
+    // result card and the books. They just stop crowding the one screen a
+    // player uses to find the challenge that still needs them.
+    //
+    // A cancelled or expired challenge has no result worth coming back to, so
+    // it goes after a day. A completed one has a scoreboard and a card, so it
+    // stays three days.
+    static get LIST_KEEP_HOURS() {
+        return { dead: 24, completed: 72 };
+    }
+
     async listForUser(userId, limit = 30) {
+        const keep = ChallengeService.LIST_KEEP_HOURS;
         const result = await pool.query(`
             SELECT c.code, c.mode, c.format, c.status, c.categories,
                    c.prize_amount, c.scheduled_start_at, c.created_at,
@@ -605,9 +618,17 @@ class ChallengeService {
             JOIN users creator  ON creator.id = c.creator_user_id
             WHERE me.user_id = $1
               AND NOT (c.settings ? 'rematchOf')
+              -- Anything still in motion always shows, however old it is.
+              AND (
+                c.status NOT IN ('completed', 'expired', 'cancelled', 'void_refunded')
+                OR (c.status = 'completed'
+                    AND COALESCE(c.completed_at, c.created_at) > NOW() - ($3::int * INTERVAL '1 hour'))
+                OR (c.status IN ('expired', 'cancelled', 'void_refunded')
+                    AND COALESCE(c.completed_at, c.created_at) > NOW() - ($4::int * INTERVAL '1 hour'))
+              )
             ORDER BY c.created_at DESC
             LIMIT $2
-        `, [userId, limit]);
+        `, [userId, limit, keep.completed, keep.dead]);
 
         const now = Date.now();
 
