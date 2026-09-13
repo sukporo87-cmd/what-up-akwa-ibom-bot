@@ -11,11 +11,17 @@
      only an installed PWA can. -->
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
-<link rel="apple-touch-icon" href="/media/icon-192.png">
+<!-- iOS never masks this one. It rounds the corners and fills any
+     transparency with a flat background of its own choosing (white on the
+     phone this was checked on), so the transparent mark that Android
+     composites onto purple came out as a purple bubble on white. iOS gets its
+     own opaque purple version instead, so both platforms look the same. -->
+<link rel="apple-touch-icon" sizes="180x180" href="/media/icon-apple-180.png">
+<link rel="apple-touch-icon" sizes="192x192" href="/media/icon-apple-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="WUT Trivia">
+<meta name="apple-mobile-web-app-title" content="What's Up Trivia">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -4854,14 +4860,23 @@ function isStandalone(){
       || window.navigator.standalone === true;
 }
 
-function isIosSafari(){
+function isIos(){
   const ua=navigator.userAgent;
-  const ios=/iPad|iPhone|iPod/.test(ua)
+  return /iPad|iPhone|iPod/.test(ua)
     /* iPadOS 13+ reports itself as a Mac; a touch-capable "Mac" is an iPad. */
     || (navigator.platform==='MacIntel' && (navigator.maxTouchPoints||0)>1);
-  /* Chrome and Firefox on iOS cannot install to the home screen at all. */
-  const safari=!/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
-  return ios && safari;
+}
+
+/* Every iOS browser that has a Share sheet can now Add to Home Screen —
+   Chrome for iOS included, checked on a real phone. An earlier version of this
+   told Chrome users to open Safari first, which was an extra step that was not
+   needed. The one case left is an IN-APP browser, the window that opens when a
+   link is tapped inside WhatsApp or Instagram, which has no Add to Home Screen
+   at all. That case matters because challenge invites arrive in WhatsApp. */
+function isInAppBrowser(){
+  /* An in-app web view leaves "Safari" out of its user agent; every real iOS
+     browser, Chrome and Firefox included, keeps it. */
+  return !/Safari/.test(navigator.userAgent);
 }
 
 function installDismissed(){
@@ -4898,11 +4913,14 @@ function showInstallCard(){
     return;
   }
 
-  if(isIosSafari()){
-    $('installTitle').textContent='Add to your home screen';
-    $('installBody').textContent='Tap the Share button below, then “Add to Home Screen”. '
-      +'It opens full screen — and it is the only way iPhone can alert you when a challenge is about to start.';
+  if(isIos()){
     $('installGo').hidden=true;
+    $('installTitle').textContent='Add to your home screen';
+    $('installBody').textContent = isInAppBrowser()
+      ? 'Tap the ⋯ or Share button and choose “Open in Safari”, then Share → “Add to Home Screen”. '
+        +'It opens full screen — and it is the only way an iPhone can alert you when a challenge is about to start.'
+      : 'Tap the Share button, then “Add to Home Screen”. '
+        +'It opens full screen — and it is the only way an iPhone can alert you when a challenge is about to start.';
     $('installCard').hidden=false;
   }
 }

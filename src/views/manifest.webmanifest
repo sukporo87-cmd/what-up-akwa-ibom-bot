@@ -1,6 +1,6 @@
 {
   "name": "What's Up Trivia",
-  "short_name": "WUT Trivia",
+  "short_name": "What's Up Trivia",
   "description": "Play trivia for real prizes. Classic games, tournaments and head-to-head challenges.",
   "id": "/",
   "start_url": "/?src=pwa",

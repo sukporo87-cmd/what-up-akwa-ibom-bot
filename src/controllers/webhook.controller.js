@@ -2233,9 +2233,16 @@ Type the code, or type SKIP to continue:`
     const lastActiveMinutesAgo = user.last_active ? 
       (Date.now() - new Date(user.last_active).getTime()) / 60000 : 999;
 
+    // The number list here was written out by hand and stopped at '5'. Adding
+    // 6 and 7 to the menu without adding them here would have made typing 6
+    // re-greet the player instead of starting a challenge — the greeting
+    // returns, so the menu handler below never ran. Read from the menu itself,
+    // and a future item is covered the day it is added.
+    const menuNumbers = this.mainMenuItems(isPaymentEnabled).map(item => item.number);
+
     if (!isInPostGameWindow && lastActiveMinutesAgo > 5 && 
         !input.includes('PLAY') && 
-        input !== '1' && input !== '2' && input !== '3' && input !== '4' && input !== '5') {
+        !menuNumbers.includes(input)) {
 
       let welcomeMessage = `Hello again @${user.username}! 👋\n\n`;
       welcomeMessage += `Welcome back to What's Up Trivia Game! 🎉\n\n`;
@@ -2247,16 +2254,11 @@ Type the code, or type SKIP to continue:`
 
       welcomeMessage += `_Proudly brought to you by SummerIsland Systems._\n\n`;
       welcomeMessage += `What would you like to do?\n\n`;
-      welcomeMessage += `1️⃣ Play Now\n`;
-      welcomeMessage += `2️⃣ How to Play\n`;
-      welcomeMessage += `3️⃣ View Leaderboard\n`;
-
-      if (isPaymentEnabled) {
-        welcomeMessage += `4️⃣ Buy Games\n`;
-        welcomeMessage += `5️⃣ My Stats`;
-      } else {
-        welcomeMessage += `4️⃣ My Stats`;
-      }
+      // Same list as the main menu, so a number means one thing wherever a
+      // player is shown it. This used to be a third hand-written copy.
+      welcomeMessage += this.mainMenuItems(isPaymentEnabled)
+        .map(item => `${item.emoji} ${item.label}`)
+        .join('\n');
 
       await messagingService.sendMessage(user.phone_number, welcomeMessage);
       await pool.query('UPDATE users SET last_active = NOW() WHERE id = $1', [user.id]);
