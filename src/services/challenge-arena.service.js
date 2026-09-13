@@ -93,10 +93,13 @@ class ChallengeArenaService {
                 opensAt: startsAt - LOBBY_OPEN_MS,
                 startsAt,
                 // Whether we can actually reach them when the lobby opens.
-                // Promising a reminder to a web-only player would be a lie
-                // until push notifications exist.
-                willRemind: !!(user.phone_number &&
-                               !String(user.phone_number).startsWith('web_'))
+                // A chat account always can. A web-only account can now too,
+                // but only once it has allowed notifications on this device —
+                // so this asks, rather than assuming. Promising a reminder we
+                // cannot send is how a player misses their own match.
+                willRemind: (!!(user.phone_number &&
+                                !String(user.phone_number).startsWith('web_')))
+                            || await require('./push.service').hasSubscription(user.id)
             };
         }
 
@@ -260,14 +263,35 @@ class ChallengeArenaService {
         const challengeChatService = require('./challenge-chat.service');
         const link = deepLinkService.buildLinks(challenge.code).web;
 
+        const pushService = require('./push.service');
+
         let sent = 0;
         for (const person of people.rows) {
-            // Web-only accounts have no chat identifier to message.
-            if (!person.phone_number || String(person.phone_number).startsWith('web_')) continue;
-
             // Already sitting in the lobby with a live connection? They can see
             // the countdown; a message would just be noise.
             if (gameEvents.isConnected(person.id)) continue;
+
+            // Web-only accounts have no chat identifier, so they get a push
+            // instead. This used to be the line that skipped them entirely,
+            // which is why a browser-only player could miss their own match.
+            if (!person.phone_number || String(person.phone_number).startsWith('web_')) {
+                try {
+                    const result = await pushService.notifyUser(person.id, {
+                        title: 'Your challenge lobby is open',
+                        body: 'It starts in 5 minutes. Tap to join.',
+                        url: `/c/${challenge.code}`,
+                        // One notification per challenge, replaced rather than
+                        // repeated if anything sends twice.
+                        tag: `lobby-${challenge.code}`,
+                        // Worthless once the match has started.
+                        ttl: 300
+                    });
+                    if (result.sent > 0) sent++;
+                } catch (error) {
+                    logger.error(`Could not push to user ${person.id}:`, error.message);
+                }
+                continue;
+            }
 
             try {
                 const MessagingService = require('./messaging.service');

@@ -981,6 +981,21 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <span class="tail" id="chalWaitTail">We'll take you straight in.</span>
     </div>
 
+    <!-- Asked here and nowhere else: a player who has joined a live challenge
+         and is watching a countdown to a lobby that has not opened is the one
+         moment when "shall we tell you when it opens?" answers a question they
+         already have. See askForPush(). -->
+    <div class="install" id="pushCard" hidden>
+      <div class="txt">
+        <b>Get told when your lobby opens</b>
+        <span>One notification, 5 minutes before your challenge starts. Nothing else, ever.</span>
+      </div>
+      <div class="acts">
+        <button class="ghost" id="pushGo">Turn on</button>
+        <button class="ghost quiet" id="pushNo">No thanks</button>
+      </div>
+    </div>
+
     <div class="cardActs">
       <button class="ghost" id="chalAccept" onclick="acceptChallenge()">Accept</button>
     </div>
@@ -1420,6 +1435,9 @@ function stopWaitingForLobby(){
 let waitTail=null, waitTailUntil=0;
 
 function showWaitClock(text,tail){
+  /* Called every second by the ticker; askForPush() returns immediately once
+     it has been asked, refused, or found unavailable. */
+  askForPush();
   $('chalWaitClock').textContent=text;
   $('chalWaitTail').textContent=(waitTail && waitTailUntil>Date.now()) ? waitTail : (tail||'');
   $('chalWait').hidden=false;
@@ -1435,6 +1453,7 @@ function flashWaitTail(msg,ms){
 
 function hideWaitClock(){
   $('chalWait').hidden=true;
+  $('pushCard').hidden=true;
   waitTail=null; waitTailUntil=0;
 }
 
@@ -4948,11 +4967,97 @@ function registerWorker(){
   });
 }
 
+/* ---------- notifications ----------
+   ONE MESSAGE, ONE REASON: the lobby for a live challenge you have already
+   joined is about to open. Nothing else is ever sent, and the card says so,
+   because a permission spent on marketing is a permission revoked — and a
+   revoked one cannot be asked for again.
+
+   WHERE IT IS ASKED MATTERS. Not on the lobby, and never on a timer: the
+   browser dialog is only allowed straight after a tap, and a player who has
+   just joined a challenge that starts in an hour is the one moment when
+   "shall we tell you when it opens?" answers a question they already have.
+
+   iOS ADDS ONE RULE: an installed PWA can receive push, a Safari tab cannot.
+   So on iPhone this is only offered once the app is on the home screen, which
+   is what the install card is for. */
+let pushKey=null, pushAsked=false;
+
+function pushSupported(){
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function pushDismissed(){
+  try{ return localStorage.getItem('wut_push_dismissed')==='1'; }catch(e){ return false; }
+}
+
+async function loadPushKey(){
+  if(pushKey!==null) return pushKey;
+  try{
+    const d=await(await fetch('/web/game/push/key')).json();
+    pushKey=(d && d.enabled && d.publicKey) ? d.publicKey : '';
+  }catch(e){ pushKey=''; }
+  return pushKey;
+}
+
+/* The VAPID key travels as base64url text and the browser wants raw bytes. */
+function urlB64ToUint8(base64){
+  const pad='='.repeat((4-base64.length%4)%4);
+  const raw=atob((base64+pad).replace(/-/g,'+').replace(/_/g,'/'));
+  const out=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i);
+  return out;
+}
+
+/* Offer the card. Silent unless every condition holds — there is no value in
+   a card that leads to a dialog the browser will refuse. */
+async function askForPush(){
+  if(pushAsked || pushDismissed() || !pushSupported()) return;
+  if(Notification.permission!=='default') return;     /* already answered, either way */
+  if(isIos() && !isStandalone()) return;              /* iPhone: only once installed */
+  if(!await loadPushKey()) return;                    /* server has no keys configured */
+  pushAsked=true;
+  $('pushCard').hidden=false;
+}
+
+async function enablePush(){
+  $('pushCard').hidden=true;
+  try{
+    /* Must be the direct result of the tap. Anything awaited before this and
+       Safari treats the dialog as unprompted and refuses it. */
+    const permission=await Notification.requestPermission();
+    track('push_permission',{outcome:permission});
+    if(permission!=='granted'){ dismissPush(); return; }
+
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.subscribe({
+      userVisibleOnly:true,                            /* required: every push is shown */
+      applicationServerKey:urlB64ToUint8(pushKey)
+    });
+    const r=await fetch('/web/game/push/subscribe',{
+      method:'POST',headers:H(),body:JSON.stringify({subscription:sub.toJSON()})
+    });
+    const d=await r.json();
+    if(!d.success){
+      /* The server could not store it, so the browser must not think it is
+         subscribed either — that would be a permission spent for nothing. */
+      try{ await sub.unsubscribe(); }catch(e){}
+    }
+  }catch(e){ dismissPush(); }
+}
+
+function dismissPush(){
+  try{ localStorage.setItem('wut_push_dismissed','1'); }catch(e){}
+  $('pushCard').hidden=true;
+}
+
 /* ---------- boot ---------- */
 (async()=>{
   console.log('What\'s Up Trivia — web build', BUILD);
   registerWorker();
   $('installNo').onclick=()=>{ sfx.tap(); dismissInstall(); };
+  $('pushGo').onclick=()=>{ sfx.tap(); enablePush(); };
+  $('pushNo').onclick=()=>{ sfx.tap(); dismissPush(); };
   const qs=new URLSearchParams(location.search);
 
   // We are the checkout tab: hand the reference to the app tab and get out of

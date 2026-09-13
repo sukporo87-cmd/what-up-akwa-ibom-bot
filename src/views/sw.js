@@ -27,7 +27,7 @@
    the fallback for a player who opens the app with no signal.
 */
 
-const VERSION = 'wut-shell-v1';
+const VERSION = 'wut-shell-v2';
 const SHELL = [
   '/',
   '/media/tiva.webp',
@@ -109,9 +109,59 @@ self.addEventListener('message', (event) => {
   if (event.data === 'skip-waiting') self.skipWaiting();
 });
 
-/* PUSH is not wired up yet — that is the next step, and it needs a signing key
-   pair and a subscription store on the server. When it lands, the handlers go
-   here: 'push' to show the notification, 'notificationclick' to focus or open
-   the lobby. Leaving them out is deliberate; an empty push handler shows the
-   browser's own "This site has been updated in the background" notice, which
-   is worse than no push at all. */
+/* ============================================
+   PUSH
+   ============================================
+   Every message we send is a moment the player is already waiting for: their
+   lobby opening, their challenge starting. There is no marketing here.
+
+   A push handler must ALWAYS end in a visible notification. Browsers grant
+   the permission on the understanding that a push is shown to the user, and a
+   handler that receives one silently gets the site's permission revoked. So
+   the catch below still shows something rather than nothing. */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+
+  const title = data.title || "What's Up Trivia";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || 'Open the app to see what is waiting.',
+      icon: '/media/icon-192.png',
+      badge: '/media/icon-192.png',
+      // Same tag replaces rather than stacks: two reminders for one challenge
+      // should be one line in the shade, not two.
+      tag: data.tag || 'wut',
+      renotify: true,
+      // A lobby reminder is time-critical — it should not be held back by the
+      // browser's quiet heuristics.
+      requireInteraction: false,
+      data: { url: data.url || '/' }
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || '/';
+
+  // Focus the app if it is already open rather than opening a second copy —
+  // a player with two windows on one live match is the single-stream problem
+  // all over again.
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url.indexOf(self.location.origin) === 0 && 'focus' in client) {
+          if ('navigate' in client && target !== '/') client.navigate(target).catch(() => {});
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    })
+  );
+});
+
+/* A push service can retire a subscription on its own — after a long silence,
+   or when the browser rotates its keys. The page re-subscribes on its next
+   visit; there is nothing useful to do from here without the VAPID key. */
+self.addEventListener('pushsubscriptionchange', () => {});

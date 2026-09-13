@@ -26,6 +26,7 @@ const pool = require('../config/database');
 const auditService = require('../services/audit.service');
 const restrictionsService = require('../services/restrictions.service');
 const reviewInvites = require('../services/review-invite.service');
+const pushService = require('../services/push.service');
 
 // Runs fn with this request's IP, user agent and open-stream count attached to
 // any answer it produces (see audit.service, WEB INPUT ATTRIBUTION). If the
@@ -338,6 +339,56 @@ router.post('/signal', requireWebAuth, async (req, res) => {
     } catch (error) {
         logger.error('Web signal error:', error);
         res.status(500).json({ success: false, error: 'Could not record that' });
+    }
+});
+
+// ============================================
+// WEB PUSH
+// ============================================
+// The only way to reach a web-only player when their challenge lobby opens.
+// Everything here is per-device: a browser's subscription belongs to that
+// browser on that phone, so a player with two devices has two rows.
+//
+// The public key is served rather than baked into play.html so rotating the
+// key pair is an environment change and a restart, not a redeploy of the page.
+
+router.get('/push/key', (req, res) => {
+    res.json({
+        success: true,
+        enabled: pushService.isEnabled(),
+        publicKey: pushService.isEnabled() ? pushService.publicKey() : null
+    });
+});
+
+router.post('/push/subscribe', requireWebAuth, async (req, res) => {
+    try {
+        if (!pushService.isEnabled()) {
+            return res.status(503).json({ success: false, error: 'Notifications are not available yet' });
+        }
+        const result = await pushService.subscribe(
+            req.webUser.id,
+            (req.body && req.body.subscription) || null,
+            req.headers['user-agent']
+        );
+        if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Push subscribe error:', error);
+        res.status(500).json({ success: false, error: 'Could not turn on notifications' });
+    }
+});
+
+// Unauthenticated on purpose. A browser that has just revoked the permission,
+// or a session that has expired, still needs to be able to say "stop sending
+// to this endpoint" — and the endpoint is the secret that proves ownership of
+// the device. Refusing this would leave dead rows being pushed to forever.
+router.post('/push/unsubscribe', async (req, res) => {
+    try {
+        await pushService.unsubscribe((req.body && req.body.endpoint) || null);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Push unsubscribe error:', error);
+        res.status(500).json({ success: false, error: 'Could not turn off notifications' });
     }
 });
 
