@@ -162,25 +162,31 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 
 /* ---------- auth ----------
    The sign-in screen is the first thing anyone sees, and it was a line of text
-   on an empty field. It now carries the logo at the top, Ace in the bottom
-   left and the landmarks bottom right, with the form sitting between them.
+   on an empty field. It now carries the logo at the top and Ace flush into the
+   bottom-left corner, with the form sitting between them. A landmarks image sat
+   bottom-right for a day and was dropped: two illustrations in two corners
+   fought each other and neither won.
 
    The artwork is BEHIND the form and never in front of it: the two images sit
    at the bottom of the screen, the form scrolls over them if the keyboard
    takes the room, and every one of them is pointer-events:none so a stray tap
    near the edge cannot swallow a tap meant for the email field. */
 #vAuth{position:relative;overflow:hidden}
-.authArt{position:absolute;inset:0;pointer-events:none;z-index:0}
+/* Pulled OUT of the app's own padding so the artwork reaches the real screen
+   edges. .app pads itself by --pad at the sides and by the safe area plus 20px
+   at the bottom; inset:0 stopped at the inside of that, which left Ace
+   floating in a band of empty background above the bottom of the screen. */
+.authArt{position:absolute;top:0;z-index:0;pointer-events:none;
+  left:calc(-1 * var(--pad));right:calc(-1 * var(--pad));
+  bottom:calc(-1 * (env(safe-area-inset-bottom) + 20px))}
 .authArt img{position:absolute;display:block;pointer-events:none;
   -webkit-user-select:none;user-select:none;-webkit-user-drag:none}
-.authArt .logo{top:clamp(14px,4vh,40px);left:50%;transform:translateX(-50%);
-  width:min(74%,300px);height:auto}
-/* Bottom corners, deliberately bleeding off the edges: cropping them at the
-   screen edge reads as a scene continuing past the frame rather than two
-   stickers dropped on a background. */
-.authArt .ace{left:-6%;bottom:0;width:min(52%,230px);height:auto;
+.authArt .logo{top:clamp(4px,1.5vh,18px);left:50%;transform:translateX(-50%);
+  width:min(78%,320px);height:auto}
+/* Flush into the bottom-left corner, bleeding off both edges: a mascot with a
+   margin round him reads as a sticker dropped on a background. */
+.authArt .ace{left:-7%;bottom:0;width:min(58%,250px);height:auto;
   filter:drop-shadow(0 10px 22px rgba(0,0,0,.55))}
-.authArt .land{right:-4%;bottom:0;width:min(62%,280px);height:auto;opacity:.92}
 
 .auth{position:relative;z-index:1;max-width:380px;margin:auto;width:100%;padding:30px 0}
 .auth .sub{color:var(--mute);font-size:14.5px;margin:0 0 26px}
@@ -188,7 +194,7 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
    sitting on top of a face. On a short screen the form wins and the art is
    simply covered \u2014 signing in matters more than the picture. */
 @media (min-height:600px){
-  .auth{padding:clamp(150px,26vh,230px) 0 clamp(190px,30vh,260px)}
+  .auth{padding:clamp(130px,23vh,205px) 0 clamp(150px,24vh,215px)}
 }
 label{display:block;font-size:12px;color:var(--mute);margin-bottom:6px;font-weight:500}
 input,select{width:100%;background:var(--slate);border:1.5px solid transparent;border-radius:11px;
@@ -550,7 +556,6 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
          pictures they will not see. -->
     <div class="authArt" aria-hidden="true">
       <img class="logo" id="artLogo" alt="" data-src="/media/logo-wordmark.png">
-      <img class="land" id="artLand" alt="" data-src="/media/landmarks.png">
       <img class="ace"  id="artAce"  alt="" data-src="/media/mascot-ace.webp" data-fallback="/media/mascot-ace.png">
     </div>
 
