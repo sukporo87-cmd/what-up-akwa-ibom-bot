@@ -160,10 +160,36 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .stat .fig{display:block;font-size:19px;color:var(--paper)}
 .stat span{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
 
-/* ---------- auth ---------- */
-.auth{max-width:380px;margin:auto;width:100%;padding:30px 0}
-.auth h1{font-size:26px;margin:0 0 6px}
+/* ---------- auth ----------
+   The sign-in screen is the first thing anyone sees, and it was a line of text
+   on an empty field. It now carries the logo at the top, Ace in the bottom
+   left and the landmarks bottom right, with the form sitting between them.
+
+   The artwork is BEHIND the form and never in front of it: the two images sit
+   at the bottom of the screen, the form scrolls over them if the keyboard
+   takes the room, and every one of them is pointer-events:none so a stray tap
+   near the edge cannot swallow a tap meant for the email field. */
+#vAuth{position:relative;overflow:hidden}
+.authArt{position:absolute;inset:0;pointer-events:none;z-index:0}
+.authArt img{position:absolute;display:block;pointer-events:none;
+  -webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+.authArt .logo{top:clamp(14px,4vh,40px);left:50%;transform:translateX(-50%);
+  width:min(74%,300px);height:auto}
+/* Bottom corners, deliberately bleeding off the edges: cropping them at the
+   screen edge reads as a scene continuing past the frame rather than two
+   stickers dropped on a background. */
+.authArt .ace{left:-6%;bottom:0;width:min(52%,230px);height:auto;
+  filter:drop-shadow(0 10px 22px rgba(0,0,0,.55))}
+.authArt .land{right:-4%;bottom:0;width:min(62%,280px);height:auto;opacity:.92}
+
+.auth{position:relative;z-index:1;max-width:380px;margin:auto;width:100%;padding:30px 0}
 .auth .sub{color:var(--mute);font-size:14.5px;margin:0 0 26px}
+/* Room for the logo above and the artwork below, without the form ever
+   sitting on top of a face. On a short screen the form wins and the art is
+   simply covered \u2014 signing in matters more than the picture. */
+@media (min-height:600px){
+  .auth{padding:clamp(150px,26vh,230px) 0 clamp(190px,30vh,260px)}
+}
 label{display:block;font-size:12px;color:var(--mute);margin-bottom:6px;font-weight:500}
 input,select{width:100%;background:var(--slate);border:1.5px solid transparent;border-radius:11px;
      color:var(--paper);padding:13px 14px;font-family:inherit;font-size:15.5px;margin-bottom:13px}
@@ -173,6 +199,12 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .cta:hover{filter:brightness(1.07)}
 .cta:disabled{opacity:.5}
 .link{color:var(--brass);font-size:14px;text-align:center;width:100%;padding:14px 0}
+/* "Create an account" is the second most important thing on this screen and
+   read as body text: same weight, same colour family as the caption above it.
+   Underlined and brighter, so it is visibly a thing you tap. */
+.link.strong{color:var(--mint);font-weight:600;font-size:14.5px;
+  text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1.5px}
+.link.strong:hover{filter:brightness(1.12)}
 .msg{font-size:13.5px;min-height:19px;margin-bottom:6px;color:var(--ember)}
 .otp{letter-spacing:.5em;font-family:var(--display);font-size:22px;text-align:center}
 
@@ -307,6 +339,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .stage .board .screen .cta{margin-top:2px;padding:6px 13px;border-radius:999px;
   background:#2e2540;color:var(--brass);font-size:12px;font-weight:700}
 .stage .board .screen img,.stage .board .screen video{width:100%;height:100%;object-fit:cover;display:block}
+.stage .board .sndBtn{position:absolute;right:8px;bottom:8px;z-index:2;
+  width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.28);
+  background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:1;
+  display:grid;place-items:center;backdrop-filter:blur(4px)}
+.stage .board .sndBtn[hidden]{display:none}
 .stage .board .legs{position:absolute;left:0;right:0;bottom:-9px;display:flex;
   justify-content:space-between;padding:0 18px;pointer-events:none}
 .stage .board .legs i{width:16px;height:9px;border-radius:0 0 4px 4px;background:var(--brass);opacity:.85}
@@ -507,8 +544,17 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
   <!-- ============ AUTH ============ -->
   <section class="view on" id="vAuth">
+    <!-- The artwork. Decorative, so it is hidden from screen readers, and its
+         src is set in JS the first time this screen is shown: a signed-in
+         player goes straight to the lobby and should never pay for 100 KB of
+         pictures they will not see. -->
+    <div class="authArt" aria-hidden="true">
+      <img class="logo" id="artLogo" alt="" data-src="/media/logo-wordmark.png">
+      <img class="land" id="artLand" alt="" data-src="/media/landmarks.png">
+      <img class="ace"  id="artAce"  alt="" data-src="/media/mascot-ace.webp" data-fallback="/media/mascot-ace.png">
+    </div>
+
     <div class="auth">
-      <h1>What's Up <i style="color:var(--brass);font-style:normal">Trivia</i></h1>
       <p class="sub" id="authSub">15 questions. Real cash. Sign in to play.</p>
 
       <div id="fEmail">
@@ -524,7 +570,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
         </div>
         <div class="msg" id="mAuth"></div>
         <button class="cta" id="bAuth" onclick="askCode()">Send my code</button>
-        <button class="link" onclick="toggleMode()" id="bMode">New here? Create an account</button>
+        <button class="link strong" onclick="toggleMode()" id="bMode">New here? Create an account</button>
       </div>
 
       <div id="fCode" style="display:none">
@@ -758,6 +804,9 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
            src="/media/tiva.webp" onerror="this.src='/media/tiva.png';this.onerror=null">
       <div class="board" id="alBoard">
         <div class="screen" id="alScreen" aria-live="polite"></div>
+        <!-- Shown only while a video slide is up. A browser will not autoplay
+             with sound, so this is the tap that turns it on. -->
+        <button class="sndBtn" id="alSound" hidden aria-label="Turn sound on">🔇</button>
         <div class="legs"><i></i><i></i></div>
       </div>
     </div>
@@ -1561,10 +1610,44 @@ const LOBBY_DEFAULT_SLIDES=[
 
 let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,aliveT:null,shown:false,painted:false};
 
+/* BOARD SOUND.
+   Every browser refuses to autoplay a video with sound until the person has
+   asked for it. That is not our rule and there is no way around it: an
+   unmuted autoplay is simply blocked, and the slide shows nothing at all
+   instead of playing quietly. So a video starts muted and carries a tap to
+   turn sound on, and once it has been tapped every later video in the session
+   plays with sound. Kept for the session rather than forever, so a lobby does
+   not start talking out loud weeks later on a bus. */
+const BOARD_SOUND_KEY='wut_board_sound';
+function boardSoundOn(){
+  try{ return sessionStorage.getItem(BOARD_SOUND_KEY)==='1'; }catch(e){ return false; }
+}
+function setBoardSound(on){
+  try{ sessionStorage.setItem(BOARD_SOUND_KEY, on?'1':'0'); }catch(e){}
+}
+function paintSoundBtn(video){
+  const btn=$('alSound');
+  if(!video){ btn.hidden=true; return; }
+  btn.hidden=false;
+  const on=!video.muted;
+  btn.textContent = on ? '🔊' : '🔇';
+  btn.setAttribute('aria-label', on ? 'Turn sound off' : 'Turn sound on');
+  btn.onclick=()=>{
+    const wantOn=video.muted;
+    video.muted=!wantOn;
+    setBoardSound(wantOn);
+    /* Unmuting can make a browser pause the element, so ask it to play again.
+       The tap is the gesture that permits it. */
+    if(wantOn && video.play) video.play().catch(()=>{ video.muted=true; paintSoundBtn(video); });
+    paintSoundBtn(video);
+  };
+}
+
 function boardStop(){
   clearTimeout(board.slideT); board.slideT=null;
   clearTimeout(board.swapT); board.swapT=null;
   clearTimeout(board.aliveT); board.aliveT=null;
+  paintSoundBtn(null);
   $('alTiva').classList.remove('alive','push');
   clearInterval(board.refreshT); board.refreshT=null;
   const v=$('alScreen').querySelector('video');
@@ -1655,6 +1738,7 @@ function boardPaint(index){
 
   const old=screen.querySelector('video');
   if(old){ try{ old.pause(); old.removeAttribute('src'); old.load(); }catch(e){} }
+  paintSoundBtn(null);
   screen.innerHTML='';
   screen.className='screen '+((s.kind==='image'||s.kind==='video')?'media':'text');
 
@@ -1666,12 +1750,23 @@ function boardPaint(index){
     screen.appendChild(img);
   } else if(s.kind==='video'){
     const v=document.createElement('video');
+    /* MUTED TO START, ALWAYS. Not a preference — a browser blocks an unmuted
+       autoplay outright, so the alternative is a slide that never plays. */
     v.muted=true; v.defaultMuted=true; v.autoplay=true; v.loop=true;
     v.playsInline=true; v.setAttribute('playsinline','');   /* iOS: play in place, never fullscreen */
     v.preload='auto'; v.src=s.mediaUrl;
     v.onerror=()=>boardShow(board.i+1);
     screen.appendChild(v);
     v.play&&v.play().catch(()=>{});            /* refused autoplay still shows the first frame */
+
+    /* Already asked for sound earlier in this session, and has not muted the
+       app itself. Unmute once it is actually playing: doing it before then is
+       what makes a browser stop the video. */
+    if(boardSoundOn() && sound){
+      const unmute=()=>{ v.muted=false; paintSoundBtn(v); };
+      if(!v.paused) unmute(); else v.addEventListener('playing',unmute,{once:true});
+    }
+    paintSoundBtn(v);
   } else {
     if(s.title){ const h=document.createElement('h3'); h.textContent=s.title; screen.appendChild(h); }
     if(s.body){ const p=document.createElement('p'); p.textContent=s.body; screen.appendChild(p); }
@@ -2672,7 +2767,23 @@ function clearChallenge(){
 }
 stashChallenge();
 const naira=n=>'₦'+Number(n||0).toLocaleString();
-function view(v){document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));$(v).classList.add('on');}
+function view(v){
+  document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));
+  $(v).classList.add('on');
+  /* The sign-in artwork is ~100 KB and only ever appears here. A returning
+     player is signed in and goes straight to the lobby, so it is fetched the
+     first time this screen is actually shown and never otherwise. */
+  if(v==='vAuth') loadAuthArt();
+}
+
+function loadAuthArt(){
+  document.querySelectorAll('.authArt img[data-src]').forEach(img=>{
+    const fallback=img.getAttribute('data-fallback');
+    if(fallback){ img.onerror=()=>{ img.onerror=null; img.src=fallback; }; }
+    img.src=img.getAttribute('data-src');
+    img.removeAttribute('data-src');
+  });
+}
 function show(on,off){$(on).style.display='block';$(off).style.display='none';}
 
 /* ---------- sound: generated, nothing to download ---------- */
@@ -5163,6 +5274,11 @@ function dismissPush(){
   } else if(pendingChallenge() && token){
     try{ await resumeChallenge(); }catch(e){}
   }
+
+  /* vAuth carries the `on` class in the markup, so view() is never called for
+     it on a cold start and its artwork would never be fetched. Run last, once
+     every branch above has settled on a screen. */
+  if($('vAuth').classList.contains('on')) loadAuthArt();
 })();
 </script>
 </body>
