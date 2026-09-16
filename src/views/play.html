@@ -181,8 +181,9 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
   bottom:calc(-1 * (env(safe-area-inset-bottom) + 20px))}
 .authArt img{position:absolute;display:block;pointer-events:none;
   -webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+/* Trim. Widening it was never asked for \u2014 only moving it up was. */
 .authArt .logo{top:clamp(4px,1.5vh,18px);left:50%;transform:translateX(-50%);
-  width:min(78%,320px);height:auto}
+  width:min(58%,220px);height:auto}
 /* Flush into the bottom-left corner, bleeding off both edges: a mascot with a
    margin round him reads as a sticker dropped on a background. */
 .authArt .ace{left:-7%;bottom:0;width:min(58%,250px);height:auto;
@@ -194,7 +195,7 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
    sitting on top of a face. On a short screen the form wins and the art is
    simply covered \u2014 signing in matters more than the picture. */
 @media (min-height:600px){
-  .auth{padding:clamp(130px,23vh,205px) 0 clamp(150px,24vh,215px)}
+  .auth{padding:clamp(108px,19vh,170px) 0 clamp(150px,24vh,215px)}
 }
 label{display:block;font-size:12px;color:var(--mute);margin-bottom:6px;font-weight:500}
 input,select{width:100%;background:var(--slate);border:1.5px solid transparent;border-radius:11px;
@@ -299,6 +300,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
    One number, big enough to be the answer to "is this thing working?" from
    across a room. It replaces a sentence of grey text that looked like an error
    message on a blank screen. */
+/* Centred as a column: the clock, its caption and the button below it all sit
+   on the same axis. The button used to be left-aligned under a centred
+   countdown, which reads as an accident rather than a layout. */
+#vChal .bar ~ #chalFrom,#vChal #chalFrom,#vChal #chalMeta,#vChal #chalPrize,#vChal #chalNote{text-align:center}
+#vChal .cardActs{justify-content:center}
 .waitBox{display:flex;flex-direction:column;align-items:center;text-align:center;
   gap:2px;margin:34px 0 26px}
 .waitBox[hidden]{display:none}
@@ -318,6 +324,16 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
    and letting the width follow keeps her proportions exact on every screen,
    and the board simply takes the rest of the row. Sizing by width instead
    made the board short and wide on a phone — the opposite of a whiteboard. */
+/* PLAYING FOR ₦X.
+   A sponsored prize was named once on the invite screen and never mentioned
+   again, so the lobby and the match \u2014 the two screens people actually sit on
+   \u2014 said nothing about the money they were playing for. */
+.playingFor{display:block;text-align:center;margin:2px 0 14px;
+  font-family:var(--display);font-weight:700;font-size:clamp(15px,4.4vw,18px);
+  color:var(--brass);letter-spacing:-.01em}
+.playingFor[hidden]{display:none}
+.playingFor b{font-size:1.18em}
+
 .stage{display:flex;align-items:flex-end;gap:10px;margin:16px 0 6px;
        height:clamp(290px,50vh,430px)}
 /* [hidden] comes from the browser's own stylesheet, and any author rule beats
@@ -799,6 +815,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <p id="alCount">Waiting for players…</p>
     </div>
 
+    <div class="playingFor" id="alPrize" hidden></div>
+
     <div class="msg" id="alWho">Waiting for players…</div>
     <div class="msg" id="alNote" style="margin-top:8px"></div>
 
@@ -830,6 +848,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
     </div>
 
+    <div class="playingFor" id="aqPrize" hidden></div>
     <div class="ladderMeta"><span id="aqBoard"></span></div>
 
     <div class="qwrap">
@@ -1329,7 +1348,7 @@ function showChallengeInvite(c){
               :                            'Costs one of your credits.';
 
   $('chalFrom').textContent = c.isInitiator
-    ? 'Your challenge'
+    ? 'Your Challenge'
     : ('@' + c.createdBy + ' challenged you');
   $('chalMeta').textContent=cats+' \u00b7 15 questions \u00b7 10 seconds each';
   $('chalPrize').textContent=c.prizeAmount>0?('\u20a6'+Number(c.prizeAmount).toLocaleString('en-NG')+' prize'):'';
@@ -1532,12 +1551,21 @@ async function joinArena(code){
     const r=await fetch('/challenge/'+code+'/lobby',{method:'POST',headers:H()});
     const d=await r.json();
     if(!d.success){
+      /* Over. Stop the heartbeat that would otherwise keep POSTing here every
+         20 seconds — which is how a finished challenge was being asked to open
+         a lobby in the first place. */
+      if(d.reason==='already_finished'){
+        arena.finished=true; arena.code=null;
+        stopArenaHeartbeat(); stopArenaWatchdog(); arenaStopClock();
+        stopWaitingForLobby();
+      }
       await showLobbyWaitScreen(code);
       $('chalNote').textContent={
         // NOT "come back then". Telling somebody to leave is telling somebody
         // to leave, and the lobby is meant to be where they wait — the screen
         // we want holding their attention until the challenge starts.
         too_early:'You’re in. The lobby opens 5 minutes before the start — hang tight, we’ll bring you in automatically.',
+        already_finished:'This challenge is over. Open it from Challenges to see the result.',
         already_started:'This one has already started — you can\'t join midway.',
         not_a_participant:'You need to accept this challenge first.',
         not_live:'This is an anytime challenge, not a live one.'
@@ -1565,7 +1593,9 @@ async function joinArena(code){
     }
     stopWaitingForLobby();
     arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15,
-           userId:d.userId!==undefined?d.userId:null,inMatch:!!d.resumed};
+           userId:d.userId!==undefined?d.userId:null,inMatch:!!d.resumed,
+           id:d.challengeId||null,prize:Number(d.prizeAmount)||0,finished:false};
+    paintPlayingFor(arena.prize);
     startArenaHeartbeat();
     clearChallenge();
     $('alWho').textContent='Waiting for players…';
@@ -1576,8 +1606,24 @@ async function joinArena(code){
   }catch(e){ $('chalNote').textContent='Could not join that lobby.'; }
 }
 
+/* Said on both screens people actually sit on: the lobby and the match. */
+function paintPlayingFor(amount){
+  const money=Number(amount)||0;
+  ['alPrize','aqPrize'].forEach(id=>{
+    const el=$(id);
+    if(!money){ el.hidden=true; el.textContent=''; return; }
+    el.innerHTML='';
+    el.appendChild(document.createTextNode('Playing for '));
+    const b=document.createElement('b');
+    b.textContent='\u20a6'+money.toLocaleString('en-NG');
+    el.appendChild(b);
+    el.hidden=false;
+  });
+}
+
 function arenaLobby(d){
   arenaSawEvent();
+  if(d.challengeId && !arena.id) arena.id=d.challengeId;
   const names=(d.present||[]).map(p=>'@'+p.username);
   $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
   $('alWho').textContent=names.join(' · ')||'Waiting for players…';
@@ -2051,9 +2097,13 @@ function arenaBoard(board){
 
 function arenaFinished(d){
   arena.inMatch=false;
+  /* A finished match can never be abandoned. Anything that arrives afterwards
+     belongs to a different challenge. */
+  arena.finished=true;
   stopArenaHeartbeat();
   stopArenaWatchdog();
   arenaStopClock();
+  paintPlayingFor(0);
   $('cbScore').textContent='Final';
   $('cbSub').textContent='Here is how it finished.';
   $('cbBoard').innerHTML='<div class="who">Final standings</div>'+
@@ -2072,10 +2122,23 @@ function arenaFinished(d){
 }
 
 function arenaAbandoned(d){
+  /* THIS EVENT GOES TO A ROOM, AND A PLAYER CAN BE IN MORE THAN ONE.
+     Create two challenges in an evening, play one to the end, and the other
+     one expiring at its own start time emits \u2018not enough players\u2019 to the
+     same stream \u2014 which used to switch the screen and overwrite the result of
+     the match just finished with a failure message about a different one.
+
+     So: only act on the arena this player is actually in, and never on one
+     that has already produced a result. */
+  if(d && d.challengeId && arena.id && d.challengeId!==arena.id) return;
+  if(arena.finished) return;
+  if($('vChalBoard').classList.contains('on')) return;
+
   arena.inMatch=false;
   stopArenaHeartbeat();
   stopArenaWatchdog();
   arenaStopClock();
+  paintPlayingFor(0);
   $('chalNote').textContent={
     not_enough_players:'Not enough players turned up — a challenge needs at least two to finish.',
     no_questions:"We couldn't build a question set for this one. Nothing was charged."
@@ -3991,32 +4054,68 @@ function openCheckout(){
   $('payBtn').disabled=true;
   $('payBtn').textContent='Waiting for payment…';
   $('mPay').textContent='Finish in the other tab. This page updates on its own.';
-  watchEntry(payData.reference,win);
+  watchEntry(payData,win);
 }
 
-function watchEntry(reference,win){
+/* WHAT WE ARE WAITING FOR DECIDES WHERE WE LOOK.
+   This used to poll the tournament endpoint whatever the payment was, so a
+   challenge payment had nothing to find: the money cleared, the webhook ran,
+   and this screen still read "Waiting for payment" until the player gave up
+   and went back by hand.
+
+   The poll is also not enough on its own. On an installed iPhone app the
+   payment opens in Safari, the app is backgrounded, and iOS suspends both the
+   timer and the event stream. So the check runs again the moment the app comes
+   back to the foreground, which is exactly when the answer has arrived. */
+function watchEntry(pay,win){
   clearInterval(payPoll);
-  let n=0;
-  payPoll=setInterval(async()=>{
-    if(++n>100){ clearInterval(payPoll); return; }
+  const isChallenge = pay && pay.kind==='challenge' && pay.code;
+  const url = isChallenge
+    ? '/web/payment/challenge-status/'+encodeURIComponent(pay.code)
+    : '/web/payment/tournament-status/'+encodeURIComponent(pay.reference||'');
+  if(!isChallenge && !pay.reference){ return; }
+
+  let n=0, done=false;
+  const finish=async(d)=>{
+    if(done) return; done=true;
+    clearInterval(payPoll); payPoll=null;
+    document.removeEventListener('visibilitychange',wake);
+    try{ if(win&&!win.closed) win.close(); }catch(e){}
+    sfx.lock();
+
+    if(isChallenge){
+      /* Straight to the thing they paid for. showChallengeShare fetches the
+         invite itself when it does not already have one. */
+      await showChallengeShare({code:pay.code, categories:pay.subtitle||'', inviteText:''});
+      return;
+    }
+    overlay('','You\'re in',
+      `${d.tournamentName||'The tournament'} entry confirmed`
+      +(d.joined?'.':' — you\'ll appear on the board shortly.'),
+      'Back to menu',()=>{ closeOver(); });
+  };
+
+  const check=async()=>{
+    if(done) return true;
     try{
-      const d=await(await fetch('/web/payment/tournament-status/'+encodeURIComponent(reference),
-        {headers:H()})).json();
-      if(d.success&&d.status==='success'){
-        clearInterval(payPoll);
-        try{ if(win&&!win.closed) win.close(); }catch(e){}
-        sfx.lock();
-        overlay('','You\'re in',
-          `${d.tournamentName||'The tournament'} entry confirmed`
-          +(d.joined?'.':' — you\'ll appear on the board shortly.'),
-          'Back to menu',()=>{ closeOver(); });
-      }
+      const d=await(await fetch(url,{headers:H()})).json();
+      if(d.success&&d.status==='success'){ await finish(d); return true; }
     }catch(e){}
+    return false;
+  };
+
+  const wake=()=>{ if(document.visibilityState==='visible') check(); };
+  document.addEventListener('visibilitychange',wake);
+
+  payPoll=setInterval(async()=>{
+    if(++n>100){ clearInterval(payPoll); payPoll=null;
+      document.removeEventListener('visibilitychange',wake); return; }
+    await check();
   },3000);
 }
 
 async function cancelCheckout(){
-  clearInterval(payPoll); payData=null;
+  clearInterval(payPoll); payPoll=null; payData=null;
   // Clear the server-side recovery record too, or refresh() drags us straight
   // back to this screen — which is exactly what happened.
   try{ await fetch('/web/game/checkout/dismiss',{method:'POST',headers:H()}); }catch(e){}

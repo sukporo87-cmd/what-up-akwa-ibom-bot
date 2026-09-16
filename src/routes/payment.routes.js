@@ -489,13 +489,36 @@ function getPlatformName(phoneNumber) {
     return 'WhatsApp';
 }
 
+// Every gateway names the reference differently, and Flutterwave names it
+// differently depending on which of its own checkouts ran. A card payment
+// redirects with ?tx_ref=..., but an OPay / bank-transfer payment comes back
+// through the older rave redirect with the whole thing as ?response={JSON},
+// where the reference is `txRef` inside the JSON and there is no tx_ref at all.
+//
+// That mismatch is what produced a bare "No reference provided" page after a
+// payment that had already succeeded: the webhook credited it correctly a
+// second earlier, and only the player's own redirect fell over.
+function paymentReferenceOf(query) {
+    const direct = query.reference || query.paymentReference || query.tx_ref ||
+                   query.txRef || query.trxref;
+    if (direct) return String(direct);
+
+    if (query.response) {
+        try {
+            const parsed = JSON.parse(query.response);
+            const inner = parsed.txRef || parsed.tx_ref || parsed.reference;
+            if (inner) return String(inner);
+        } catch (e) { /* not JSON, nothing to take from it */ }
+    }
+    return null;
+}
+
 // ============================================
 // REGULAR GAME PAYMENT CALLBACK
 // ============================================
 
 router.get('/callback', async (req, res) => {
-    // Paystack sends 'reference', Korapay sends 'reference', Monnify sends 'paymentReference', Flutterwave sends 'tx_ref'
-    const reference = req.query.reference || req.query.paymentReference || req.query.tx_ref;
+    const reference = paymentReferenceOf(req.query);
     
     if (!reference) {
         return res.status(400).send('No reference provided');
@@ -733,8 +756,7 @@ router.get('/callback', async (req, res) => {
 // ============================================
 
 router.get('/tournament-callback', async (req, res) => {
-    // Paystack/Korapay send 'reference', Monnify sends 'paymentReference', Flutterwave sends 'tx_ref'
-    const reference = req.query.reference || req.query.paymentReference || req.query.tx_ref;
+    const reference = paymentReferenceOf(req.query);
     
     if (!reference) {
         return res.status(400).send('No reference provided');

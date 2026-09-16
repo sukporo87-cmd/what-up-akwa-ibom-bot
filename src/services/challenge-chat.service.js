@@ -808,6 +808,13 @@ class ChallengeChatService {
             try {
                 const gameEvents = require('./game-events.service');
                 gameEvents.emit(user.id, 'challenge.payment', {
+                    // The checkout screen polls for the result, and it can
+                    // only poll the right thing if it knows what it is. Without
+                    // these it fell back to the tournament endpoint, which knows
+                    // nothing about a challenge, so the screen sat on "Waiting
+                    // for payment" forever even after the money had cleared.
+                    kind: 'challenge',
+                    code: challenge.code,
                     amount: total,
                     title: 'Challenge ' + challenge.code,
                     subtitle: Number(challenge.prize_amount) > 0

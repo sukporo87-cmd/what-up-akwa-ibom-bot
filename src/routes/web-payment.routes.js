@@ -372,6 +372,54 @@ router.get('/history', requireWebAuth, async (req, res) => {
 // and polling must never be able to condemn a payment in flight.
 // ============================================
 
+// Has this challenge's setup payment cleared? Polled by the checkout screen.
+// Keyed by the challenge CODE rather than the payment reference: the code is
+// what the player already has on screen, and it survives a gateway that
+// renames its own reference between the redirect and the webhook.
+router.get('/challenge-status/:code', requireWebAuth, async (req, res) => {
+    try {
+        const code = String(req.params.code || '').trim().toUpperCase();
+        if (!/^[A-Z0-9]{4,16}$/.test(code)) {
+            return res.status(400).json({ success: false, error: 'No challenge given' });
+        }
+
+        const r = await pool.query(
+            `SELECT c.id, c.code, c.status, c.creator_user_id, s.payment_status
+             FROM challenges c
+             LEFT JOIN challenge_sponsorships s ON s.challenge_id = c.id
+             WHERE c.code = $1`,
+            [code]
+        );
+        const row = r.rows[0];
+
+        // 404 rather than 403 on someone else's challenge.
+        if (!row || row.creator_user_id !== req.webUser.id) {
+            return res.status(404).json({ success: false, error: 'Challenge not found' });
+        }
+
+        // Settled money OR a challenge that has left the paying state. Either
+        // is proof enough to stop waiting: a free challenge has no sponsorship
+        // row at all, and one whose payment cleared is already 'open'.
+        const settled = String(row.payment_status || '').toLowerCase() === 'settled';
+        const opened = row.status !== 'awaiting_sponsorship';
+        const paid = settled || opened;
+
+        if (paid) {
+            try { await redis.del(`pending_checkout:${req.webUser.id}`); } catch (e) { /* non-fatal */ }
+        }
+
+        res.json({
+            success: true,
+            status: paid ? 'success' : 'processing',
+            code: row.code,
+            challengeStatus: row.status
+        });
+    } catch (error) {
+        logger.error('Challenge payment status error:', error);
+        res.status(500).json({ success: false, error: 'Could not check that payment' });
+    }
+});
+
 router.get('/tournament-status/:reference', requireWebAuth, async (req, res) => {
     try {
         const reference = String(req.params.reference || '').trim();

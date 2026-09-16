@@ -83,8 +83,34 @@ class ChallengeArenaService {
     // LOBBY
     // ============================================
 
+    // Statuses a lobby can still be joined from. Anything else is over.
+    static get JOINABLE() {
+        return ['open', 'lobby', 'live'];
+    }
+
     async joinLobby(challenge, user) {
         if (challenge.mode !== 'live') return { ok: false, reason: 'not_live' };
+
+        // A FINISHED CHALLENGE HAS NO LOBBY TO JOIN.
+        //
+        // This guard is the whole fix for a bogus "Not enough players turned
+        // up" arriving AFTER a challenge had been played to the end. On
+        // completion, _teardown() drops the match state and its timers. Any
+        // later call to this method therefore found no state, fell through to
+        // the arrival path, and _ensureStartTimer() built a BRAND NEW lobby
+        // state whose start time was already in the past — so the timer fired
+        // immediately, found one person in the room, and announced that not
+        // enough players had turned up for a match that had already finished.
+        //
+        // It did not need a second challenge or a stray tap to happen: the
+        // lobby heartbeat POSTs here every 20 seconds, and a client that
+        // missed the finish event keeps beating.
+        //
+        // Nothing was damaged — _expire() only touches open/lobby/live rows —
+        // but the player was told their completed match had failed.
+        if (!ChallengeArenaService.JOINABLE.includes(challenge.status)) {
+            return { ok: false, reason: 'already_finished', status: challenge.status };
+        }
 
         const startsAt = new Date(challenge.scheduled_start_at).getTime();
         if (Date.now() < startsAt - LOBBY_OPEN_MS) {
@@ -339,6 +365,16 @@ class ChallengeArenaService {
 
         const state = this.matches.get(challenge.id);
         if (!state || state.phase !== 'lobby') return;
+
+        // The row is the truth, not the timer. A timer can outlive the match
+        // it belonged to; expiring or failing a challenge that the database
+        // says is already finished is never right.
+        const current = await pool.query('SELECT status FROM challenges WHERE id = $1', [challenge.id]);
+        const status = current.rows[0] && current.rows[0].status;
+        if (!ChallengeArenaService.JOINABLE.includes(status)) {
+            this._teardown(challenge.id);
+            return;
+        }
 
         const present = gameEvents.roomMembers(challenge.id);
 

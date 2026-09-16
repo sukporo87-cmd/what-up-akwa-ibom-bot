@@ -194,20 +194,22 @@ class ChallengeSponsorshipService {
         const row = sponsorship.rows[0];
         if (!row) return { ok: false, reason: 'no_settled_sponsorship' };
 
-        // The initiator cannot win their own sponsored prize. This is a
-        // backstop: the completion rule already makes a solo win impossible,
-        // but if the initiator legitimately wins a real challenge the money is
-        // theirs coming back and must not go out through the payout channel.
-        if (winnerUserId === challenge.creator_user_id) {
-            await pool.query(
-                `UPDATE challenge_sponsorships
-                 SET payment_status = 'withheld', withheld_reason = 'initiator_won_own_prize',
-                     updated_at = NOW() WHERE id = $1`,
-                [row.id]
-            );
-            logger.warn(`Challenge ${challenge.code}: initiator won their own sponsored prize \u2014 withheld`);
-            return { ok: false, reason: 'initiator_won' };
-        }
+        // THE INITIATOR MAY WIN THEIR OWN SPONSORED PRIZE. Founder ruling,
+        // 16 Sep: someone who sets up a challenge and beats their friends has
+        // won it, and withholding the prize left a real winner with no prize
+        // message, no CLAIM prompt and nothing on screen to explain why.
+        //
+        // What this used to guard against is already guarded, structurally and
+        // better: award() is reachable only from checkCompletion(), which
+        // requires TWO DISTINCT FINISHERS. "Sponsor a prize, invite nobody,
+        // claim your own money back" cannot reach this line. With a real
+        // second player the money is simply the sponsor's coming back, the
+        // house keeps the setup charge and the fee, and there is nothing to
+        // gain by arranging it.
+        //
+        // Anti-collusion still applies to everyone, initiator included: a
+        // suspicious result sets integrity_hold below and the prize is created
+        // held rather than payable.
 
         const held = challenge.integrity_hold === true;
 
