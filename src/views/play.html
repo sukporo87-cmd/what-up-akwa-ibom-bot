@@ -116,6 +116,16 @@ h1,h2,.fig{font-family:var(--display);font-weight:800;letter-spacing:-.02em}
 .opt.right .k{background:var(--mint);color:#08150f}
 .opt.wrong{border-color:var(--ember);background:rgba(255,107,91,.11)}
 .opt.wrong .k{background:var(--ember);color:#2a0d09}
+/* LOCKED IN, BEFORE THE SERVER ANSWERS.
+   This class was already being applied on every tap and had no rule behind it,
+   so choosing an option looked exactly like not choosing one — and players
+   tapped again, and again, waiting for something to happen. It is the only
+   feedback between the tap and the reveal. */
+.opt.picked{border-color:var(--brass);background:rgba(232,182,76,.16);transform:scale(.985)}
+.opt.picked .k{background:var(--brass);color:#2a1f05}
+/* The ones they did not pick step back, so the choice is unmistakable. */
+.opt:disabled{cursor:default}
+.opt:disabled:not(.picked):not(.right):not(.wrong){opacity:.5}
 .opt.gone{opacity:.16;pointer-events:none}
 
 /* ---------- verdict ---------- */
@@ -2163,6 +2173,7 @@ function chalRenderQuestion(q){
   ['A','B','C','D'].forEach(letter=>{
     const b=document.createElement('button');
     b.className='opt';
+    b.id='cqOpt'+letter;
     b.textContent=letter+'. '+q.options[letter];
     b.onclick=()=>{ sfx.tap(); chalAnswer(letter); };
     $('cqOpts').appendChild(b);
@@ -2523,6 +2534,9 @@ async function chalAnswer(letter){
   if(chal.locked)return;
   chal.locked=true; chalStopClock();
   [...$('cqOpts').children].forEach(b=>b.disabled=true);
+  /* Same feedback the live arena gives: show which one they chose the instant
+     they choose it, not when the server replies. */
+  const cqPicked=$('cqOpt'+letter); if(cqPicked)cqPicked.classList.add('picked');
 
   try{
     const r=await fetch('/challenge/'+chal.code+'/answer',{
@@ -4108,6 +4122,10 @@ let cardWait=null;
 function requestCard(){
   clearTimeout(cardWait);
   go('SHARE');
+  /* Drawing a card takes several seconds on the server. Saying nothing for
+     that long reads as a dead button, and people tap it again. */
+  overlay('\ud83c\udfa8','Making your card',
+    'This takes a few seconds. Keep this screen open \u2014 it will appear on its own.');
   cardWait=setTimeout(()=>{
     if($('vCard').classList.contains('on')) return;      // it arrived, all good
     overlay('','Card is taking a while',
@@ -4128,6 +4146,7 @@ let cardBlob=null, cardData=null;
 
 async function showCard(c){
   clearTimeout(cardWait);
+  closeOver();                 /* the "making your card" notice has done its job */
   cardData=c; cardBlob=null;
   $('cardAmt').textContent = c.isTournament ? 'Nice run' : naira(c.amount||0);
   $('cardSub').textContent = c.isTournament

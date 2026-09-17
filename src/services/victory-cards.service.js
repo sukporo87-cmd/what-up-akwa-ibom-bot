@@ -120,7 +120,20 @@ class VictoryCardsService {
                 FROM transactions t
                 LEFT JOIN victory_cards vc ON t.id = vc.transaction_id
                 WHERE t.user_id = $1 
-                AND t.transaction_type IN ('prize', 'challenge_prize')
+                -- CLASSIC WINS ONLY.
+                --
+                -- A challenge produces and sends its OWN result card the
+                -- moment the match ends, to every player. Gating a challenge
+                -- prize on a separate Classic-style victory card asked the
+                -- winner to share a second card for the same win — and the
+                -- share flow could not even build one, because it looks up a
+                -- Classic session that a challenge round does not leave
+                -- behind. The result was a claim button that led to "Card is
+                -- taking a while" and no way through.
+                --
+                -- Tournament prizes were never gated here either. Challenge
+                -- prizes now match them.
+                AND t.transaction_type = 'prize'
                 AND t.amount > 0
                 AND (t.victory_card_shared = false OR t.victory_card_shared IS NULL)
                 ORDER BY t.created_at DESC
