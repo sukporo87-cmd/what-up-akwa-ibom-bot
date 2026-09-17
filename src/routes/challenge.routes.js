@@ -574,8 +574,7 @@ router.post('/:code/lobby', requireChallengeAuth, requireChallengesEnabled, asyn
             // What they are playing for. The lobby and the arena both say it
             // out loud: a sponsored prize is the reason anyone turned up, and
             // it was mentioned once on the invite screen and never again.
-            prizeAmount: Number(challenge.prize_amount) || 0,
-            challengeId: challenge.id
+            prizeAmount: Number(challenge.prize_amount) || 0
         });
     } catch (error) {
         logger.error('Error joining challenge lobby:', error);

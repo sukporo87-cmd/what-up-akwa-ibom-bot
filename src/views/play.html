@@ -1551,21 +1551,12 @@ async function joinArena(code){
     const r=await fetch('/challenge/'+code+'/lobby',{method:'POST',headers:H()});
     const d=await r.json();
     if(!d.success){
-      /* Over. Stop the heartbeat that would otherwise keep POSTing here every
-         20 seconds — which is how a finished challenge was being asked to open
-         a lobby in the first place. */
-      if(d.reason==='already_finished'){
-        arena.finished=true; arena.code=null;
-        stopArenaHeartbeat(); stopArenaWatchdog(); arenaStopClock();
-        stopWaitingForLobby();
-      }
       await showLobbyWaitScreen(code);
       $('chalNote').textContent={
         // NOT "come back then". Telling somebody to leave is telling somebody
         // to leave, and the lobby is meant to be where they wait — the screen
         // we want holding their attention until the challenge starts.
         too_early:'You’re in. The lobby opens 5 minutes before the start — hang tight, we’ll bring you in automatically.',
-        already_finished:'This challenge is over. Open it from Challenges to see the result.',
         already_started:'This one has already started — you can\'t join midway.',
         not_a_participant:'You need to accept this challenge first.',
         not_live:'This is an anytime challenge, not a live one.'
@@ -1594,7 +1585,7 @@ async function joinArena(code){
     stopWaitingForLobby();
     arena={code:code,startsAt:d.startsAt,position:0,locked:false,timer:null,total:15,
            userId:d.userId!==undefined?d.userId:null,inMatch:!!d.resumed,
-           id:d.challengeId||null,prize:Number(d.prizeAmount)||0,finished:false};
+           prize:Number(d.prizeAmount)||0};
     paintPlayingFor(arena.prize);
     startArenaHeartbeat();
     clearChallenge();
@@ -1623,7 +1614,6 @@ function paintPlayingFor(amount){
 
 function arenaLobby(d){
   arenaSawEvent();
-  if(d.challengeId && !arena.id) arena.id=d.challengeId;
   const names=(d.present||[]).map(p=>'@'+p.username);
   $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
   $('alWho').textContent=names.join(' · ')||'Waiting for players…';
@@ -2097,9 +2087,6 @@ function arenaBoard(board){
 
 function arenaFinished(d){
   arena.inMatch=false;
-  /* A finished match can never be abandoned. Anything that arrives afterwards
-     belongs to a different challenge. */
-  arena.finished=true;
   stopArenaHeartbeat();
   stopArenaWatchdog();
   arenaStopClock();
@@ -2122,18 +2109,6 @@ function arenaFinished(d){
 }
 
 function arenaAbandoned(d){
-  /* THIS EVENT GOES TO A ROOM, AND A PLAYER CAN BE IN MORE THAN ONE.
-     Create two challenges in an evening, play one to the end, and the other
-     one expiring at its own start time emits \u2018not enough players\u2019 to the
-     same stream \u2014 which used to switch the screen and overwrite the result of
-     the match just finished with a failure message about a different one.
-
-     So: only act on the arena this player is actually in, and never on one
-     that has already produced a result. */
-  if(d && d.challengeId && arena.id && d.challengeId!==arena.id) return;
-  if(arena.finished) return;
-  if($('vChalBoard').classList.contains('on')) return;
-
   arena.inMatch=false;
   stopArenaHeartbeat();
   stopArenaWatchdog();
@@ -4084,9 +4059,33 @@ function watchEntry(pay,win){
     sfx.lock();
 
     if(isChallenge){
-      /* Straight to the thing they paid for. showChallengeShare fetches the
-         invite itself when it does not already have one. */
-      await showChallengeShare({code:pay.code, categories:pay.subtitle||'', inviteText:''});
+      /* ASK THE SERVER WHAT THIS CHALLENGE IS. Do not describe it from what
+         happens to be on this screen.
+         A hand-built object here shipped without `startLabel`, and
+         showChallengeShare reads exactly that field to decide live or anytime.
+         So a LIVE challenge came back from a successful payment labelled
+         "Play my round", and pressing it started a solo async round while the
+         person who had been invited sat in a lobby that nobody else joined.
+         The share screen gets the real row, or it gets nothing. */
+      try{
+        const c=(await(await fetch('/challenge/'+pay.code,{headers:H()})).json()).challenge;
+        await showChallengeShare({
+          code:pay.code,
+          categories:(c.categories||[]).map(x=>x.replace(/[_-]+/g,' ')).join(', '),
+          /* The one field that decides live vs anytime. */
+          startLabel:c.scheduledStartAt
+            ? new Date(c.scheduledStartAt).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})
+            : null,
+          prizeAmount:c.prizeAmount,
+          inviteText:''
+        });
+      }catch(e){
+        /* Could not read it back. Say the payment worked and send them to the
+           list, rather than guessing at what kind of challenge it is. */
+        overlay('\u2705','Payment received',
+          'Your challenge is ready. Open it from Challenges to get the invite.',
+          'Challenges',()=>{ closeOver(); openChallengeHub(); });
+      }
       return;
     }
     overlay('','You\'re in',
