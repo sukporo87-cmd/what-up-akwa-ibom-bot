@@ -438,6 +438,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .claimTile{border-color:var(--mint)!important;
            background:linear-gradient(150deg,rgba(53,211,154,.16),var(--slate))!important}
 .claimTile strong{color:var(--mint)}
+.claimTile .kind{display:block;font-size:11.5px;color:var(--mute);
+  text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
 
 /* ---------- recent games + game review ----------
@@ -656,11 +658,9 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <span>Credits and tournament entries</span>
     </button>
 
-    <!-- only rendered when there is actually money waiting -->
-    <button class="tile claimTile" id="tileClaim" onclick="claimPrize()" style="display:none">
-      <strong id="claimLabel">Claim your prize</strong>
-      <span id="claimSub">Waiting to be collected</span>
-    </button>
+    <!-- One tile per unclaimed win. A player holding three saw one, with no
+         way to know the others were there. -->
+    <div id="claimList"></div>
 
     <button class="tile" onclick="openStats()">
       <strong>Your stats</strong>
@@ -3024,29 +3024,10 @@ async function refresh(){
       return;
     }
 
-    // An unclaimed prize gets its own tile. Nothing else in the lobby matters
-    // as much as money the player hasn't collected.
-    const t=$('tileClaim'), pw=d.pendingWin;
-    if(pw && pw.amount>0){
-      t.style.display='block';
-      if(pw.awaitingReceipt){
-        // We've sent the money. WhatsApp asks them to reply RECEIVED; this is
-        // the web equivalent, and without it the payout never gets closed out.
-        $('claimLabel').textContent=`Confirm you received ${naira(pw.amount)}`;
-        $('claimSub').textContent=`Sent to your bank · ref ${pw.reference} · tap once it lands`;
-        t.onclick=()=>confirmReceipt(pw);
-      } else if(pw.detailsGiven){
-        $('claimLabel').textContent=`${naira(pw.amount)} on its way`;
-        $('claimSub').textContent=`Details received · ref ${pw.reference} · being processed`;
-        t.onclick=()=>overlay(naira(pw.amount),'Payment in progress',
-          `We have your bank details and your prize is being processed. Payments usually land `
-          +`within 12–24 hours. Reference ${pw.reference}. We'll email you the moment it's sent.`);
-      } else {
-        $('claimLabel').textContent=`Claim ${naira(pw.amount)}`;
-        $('claimSub').textContent='Tap to send your bank details';
-        t.onclick=()=>claimPrize();
-      }
-    } else { t.style.display='none'; t.onclick=null; }
+    // EVERY unclaimed win, each with its own tile. Nothing else in the lobby
+    // matters as much as money the player has not collected, and showing one
+    // of three hid the other two completely.
+    paintClaims(d.pendingWins || (d.pendingWin ? [d.pendingWin] : []));
 
     // Same state object the SSE event carries, so a cold load lands exactly
     // where a live stream would.
@@ -4201,6 +4182,59 @@ function saveCard(){
   document.body.appendChild(a); a.click(); a.remove();
   $('mCard').style.color='var(--mute)';
   $('mCard').textContent='Saved. Post it wherever you like.';
+}
+
+/* One tile per win, newest first, each saying what it is: a challenge prize
+   and a Classic win look identical as bare amounts. The claim conversation
+   itself takes them one at a time — that part is the payout flow and is not
+   ours to change — so a tile says so when there is more than one waiting. */
+function paintClaims(wins){
+  const box=$('claimList');
+  box.innerHTML='';
+  const list=(wins||[]).filter(w=>w && w.amount>0);
+  if(!list.length) return;
+
+  list.forEach((pw,i)=>{
+    const b=document.createElement('button');
+    b.className='tile claimTile';
+    const kind=document.createElement('span'); kind.className='kind';
+    kind.textContent=pw.label||'Prize';
+    const head=document.createElement('strong');
+    const sub=document.createElement('span');
+
+    if(pw.awaitingReceipt){
+      // We have sent the money. WhatsApp asks them to reply RECEIVED; this is
+      // the web equivalent, and without it the payout never gets closed out.
+      head.textContent=`Confirm you received ${naira(pw.amount)}`;
+      sub.textContent=`Sent to your bank · ref ${pw.reference} · tap once it lands`;
+      b.onclick=()=>confirmReceipt(pw);
+    } else if(pw.detailsGiven){
+      head.textContent=`${naira(pw.amount)} on its way`;
+      sub.textContent=`Details received · ref ${pw.reference} · being processed`;
+      b.onclick=()=>overlay(naira(pw.amount),'Payment in progress',
+        `We have your bank details and your prize is being processed. Payments usually land `
+        +`within 12–24 hours. Reference ${pw.reference}. We'll email you the moment it's sent.`);
+    } else {
+      head.textContent=`Claim ${naira(pw.amount)}`;
+      sub.textContent = (i===0)
+        ? 'Tap to send your bank details'
+        : `Ref ${pw.reference} · claim the one above first`;
+      b.onclick=()=>claimPrize();
+    }
+
+    b.appendChild(kind); b.appendChild(head); b.appendChild(sub);
+    box.appendChild(b);
+  });
+
+  const waiting=list.filter(w=>!w.detailsGiven && !w.awaitingReceipt).length;
+  if(waiting>1){
+    const note=document.createElement('p');
+    note.className='note';
+    note.style.cssText='font-size:13px;color:var(--mute);margin:2px 0 12px;text-align:center';
+    note.textContent=`${waiting} prizes waiting. They are claimed one at a time — `
+      +`finish one and the next is ready.`;
+    box.appendChild(note);
+  }
 }
 
 function claimPrize(){ sfx.tap(); go('CLAIM'); }

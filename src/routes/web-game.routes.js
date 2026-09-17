@@ -697,35 +697,67 @@ router.get('/state', requireWebAuth, async (req, res) => {
         // isn't — a paid prize still needs the player to confirm it arrived,
         // which is the step WhatsApp does with "reply RECEIVED". Using the
         // claim query meant the tile vanished the moment you were paid.
+        // EVERY kind of win, and ALL of them.
+        //
+        // Two faults, one query. It listed only 'prize' and 'tournament_prize',
+        // so a challenge prize never produced a claim tile at all — the winner
+        // was told nothing and the money sat in the payout workspace waiting
+        // for bank details that were never asked for. And LIMIT 1 meant a
+        // player holding three wins saw one, with no way to know the others
+        // existed.
+        //
+        // The chat CLAIM flow already covered challenge prizes and refunds
+        // (see handlePaymentConfirmation), which is why tapping a Classic
+        // claim on web produced the challenge prompt: the two sides were
+        // looking at different sets of money.
         let pendingWin = null;
+        let pendingWins = [];
         try {
             const r = await pool.query(`
-                SELECT t.id, t.amount, t.payout_status, t.paid_at, t.confirmed_at,
+                SELECT t.id, t.amount, t.transaction_type, t.payout_status,
+                       t.paid_at, t.confirmed_at, t.created_at,
                        (pd.id IS NOT NULL) AS details_given
                 FROM transactions t
                 LEFT JOIN payout_details pd ON pd.transaction_id = t.id
                 WHERE t.user_id = $1
-                  AND t.transaction_type IN ('prize', 'tournament_prize')
+                  AND t.transaction_type IN ('prize', 'tournament_prize',
+                                             'challenge_prize', 'challenge_refund')
                   AND t.amount > 0
                   AND t.confirmed_at IS NULL
+                  AND COALESCE(t.payout_hold, false) = false
                   AND (t.payout_status IS NULL
                        OR t.payout_status IN ('pending', 'details_collected', 'approved', 'paid'))
                 ORDER BY t.created_at DESC
-                LIMIT 1
+                LIMIT 10
             `, [user.id]);
 
-            const txn = r.rows[0];
-            if (txn && Number(txn.amount) > 0) {
-                const status = txn.payout_status || 'pending';
-                pendingWin = {
-                    amount: Number(txn.amount),
-                    reference: `WUA-${String(txn.id).padStart(4, '0')}`,
-                    detailsGiven: txn.details_given === true,
-                    status,
-                    awaitingReceipt: status === 'paid',
-                    paidAt: txn.paid_at || null
-                };
-            }
+            const LABELS = {
+                prize: 'Classic win',
+                tournament_prize: 'Tournament prize',
+                challenge_prize: 'Challenge prize',
+                challenge_refund: 'Challenge refund'
+            };
+
+            pendingWins = r.rows
+                .filter(t => Number(t.amount) > 0)
+                .map(t => {
+                    const status = t.payout_status || 'pending';
+                    return {
+                        id: t.id,
+                        amount: Number(t.amount),
+                        kind: t.transaction_type,
+                        label: LABELS[t.transaction_type] || 'Prize',
+                        reference: `WUA-${String(t.id).padStart(4, '0')}`,
+                        detailsGiven: t.details_given === true,
+                        status,
+                        awaitingReceipt: status === 'paid',
+                        paidAt: t.paid_at || null
+                    };
+                });
+
+            // Kept so an older cached page still shows something rather than
+            // nothing. The list is what the current page reads.
+            pendingWin = pendingWins[0] || null;
         } catch (e) {
             logger.error(`Could not read pending payout: ${e && e.message}`);
         }
@@ -747,6 +779,7 @@ router.get('/state', requireWebAuth, async (req, res) => {
             user: webAuthService.publicUser({ ...user, ...stats }),
             streaming: gameEvents.isConnected(user.id),
             pendingWin,
+            pendingWins,
             pendingCheckout,
             state,
             awaitingStart: state.phase === 'awaiting_start',   // kept for compatibility

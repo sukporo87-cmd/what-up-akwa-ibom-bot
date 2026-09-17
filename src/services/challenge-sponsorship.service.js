@@ -211,6 +211,31 @@ class ChallengeSponsorshipService {
         // suspicious result sets integrity_hold below and the prize is created
         // held rather than payable.
 
+        // THE WINNER GETS THE PRIZE, NOT THE WHOLE CHARGE.
+        //
+        // challenge_sponsorships.amount is what the SPONSOR PAID: the prize
+        // plus the setup charge plus the platform fee, taken as one payment.
+        // Paying that out handed the winner the house's own fee — ₦1,150 on a
+        // ₦1,000 prize — and turned every sponsored challenge into a loss,
+        // breaking the rule that a sponsored prize nets to zero and revenue is
+        // setup plus fee.
+        //
+        // The prize is read from the CHALLENGE ROW, which is snapshotted at
+        // creation, so raising a band today cannot change what a challenge
+        // created yesterday pays. Same source the refund path already uses.
+        const prize = Number(challenge.prize_amount) || 0;
+        const collected = Number(row.amount) || 0;
+
+        if (prize <= 0) {
+            // A settled sponsorship with no prize on the row is a data problem,
+            // not a payout. Refuse rather than guess an amount.
+            logger.error(`Challenge ${challenge.code}: settled sponsorship but prize_amount is ${challenge.prize_amount} — nothing awarded`);
+            return { ok: false, reason: 'no_prize_amount' };
+        }
+
+        // Never pay out more than came in, whatever the rows say.
+        const payout = Math.min(prize, collected || prize);
+
         const held = challenge.integrity_hold === true;
 
         const transaction = await pool.query(`
@@ -220,14 +245,20 @@ class ChallengeSponsorshipService {
             VALUES ($1, $2, 'challenge_prize', 'success', 'pending', $3, $4, $5, $6)
             RETURNING id
         `, [
-            winnerUserId, row.amount, held,
+            winnerUserId, payout, held,
             held ? 'challenge_integrity_review' : null,
             challenge.created_platform || 'web',
             JSON.stringify({
                 challengeId: challenge.id,
                 challengeCode: challenge.code,
                 sponsorshipId: row.id,
-                sponsoredBy: challenge.creator_user_id
+                sponsoredBy: challenge.creator_user_id,
+                // The itemisation, so the books can be read back without
+                // recomputing anything from a live price list.
+                prize: prize,
+                collected: collected,
+                setupCharge: Number(challenge.setup_charge) || 0,
+                prizeFee: Number(challenge.prize_fee) || 0
             })
         ]);
 
@@ -244,14 +275,16 @@ class ChallengeSponsorshipService {
         ]);
 
         logger.info(
-            `Challenge ${challenge.code}: \u20a6${row.amount} ${held ? 'WITHHELD for review' : 'awarded'} ` +
-            `to user ${winnerUserId} (transaction ${transaction.rows[0].id})`
+            `Challenge ${challenge.code}: \u20a6${payout} ${held ? 'WITHHELD for review' : 'awarded'} ` +
+            `to user ${winnerUserId} (transaction ${transaction.rows[0].id}; ` +
+            `collected \u20a6${collected}, house keeps \u20a6${collected - payout})`
         );
 
         return {
             ok: true,
             held,
-            amount: row.amount,
+            amount: payout,
+            collected,
             transactionId: transaction.rows[0].id
         };
     }
