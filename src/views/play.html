@@ -3326,17 +3326,25 @@ function applyState(st, text){
       }
       if(st.expects==='text' && st.field){ askField(st,text); return; }
 
-      /* THE OPTIONS LIVE IN THE WORDS, NOT IN THE STATE.
-         game.state says "this step wants a choice"; the numbered list is in
-         the message that comes with it. The two are separate SSE frames, and
-         when state won the race we opened a sheet titled "What day?" with a
-         bare text box \u2014 then the words arrived and a SECOND sheet appeared
-         with the actual days. Two prompts for one question.
-         So: if this wants a choice and we have no choices to show, hold it
-         until the words arrive. The timer is the escape hatch, so a prompt
-         whose message never comes still renders as a text box rather than
-         leaving the player facing nothing. */
-      if(st.expects==='choice' && !(st.actions||[]).length && !parseOpts((text||'').replace(/[*_]/g,'')).length){
+      /* THE WORDS ARRIVE IN A SEPARATE FRAME FROM THE STATE.
+         game.state says "this step wants a choice"; the words that explain the
+         choice come in a `message` frame beside it. When state won the race we
+         opened a sheet with a title and a bare text box, and the words landed
+         a moment later in a SECOND sheet.
+
+         HOLD ONLY WHEN THERE ARE NO WORDS YET. An earlier version of this also
+         held a prompt whose words HAD arrived but contained no numbered list —
+         which is most of them. "Confirm your entry" explains itself in prose
+         (type YES to pay, CODE for a promo code, CANCEL to go back) and has
+         nothing numbered in it, so it was held, and by then its text had
+         already been taken out of the buffer. The fallback a moment later had
+         nothing left to show and rendered the title alone: a confirm box with
+         no instructions, on tournament day.
+
+         So the test is whether we have the words, not whether they happen to
+         contain a numbered list. Words present: draw them. No words: wait
+         briefly for them, and fall back to a plain box if they never come. */
+      if(st.expects==='choice' && !(st.actions||[]).length && !(text||'').trim()){
         pendingChoice=st;
         clearTimeout(pendingChoiceT);
         pendingChoiceT=setTimeout(()=>{
