@@ -1316,6 +1316,7 @@
             <option value="">All Modes</option>
             <option value="classic">Classic</option>
             <option value="tournament">Tournament</option>
+            <option value="challenge">Challenge</option>
           </select>
           <select id="winnersAmountFilter" onchange="loadWinners()" style="padding: 10px 15px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); color: var(--text-primary);">
             <option value="">All Amounts</option>
@@ -5166,7 +5167,7 @@ function renderWinnersTable(winners, total = 0) {
     html += `<tr>
       <td>${platformIcon} <strong>@${winner.username || 'unknown'}</strong><br><small>${winner.full_name || ''}</small></td>
       <td style="color: ${amountColor}; font-weight: bold;">₦${parseFloat(winner.amount).toLocaleString()}</td>
-      <td><span class="badge" style="background: ${winner.game_mode === 'tournament' ? '#dbeafe' : '#f3e8ff'}; color: ${winner.game_mode === 'tournament' ? '#1e40af' : '#7c3aed'};">${winner.game_mode || 'classic'}</span></td>
+      <td><span class="badge" style="background: ${winner.game_mode === 'tournament' ? '#dbeafe' : winner.game_mode === 'challenge' ? '#fef3c7' : '#f3e8ff'}; color: ${winner.game_mode === 'tournament' ? '#1e40af' : winner.game_mode === 'challenge' ? '#92400e' : '#7c3aed'};">${winner.game_mode || 'classic'}</span></td>
       <td>${cardStatus}</td>
       <td>${new Date(winner.win_date).toLocaleString()}</td>
       <td>

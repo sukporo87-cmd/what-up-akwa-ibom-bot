@@ -31,10 +31,18 @@ const challengeService = require('./challenge.service');
 
 // A card outlives the 24h play window so a late screenshot still resolves.
 const CARD_TTL_SECONDS = 7 * 24 * 3600;
+// Raise this when the card's design changes. See _cardKey.
+const CARD_DESIGN = 'v2-2026-09';
 
 class ChallengeCardService {
 
-    _cardKey(challengeId) { return `chal:${challengeId}:card`; }
+    // THE DESIGN VERSION IS PART OF THE KEY.
+    // A rendered card is cached as bytes for a week. Without a version in the
+    // key, redesigning the card changes nothing for any challenge already
+    // carded: the old image keeps being served until its week runs out, and
+    // it looks as though the deploy did not land. Raise CARD_DESIGN whenever
+    // the card's look changes and every cached card is redrawn on next ask.
+    _cardKey(challengeId) { return `chal:${challengeId}:card:${CARD_DESIGN}`; }
 
     // ============================================
     // CARD DATA
@@ -177,3 +185,4 @@ class ChallengeCardService {
 
 module.exports = new ChallengeCardService();
 module.exports.CARD_TTL_SECONDS = CARD_TTL_SECONDS;
+module.exports.CARD_DESIGN = CARD_DESIGN;

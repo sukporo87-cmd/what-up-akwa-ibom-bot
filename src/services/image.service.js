@@ -98,8 +98,14 @@ class ImageService {
 
     CT.fitText(ctx, '@' + username, W * 0.56, money ? 618 : 566, 720, money ? 48 : 58, '800', palette.text);
     if (city) CT.fitText(ctx, 'from ' + city, W * 0.56, money ? 658 : 610, 700, 29, 'normal', palette.dim);
-    CT.fitText(ctx, `${questionsAnswered}/15 correct \u00b7 ${timeTaken}s`,
-               W * 0.56, money ? 698 : 654, 760, 27, '600', palette.faint);
+    // The time is left off when it is not known, rather than printed as
+    // "0s". A tournament prize is recorded when the tournament settles, and
+    // the settlement row does not carry the time of the run that earned it.
+    const secs = Number(timeTaken);
+    const scoreLine = secs > 0
+      ? `${questionsAnswered}/15 correct \u00b7 ${timeTaken}s`
+      : `${questionsAnswered}/15 correct`;
+    CT.fitText(ctx, scoreLine, W * 0.56, money ? 698 : 654, 760, 27, '600', palette.faint);
 
     this._panel(ctx, W, money ? 738 : 706, [
       place

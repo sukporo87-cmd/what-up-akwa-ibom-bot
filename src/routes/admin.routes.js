@@ -4363,8 +4363,17 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
         
         // Mode filter
         if (mode) {
-            conditions.push(`gs.game_mode = $${paramIndex}`);
-            params.push(mode);
+            // Filter on the kind of win recorded on the transaction, the same
+            // thing the column now shows. Filtering on the guessed session
+            // mode dropped every tournament and challenge win.
+            const MODE_TYPES = {
+                classic: ['prize'],
+                tournament: ['tournament_prize'],
+                challenge: ['challenge_prize', 'challenge_refund']
+            };
+            const types = MODE_TYPES[String(mode).toLowerCase()] || ['__none__'];
+            conditions.push(`t.transaction_type = ANY($${paramIndex}::text[])`);
+            params.push(types);
             paramIndex++;
         }
         
@@ -4410,7 +4419,22 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
                 u.full_name,
                 u.phone_number,
                 vc.id as victory_card_id,
-                gs.game_mode,
+                t.transaction_type,
+                -- THE KIND OF WIN COMES FROM THE WIN ITSELF.
+                -- This used to be gs.game_mode from a game session found by
+                -- guessing: same user, same day, and a score equal to the
+                -- prize. That guess can only ever match a Classic win. A
+                -- challenge session's score is a count of correct answers,
+                -- never a naira amount, and a tournament prize is paid when
+                -- the tournament settles, usually on another day. Both came
+                -- back empty, and the page printed an empty mode as
+                -- "classic" \u2014 so every win on the list said Classic.
+                CASE t.transaction_type
+                    WHEN 'tournament_prize' THEN 'tournament'
+                    WHEN 'challenge_prize'  THEN 'challenge'
+                    WHEN 'challenge_refund' THEN 'challenge'
+                    ELSE 'classic'
+                END AS game_mode,
                 gs.platform
             FROM transactions t
             JOIN users u ON t.user_id = u.id
@@ -4443,87 +4467,141 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
 
 // Regenerate victory card
 router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, res) => {
+    // DRAW THE CARD FOR THE KIND OF WIN IT WAS.
+    //
+    // This used to call generateWinImage() for every row, which is the Classic
+    // card, whatever the win actually was. A challenge prize came out as a
+    // Classic card with a question count invented from the amount (\u20a61,150
+    // mapped to "5/15"), and a tournament prize came out with no tournament on
+    // it. The in-game paths were always right; only this admin button was not.
+    //
+    // It now reads the transaction's own type and hands each kind to the same
+    // generator the game uses.
+    const fs = require('fs');
+    let imagePath = null;
     try {
         const victoryCardsService = require('../services/victory-cards.service');
         const ImageService = require('../services/image.service');
         const imageService = new ImageService();
-        
-        const cardId = parseInt(req.params.id);
+
+        const requestedId = parseInt(req.params.id, 10);
         const adminId = req.session?.adminId || null;
-        
-        // Try to get card data by victory_card_id first
-        let cardData = await victoryCardsService.getVictoryCardData(cardId);
-        
-        // If not found, try by transaction_id
-        if (!cardData) {
-            cardData = await victoryCardsService.getVictoryCardByTransaction(cardId);
+        if (!Number.isInteger(requestedId)) {
+            return res.status(400).json({ error: 'No card or transaction given' });
         }
-        
-        // If still not found, get from transaction directly
+
+        // The page sends a victory-card id when one exists and a transaction
+        // id when it does not, in the same parameter. Resolve which it is
+        // before trusting it: the two id sequences overlap, and reading a
+        // victory-card id as a transaction id draws somebody else's win.
+        let cardData = await victoryCardsService.getVictoryCardData(requestedId);
+        let transactionId = cardData && cardData.transaction_id ? cardData.transaction_id : null;
         if (!cardData) {
-            const transactionResult = await pool.query(`
-                SELECT t.id as transaction_id, t.amount, t.created_at as win_date,
-                       u.id as user_id, u.username, u.full_name, u.city,
-                       gs.current_question as questions_answered
-                FROM transactions t
-                JOIN users u ON t.user_id = u.id
-                LEFT JOIN game_sessions gs ON t.user_id = gs.user_id 
-                    AND DATE(gs.completed_at) = DATE(t.created_at)
-                    AND gs.current_score = t.amount
-                WHERE t.id = $1 AND t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
-            `, [cardId]);
-            
-            if (transactionResult.rows.length > 0) {
-                cardData = transactionResult.rows[0];
-                cardData.total_questions = 15;
+            cardData = await victoryCardsService.getVictoryCardByTransaction(requestedId);
+            transactionId = requestedId;
+        }
+        if (!transactionId) transactionId = requestedId;
+
+        const txRes = await pool.query(`
+            SELECT t.id AS transaction_id, t.amount, t.transaction_type, t.tournament_id,
+                   t.winning_data, t.created_at AS win_date,
+                   u.id AS user_id, u.username, u.full_name, u.city
+            FROM transactions t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.id = $1
+              AND t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')
+        `, [transactionId]);
+        const tx = txRes.rows[0];
+        if (!tx) return res.status(404).json({ error: 'Victory card or transaction not found' });
+
+        let winning = tx.winning_data;
+        if (typeof winning === 'string') { try { winning = JSON.parse(winning); } catch (e) { winning = {}; } }
+        winning = winning || {};
+
+        // -------- CHALLENGE --------
+        if (tx.transaction_type === 'challenge_prize' || tx.transaction_type === 'challenge_refund') {
+            // A refund is money going back to a sponsor because the challenge
+            // did not finish. There is no result, so there is nothing to draw.
+            if (tx.transaction_type === 'challenge_refund') {
+                return res.status(400).json({
+                    error: 'This is a challenge refund. A challenge that did not finish has no result to put on a card.'
+                });
             }
+            const challengeId = parseInt(winning.challengeId, 10);
+            if (!Number.isInteger(challengeId)) {
+                return res.status(422).json({ error: 'This challenge prize does not record which challenge it came from.' });
+            }
+            const chRes = await pool.query('SELECT * FROM challenges WHERE id = $1', [challengeId]);
+            if (!chRes.rows[0]) return res.status(404).json({ error: 'That challenge no longer exists.' });
+
+            // Same data the game uses for this card. The game's generate()
+            // serves a cached image; an admin asking to regenerate wants a
+            // fresh one, so the data is fetched and drawn directly.
+            const challengeCardService = require('../services/challenge-card.service');
+            const data = await challengeCardService.getCardData(chRes.rows[0]);
+            if (!data) return res.status(409).json({ error: 'That challenge has not finished, so it has no result yet.' });
+            imagePath = await imageService.generateChallengeCard(data);
+
+        // -------- TOURNAMENT --------
+        } else if (tx.transaction_type === 'tournament_prize') {
+            const tRes = await pool.query(`
+                SELECT t.tournament_name, tp.rank, tp.best_score
+                FROM tournaments t
+                LEFT JOIN tournament_participants tp
+                       ON tp.tournament_id = t.id AND tp.user_id = $2
+                WHERE t.id = $1
+            `, [tx.tournament_id, tx.user_id]);
+            const t = tRes.rows[0] || {};
+            imagePath = await imageService.generateTournamentCard({
+                username: tx.username,
+                city: tx.city,
+                questionsAnswered: Number(t.best_score) || 0,
+                timeTaken: winning.timeTaken || '0',
+                rank: t.rank,
+                tournamentName: t.tournament_name || 'Tournament',
+                // The amount actually paid for this placing, from the
+                // transaction itself, rather than recomputed.
+                prizeAmount: Number(tx.amount) || 0
+            });
+
+        // -------- CLASSIC --------
+        } else {
+            let questionsAnswered = Number(
+                (cardData && cardData.questions_answered) || winning.questionsAnswered) || 0;
+            if (!questionsAnswered) {
+                const amount = parseFloat(tx.amount);
+                const prizeTiers = {
+                    50000: 15, 35000: 14, 25000: 13, 20000: 12, 15000: 11,
+                    10000: 10, 7500: 9, 5000: 8, 3000: 7, 2000: 6, 1000: 5
+                };
+                questionsAnswered = prizeTiers[amount] || Math.min(Math.floor(amount / 3000) + 5, 15);
+            }
+            imagePath = await imageService.generateWinImage({
+                name: tx.full_name,
+                username: tx.username,
+                city: tx.city,
+                amount: parseFloat(tx.amount),
+                questionsAnswered,
+                totalQuestions: 15
+            });
         }
-        
-        if (!cardData) {
-            return res.status(404).json({ error: 'Victory card or transaction not found' });
-        }
-        
-        // Calculate questionsAnswered from amount if not available
-        // Prize tiers: Q5=₦1000, Q6=₦2000, Q7=₦3000, Q8=₦5000, Q9=₦7500, Q10=₦10000, 
-        //              Q11=₦15000, Q12=₦20000, Q13=₦25000, Q14=₦35000, Q15=₦50000
-        let questionsAnswered = cardData.questions_answered;
-        if (!questionsAnswered) {
-            const amount = parseFloat(cardData.amount);
-            const prizeTiers = {
-                50000: 15, 35000: 14, 25000: 13, 20000: 12, 15000: 11,
-                10000: 10, 7500: 9, 5000: 8, 3000: 7, 2000: 6, 1000: 5
-            };
-            questionsAnswered = prizeTiers[amount] || Math.min(Math.floor(amount / 3000) + 5, 15);
-        }
-        
-        // Generate the image
-        const imagePath = await imageService.generateWinImage({
-            name: cardData.full_name,
-            username: cardData.username,
-            city: cardData.city,
-            amount: parseFloat(cardData.amount),
-            questionsAnswered: questionsAnswered,
-            totalQuestions: cardData.total_questions || 15
-        });
-        
-        // Log regeneration if we have a victory card id
-        if (cardData.id) {
+
+        // generateWinImage returns an object on Telegram; every other path a path.
+        const filePath = (imagePath && typeof imagePath === 'object') ? imagePath.filepath : imagePath;
+
+        if (cardData && cardData.id) {
             await victoryCardsService.logAdminRegeneration(cardData.id, adminId);
         }
-        
-        // Return the image path (or base64)
-        const fs = require('fs');
-        const imageBuffer = fs.readFileSync(imagePath);
-        const base64Image = imageBuffer.toString('base64');
-        
-        // Clean up
-        fs.unlinkSync(imagePath);
+
+        const base64Image = fs.readFileSync(filePath).toString('base64');
+        try { fs.unlinkSync(filePath); } catch (e) { /* already gone */ }
         imageService.cleanupTempFiles();
-        
-        res.json({ 
-            success: true, 
+
+        res.json({
+            success: true,
             image: `data:image/png;base64,${base64Image}`,
-            cardData
+            kind: tx.transaction_type,
+            cardData: { ...(cardData || {}), transaction_id: tx.transaction_id, transaction_type: tx.transaction_type }
         });
     } catch (error) {
         logger.error('Error regenerating victory card:', error);
