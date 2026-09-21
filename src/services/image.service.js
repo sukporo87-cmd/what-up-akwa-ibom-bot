@@ -10,6 +10,10 @@
 const { createCanvas, loadImage } = require('canvas');
 const QRCode = require('qrcode');
 const path = require('path');
+const CT = require('./card-template.service');
+
+// One call to action on every card, so the wording is changed in one place.
+const JOIN_LABEL = 'SIGN UP TO PLAY AT WHATSUPTRIVIA.COM.NG';
 const fs = require('fs');
 const { logger } = require('../utils/logger');
 
@@ -71,496 +75,193 @@ class ImageService {
   }
 
   // ============================================
-  // TOURNAMENT CARD — The flagship card
-  // Layout: Badge → Score (hero) → Stats → Username → Challenge CTA
+  // TOURNAMENT CARD
   // ============================================
-
   async generateTournamentCard(cardData) {
-    const { username, city, questionsAnswered, timeTaken, rank, tournamentName } = cardData;
-    const isPerfect = questionsAnswered === 15;
-    const W = 1080, H = 1080;
-    const canvas = createCanvas(W, H);
-    const ctx = canvas.getContext('2d');
+    const { username, city, questionsAnswered, timeTaken, rank, tournamentName, prizeAmount } = cardData;
+    const { canvas, ctx, palette, W, H } = await CT.startCard('cosmic');
+    await this._tiva(ctx, W, H, 0.30);
 
-    await this.drawBackground(ctx, W, H, isPerfect ? 'dark' : 'tournament');
-    if (isPerfect) this.drawConfetti(ctx, W, H, ['#FFD700','#FFA500','#FFFF00'], 40, true);
+    const money = Number(prizeAmount) || 0;
+    const place = parseInt(rank, 10);
+    const trophyH = await CT.place(ctx, 'card-trophy.png', W * 0.56, 14, money ? 200 : 214);
+    CT.drawPill(ctx, place ? `RANK #${place}` : 'TOURNAMENT', W * 0.56, 16 + trophyH + 4, 660, 82);
 
-    const ac = isPerfect ? '#FFD700' : '#00BFFF';  // accent
-    const tx = isPerfect ? '#FFD700' : '#FFFFFF';   // text
+    // The tournament's own name. It used to be whatever the caller happened to
+    // pass, which was 'Tournament' more often than not.
+    CT.fitText(ctx, String(tournamentName || 'Tournament').toUpperCase(),
+               W * 0.56, money ? 452 : 486, 730, 36, '800', palette.accent);
 
-    // ─── QR CODE (top-right, compact) ───
-    await this.drawQRCode(ctx, W);
+    // What the rank is worth. A tournament win pays, and a card that showed a
+    // placing but no money read as the smaller prize beside a Classic card.
+    if (money > 0) CT.drawMoney(ctx, money, W * 0.56, 556, 104, palette);
 
-    // ─── TOURNAMENT NAME BADGE (top-left area, not full width) ───
-    const bY = 35;
-    ctx.fillStyle = ac;
-    ctx.globalAlpha = 0.9;
-    this.roundRect(ctx, 30, bY, 680, 55, 28);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = isPerfect ? '#1a0a2e' : '#FFFFFF';
-    ctx.font = 'bold 26px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText((tournamentName || 'TOURNAMENT').toUpperCase(), 370, bY + 37);
+    CT.fitText(ctx, '@' + username, W * 0.56, money ? 618 : 566, 720, money ? 48 : 58, '800', palette.text);
+    if (city) CT.fitText(ctx, 'from ' + city, W * 0.56, money ? 658 : 610, 700, 29, 'normal', palette.dim);
+    CT.fitText(ctx, `${questionsAnswered}/15 correct \u00b7 ${timeTaken}s`,
+               W * 0.56, money ? 698 : 654, 760, 27, '600', palette.faint);
 
-    // ─── SCORE — THE HERO ELEMENT ───
-    // This is what grabs attention when scrolling
-    ctx.textAlign = 'center';
-    ctx.fillStyle = tx;
-    ctx.font = 'bold 120px Arial';
-    ctx.shadowColor = isPerfect ? 'rgba(255,215,0,0.6)' : 'rgba(0,200,255,0.4)';
-    ctx.shadowBlur = 25;
-    ctx.fillText('Q' + questionsAnswered + '/15', W / 2, 210);
-    ctx.shadowBlur = 0;
-
-    // Small "reached" label above
-    ctx.fillStyle = ac;
-    ctx.font = 'bold 22px Arial';
-    ctx.globalAlpha = 0.8;
-    ctx.fillText(isPerfect ? 'PERFECT SCORE' : 'QUESTIONS REACHED', W / 2, 115);
-    ctx.globalAlpha = 1;
-
-    // ─── USERNAME (prominent, right below score) ───
-    ctx.fillStyle = tx;
-    ctx.font = 'bold 48px Arial';
-    ctx.shadowColor = 'rgba(0,0,0,0.7)';
-    ctx.shadowBlur = 12;
-    ctx.fillText('@' + (username || 'player'), W / 2, 290);
-    ctx.shadowBlur = 0;
-
-    if (city) {
-      ctx.fillStyle = ac;
-      ctx.font = '24px Arial';
-      ctx.globalAlpha = 0.85;
-      ctx.fillText(city, W / 2, 325);
-      ctx.globalAlpha = 1;
-    }
-
-    // ─── STATS ROW (Time + Rank side by side in glass pills) ───
-    const statY = 365;
-    const timeStr = typeof timeTaken === 'number' ? timeTaken.toFixed(1) + 's' : timeTaken + 's';
-
-    // Time pill
-    ctx.fillStyle = 'rgba(10,5,35,0.55)';
-    ctx.strokeStyle = isPerfect ? 'rgba(255,215,0,0.3)' : 'rgba(100,180,255,0.25)';
-    ctx.lineWidth = 1.5;
-    this.roundRect(ctx, W/2 - 280, statY, 250, 85, 16);
-    ctx.fill(); ctx.stroke();
-
-    ctx.fillStyle = ac; ctx.font = 'bold 18px Arial';
-    ctx.fillText('TIME', W/2 - 155, statY + 30);
-    ctx.fillStyle = tx; ctx.font = 'bold 36px Arial';
-    ctx.fillText(timeStr, W/2 - 155, statY + 68);
-
-    // Rank pill
-    if (rank) {
-      ctx.fillStyle = 'rgba(10,5,35,0.55)';
-      this.roundRect(ctx, W/2 + 30, statY, 250, 85, 16);
-      ctx.fill(); ctx.stroke();
-
-      ctx.fillStyle = ac; ctx.font = 'bold 18px Arial';
-      ctx.fillText('RANK', W/2 + 155, statY + 30);
-      ctx.fillStyle = tx; ctx.font = 'bold 36px Arial';
-      ctx.fillText('#' + rank, W/2 + 155, statY + 68);
-    }
-
-    // ─── CHALLENGE CTA — The conversion zone ───
-    // This is what makes someone want to tap/join
-    const ctaY = 500;
-
-    // Dark glass panel behind CTA text
-    ctx.fillStyle = 'rgba(10, 5, 35, 0.65)';
-    this.roundRect(ctx, 40, ctaY, W - 80, 140, 20);
-    ctx.fill();
-    // Subtle border
-    ctx.strokeStyle = isPerfect ? 'rgba(255,215,0,0.2)' : 'rgba(100,180,255,0.15)';
-    ctx.lineWidth = 1;
-    this.roundRect(ctx, 40, ctaY, W - 80, 140, 20);
-    ctx.stroke();
-
-    // Challenge text line 1
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 26px Arial';
-    ctx.textAlign = 'center';
-    const challengeLine1 = '@' + (username || 'player') + ' reached Q' + questionsAnswered + ' in ' + timeStr;
-    ctx.fillText(challengeLine1, W / 2, ctaY + 40);
-
-    // Challenge text line 2
-    ctx.fillStyle = ac;
-    ctx.font = 'bold 30px Arial';
-    ctx.fillText('Think you can beat that?', W / 2, ctaY + 80);
-
-    // URL line
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 24px Arial';
-    ctx.globalAlpha = 0.9;
-    ctx.fillText('Join: whatsuptrivia.com.ng', W / 2, ctaY + 118);
-    ctx.globalAlpha = 1;
-
-    // ─── BRANDING (small, bottom-right of the coin area) ───
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.font = '16px Arial';
-    ctx.textAlign = 'right';
-    ctx.fillText("What's Up Trivia", W - 40, H - 30);
-    ctx.textAlign = 'center';
-
+    this._panel(ctx, W, money ? 738 : 706, [
+      place
+        ? `@${username} placed ${this._ordinal(place)} in ${tournamentName}`
+        : `@${username} played ${tournamentName}`,
+      'Think you can top the table?',
+      'Play now: whatsuptrivia.com.ng'
+    ]);
+    CT.drawJoinBar(ctx, W / 2, H - 104, 890, 74, JOIN_LABEL);
     return this.saveCanvas(canvas, 'tournament');
   }
 
   // ============================================
-  // REGULAR WIN CARD
-  // Layout: Trophy → Amount (hero) → Username → Score → Challenge CTA
+  // CHALLENGE CARD
   // ============================================
-
-  // ============================================
-  // CHALLENGE RESULT CARD
-  // ============================================
-  // The growth engine. This is designed to be screenshotted and posted back
-  // into the group chat it came from, so two rules shape the layout:
-  //
-  //   1. THE LOSER MUST BE WILLING TO SHARE IT. No humiliation copy, no
-  //      "destroyed", no "crushed". Both scores are given the same treatment
-  //      and the loser is named neutrally. A card only the winner will post
-  //      halves the reach of the whole feature.
-  //
-  //   2. THE QR IS A REMATCH, NOT A HOMEPAGE. It encodes a challenge that
-  //      already exists with the same settings, so one scan puts you in a
-  //      duel. Sending a beaten player to a creation form loses them.
-  //
-  // Layout copied from generateTournamentCard rather than invented: same
-  // canvas size, background loader, roundRect, QR helper and shadow treatment,
-  // so it inherits the look with no new assets.
+  // Two players get a head-to-head; three or more get standings. Past five,
+  // the first five are listed and the remainder counted, because a card with
+  // twelve rows on it is a spreadsheet.
   async generateChallengeCard(cardData) {
     const {
       winnerName, winnerScore, winnerTimeMs,
       loserName, loserScore, loserTimeMs,
-      categories, rematchUrl, isGroup, groupSize, standings
+      categories, isGroup, groupSize, standings
     } = cardData;
 
-    const W = 1080, H = 1080;
-    const canvas = createCanvas(W, H);
-    const ctx = canvas.getContext('2d');
+    const { canvas, ctx, palette, W, H } = await CT.startCard('gold');
+    await this._tiva(ctx, W, H, 0.28);
 
-    const perfect = winnerScore === 15;
+    // Below the logo, never across it: the badge is wide and the logo owns
+    // the top-right corner.
+    CT.drawPill(ctx, 'CHALLENGE WINNER!!!', W * 0.55, 148, 700, 82);
 
-    await this.drawBackground(ctx, W, H, perfect ? 'dark' : 'warm');
-    if (perfect) this.drawConfetti(ctx, W, H, ['#FFD700', '#FFA500', '#FFFF00'], 40, true);
+    const cats = Array.isArray(categories) ? categories.join(' \u00b7 ') : String(categories || '');
+    CT.fitText(ctx, cats.replace(/[_-]+/g, ' ').toUpperCase(), W * 0.55, 292, 720, 40, '800', palette.text);
 
-    const ac = perfect ? '#FFD700' : '#FF9E4A';
-    const tx = '#FFFFFF';
-    const fmtTime = (ms) => (Number(ms || 0) / 1000).toFixed(1) + 's';
+    const secs = (ms) => (Number(ms) > 0 ? (Number(ms) / 1000).toFixed(1) + 's' : '');
+    let rows = Array.isArray(standings) && standings.length
+      ? standings.map(p => [String(p.username || '').replace(/^@/, ''),
+                            `${p.score}/15`, secs(p.timeMs)])
+      : [[String(winnerName || '').replace(/^@/, ''), `${winnerScore}/15`, secs(winnerTimeMs)],
+         [String(loserName || '').replace(/^@/, ''), `${loserScore}/15`, secs(loserTimeMs)]];
+    rows = rows.filter(r => r[0]);
 
-    // ─── REMATCH QR (top-right) ───
-    await this.drawQRCode(ctx, W, rematchUrl);
+    const total = (isGroup && Number(groupSize)) ? Number(groupSize) : rows.length;
+    const shown = rows.slice(0, 5);
+    const head = shown.length === 2;
 
-    // ─── BADGE (top-left) ───
-    const bY = 35;
-    ctx.fillStyle = ac;
-    ctx.globalAlpha = 0.9;
-    this.roundRect(ctx, 30, bY, 620, 55, 28);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#1a0a2e';
-    ctx.font = 'bold 26px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('CHALLENGE', 340, bY + 37);
+    const rh = head ? 130 : 66, gap = head ? 20 : 7;
+    let y = head ? 346 : 320;
+    const rx = Math.round(W * 0.26), rw = Math.round(W * 0.70);
+    shown.forEach((p, i) => { this._standingRow(ctx, rx, y, rw, rh, i + 1, '@' + p[0], p[1], p[2], i === 0); y += rh + gap; });
+    y -= gap;
 
-    // ─── THE VERDICT — the hero line ───
-    ctx.textAlign = 'center';
-    ctx.fillStyle = ac;
-    ctx.font = 'bold 22px Arial';
-    ctx.globalAlpha = 0.85;
-    ctx.fillText(isGroup ? `${groupSize} PLAYERS` : 'HEAD TO HEAD', W / 2, 150);
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = tx;
-    ctx.shadowColor = 'rgba(0,0,0,0.7)';
-    ctx.shadowBlur = 14;
-    // Sized down for long usernames rather than clipped — Nigerian handles run
-    // long and a truncated name is not shareable.
-    const verdict = isGroup
-      ? `@${winnerName} took 1st`
-      : `@${winnerName} beat @${loserName}`;
-    ctx.font = `bold ${verdict.length > 26 ? 44 : verdict.length > 20 ? 54 : 64}px Arial`;
-    ctx.fillText(verdict, W / 2, 235);
-    ctx.shadowBlur = 0;
-
-    // ─── THE SCORES — equal weight, deliberately ───
-    const rowY = 360;
-    const rowH = 150;
-    const boxW = 900;
-    const boxX = (W - boxW) / 2;
-
-    const scoreRow = (y, name, score, time, isWinner, compact = false, place = 0) => {
-      // The box must match the step used by the caller, or compact rows draw
-      // at full height and overlap the one below.
-      const h = compact ? Math.round(rowH * 0.62) : rowH;
-
-      ctx.fillStyle = isWinner ? 'rgba(255,215,0,0.16)' : 'rgba(255,255,255,0.10)';
-      this.roundRect(ctx, boxX, y, boxW, h, 22);
-      ctx.fill();
-
-      if (isWinner) {
-        ctx.strokeStyle = ac;
-        ctx.lineWidth = 3;
-        this.roundRect(ctx, boxX, y, boxW, h, 22);
-        ctx.stroke();
-      }
-
-      // A compact row fits more of the field on the card: one line per player,
-      // with the position number doing the work the second line used to.
-      const nameSize = compact ? 32 : 42;
-      const scoreSize = compact ? 44 : 72;
-      const nameY = compact ? y + 46 : y + 62;
-
-      ctx.textAlign = 'left';
-      ctx.fillStyle = tx;
-      ctx.font = `bold ${nameSize}px Arial`;
-      const label = (compact && place ? `${place}. ` : '') +
-                    '@' + String(name || 'player').slice(0, compact ? 14 : 18);
-      ctx.fillText(label, boxX + 40, nameY);
-
-      if (!compact) {
-        ctx.fillStyle = isWinner ? ac : 'rgba(255,255,255,0.75)';
-        ctx.font = 'bold 26px Arial';
-        ctx.fillText(fmtTime(time), boxX + 40, y + 108);
-      }
-
-      ctx.textAlign = 'right';
-      ctx.fillStyle = isWinner ? ac : tx;
-      ctx.font = `bold ${scoreSize}px Arial`;
-      ctx.fillText(`${score}/15`, boxX + boxW - 40, compact ? y + 50 : y + 95);
-    };
-
-    // ─── THE FIELD ───
-    //
-    // A group card used to print two rows regardless, so the third player in a
-    // three-player challenge simply was not on it \u2014 having played the whole
-    // thing. Everyone is drawn, up to what fits; beyond that the rest are
-    // counted rather than dropped silently.
-    //
-    // Rows shrink as the field grows so a 20-player card stays legible instead
-    // of running off the bottom.
-    const field = (standings && standings.length)
-      ? standings
-      : [{ username: winnerName, score: winnerScore, timeMs: winnerTimeMs },
-         { username: loserName, score: loserScore, timeMs: loserTimeMs }].filter(r => r.username);
-
-    const MAX_ROWS = field.length <= 5 ? field.length : 5;
-    const compact = field.length > 2;
-    const stepH = compact ? Math.round(rowH * 0.62) + 14 : rowH + 24;
-
-    let drawnY = rowY;
-    for (let i = 0; i < MAX_ROWS; i++) {
-      scoreRow(drawnY, field[i].username, field[i].score, field[i].timeMs, i === 0, compact, i + 1);
-      drawnY += stepH;
+    const others = Math.max(0, total - shown.length);
+    if (others > 0) {
+      CT.fitText(ctx, `and ${others} other player${others === 1 ? '' : 's'}`,
+                 W * 0.55, y + 36, 700, 28, '800', palette.text);
+      y += 48;
     }
 
-    if (field.length > MAX_ROWS) {
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255,255,255,0.72)';
-      ctx.font = '26px Arial';
-      ctx.fillText(
-        `+ ${field.length - MAX_ROWS} more player${field.length - MAX_ROWS === 1 ? '' : 's'}`,
-        W / 2, drawnY + 34
-      );
-      drawnY += 52;
-    }
-
-    // ─── TIEBREAK NOTE, only when it actually decided the result ───
-    if (field.length > 1 && field[0].score === field[1].score) {
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.font = '24px Arial';
-      ctx.fillText('Same score \u2014 won on speed', W / 2, drawnY + 30);
-    }
-
-    // ─── CATEGORY CHIPS ───
-    // The Speed Level slot lives here in the layout but renders nothing while
-    // every challenge runs one clock. Switching levels on later is a chip.
-    ctx.textAlign = 'center';
-    let chipY = 720;
-    const chips = (categories || []).slice(0, 3);
-    if (chips.length) {
-      const chipW = 240, gap = 20;
-      const totalW = chips.length * chipW + (chips.length - 1) * gap;
-      let x = (W - totalW) / 2;
-      for (const chip of chips) {
-        ctx.fillStyle = 'rgba(255,255,255,0.14)';
-        this.roundRect(ctx, x, chipY, chipW, 56, 28);
-        ctx.fill();
-        ctx.fillStyle = tx;
-        ctx.font = 'bold 24px Arial';
-        ctx.fillText(String(chip).replace(/[_-]+/g, ' ').toUpperCase().slice(0, 16), x + chipW / 2, chipY + 37);
-        x += chipW + gap;
-      }
-      chipY += 90;
-    }
-
-    // ─── 15 QUESTIONS · 10 SECONDS ───
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '26px Arial';
-    ctx.fillText('15 questions \u00b7 10 seconds each', W / 2, chipY + 20);
-
-    // ─── THE CALL TO ACTION ───
-    ctx.fillStyle = ac;
-    ctx.font = 'bold 34px Arial';
-    ctx.fillText('Scan to take them on', W / 2, H - 110);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '22px Arial';
-    ctx.fillText(String(rematchUrl || '').replace(/^https?:\/\//, ''), W / 2, H - 62);
-
-    // saveCanvas, like every other generator here. Returning a raw Buffer was
-    // the bug: whatsapp.service.uploadMedia does fs.createReadStream(path), so
-    // a Buffer threw ERR_INVALID_ARG_VALUE and no card ever reached WhatsApp.
-    // The web route reads the file and caches the bytes itself.
+    // The panel starts below whatever the rows needed. A fixed position clips
+    // the overflow line the moment a fifth row appears.
+    const panelY = Math.max(head ? 706 : 722, y + 26);
+    const beaten = Math.max(1, total - 1);
+    this._panel(ctx, W, panelY, [
+      `@${shown[0][0]} defeated ${beaten} ${beaten === 1 ? 'friend' : 'friends'} in a What's Up Trivia Challenge`,
+      'Challenge your friends to a game of Knowledge?',
+      'Sign up, create your challenge & invite friends to play'
+    ]);
+    CT.drawJoinBar(ctx, W / 2, H - 104, 890, 74, JOIN_LABEL);
     return this.saveCanvas(canvas, 'challenge');
   }
 
+  // ============================================
+  // CLASSIC WIN
+  // ============================================
   async generateRegularWinPNG(winData) {
-    const { username, city, amount, questionsAnswered, totalQuestions } = winData;
-    const W = 1080, H = 1080;
-    const canvas = createCanvas(W, H);
-    const ctx = canvas.getContext('2d');
-
-    await this.drawBackground(ctx, W, H, 'warm');
-    this.drawConfetti(ctx, W, H, ['#FF6B6B','#4ECDC4','#FFD93D','#95E1D3','#FCBAD3','#FFF'], 50);
-    await this.drawQRCode(ctx, W);
-
-    // Trophy
-    await this.drawTrophyImage(ctx, W, 30, 170, false);
-
-    // "WINNER" badge
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 18;
-    this.roundRect(ctx, W/2 - 120, 215, 240, 48, 24); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = '#FF6B35'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('WINNER!', W/2, 248);
-
-    // ─── AMOUNT — THE HERO ───
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 110px Arial';
-    ctx.shadowColor = 'rgba(255,215,0,0.6)'; ctx.shadowBlur = 30;
-    ctx.textAlign = 'center';
-    ctx.fillText('N' + amount.toLocaleString(), W/2, 380);
-    ctx.shadowBlur = 0;
-
-    // Username
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 46px Arial';
-    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 10;
-    ctx.fillText('@' + username, W/2, 450);
-    ctx.shadowBlur = 0;
-
-    if (city) {
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.font = '24px Arial';
-      ctx.fillText('from ' + city, W/2, 485);
-    }
-
-    // Score line
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 28px Arial';
-    ctx.globalAlpha = 0.85;
-    ctx.fillText(questionsAnswered + '/' + totalQuestions + ' Questions Correct on What\'s Up Trivia', W/2, 530);
-    ctx.globalAlpha = 1;
-
-    // ─── CHALLENGE CTA ───
-    const ctaY = 570;
-    ctx.fillStyle = 'rgba(10,5,35,0.6)';
-    this.roundRect(ctx, 40, ctaY, W-80, 115, 20); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
-    this.roundRect(ctx, 40, ctaY, W-80, 115, 20); ctx.stroke();
-
-    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('@' + username + ' won N' + amount.toLocaleString() + ' playing trivia!', W/2, ctaY + 38);
-    ctx.fillStyle = '#FFD93D'; ctx.font = 'bold 28px Arial';
-    ctx.fillText('Your turn — can you win bigger?', W/2, ctaY + 74);
-    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 22px Arial'; ctx.globalAlpha = 0.9;
-    ctx.fillText('Play now: whatsuptrivia.com.ng', W/2, ctaY + 105);
-    ctx.globalAlpha = 1;
-
-    // Branding
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '16px Arial'; ctx.textAlign = 'right';
-    ctx.fillText('SummerIsland Systems', W-40, H-30); ctx.textAlign = 'center';
-
-    return this.saveCanvas(canvas, 'win');
+    return this._classicCard(winData, false);
   }
 
-  // ============================================
-  // GRAND PRIZE CARD
-  // Layout: Banner → Trophy → Amount (hero) → Username → Perfect badge → CTA
-  // ============================================
-
   async generateGrandPrizePNG(winData) {
-    const { username, city, amount } = winData;
-    const W = 1080, H = 1080;
-    const canvas = createCanvas(W, H);
-    const ctx = canvas.getContext('2d');
+    return this._classicCard(winData, true);
+  }
 
-    await this.drawBackground(ctx, W, H, 'dark');
-    this.drawConfetti(ctx, W, H, ['#FFD700','#FFA500','#FFFF00','#FFE066'], 50, true);
-    await this.drawQRCode(ctx, W);
+  async _classicCard(winData, grand) {
+    const { username, city, amount, questionsAnswered } = winData;
+    const { canvas, ctx, palette, W, H } = await CT.startCard('cosmic');
+    await this._tiva(ctx, W, H, 0.30);
 
-    // Gold banner
-    const bG = ctx.createLinearGradient(W/2-340, 35, W/2+340, 35);
-    bG.addColorStop(0,'#FFD700'); bG.addColorStop(0.5,'#FFB000'); bG.addColorStop(1,'#FFD700');
-    ctx.fillStyle = bG; ctx.shadowColor = 'rgba(255,215,0,0.7)'; ctx.shadowBlur = 25;
-    this.roundRect(ctx, W/2-340, 35, 680, 55, 28); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = '#1a0a2e'; ctx.font = 'bold 28px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('GRAND PRIZE WINNER!', W/2, 72);
+    const trophyH = await CT.place(ctx, 'card-trophy.png', W * 0.56, 14, grand ? 266 : 232);
+    CT.drawPill(ctx, grand ? 'GRAND PRIZE WINNER!!!' : 'WINNER!',
+                W * 0.56, 18 + trophyH + 6, 680, grand ? 88 : 84);
+    CT.drawMoney(ctx, amount, W * 0.56, grand ? 596 : 562, grand ? 128 : 120, palette);
+    CT.fitText(ctx, '@' + username, W * 0.56, grand ? 662 : 632, 700, 54, '800', palette.text);
+    if (city) CT.fitText(ctx, 'from ' + city, W * 0.56, grand ? 702 : 674, 700, 30, 'normal', palette.dim);
+    CT.fitText(ctx, `${questionsAnswered}/15 Questions Correct on What's Up Trivia`,
+               W * 0.56, grand ? 740 : 714, 760, 25, '600', palette.faint);
 
-    // Trophy
-    await this.drawTrophyImage(ctx, W, 110, 200, true);
+    this._panel(ctx, W, 750, [
+      `@${username} won \u20a6${Number(amount || 0).toLocaleString('en-NG')} playing What's Up Trivia!`,
+      'Your turn \u2014 can you win bigger?',
+      'Play now: whatsuptrivia.com.ng'
+    ]);
+    CT.drawJoinBar(ctx, W / 2, H - 104, 890, 74, JOIN_LABEL);
+    return this.saveCanvas(canvas, grand ? 'grandprize' : 'victory-card');
+  }
 
-    // ─── AMOUNT — THE HERO ───
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 115px Arial';
-    ctx.shadowColor = 'rgba(255,255,255,0.5)'; ctx.shadowBlur = 35;
-    ctx.textAlign = 'center';
-    ctx.fillText('N' + amount.toLocaleString(), W/2, 410);
-    ctx.shadowBlur = 0;
+  // ---- shared bits of the new layout ----
 
-    // Username
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 48px Arial';
-    ctx.shadowColor = 'rgba(255,215,0,0.5)'; ctx.shadowBlur = 15;
-    ctx.fillText('@' + username, W/2, 480);
-    ctx.shadowBlur = 0;
+  async _tiva(ctx, W, H, frac) {
+    const im = await CT.asset('card-tiva.png');
+    if (!im) return;
+    const tw = Math.round(W * frac), th = im.height * (tw / im.width);
+    ctx.drawImage(im, -Math.round(W * 0.035), H - th, tw, th);
+  }
 
-    if (city) {
-      ctx.fillStyle = '#FFD700'; ctx.font = '24px Arial'; ctx.globalAlpha = 0.8;
-      ctx.fillText('from ' + city, W/2, 515); ctx.globalAlpha = 1;
+  _panel(ctx, W, y, lines) {
+    const w = 886, h = 168;
+    CT.drawPanel(ctx, W / 2, y, w, h);
+    CT.fitText(ctx, lines[0], W / 2, y + 54, w - 80, lines[0].length > 48 ? 27 : 31, '800', '#ffffff');
+    CT.fitText(ctx, lines[1], W / 2, y + 100, w - 80, 30, '800', '#ffc233');
+    CT.fitText(ctx, lines[2], W / 2, y + 144, w - 80, 24, 'normal', 'rgba(255,255,255,.78)');
+  }
+
+  _standingRow(ctx, x, y, w, h, rank, name, score, time, top) {
+    ctx.save();
+    const r = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+    ctx.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(x + r, y + h);
+    ctx.arc(x + r, y + r, r, Math.PI / 2, -Math.PI / 2);
+    ctx.closePath();
+    ctx.fillStyle = top ? 'rgba(26,19,72,.93)' : 'rgba(26,19,72,.72)';
+    ctx.fill();
+    if (top) { ctx.lineWidth = 3; ctx.strokeStyle = '#ffd257'; ctx.stroke(); }
+
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = top ? '#ffd257' : 'rgba(255,255,255,.55)';
+    ctx.font = CT.font(h * 0.36, '800'); ctx.textAlign = 'center';
+    ctx.fillText(String(rank), x + 38, y + h / 2);
+
+    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left';
+    ctx.font = CT.font(h * 0.34, '800');
+    ctx.fillText(name, x + 72, y + h / 2 - (time ? h * 0.13 : 0));
+    if (time) {
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.font = CT.font(h * 0.24, 'normal');
+      ctx.fillText(time, x + 72, y + h / 2 + h * 0.24);
     }
 
-    // Perfect score badge
-    ctx.fillStyle = 'rgba(255,215,0,0.15)';
-    this.roundRect(ctx, W/2-140, 535, 280, 42, 21); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,215,0,0.4)'; ctx.lineWidth = 1.5;
-    this.roundRect(ctx, W/2-140, 535, 280, 42, 21); ctx.stroke();
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 22px Arial';
-    ctx.fillText('15/15 PERFECT SCORE', W/2, 563);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = top ? '#ffd257' : '#ffffff';
+    ctx.font = CT.font(h * 0.42, '800');
+    ctx.fillText(score, x + w - 34, y + h / 2);
+    ctx.restore();
+  }
 
-    // ─── CHALLENGE CTA ───
-    const ctaY = 610;
-    ctx.fillStyle = 'rgba(10,5,35,0.65)';
-    this.roundRect(ctx, 40, ctaY, W-80, 115, 20); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,215,0,0.2)'; ctx.lineWidth = 1;
-    this.roundRect(ctx, 40, ctaY, W-80, 115, 20); ctx.stroke();
-
-    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('@' + username + ' answered all 15 questions and won N' + amount.toLocaleString() + '!', W/2, ctaY + 38);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 28px Arial';
-    ctx.fillText('Can you go all the way?', W/2, ctaY + 74);
-    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 22px Arial'; ctx.globalAlpha = 0.9;
-    ctx.fillText('Play now: whatsuptrivia.com.ng', W/2, ctaY + 105);
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = 'rgba(255,215,0,0.3)'; ctx.font = '16px Arial'; ctx.textAlign = 'right';
-    ctx.fillText('SummerIsland Systems', W-40, H-30); ctx.textAlign = 'center';
-
-    return this.saveCanvas(canvas, 'grand');
+  _ordinal(n) {
+    const v = n % 100;
+    if (v >= 11 && v <= 13) return n + 'th';
+    return n + (['th', 'st', 'nd', 'rd'][n % 10] || 'th');
   }
 
   // ============================================

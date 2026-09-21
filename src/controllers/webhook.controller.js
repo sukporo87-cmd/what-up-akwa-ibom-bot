@@ -3786,7 +3786,10 @@ Reply with your choice:`
           questionsAnswered: winData.questionsAnswered,
           timeTaken: winData.timeTaken || '0',
           rank: winData.rank,
-          tournamentName: winData.tournamentName || 'Tournament'
+          // The real tournament's name, not a placeholder, and what the rank
+          // is worth. Both come from the row, so a card cannot invent either.
+          tournamentName: winData.tournamentName || 'Tournament',
+          prizeAmount: Number(winData.rankPrize) || 0
         });
         
         caption = `🏆 @${user.username} reached Q${winData.questionsAnswered} in ${winData.timeTaken}s in ${winData.tournamentName || 'the tournament'}! ` +

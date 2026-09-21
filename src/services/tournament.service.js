@@ -853,4 +853,56 @@ class TournamentService {
     }
 }
 
+// What a given rank is worth in a given tournament.
+//
+// Exposed because the result card has to show it, and the ONLY safe way to
+// show it is to read it from the same place the settlement reads it. A second
+// copy of the prize ladder living in the card renderer would mean a card that
+// promises one figure while the payout runs another, and nobody would notice
+// until a player complained.
+//
+// The resolution order is the settlement's own: the tournament's stored
+// prize_structure first, the default ladder second. Returns 0 for a rank
+// outside the paying places, or when anything is missing — a card that says
+// nothing is far better than a card that invents a number.
+TournamentService.prototype.prizeForRank = async function (tournamentId, rank) {
+    const place = parseInt(rank, 10);
+    if (!tournamentId || !Number.isInteger(place) || place < 1) return 0;
+
+    try {
+        const tRes = await pool.query(
+            'SELECT prize_pool FROM tournaments WHERE id = $1', [tournamentId]);
+        const pool_ = Number(tRes.rows[0] && tRes.rows[0].prize_pool) || 0;
+        if (pool_ <= 0) return 0;
+
+        // Same default ladder the settlement falls back to.
+        let distribution = [0.40, 0.20, 0.15, 0.10, 0.05, 0.03, 0.03, 0.02, 0.01, 0.01];
+
+        const iRes = await pool.query(
+            'SELECT prize_structure FROM tournament_instructions WHERE tournament_id = $1',
+            [tournamentId]);
+        let structure = iRes.rows[0] && iRes.rows[0].prize_structure;
+        if (typeof structure === 'string') {
+            try { structure = JSON.parse(structure); } catch (e) { structure = null; }
+        }
+        if (structure && Array.isArray(structure) && structure.length) {
+            // A structure may state a percentage or a flat amount. A flat
+            // amount is returned as-is rather than turned into a fraction and
+            // back, which is where rounding would creep in.
+            const row = structure.find(p => parseInt(p.position, 10) === place);
+            if (row && row.amount) return Math.round(Number(row.amount)) || 0;
+            distribution = structure
+                .sort((a, b) => a.position - b.position)
+                .map(p => (p.percentage ? parseFloat(p.percentage) / 100 : 0));
+        }
+
+        const share = distribution[place - 1];
+        if (!share || share <= 0) return 0;
+        return Math.round(pool_ * share);
+    } catch (error) {
+        logger.error(`Could not read prize for rank ${rank} in tournament ${tournamentId}: ${error.message}`);
+        return 0;
+    }
+};
+
 module.exports = TournamentService;

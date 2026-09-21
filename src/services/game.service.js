@@ -1952,10 +1952,22 @@ class GameService {
                             if (rResult.rows.length > 0) currentRank = rResult.rows[0].rank;
                         } catch (err) {}
                     }
+                    // What that rank is worth, read from the tournament's own
+                    // prize structure so the card and the settlement can never
+                    // quote different figures.
+                    let rankPrize = 0;
+                    if (session.tournament_id && currentRank) {
+                        try {
+                            const TournamentService = require('./tournament.service');
+                            rankPrize = await new TournamentService()
+                                .prizeForRank(session.tournament_id, currentRank);
+                        } catch (err) { rankPrize = 0; }
+                    }
+
                     await redis.setex(`win_share_pending:${user.id}`, 86400, JSON.stringify({
                         isTournament: true, questionsAnswered, timeTaken,
                         tournamentName, tournamentId: session.tournament_id,
-                        rank: currentRank, totalQuestions: 15
+                        rank: currentRank, rankPrize, totalQuestions: 15
                     }));
                     // Create victory card record for tournament games too (requires sharing before claiming)
                     try {
