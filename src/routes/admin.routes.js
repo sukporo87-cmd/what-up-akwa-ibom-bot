@@ -4504,7 +4504,11 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
 
         const txRes = await pool.query(`
             SELECT t.id AS transaction_id, t.amount, t.transaction_type, t.tournament_id,
-                   t.winning_data, t.created_at AS win_date,
+                   -- win_data, NOT winning_data. The name was written from
+                   -- memory and the column does not exist, which failed this
+                   -- query for every row, every kind of win. Verified against
+                   -- the INSERT in challenge-sponsorship.service.award().
+                   t.win_data, t.created_at AS win_date,
                    u.id AS user_id, u.username, u.full_name, u.city
             FROM transactions t
             JOIN users u ON u.id = t.user_id
@@ -4514,7 +4518,7 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
         const tx = txRes.rows[0];
         if (!tx) return res.status(404).json({ error: 'Victory card or transaction not found' });
 
-        let winning = tx.winning_data;
+        let winning = tx.win_data;
         if (typeof winning === 'string') { try { winning = JSON.parse(winning); } catch (e) { winning = {}; } }
         winning = winning || {};
 
