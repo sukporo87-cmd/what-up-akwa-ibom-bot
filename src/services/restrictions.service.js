@@ -533,8 +533,14 @@ class RestrictionsService {
     // GRAND PRIZE COOLDOWN
     // ============================================
     
+    // 5 days, by founder ruling (Sep 2026), and published on the website's
+    // Rules, Terms, FAQ and Responsible Play pages. The fallback used to be 7,
+    // which meant the published "5 days" was only true while an environment
+    // variable happened to be set \u2014 delete it and every page would be wrong
+    // without anyone noticing. The variable can still override this, but the
+    // site copy has to change with it.
     getCooldownDays() {
-        return parseInt(process.env.GRAND_PRIZE_COOLDOWN_DAYS) || 7;
+        return parseInt(process.env.GRAND_PRIZE_COOLDOWN_DAYS) || 5;
     }
     
     async checkGrandPrizeCooldown(userId) {
