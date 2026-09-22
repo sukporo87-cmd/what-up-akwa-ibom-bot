@@ -32,18 +32,18 @@
     border-radius: 16px; padding: 16px 14px 22px; }
   .phone .num { font-family: 'JetBrains Mono', monospace; font-size: 30px; color: #e8b64c; font-weight: 700; }
   .phone .sub { font-size: 12px; color: #9b8fb0; margin-bottom: 12px; }
-  .stage { display: flex; align-items: flex-end; gap: 8px; }
-  .stage img.tiva { width: 74px; height: auto; display: block; }
-  .board { flex: 1; border: 3px solid #e8b64c; border-radius: 14px; aspect-ratio: 9/14;
-    overflow: hidden; position: relative; background: #241d33; }
+  .stage { position: relative; border-radius: 12px; overflow: hidden; background: #eeeeec; }
+  .stage img.scene-still { width: 100%; display: block; }
+  .board { position: absolute; left: 39.06%; top: 15.55%; width: 55.62%; height: 69%;
+    overflow: hidden; border-radius: 2px; }
   .board .screen { position: absolute; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; text-align: center; padding: 12px 10px; gap: 6px; }
-  .board .screen.text { background: #fff; color: #1a1424; }
+    align-items: center; justify-content: center; text-align: center; padding: 9% 8%; gap: 4px; }
+  .board .screen.text { background: transparent; color: #1a1424; }
   .board .screen.media { background: #000; padding: 0; }
-  .board .screen h3 { font-size: 13px; line-height: 1.2; }
-  .board .screen p { font-size: 10.5px; line-height: 1.4; color: #4a4056; }
-  .board .screen .cta { margin-top: 2px; padding: 4px 9px; border-radius: 999px;
-    background: #2e2540; color: #e8b64c; font-size: 9.5px; font-weight: 700; }
+  .board .screen h3 { font-size: 11px; line-height: 1.18; }
+  .board .screen p { font-size: 9px; line-height: 1.35; color: #4a4056; }
+  .board .screen .cta { margin-top: 2px; padding: 3px 7px; border-radius: 999px;
+    background: #2e2540; color: #e8b64c; font-size: 8px; font-weight: 700; }
   .board .screen img, .board .screen video { width: 100%; height: 100%; object-fit: cover; }
   .board .screen .none { color: #9b8fb0; font-size: 11px; font-style: italic; }
   .prev-nav { display: flex; gap: 7px; justify-content: center; margin-top: 12px; }
@@ -76,6 +76,19 @@
   .editor-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 16px; }
   .editor-err { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 18px; }
   .only-media, .only-text { display: contents; }
+  .upl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .upl-btn { display: inline-block; cursor: pointer; }
+  .upl-btn.busy { opacity: .6; pointer-events: none; }
+  .upl-name { font-size: 13px; color: var(--text-dim); word-break: break-all; }
+  .upl-bar { height: 6px; border-radius: 999px; background: var(--bg); margin-top: 10px;
+    overflow: hidden; border: 1px solid var(--border); }
+  .upl-bar[hidden] { display: none; }
+  .upl-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .upl-prev { margin-top: 10px; }
+  .upl-prev img, .upl-prev video { max-width: 220px; max-height: 160px; border-radius: 8px;
+    border: 1px solid var(--border); display: block; }
+  .upl-alt { margin-top: 12px; font-size: 13px; color: var(--text-dim); }
+  .upl-alt summary { cursor: pointer; margin-bottom: 8px; }
 
   .row { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
     padding: 15px 17px; margin-bottom: 11px; }
@@ -132,7 +145,10 @@
         <div class="num">49</div>
         <div class="sub">2 players here</div>
         <div class="stage">
-          <img class="tiva" src="/media/tiva.webp" alt="" onerror="this.src='/media/tiva.png';this.onerror=null">
+          <!-- The same scene a player gets, held on the frame where the board
+               stops. The board sits over the whiteboard in the clip, at the
+               percentages play.html uses, so this preview matches. -->
+          <img class="scene-still" src="/media/tiva-poster.jpg" alt="">
           <div class="board"><div class="screen text" id="pvScreen"><span class="none">Loading…</span></div></div>
         </div>
         <div class="prev-nav">
@@ -178,10 +194,25 @@
       </div>
 
       <div class="wide" id="rowMedia" style="display:none">
-        <label for="fMedia">Media address (https)</label>
-        <input id="fMedia" placeholder="https://res.cloudinary.com/…/promo.mp4">
-        <div class="hint">Upload the file wherever you host media and paste the direct link here.
-          Videos should be short, muted-friendly and under about 3&nbsp;MB, since players pay for data.</div>
+        <label>Image or video</label>
+        <div class="upl">
+          <label class="btn btn-add upl-btn" for="fFile" id="uplLabel">⬆ Upload a file</label>
+          <input type="file" id="fFile" accept="image/*,video/*" hidden>
+          <span class="upl-name" id="uplName">No file uploaded</span>
+        </div>
+        <div class="upl-bar" id="uplBar" hidden><i id="uplFill"></i></div>
+        <div class="upl-prev" id="uplPrev"></div>
+        <div class="hint">Hosted in our own media storage, so you control it here: replacing or
+          deleting the slide removes the file too. Players are sent a compressed copy sized for a
+          phone, whatever you upload. Images up to 10&nbsp;MB, videos up to 100&nbsp;MB. Videos play
+          muted until the player taps for sound.</div>
+        <details class="upl-alt">
+          <summary>Or paste a link instead</summary>
+          <input id="fMedia" placeholder="https://…">
+          <div class="hint">A link to a file hosted elsewhere. We can't compress it or delete it for
+            you, so an upload is better.</div>
+        </details>
+        <input type="hidden" id="fPublicId">
       </div>
 
       <div>
@@ -337,6 +368,9 @@ function openEditor(id) {
   document.getElementById('fTitle').value    = r && r.title ? r.title : '';
   document.getElementById('fBody').value     = r && r.body ? r.body : '';
   document.getElementById('fMedia').value    = r && r.media_url ? r.media_url : '';
+  document.getElementById('fPublicId').value = r && r.media_public_id ? r.media_public_id : '';
+  document.getElementById('fFile').value = '';
+  showUploaded(r && r.media_url ? r.media_url : '', r && r.kind, r && r.media_public_id);
   document.getElementById('fUrl').value      = r && r.link_url ? r.link_url : '';
   document.getElementById('fCta').value      = r && r.cta_label ? r.cta_label : '';
   document.getElementById('fSeconds').value  = r ? r.duration_seconds : 9;
@@ -367,7 +401,99 @@ function counts() {
 }
 ['fTitle','fBody','fCta'].forEach(f => document.getElementById(f).addEventListener('input', counts));
 
+// --------------------------------------------
+// UPLOAD — straight from this page to our media storage
+// --------------------------------------------
+// The server signs the request; the file itself goes directly to Cloudinary,
+// never through our web server.
+const MAX_BYTES = { image: 10 * 1024 * 1024, video: 100 * 1024 * 1024 };
+let uploading = false;
+
+function showUploaded(url, kind, publicId) {
+  const prev = document.getElementById('uplPrev');
+  const name = document.getElementById('uplName');
+  prev.innerHTML = '';
+  if (!url) { name.textContent = 'No file uploaded'; return; }
+  name.textContent = publicId ? 'Uploaded: ' + publicId.split('/').pop() : 'Linked from elsewhere';
+  const el = document.createElement(kind === 'video' ? 'video' : 'img');
+  el.src = url;
+  if (kind === 'video') { el.muted = true; el.controls = true; el.playsInline = true; }
+  prev.appendChild(el);
+}
+
+// Pasting a link means the slide no longer uses an uploaded file.
+document.getElementById('fMedia').addEventListener('input', () => {
+  document.getElementById('fPublicId').value = '';
+  showUploaded(document.getElementById('fMedia').value.trim(), document.getElementById('fKind').value, '');
+});
+
+document.getElementById('fFile').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const err = document.getElementById('editorErr');
+  err.textContent = '';
+
+  const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
+  if (!type) { err.textContent = 'That file is not an image or a video.'; e.target.value = ''; return; }
+  // The slide's kind follows the file, so an admin cannot save a video as an image.
+  document.getElementById('fKind').value = type;
+  kindChanged();
+  if (file.size > MAX_BYTES[type]) {
+    err.textContent = (type === 'video' ? 'Videos' : 'Images') + ' can be up to ' +
+      (MAX_BYTES[type] / 1048576) + ' MB. That one is ' + (file.size / 1048576).toFixed(1) + ' MB.';
+    e.target.value = '';
+    return;
+  }
+
+  const sig = await apiCall('/lobby-content/upload-signature', { method: 'POST' });
+  if (!sig || !sig.success) { err.textContent = (sig && sig.error) || 'Could not start the upload.'; return; }
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', sig.apiKey);
+  form.append('timestamp', sig.timestamp);
+  form.append('signature', sig.signature);
+  form.append('folder', sig.folder);
+
+  const bar = document.getElementById('uplBar'), fill = document.getElementById('uplFill');
+  const lbl = document.getElementById('uplLabel'), saveBtn = document.getElementById('saveBtn');
+  bar.hidden = false; fill.style.width = '0%';
+  lbl.classList.add('busy'); lbl.textContent = 'Uploading…';
+  saveBtn.disabled = true; uploading = true;
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', 'https://api.cloudinary.com/v1_1/' + encodeURIComponent(sig.cloudName) + '/' + type + '/upload');
+  xhr.upload.onprogress = (ev) => {
+    if (ev.lengthComputable) fill.style.width = Math.round(100 * ev.loaded / ev.total) + '%';
+  };
+  xhr.onload = () => {
+    uploading = false; saveBtn.disabled = false;
+    lbl.classList.remove('busy'); lbl.textContent = '⬆ Upload a different file';
+    let out = null;
+    try { out = JSON.parse(xhr.responseText); } catch (x) {}
+    if (xhr.status >= 200 && xhr.status < 300 && out && out.secure_url) {
+      fill.style.width = '100%';
+      document.getElementById('fMedia').value = out.secure_url;
+      document.getElementById('fPublicId').value = out.public_id;
+      showUploaded(out.secure_url, type, out.public_id);
+      toast('Uploaded — save the slide to publish it');
+    } else {
+      bar.hidden = true;
+      err.textContent = 'Upload failed: ' + ((out && out.error && out.error.message) || 'please try again.');
+    }
+    e.target.value = '';
+  };
+  xhr.onerror = () => {
+    uploading = false; saveBtn.disabled = false; bar.hidden = true;
+    lbl.classList.remove('busy'); lbl.textContent = '⬆ Upload a file';
+    err.textContent = 'Upload failed. Check your connection and try again.';
+    e.target.value = '';
+  };
+  xhr.send(form);
+});
+
 async function save() {
+  if (uploading) { document.getElementById('editorErr').textContent = 'Wait for the upload to finish.'; return; }
   const btn = document.getElementById('saveBtn');
   const err = document.getElementById('editorErr');
   err.textContent = '';
@@ -377,6 +503,7 @@ async function save() {
     title: document.getElementById('fTitle').value.trim(),
     body: document.getElementById('fBody').value.trim(),
     media_url: document.getElementById('fMedia').value.trim(),
+    media_public_id: document.getElementById('fPublicId').value.trim() || null,
     link_url: document.getElementById('fUrl').value.trim(),
     cta_label: document.getElementById('fCta').value.trim(),
     duration_seconds: parseInt(document.getElementById('fSeconds').value, 10),

@@ -344,41 +344,57 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .playingFor[hidden]{display:none}
 .playingFor b{font-size:1.18em}
 
-.stage{display:flex;align-items:flex-end;gap:10px;margin:16px 0 6px;
-       height:clamp(290px,50vh,430px)}
+/* THE SCENE. Tiva's clip, framed as a picture on the dark lobby.
+   Its background is light and the whiteboard inside it is white, so the clip
+   cannot be keyed out without punching holes in the board; it is shown as a
+   scene instead. The box carries the clip's own proportions (640x984), so
+   nothing is letterboxed and the board overlay below stays in register. */
+/* width:100% is load-bearing. The lobby is a flex column, and everything
+   inside the scene is absolutely positioned, so without an explicit width the
+   stage shrinks to zero and the aspect ratio gives it zero height — the scene
+   vanishes while the code reports it shown. */
+.stage{width:100%;max-width:420px;margin:16px auto 6px}
 /* [hidden] comes from the browser's own stylesheet, and any author rule beats
-   it. Without this the stage would show even while empty. */
+   it. Without this the stage would show while empty. */
 .stage[hidden]{display:none}
-.stage .tiva{height:100%;width:auto;flex:none;display:block;
-  filter:drop-shadow(0 14px 18px rgba(0,0,0,.5));
-  -webkit-user-select:none;user-select:none;-webkit-user-drag:none;pointer-events:none}
-/* A gold frame standing on two short legs, on the same floor she is on.
-   overflow lives on the screen, not the frame, so the legs are not clipped
-   away by their own parent. */
-.stage .board{flex:1;min-width:0;height:94%;position:relative;
-  border:3px solid var(--brass);border-radius:18px;background:var(--slate);
-  box-shadow:0 10px 26px rgba(0,0,0,.45)}
-.stage .board .screen{position:absolute;inset:0;border-radius:15px;overflow:hidden;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  text-align:center;padding:18px 15px;gap:9px}
-/* Text is drawn on white: the board should read as a real whiteboard, and
-   dark on white is what stays legible in a bright room. */
-.stage .board .screen.text{background:#fff;color:#1a1424}
+.stage .scene{position:relative;width:100%;aspect-ratio:640/984;border-radius:18px;
+  overflow:hidden;background:#eeeeec;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+.stage .scene video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  display:block;pointer-events:none}
+.stage .scene video[hidden]{display:none}
+
+/* THE BOARD is the whiteboard in the clip. It is positioned in percentages of
+   the clip, measured from the frame where it holds still, so it lines up at
+   every screen size. Hidden until the board has finished forming in the
+   intro; a slide must never float in front of an empty wall. */
+.stage .board{position:absolute;left:39.06%;top:15.55%;width:55.62%;height:69%;
+  overflow:hidden;border-radius:3px;opacity:0;transition:opacity .45s ease;
+  container-type:inline-size}
+.stage .board.ready{opacity:1}
+/* She has gone: the stage steps aside and the clock takes over. */
+.stage.gone{opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease}
+/* The size lives here, not in a style attribute on the element: an inline
+   style beats a stylesheet rule, so the countdown never grew. */
+#alSecs{font-size:44px;transition:font-size .45s ease,color .45s ease}
+#alHero.focus #alSecs{font-size:76px;color:var(--brass)}
+.stage .board .screen{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;padding:9% 8%;gap:.6em}
+/* Text is written ON the board, so it has no box of its own: a white panel
+   over the clip's slightly grey board would read as a sticker. */
+.stage .board .screen.text{background:transparent;color:#1a1424}
 .stage .board .screen.media{background:#000;padding:0}
-.stage .board .screen h3{font-family:var(--display);font-size:clamp(15px,4.2vw,19px);
-  line-height:1.2;margin:0;letter-spacing:-.01em}
-.stage .board .screen p{margin:0;font-size:clamp(12.5px,3.3vw,14px);line-height:1.45;color:#4a4056}
-.stage .board .screen .cta{margin-top:2px;padding:6px 13px;border-radius:999px;
-  background:#2e2540;color:var(--brass);font-size:12px;font-weight:700}
+.stage .board .screen h3{font-family:var(--display);margin:0;line-height:1.15;letter-spacing:-.01em;
+  font-size:15px;font-size:clamp(13px,10.5cqw,24px)}
+.stage .board .screen p{margin:0;line-height:1.4;color:#4a4056;
+  font-size:12px;font-size:clamp(11px,7.2cqw,16px)}
+.stage .board .screen .cta{margin-top:2px;padding:.45em 1em;border-radius:999px;
+  background:#2e2540;color:var(--brass);font-weight:700;font-size:11px;font-size:clamp(10px,6.2cqw,14px)}
 .stage .board .screen img,.stage .board .screen video{width:100%;height:100%;object-fit:cover;display:block}
-.stage .board .sndBtn{position:absolute;right:8px;bottom:8px;z-index:2;
-  width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.28);
-  background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:1;
+.stage .board .sndBtn{position:absolute;right:6px;bottom:6px;z-index:2;
+  width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.28);
+  background:rgba(0,0,0,.55);color:#fff;font-size:14px;line-height:1;
   display:grid;place-items:center;backdrop-filter:blur(4px)}
 .stage .board .sndBtn[hidden]{display:none}
-.stage .board .legs{position:absolute;left:0;right:0;bottom:-9px;display:flex;
-  justify-content:space-between;padding:0 18px;pointer-events:none}
-.stage .board .legs i{width:16px;height:9px;border-radius:0 0 4px 4px;background:var(--brass);opacity:.85}
 /* Which slide is up. Dots only while there are few enough to read at a
    glance; past that the row is noise and stays empty. */
 .ticks{display:flex;gap:5px;justify-content:center;margin-top:16px;min-height:5px}
@@ -386,57 +402,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .ticks i{width:5px;height:5px;border-radius:50%;background:var(--line);transition:background .25s}
 .ticks i.on{background:var(--brass)}
 
-/* THE ENTRANCE. One constant drives it: --walk-ms. Today she slides in and
-   settles, because a single still render cannot walk and pretending for six
-   seconds is worse than arriving in one. When a real walk cycle exists this
-   becomes its length and these keyframes become its frames — nothing else
-   in the lobby changes. */
-.stage.walking .tiva{animation:tivaIn var(--walk-ms,1500ms) cubic-bezier(.22,.61,.36,1) both}
-.stage.walking .board{animation:boardUp 460ms cubic-bezier(.34,1.36,.64,1) both;
-  animation-delay:calc(var(--walk-ms,1500ms) - 120ms)}
-@keyframes tivaIn{from{transform:translateX(-160%)}60%{transform:translateX(4%)}to{transform:translateX(0)}}
-@keyframes boardUp{from{opacity:0;transform:translateY(16px) scaleY(.82)}to{opacity:1;transform:none}}
-.stage .board{transform-origin:bottom}
-/* Straight to the board: someone who asked for less motion, or who joined with
-   seconds to spare, should not sit through a performance. */
-.stage.settled .tiva,.stage.settled .board{animation:none}
-
-/* SHE IS NOT A PHOTOGRAPH.
-   Once she has arrived, a slow breath and a weight shift keep her alive
-   without pulling attention off the board. Both are whole-image transforms:
-   this is one flat render, so an arm cannot move on its own. Real pose
-   changes need more drawings \u2014 see poseSwap below, which cross-fades between
-   them the moment they exist. */
-.stage.settled .tiva,.stage.walking .tiva{will-change:transform}
-.stage .tiva.alive{animation:tivaBreathe 4.6s ease-in-out infinite}
-@keyframes tivaBreathe{
-  0%,100%{transform:translateY(0) scale(1)}
-  28%{transform:translateY(-1.5px) scale(1.006)}
-  55%{transform:translateY(0) scale(1)}
-  72%{transform:translateY(-.5px) scale(1.002) rotate(.25deg)}
-}
-/* The push: she leans into the board as the old slide leaves. */
-.stage .tiva.push{animation:tivaPush 620ms cubic-bezier(.36,.07,.19,.97)}
-@keyframes tivaPush{
-  0%{transform:translateX(0) rotate(0)}
-  30%{transform:translateX(5px) rotate(1.1deg)}
-  60%{transform:translateX(2px) rotate(.4deg)}
-  100%{transform:translateX(0) rotate(0)}
-}
-
-/* THE BOARD SWAP. The old slide is pushed off to the left and the next one
-   is dragged in from the right, so the board reads as a physical thing being
-   changed rather than a panel whose contents blink. */
+/* THE BOARD SWAP. The old slide slides off the board and the next slides on,
+   clipped by the board's own edges. */
 .stage .board .screen{transition:transform 260ms cubic-bezier(.55,.06,.68,.19),opacity 200ms ease}
-.stage .board .screen.out{transform:translateX(-112%) rotate(-1.5deg);opacity:0}
-.stage .board .screen.in{transform:translateX(112%) rotate(1.5deg);opacity:0;transition:none}
-/* No reduced-motion block: the page already kills every animation AND every
-   transition globally under that setting. The JS check in boardShow still
-   matters \u2014 it skips the 260ms swap delay so the slide changes at once. */
-/* No prefers-reduced-motion rule here: the page already kills every animation
-   globally under that setting. The JS check below matters anyway, because the
-   board must appear at once rather than sit invisible waiting for an
-   animation that will never run. */
+.stage .board .screen.out{transform:translateX(-106%);opacity:0}
+.stage .board .screen.in{transform:translateX(106%);opacity:0;transition:none}
 
 /* ---------- claim tile + stats ---------- */
 .who{background:var(--slate);border:1px solid var(--line);border-radius:14px;
@@ -820,8 +790,8 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <div class="icons"><button class="icon" onclick="toggleSound()">♪</button></div>
     </div>
 
-    <div class="hero" style="padding:20px 0 14px">
-      <span class="fig" style="font-size:44px" id="alSecs">–</span>
+    <div class="hero" id="alHero" style="padding:20px 0 14px">
+      <span class="fig" id="alSecs">–</span>
       <p id="alCount">Waiting for players…</p>
     </div>
 
@@ -833,14 +803,24 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
     <!-- Tiva and the board. Hidden until there is something to show: an empty
          gold frame is worse than the plain countdown this replaced. -->
     <div class="stage" id="alStage" hidden>
-      <img class="tiva" id="alTiva" alt="" aria-hidden="true"
-           src="/media/tiva.webp" onerror="this.src='/media/tiva.png';this.onerror=null">
-      <div class="board" id="alBoard">
-        <div class="screen" id="alScreen" aria-live="polite"></div>
-        <!-- Shown only while a video slide is up. A browser will not autoplay
-             with sound, so this is the tap that turns it on. -->
-        <button class="sndBtn" id="alSound" hidden aria-label="Turn sound on">🔇</button>
-        <div class="legs"><i></i><i></i></div>
+      <div class="scene">
+        <!-- Two clips, stacked. The loop sits underneath; its poster is its own
+             first frame, which is also the intro's last. Neither is fetched
+             until the lobby opens. See sceneStart(). -->
+        <video id="alLoop" muted playsinline loop preload="none" aria-hidden="true"
+               poster="/media/tiva-poster.jpg" data-src="/media/tiva-loop.mp4"></video>
+        <video id="alIntro" muted playsinline preload="none" aria-hidden="true"
+               data-src="/media/tiva-intro.mp4"></video>
+        <!-- The exit: she pushes the board away and walks off. Starts on the
+             frame the loop ends on, so it cuts in without a jump. -->
+        <video id="alOutro" muted playsinline preload="none" aria-hidden="true" hidden
+               data-src="/media/tiva-outro.mp4"></video>
+        <div class="board" id="alBoard">
+          <div class="screen" id="alScreen" aria-live="polite"></div>
+          <!-- Shown only while a video slide is up. A browser will not autoplay
+               with sound, so this is the tap that turns it on. -->
+          <button class="sndBtn" id="alSound" hidden aria-label="Turn sound on">🔇</button>
+        </div>
       </div>
     </div>
     <div class="ticks" id="alTicks" hidden></div>
@@ -1636,10 +1616,20 @@ function arenaLobby(d){
    exactly the lobby it was before, countdown and names intact. Nothing in
    this block talks to a challenge endpoint or touches arena state. */
 
-/* How long the entrance runs. A still render cannot walk, so today this is a
-   short arrival. Swap in a real walk cycle and raise this to its length —
-   it is the only number that changes. */
-const LOBBY_WALK_MS = 1500;
+/* The moment in the intro clip when the whiteboard has finished forming.
+   Measured from the clip: the board's frame settles at 7.5 seconds and holds
+   still until the loop. Slides are not drawn before this. */
+const LOBBY_BOARD_READY_S = 7.5;
+
+/* How long before the start she clears the board away. The exit clip runs
+   about 4.6 seconds, so from 15 seconds out she is gone with roughly ten
+   left — enough for the countdown to have the screen to itself. */
+const LOBBY_EXIT_LEAD_MS = 15 * 1000;
+
+/* A video slide plays to its end rather than being cut off at the slide time.
+   This is only a backstop for a video that stalls and never reports finishing:
+   without it the board would sit on one slide forever. */
+const LOBBY_VIDEO_MAX_MS = 3 * 60 * 1000;
 /* Under this much wait, skip the entrance. Sitting through an arrival when
    the match is about to start costs a player the thing they came for. */
 const LOBBY_WALK_MIN_WAIT_MS = 30 * 1000;
@@ -1659,7 +1649,99 @@ const LOBBY_DEFAULT_SLIDES=[
   {kind:'text',title:'Stay on this screen',body:'We start the moment the countdown hits zero. Leave now and you miss the first question.',seconds:9}
 ];
 
-let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,aliveT:null,shown:false,painted:false};
+let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,exited:false,still:false,shown:false,painted:false};
+
+/* ---------- the scene: Tiva's clip ----------
+   Two clips, stacked. The intro plays once: she walks in and the whiteboard
+   forms. The loop underneath is the stretch where the board holds still, with
+   its seam crossfaded, so it can repeat for as long as the lobby lasts. The
+   loop starts on the intro's last frame, so the handover doesn't show.
+
+   Nothing is fetched until the lobby opens (preload="none"), and the whole
+   scene is about half a megabyte. A player on Data Saver, or who has asked for
+   less motion, gets the still poster and the board at once — no video. */
+function sceneStill(){
+  const intro=$('alIntro');
+  try{ intro.pause(); }catch(e){}
+  intro.hidden=true;
+  $('alBoard').classList.add('ready');
+}
+
+function sceneStart(walk, still){
+  const intro=$('alIntro'), loop=$('alLoop'), boardEl=$('alBoard');
+  if(still){ sceneStill(); return; }
+  const reveal=()=>boardEl.classList.add('ready');
+
+  /* Fetch the loop now, while the intro plays, so it is ready at the handover. */
+  if(!loop.getAttribute('src')){ loop.src=loop.dataset.src; try{ loop.load(); }catch(e){} }
+
+  const toLoop=()=>{
+    intro.ontimeupdate=null; intro.onended=null; intro.onerror=null;
+    intro.hidden=true;
+    reveal();
+    const p=loop.play&&loop.play();
+    /* A refused autoplay leaves the poster, which is the same picture. */
+    if(p&&p.catch) p.catch(()=>{});
+  };
+  if(!walk){ toLoop(); return; }
+
+  intro.hidden=false;
+  intro.src=intro.dataset.src;
+  intro.ontimeupdate=()=>{ if(intro.currentTime>=LOBBY_BOARD_READY_S) reveal(); };
+  intro.onended=toLoop;
+  /* A clip that won't play must never leave the board hidden. */
+  intro.onerror=toLoop;
+  const p=intro.play&&intro.play();
+  if(p&&p.catch) p.catch(toLoop);
+}
+
+function scenePause(){
+  ['alIntro','alLoop','alOutro'].forEach(id=>{ try{ $(id).pause(); }catch(e){} });
+}
+
+/* THE EXIT. At LOBBY_EXIT_LEAD_MS before the start she takes the board away,
+   and the countdown becomes the only thing on screen. Slides stop first: no
+   advert should be readable on a board that is being wheeled off. */
+function sceneRetire(){
+  $('alStage').classList.add('gone');
+  $('alTicks').hidden=true;      /* the slide dots go with the board */
+  $('alHero').classList.add('focus');
+  /* Hidden after the fade, not during it. */
+  board.goneT=setTimeout(()=>{ $('alStage').hidden=true; }, 520);
+}
+
+function sceneExit(){
+  if(board.exited) return;
+  board.exited=true;
+  clearTimeout(board.exitT); board.exitT=null;
+
+  clearTimeout(board.slideT); board.slideT=null;
+  clearTimeout(board.swapT); board.swapT=null;
+  paintSoundBtn(null);
+  $('alBoard').classList.remove('ready');
+
+  const outro=$('alOutro');
+  const done=()=>{ outro.onended=null; outro.onerror=null; sceneRetire(); };
+  if(board.still){ done(); return; }   /* reduced motion or Data Saver */
+
+  try{ $('alIntro').pause(); }catch(e){}
+  try{ $('alLoop').pause(); }catch(e){}
+  outro.hidden=false;
+  if(!outro.getAttribute('src')) outro.src=outro.dataset.src;
+  outro.onended=done;
+  outro.onerror=done;              /* a clip that will not play must still clear the stage */
+  const p=outro.play&&outro.play();
+  if(p&&p.catch) p.catch(done);
+}
+
+/* Called when the lobby opens and again whenever the start time moves. */
+function sceneSchedule(startsAt){
+  clearTimeout(board.exitT); board.exitT=null;
+  if(!startsAt) return;
+  const lead=startsAt-LOBBY_EXIT_LEAD_MS-Date.now();
+  if(lead<=0){ sceneExit(); return; }
+  board.exitT=setTimeout(sceneExit,lead);
+}
 
 /* BOARD SOUND.
    Every browser refuses to autoplay a video with sound until the person has
@@ -1697,9 +1779,11 @@ function paintSoundBtn(video){
 function boardStop(){
   clearTimeout(board.slideT); board.slideT=null;
   clearTimeout(board.swapT); board.swapT=null;
-  clearTimeout(board.aliveT); board.aliveT=null;
+  clearTimeout(board.exitT); board.exitT=null;
+  clearTimeout(board.goneT); board.goneT=null;
   paintSoundBtn(null);
-  $('alTiva').classList.remove('alive','push');
+  /* Nothing plays behind a live match. */
+  scenePause();
   clearInterval(board.refreshT); board.refreshT=null;
   const v=$('alScreen').querySelector('video');
   if(v){ try{ v.pause(); }catch(e){} }
@@ -1707,29 +1791,49 @@ function boardStop(){
 
 function boardReset(){
   boardStop();
-  board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,aliveT:null,shown:false,painted:false};
+  board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,exited:false,still:false,shown:false,painted:false};
   $('alStage').hidden=true;
+  $('alStage').classList.remove('gone');
+  $('alHero').classList.remove('focus');
+  $('alBoard').classList.remove('ready');
+  $('alIntro').hidden=false;
+  $('alOutro').hidden=true;
   $('alScreen').classList.remove('in','out');
-  $('alStage').className='stage';
   $('alScreen').className='screen';
   $('alScreen').innerHTML='';
   $('alTicks').innerHTML='';
   $('alTicks').hidden=true;
 }
 
-/* Called once when the lobby opens. startsAt decides whether she walks. */
+/* Called once when the lobby opens. startsAt decides whether she walks in. */
 function boardStart(startsAt){
   boardReset();
   const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  /* Data Saver on: the player has told the browser data is expensive. A
+     looping clip is exactly what they asked to be spared. */
+  const saveData=!!(navigator.connection&&navigator.connection.saveData);
   const wait=Math.max(0,(startsAt||0)-Date.now());
-  const walk=!reduce && wait>LOBBY_WALK_MIN_WAIT_MS;
+  /* Under 30 seconds to go, skip the entrance and go straight to the board. */
+  const walk=!reduce && !saveData && wait>LOBBY_WALK_MIN_WAIT_MS;
+  board.still=reduce||saveData;
 
-  $('alStage').style.setProperty('--walk-ms',LOBBY_WALK_MS+'ms');
-  boardLoad(walk);
-  board.refreshT=setInterval(()=>boardLoad(false),LOBBY_CONTENT_REFRESH_MS);
+  /* Already inside the exit window: she never arrives. Nobody wants an advert
+     wheeled on and straight off again with ten seconds to go. */
+  if(wait>0 && wait<=LOBBY_EXIT_LEAD_MS){
+    board.exited=true;
+    $('alStage').hidden=true;
+    $('alHero').classList.add('focus');
+    return;
+  }
+
+  $('alStage').hidden=false;
+  sceneStart(walk, board.still);
+  sceneSchedule(startsAt);
+  boardLoad();
+  board.refreshT=setInterval(()=>boardLoad(),LOBBY_CONTENT_REFRESH_MS);
 }
 
-async function boardLoad(walk){
+async function boardLoad(){
   let slides=LOBBY_DEFAULT_SLIDES, version='default';
   try{
     const d=await(await fetch('/api/public/lobby-content')).json();
@@ -1748,14 +1852,6 @@ async function boardLoad(walk){
 
     const first=!board.shown;
     board.shown=true; board.i=0;
-    $('alStage').hidden=false;
-    if(first){
-      $('alStage').className='stage '+(walk?'walking':'settled');
-      /* Breathing starts only once she has stopped arriving \u2014 two transform
-         animations on one element fight, and the last one declared wins. */
-      clearTimeout(board.aliveT);
-      board.aliveT=setTimeout(()=>$('alTiva').classList.add('alive'), walk?LOBBY_WALK_MS+80:60);
-    }
     boardShow(0, first);
   }catch(e){ /* the lobby does not depend on this */ }
 }
@@ -1771,12 +1867,8 @@ function boardShow(index, instant){
   const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
 
   if(!instant && !reduce && board.painted){
-    $('alTiva').classList.add('push');
     screen.classList.add('out');
-    board.swapT=setTimeout(()=>{
-      $('alTiva').classList.remove('push');
-      boardPaint(index);
-    },260);
+    board.swapT=setTimeout(()=>boardPaint(index),260);
     return;
   }
   boardPaint(index);
@@ -1784,6 +1876,7 @@ function boardShow(index, instant){
 
 function boardPaint(index){
   board.i=((index%board.slides.length)+board.slides.length)%board.slides.length;
+  board.waitVideo=false;
   const s=board.slides[board.i];
   const screen=$('alScreen');
 
@@ -1799,14 +1892,37 @@ function boardPaint(index){
     const img=new Image(); img.alt=s.title||''; img.src=s.mediaUrl;
     img.onerror=()=>boardShow(board.i+1);      /* a dead link must not stall the board */
     screen.appendChild(img);
+  } else if(s.kind==='video' && s.poster && navigator.connection && navigator.connection.saveData){
+    /* Data Saver on: the still frame, not the video. The player told their
+       browser data is expensive; a looping clip is what they asked to avoid. */
+    const img=new Image(); img.alt=s.title||''; img.src=s.poster;
+    img.onerror=()=>boardShow(board.i+1);
+    screen.appendChild(img);
   } else if(s.kind==='video'){
     const v=document.createElement('video');
+    if(s.poster) v.poster=s.poster;   /* something to see before the first frame arrives */
+    /* A VIDEO RUNS TO ITS END, whatever the slide time says. Cutting an advert
+       off mid-sentence because a number in the dashboard says seven seconds
+       wastes the advert. The slide time still governs text and images.
+       The only exception is a board with nothing else on it: with one slide
+       there is nowhere to move on to, so it loops. */
+    board.waitVideo = board.slides.length>1;
     /* MUTED TO START, ALWAYS. Not a preference — a browser blocks an unmuted
        autoplay outright, so the alternative is a slide that never plays. */
-    v.muted=true; v.defaultMuted=true; v.autoplay=true; v.loop=true;
+    v.muted=true; v.defaultMuted=true; v.autoplay=true; v.loop=!board.waitVideo;
     v.playsInline=true; v.setAttribute('playsinline','');   /* iOS: play in place, never fullscreen */
     v.preload='auto'; v.src=s.mediaUrl;
     v.onerror=()=>boardShow(board.i+1);
+    if(board.waitVideo){
+      v.onended=()=>boardShow(board.i+1);
+      /* A stalled video never reports finishing, and the board would sit on it
+         for the rest of the lobby. Once its length is known, that length plus a
+         few seconds becomes the backstop. */
+      v.onloadedmetadata=()=>{
+        const ms=Math.min((v.duration||0)*1000+4000, LOBBY_VIDEO_MAX_MS);
+        if(ms>4000){ clearTimeout(board.slideT); board.slideT=setTimeout(()=>boardShow(board.i+1),ms); }
+      };
+    }
     screen.appendChild(v);
     v.play&&v.play().catch(()=>{});            /* refused autoplay still shows the first frame */
 
@@ -1839,11 +1955,30 @@ function boardPaint(index){
   requestAnimationFrame(()=>requestAnimationFrame(()=>screen.classList.remove('in')));
   board.painted=true;
 
-  if(board.slides.length>1) board.slideT=setTimeout(()=>boardShow(board.i+1),seconds*1000);
+  /* Text and images move on at the slide time. A video moves on when it ends
+     (see above), with its own backstop, so it is not cut off here. */
+  if(board.slides.length>1 && !board.waitVideo){
+    board.slideT=setTimeout(()=>boardShow(board.i+1),seconds*1000);
+  }
 }
 
 function arenaExtended(d){
   arena.startsAt=d.startsAt;
+  /* The start moved. If she has already cleared the board away, there is time
+     for her to bring it back; if not, the exit simply happens later. */
+  if(board.shown){
+    if(board.exited && d.startsAt-Date.now()>LOBBY_WALK_MIN_WAIT_MS){
+      clearTimeout(board.goneT); board.goneT=null;
+      board.exited=false;
+      $('alOutro').hidden=true;
+      $('alStage').hidden=false;
+      $('alStage').classList.remove('gone');
+      $('alHero').classList.remove('focus');
+      sceneStart(!board.still, board.still);
+      boardShow(board.i, true);
+    }
+    if(!board.exited) sceneSchedule(d.startsAt);
+  }
   $('alNote').textContent='Waiting a little longer.';
   $('alExtend').style.display='none';
   arenaCountdown(d.startsAt,$('alSecs'),null,null,null);

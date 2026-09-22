@@ -27,11 +27,12 @@
    the fallback for a player who opens the app with no signal.
 */
 
-const VERSION = 'wut-shell-v2';
+const VERSION = 'wut-shell-v3';
 const SHELL = [
   '/',
-  '/media/tiva.webp',
-  '/media/tiva.png',
+  /* The lobby's Tiva clips are deliberately absent: about half a megabyte,
+     for a screen only players in a live challenge ever see. They load when
+     the lobby opens. The old stills went with the clip that replaced them. */
   '/media/icon-192.png',
   '/media/icon-512.png',
   '/media/icon-maskable-512.png',

@@ -9496,6 +9496,27 @@ router.delete('/api/game-settings/answer-time/:mode/:platform', authenticateAdmi
 const LobbyContentService = require('../services/lobby-content.service');
 const lobbyContentService = new LobbyContentService();
 
+// A short-lived signature so the admin page can upload a board image or video
+// STRAIGHT TO CLOUDINARY. The file never passes through this server; see
+// cloudinary.service for why. The secret stays here — the page only ever sees
+// the signature, which is good for this one folder and about an hour.
+router.post('/api/lobby-content/upload-signature', authenticateAdmin, async (req, res) => {
+  try {
+    const cloudinaryService = require('../services/cloudinary.service');
+    const signed = cloudinaryService.signLobbyUpload();
+    if (!signed) {
+      return res.status(503).json({
+        success: false,
+        error: 'Media hosting is not configured. Set CLOUDINARY_URL on the server.'
+      });
+    }
+    res.json({ success: true, ...signed });
+  } catch (error) {
+    logger.error(`Error signing lobby upload: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Could not prepare the upload' });
+  }
+});
+
 router.get('/api/lobby-content', authenticateAdmin, async (req, res) => {
   try {
     const slides = await lobbyContentService.adminList();

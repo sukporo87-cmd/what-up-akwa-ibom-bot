@@ -16,6 +16,9 @@ const { v2: cloudinary } = require('cloudinary');
 // Parse and configure manually
 // Format: cloudinary://<api_key>:<api_secret>@<cloud_name>
 const match = cloudinaryUrl.match(/cloudinary:\/\/(\d+):([^@]+)@(.+)/);
+const CONFIGURED = !!match;
+const CLOUD_NAME = match ? match[3] : null;
+const API_KEY = match ? match[1] : null;
 if (match) {
     cloudinary.config({
         cloud_name: match[3],
@@ -201,5 +204,60 @@ class CloudinaryService {
         }
     }
 }
+
+// ============================================
+// LOBBY BOARD MEDIA
+// ============================================
+// Images and videos for the board in the live challenge lobby are hosted in
+// this same Cloudinary account, under their own folder, so the admin
+// dashboard has full control: upload, replace, delete.
+//
+// The browser uploads STRAIGHT TO CLOUDINARY with a short-lived signature
+// from us. The file never passes through Render: a 60 MB video would otherwise
+// sit in the web server's memory, hit request-size limits, and hold up a
+// server that is also running live games.
+const LOBBY_FOLDER = 'wut/lobby-board';
+
+CloudinaryService.prototype.isConfigured = function () { return CONFIGURED; };
+CloudinaryService.prototype.cloudName = function () { return CLOUD_NAME; };
+CloudinaryService.prototype.lobbyFolder = function () { return LOBBY_FOLDER; };
+
+/**
+ * Sign a direct browser upload into the lobby-board folder.
+ * The secret never leaves the server; the signature covers the folder and
+ * timestamp, so it can only be used for this folder, and only for about an
+ * hour (Cloudinary rejects stale timestamps).
+ */
+CloudinaryService.prototype.signLobbyUpload = function () {
+    if (!CONFIGURED) return null;
+    const timestamp = Math.round(Date.now() / 1000);
+    const params = { folder: LOBBY_FOLDER, timestamp };
+    const signature = cloudinary.utils.api_sign_request(params, cloudinary.config().api_secret);
+    return { cloudName: CLOUD_NAME, apiKey: API_KEY, folder: LOBBY_FOLDER, timestamp, signature };
+};
+
+/**
+ * Delete a board image or video. Refuses anything outside the board folder,
+ * so a bad id can never reach photo-verification evidence or anything else
+ * stored in this account.
+ */
+CloudinaryService.prototype.deleteLobbyMedia = async function (publicId, resourceType) {
+    if (!CONFIGURED || !publicId) return false;
+    if (!String(publicId).startsWith(LOBBY_FOLDER + '/')) {
+        logger.warn(`Refused to delete non-board Cloudinary asset: ${publicId}`);
+        return false;
+    }
+    try {
+        await cloudinary.uploader.destroy(publicId, {
+            resource_type: resourceType === 'video' ? 'video' : 'image',
+            invalidate: true
+        });
+        logger.info(`Lobby board media deleted: ${publicId}`);
+        return true;
+    } catch (error) {
+        logger.error(`Could not delete lobby board media ${publicId}: ${error.message}`);
+        return false;
+    }
+};
 
 module.exports = new CloudinaryService();
