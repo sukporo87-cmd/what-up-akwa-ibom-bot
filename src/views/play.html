@@ -1299,11 +1299,27 @@ async function resumeChallenge(){
   const code=pendingChallenge();
   if(!code)return;
   try{
-    const r=await fetch('/challenge/'+code);
+    /* SEND WHO WE ARE. Without the session headers the server cannot tell
+       whether this player is already in the challenge, so `joined` came back
+       false for everybody — and on a full two-player challenge that reads as
+       "someone got there first" to one of the two people already in it. Which
+       is exactly what a lobby reminder opened onto. */
+    const r=await fetch('/challenge/'+code,{headers:H()});
     const d=await r.json();
     if(!d.success||!d.challenge){ clearChallenge(); return; }
     track('challenge_invite_opened',{platform:'web',mode:d.challenge.mode});
-    showChallengeInvite(d.challenge);
+
+    /* Already in a live challenge whose lobby is open? Then this is not an
+       invitation to consider, it is a match about to start. Go straight in —
+       a reminder that lands you on a join screen has wasted the reminder. */
+    const c=d.challenge;
+    const startsAt=c.scheduledStartAt?new Date(c.scheduledStartAt).getTime():0;
+    if((c.joined||c.isInitiator) && c.mode==='live' && startsAt &&
+       Date.now()>=startsAt-LOBBY_OPEN_LEAD_MS && Date.now()<startsAt){
+      clearChallenge();
+      return joinArena(code);
+    }
+    showChallengeInvite(c);
   }catch(e){ clearChallenge(); }
 }
 
@@ -1640,6 +1656,10 @@ const LOBBY_BOARD_READY_S = 7.5;
    left — enough for the countdown to have the screen to itself. */
 const LOBBY_EXIT_LEAD_MS = 15 * 1000;
 
+/* The lobby opens this far ahead of the start — the same figure the server
+   uses to send the reminder. */
+const LOBBY_OPEN_LEAD_MS = 5 * 60 * 1000;
+
 /* A video slide plays to its end rather than being cut off at the slide time.
    This is only a backstop for a video that stalls and never reports finishing:
    without it the board would sit on one slide forever. */
@@ -1688,6 +1708,15 @@ function sceneStart(walk, still){
 
   /* Fetch the loop now, while the intro plays, so it is ready at the handover. */
   if(!loop.getAttribute('src')){ loop.src=loop.dataset.src; try{ loop.load(); }catch(e){} }
+
+  /* AND THE EXIT, NOW RATHER THAN AT THE EXIT.
+     It used to be fetched the moment it was needed, which on a slower phone
+     meant it was not there in time: the clip errored or stalled, the fallback
+     cleared the stage, and Tiva vanished instead of wheeling the board off.
+     One player saw the exit and the other did not, on the same challenge,
+     because one of them had it cached from an earlier lobby. */
+  const outro=$('alOutro');
+  if(!outro.getAttribute('src')){ outro.src=outro.dataset.src; try{ outro.load(); }catch(e){} }
 
   const toLoop=()=>{
     intro.ontimeupdate=null; intro.onended=null; intro.onerror=null;
