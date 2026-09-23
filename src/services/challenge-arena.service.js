@@ -62,6 +62,9 @@ const EXTENSION_MS = 5 * 60 * 1000;
 const MAX_EXTENSIONS = 2;
 
 // Presence changes are coalesced, not sent per join.
+// How often the sweep re-arms reminders for challenges starting soon.
+const REMINDER_SWEEP_MS = 2 * 60 * 1000;
+
 const PRESENCE_COALESCE_MS = 2000;
 
 const QUESTIONS_PER_ROUND = 15;
@@ -160,11 +163,16 @@ class ChallengeArenaService {
         }
         this._ensureStartTimer(challenge);
 
+        // THE ROSTER, NOT A COUNT.
+        // The browser also receives this as an event, but that is emitted once
+        // and only when the room CHANGES — so a creator arriving first, with
+        // nobody following, never received one, and their lobby said "Waiting
+        // for players…" for five minutes with them standing in it.
         return {
             ok: true,
             // Sent ONCE. The browser counts down locally from here.
             startsAt,
-            present: gameEvents.roomMembers(challenge.id).length
+            present: await this._roster(challenge.id, gameEvents.roomMembers(challenge.id))
         };
     }
 
@@ -230,6 +238,42 @@ class ChallengeArenaService {
     //
     // Scheduled ONCE per challenge, when the first person joins.
 
+    // WHY THERE IS A SWEEP.
+    //
+    // The reminder is armed for LOBBY_OPEN_MS before the start. It used to be
+    // armed only from inside joinLobby's success path — which cannot run until
+    // the lobby is ALREADY open, by which point that moment has passed and the
+    // timer refused itself as too late. So no lobby reminder was ever sent,
+    // while the waiting screen was busy promising players one.
+    //
+    // Timers also die with the process, and this server restarts on every
+    // deploy, so arming at creation alone would not be enough either. A sweep
+    // covers both: it runs on boot and every couple of minutes, and
+    // _scheduleLobbyReminder is idempotent, so re-arming an armed challenge
+    // does nothing.
+    startReminderSweep() {
+        if (this.reminderSweep) return;
+        const run = () => this.armUpcomingReminders().catch(error =>
+            logger.error('Lobby reminder sweep failed:', error.message));
+        run();
+        this.reminderSweep = setInterval(run, REMINDER_SWEEP_MS);
+        this.reminderSweep.unref?.();
+    }
+
+    async armUpcomingReminders() {
+        const res = await pool.query(`
+            SELECT c.* FROM challenges c
+            WHERE c.mode = 'live'
+              AND c.status IN ('open', 'lobby')
+              AND c.scheduled_start_at > NOW()
+              AND c.scheduled_start_at < NOW() + INTERVAL '1 hour'
+              AND EXISTS (SELECT 1 FROM challenge_participants p
+                          WHERE p.challenge_id = c.id AND p.status IN ('joined','in_lobby'))
+        `);
+        for (const challenge of res.rows) this._scheduleLobbyReminder(challenge);
+        return res.rows.length;
+    }
+
     _scheduleLobbyReminder(challenge) {
         if (this.reminders.has(challenge.id)) return;
 
@@ -267,14 +311,21 @@ class ChallengeArenaService {
 
         let sent = 0;
         for (const person of people.rows) {
-            // Already sitting in the lobby with a live connection? They can see
-            // the countdown; a message would just be noise.
-            if (gameEvents.isConnected(person.id)) continue;
-
             // Web-only accounts have no chat identifier, so they get a push
             // instead. This used to be the line that skipped them entirely,
             // which is why a browser-only player could miss their own match.
             if (!person.phone_number || String(person.phone_number).startsWith('web_')) {
+                // THE BROWSER DECIDES WHETHER TO SHOW IT, NOT THIS SERVER.
+                //
+                // This used to skip anyone we believed had a live event stream.
+                // But a phone that has been locked, or an app that has been
+                // swiped away, does not tell us so: the socket is simply gone,
+                // and we may not notice for a while. In that window the player
+                // who most needed the reminder was the one who did not get it.
+                //
+                // Only the browser knows whether anyone is actually looking. The
+                // push goes out either way, and the service worker suppresses it
+                // when a window is open, focused and on this challenge already.
                 try {
                     const result = await pushService.notifyUser(person.id, {
                         title: 'Your challenge lobby is open',
@@ -292,6 +343,12 @@ class ChallengeArenaService {
                 }
                 continue;
             }
+
+            // A chat player who is watching the lobby in a browser can already
+            // see the countdown; a WhatsApp message on top of it is noise. This
+            // check belongs here, on the chat path only — applied to the push
+            // path it was silencing the reminder for locked phones.
+            if (gameEvents.isConnected(person.id)) continue;
 
             try {
                 const MessagingService = require('./messaging.service');

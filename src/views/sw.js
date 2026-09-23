@@ -27,7 +27,7 @@
    the fallback for a player who opens the app with no signal.
 */
 
-const VERSION = 'wut-shell-v3';
+const VERSION = 'wut-shell-v4';
 const SHELL = [
   '/',
   /* The lobby's Tiva clips are deliberately absent: about half a megabyte,
@@ -125,8 +125,36 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
 
   const title = data.title || "What's Up Trivia";
-  event.waitUntil(
-    self.registration.showNotification(title, {
+
+  // IS ANYONE ACTUALLY LOOKING?
+  //
+  // The server sends this reminder to every subscribed device, because a
+  // locked phone or a swiped-away app does not announce itself — it just stops
+  // answering, and the server can take a while to notice. Deciding there meant
+  // the players who most needed the reminder were the ones who missed it.
+  //
+  // Here we can tell. If a window is open, focused and already on this
+  // challenge, the player is watching the countdown and needs no notification.
+  // Anything else — minimised, locked, another app, another page, closed —
+  // gets it.
+  const showIfUnseen = async () => {
+    try {
+      const url = data.url || '/';
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const watching = windows.some(c =>
+        c.focused === true &&
+        c.visibilityState === 'visible' &&
+        (url === '/' || (c.url || '').indexOf(url) !== -1));
+      if (watching) {
+        // Tell the page instead, so it can react without a notification.
+        windows.forEach(c => { try { c.postMessage({ type: 'push', data: data }); } catch (e) {} });
+        return;
+      }
+    } catch (e) {
+      /* If anything here fails, show it. A missed reminder is the worse
+         outcome; a duplicate one is merely annoying. */
+    }
+    return self.registration.showNotification(title, {
       body: data.body || 'Open the app to see what is waiting.',
       icon: '/media/icon-192.png',
       badge: '/media/icon-192.png',
@@ -138,8 +166,10 @@ self.addEventListener('push', (event) => {
       // browser's quiet heuristics.
       requireInteraction: false,
       data: { url: data.url || '/' }
-    })
-  );
+    });
+  };
+
+  event.waitUntil(showIfUnseen());
 });
 
 self.addEventListener('notificationclick', (event) => {

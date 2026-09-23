@@ -371,7 +371,11 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
   overflow:hidden;border-radius:3px;opacity:0;transition:opacity .45s ease;
   container-type:inline-size}
 .stage .board.ready{opacity:1}
-/* She has gone: the stage steps aside and the clock takes over. */
+/* She has gone: the stage steps aside and the clock takes over, centred, so
+   there is one thing on screen to get ready by. */
+#vArenaLobby.counting .hero,#vArenaLobby.counting .msg,#vArenaLobby.counting #alPrize{text-align:center}
+#vArenaLobby.counting .hero{min-height:46vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px}
 .stage.gone{opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease}
 /* The size lives here, not in a style attribute on the element: an inline
    style beats a stylesheet rule, so the countdown never grew. */
@@ -1579,7 +1583,14 @@ async function joinArena(code){
     paintPlayingFor(arena.prize);
     startArenaHeartbeat();
     clearChallenge();
-    $('alWho').textContent='Waiting for players…';
+    /* PAINT THE ROOM FROM THE JOIN ITSELF.
+       The roster also arrives as an event, but that is emitted once, a couple
+       of seconds after someone arrives, and only when the room CHANGES. A
+       creator sitting alone in a lobby therefore saw "Waiting for players…"
+       for the whole five minutes — including themselves as missing — because
+       the only event that would have corrected it had already gone out before
+       their stream was listening. */
+    arenaLobby({present:d.present});
     $('alExtend').style.display='none';
     view('vArenaLobby');
     arenaCountdown(d.startsAt,$('alSecs'),null,null,null);
@@ -1604,7 +1615,10 @@ function paintPlayingFor(amount){
 
 function arenaLobby(d){
   arenaSawEvent();
-  const names=(d.present||[]).map(p=>'@'+p.username);
+  /* Older servers sent a count here rather than a roster; treat that as
+     unknown rather than drawing "0 players here" over a full lobby. */
+  const roster=Array.isArray(d.present)?d.present:[];
+  const names=roster.map(p=>'@'+p.username);
   $('alCount').textContent=names.length+(names.length===1?' player here':' players here');
   $('alWho').textContent=names.join(' · ')||'Waiting for players…';
 }
@@ -1704,6 +1718,7 @@ function scenePause(){
    advert should be readable on a board that is being wheeled off. */
 function sceneRetire(){
   $('alStage').classList.add('gone');
+  $('vArenaLobby').classList.add('counting');
   $('alTicks').hidden=true;      /* the slide dots go with the board */
   $('alHero').classList.add('focus');
   /* Hidden after the fade, not during it. */
@@ -1795,6 +1810,7 @@ function boardReset(){
   $('alStage').hidden=true;
   $('alStage').classList.remove('gone');
   $('alHero').classList.remove('focus');
+  $('vArenaLobby').classList.remove('counting');
   $('alBoard').classList.remove('ready');
   $('alIntro').hidden=false;
   $('alOutro').hidden=true;
@@ -1823,6 +1839,7 @@ function boardStart(startsAt){
     board.exited=true;
     $('alStage').hidden=true;
     $('alHero').classList.add('focus');
+    $('vArenaLobby').classList.add('counting');
     return;
   }
 
@@ -1974,6 +1991,7 @@ function arenaExtended(d){
       $('alStage').hidden=false;
       $('alStage').classList.remove('gone');
       $('alHero').classList.remove('focus');
+      $('vArenaLobby').classList.remove('counting');
       sceneStart(!board.still, board.still);
       boardShow(board.i, true);
     }
@@ -2320,6 +2338,11 @@ function chalRenderQuestion(q){
 let csState=null;
 
 async function showChallengeShare(d){
+  /* This sheet carries everything the creator needs — the invite, copy and
+     share. The chat flow ALSO sends a "Challenge created" message a moment
+     later, and that used to open a plain sheet on top, burying this one
+     seconds after it appeared. The share sheet wins for as long as it is up. */
+  shareOpen=true;
   csState=d;
   chal.code=d.code;
   chalIsLive=!!d.startLabel;
@@ -2962,6 +2985,8 @@ const naira=n=>'₦'+Number(n||0).toLocaleString();
 function view(v){
   document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));
   $(v).classList.add('on');
+  /* Leaving the share screen releases its hold on incoming prompts. */
+  if(v!=='vChalShare') shareOpen=false;
   /* The sign-in artwork is ~100 KB and only ever appears here. A returning
      player is signed in and goes straight to the lobby, so it is fetched the
      first time this screen is actually shown and never otherwise. */
@@ -3479,6 +3504,11 @@ function applyState(st, text){
          So the test is whether we have the words, not whether they happen to
          contain a numbered list. Words present: draw them. No words: wait
          briefly for them, and fall back to a plain box if they never come. */
+      /* The share screen already shows the invite, with copy and share on it.
+         The chat flow's own "Challenge created" message adds nothing and used
+         to open a sheet straight over the top of it. */
+      if(shareOpen && !(st.actions||[]).length) return;
+
       if(st.expects==='choice' && !(st.actions||[]).length && !(text||'').trim()){
         pendingChoice=st;
         clearTimeout(pendingChoiceT);
@@ -3556,7 +3586,16 @@ function parseOpts(text){
   // The bank list runs to eleven, and the engine writes 10 as 🔟 and 11 as
   // two stacked keycaps. A single-digit regex silently dropped Wema Bank and
   // the "type your own" option — on a payout screen, of all places.
-  const KEYCAP = /^\s*((?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F}|[1-9][0-9]?)(?:[.)\-:]|(?=\s))\s*(.*)$/u;
+  /* A BARE NUMBER IS NOT AN OPTION.
+     This used to accept "15 questions · 10 seconds each" as option 15,
+     because any line starting with a number and a space counted. The
+     "Challenge created" message begins with exactly that, so the creator was
+     shown two nonsense buttons built out of their own confirmation text.
+     Keycaps stand alone (1️⃣ Play Now); plain digits must carry a delimiter
+     (1. Play, 2) Play), which is how every real menu here is written. */
+  const KEYCAP = /^\s*((?:[1-9]\uFE0F?\u20E3){1,2}|\u{1F51F})\s*(.*)$/u;
+  /* The dash forms are real: the day and time pickers write "*1* — today". */
+  const NUMBERED = /^\s*([1-9][0-9]?)\s*[.)\-:\u2013\u2014]\s*(.*)$/;
   const readKey = raw => {
     if(raw === '\u{1F51F}') return '10';
     const digits = raw.replace(/[\uFE0F\u20E3]/g,'');
@@ -3564,7 +3603,7 @@ function parseOpts(text){
   };
 
   for(const line of lines){
-    const m = KEYCAP.exec(line);
+    const m = KEYCAP.exec(line) || NUMBERED.exec(line);
     if(m && m[2] !== undefined){
       const k = readKey(m[1]);
       if(k && Number(k) >= 1 && Number(k) <= 20){
@@ -5168,6 +5207,8 @@ function overlay(fig,title,body,actLabel,actFn,opts){
   } else { act.style.display='none'; act.onclick=null; }
   $('over').classList.add('on');
 }
+let shareOpen=false;
+
 function closeOver(){
   $('over').classList.remove('on'); banked=0; view('vLobby'); refresh();
 }

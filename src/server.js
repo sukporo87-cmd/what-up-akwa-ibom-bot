@@ -361,6 +361,17 @@ app.listen(PORT, async () => {
   console.log(`   WhatsApp: ✅ Active`);
   console.log(`   Telegram: ${process.env.TELEGRAM_ENABLED === 'true' ? '⏸️  Configuring...' : '⏸️  Disabled'}`);
   
+  // Lobby reminders for live challenges starting soon. Armed here because
+  // timers do not survive a restart, and this process restarts on every
+  // deploy — a challenge scheduled before the deploy would otherwise lose its
+  // reminder silently. See startReminderSweep().
+  try {
+    require('./services/challenge-arena.service').startReminderSweep();
+    console.log('   Lobby reminders: ✅ armed');
+  } catch (error) {
+    console.error('   Lobby reminders: ❌', error.message);
+  }
+
   // Setup Telegram webhook ONCE, AFTER server is ready
   await setupTelegramWebhook();
   
