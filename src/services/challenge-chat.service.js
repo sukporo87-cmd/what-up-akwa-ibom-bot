@@ -279,6 +279,13 @@ const STRINGS = {
         'After that it\u2019s final \u2014 it runs, or it expires.\n\n' +
         '_Reply *CANCEL CHALLENGE* to call it off._',
 
+    // WEB ONLY. In chat the invite is the next message, ready to forward. On
+    // web it opens as its own screen with Copy and Share — but if that screen
+    // is missed or dismissed, the creator is left holding a challenge with no
+    // obvious way to send it. This says where to find it again.
+    createdWebTail:
+        '\n\n*TAP YOUR CHALLENGE IN THE MENU TO GET YOUR SHAREABLE INVITE.*',
+
     // The forwardable one. Deliberately self-contained: someone who receives
     // this with no context should understand what it is and how to play.
     // NAME FIRST, handle in brackets. Someone who has never used the platform
@@ -1231,7 +1238,7 @@ class ChallengeChatService {
 
         await messagingService.sendMessage(identifier, STRINGS.created(
             categoryLabel, startLabel, result.challenge.code, initiatorCode, data.mode
-        ));
+        ) + (platform === 'web' ? STRINGS.createdWebTail : ''));
 
         await messagingService.sendMessage(identifier,
             STRINGS.invite(this.displayName(user), result.links, categoryLabel, startLabel,

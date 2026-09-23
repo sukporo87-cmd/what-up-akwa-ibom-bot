@@ -2338,6 +2338,11 @@ function chalRenderQuestion(q){
 let csState=null;
 
 async function showChallengeShare(d){
+  /* The chat flow's own messages land a moment BEFORE this event, and they
+     open a sheet that sits above every screen. Switching to the share screen
+     underneath left that sheet covering it — which is why the invite appeared
+     as plain text with nothing to copy. Clear it first. */
+  closeAsk(); closeOver();
   /* This sheet carries everything the creator needs — the invite, copy and
      share. The chat flow ALSO sends a "Challenge created" message a moment
      later, and that used to open a plain sheet on top, burying this one

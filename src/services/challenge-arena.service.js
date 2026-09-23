@@ -328,8 +328,10 @@ class ChallengeArenaService {
                 // when a window is open, focused and on this challenge already.
                 try {
                     const result = await pushService.notifyUser(person.id, {
-                        title: 'Your challenge lobby is open',
-                        body: 'It starts in 5 minutes. Tap to join.',
+                        // The phone adds "from What's Up Trivia" under the
+                        // title itself, so the name is not repeated here.
+                        title: 'Your Challenge lobby is now open',
+                        body: 'The challenge starts in 5mins. Get into the lobby now to join and play',
                         url: `/c/${challenge.code}`,
                         // One notification per challenge, replaced rather than
                         // repeated if anything sends twice.
