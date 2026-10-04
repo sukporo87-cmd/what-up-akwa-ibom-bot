@@ -1664,6 +1664,36 @@ const LOBBY_OPEN_LEAD_MS = 5 * 60 * 1000;
    This is only a backstop for a video that stalls and never reports finishing:
    without it the board would sit on one slide forever. */
 const LOBBY_VIDEO_MAX_MS = 3 * 60 * 1000;
+
+/* ---------- counting what advertisers paid for ----------
+   A VIEW is a slide that stays on a VISIBLE screen for a full second. Painted
+   but swapped away at once, or painted while the phone is locked or the tab
+   is in the background, it was not seen, and an advertiser must not be told
+   it was. Views and taps are queued and sent in batches, never one request
+   per slide, so counting costs the lobby nothing noticeable. */
+const LOBBY_VIEW_MIN_MS = 1000;
+const LOBBY_AD_FLUSH_MS = 15 * 1000;
+let adQueue=[];
+
+function adCount(id, kind){
+  if(!id) return;
+  adQueue.push({id:id, kind:kind});
+  if(adQueue.length>=20) adFlush();
+}
+
+function adFlush(){
+  if(!adQueue.length || !token) return;
+  const events=adQueue.splice(0, adQueue.length);
+  /* keepalive lets the last batch still go out as the page closes. */
+  try{
+    fetch('/web/game/lobby-events',{method:'POST',headers:H(),
+      body:JSON.stringify({events:events}),keepalive:true}).catch(()=>{});
+  }catch(e){}
+}
+
+/* Leaving the page or locking the phone: send what we have now, because a
+   timer may never fire again. */
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') adFlush(); });
 /* Under this much wait, skip the entrance. Sitting through an arrival when
    the match is about to start costs a player the thing they came for. */
 const LOBBY_WALK_MIN_WAIT_MS = 30 * 1000;
@@ -1683,7 +1713,7 @@ const LOBBY_DEFAULT_SLIDES=[
   {kind:'text',title:'Stay on this screen',body:'We start the moment the countdown hits zero. Leave now and you miss the first question.',seconds:9}
 ];
 
-let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,exited:false,still:false,shown:false,painted:false};
+let board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,viewT:null,flushT:null,exited:false,still:false,shown:false,painted:false};
 
 /* ---------- the scene: Tiva's clip ----------
    Two clips, stacked. The intro plays once: she walks in and the whiteboard
@@ -1761,6 +1791,7 @@ function sceneExit(){
 
   clearTimeout(board.slideT); board.slideT=null;
   clearTimeout(board.swapT); board.swapT=null;
+  clearTimeout(board.viewT); board.viewT=null;
   paintSoundBtn(null);
   $('alBoard').classList.remove('ready');
 
@@ -1829,13 +1860,17 @@ function boardStop(){
   /* Nothing plays behind a live match. */
   scenePause();
   clearInterval(board.refreshT); board.refreshT=null;
+  clearTimeout(board.viewT); board.viewT=null;
+  clearInterval(board.flushT); board.flushT=null;
+  /* Whatever was seen before the match started still counts. */
+  adFlush();
   const v=$('alScreen').querySelector('video');
   if(v){ try{ v.pause(); }catch(e){} }
 }
 
 function boardReset(){
   boardStop();
-  board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,exited:false,still:false,shown:false,painted:false};
+  board={slides:[],version:null,i:0,slideT:null,refreshT:null,swapT:null,exitT:null,goneT:null,viewT:null,flushT:null,exited:false,still:false,shown:false,painted:false};
   $('alStage').hidden=true;
   $('alStage').classList.remove('gone');
   $('alHero').classList.remove('focus');
@@ -1877,6 +1912,7 @@ function boardStart(startsAt){
   sceneSchedule(startsAt);
   boardLoad();
   board.refreshT=setInterval(()=>boardLoad(),LOBBY_CONTENT_REFRESH_MS);
+  board.flushT=setInterval(adFlush,LOBBY_AD_FLUSH_MS);
 }
 
 async function boardLoad(){
@@ -1988,7 +2024,12 @@ function boardPaint(index){
 
   /* A slide with a link is tappable. Opened in a new tab so nobody leaves a
      lobby they are about to be pulled into. */
-  screen.onclick = s.url ? ()=>{ const w=window.open(s.url,'_blank'); if(w){ try{ w.opener=null; }catch(e){} } } : null;
+  screen.onclick = s.url ? ()=>{
+    /* Counted and sent BEFORE the new tab opens: on a phone the page may be
+       frozen the moment it loses focus, and the tap would never be reported. */
+    adCount(s.id,'tap'); adFlush();
+    const w=window.open(s.url,'_blank'); if(w){ try{ w.opener=null; }catch(e){} }
+  } : null;
   screen.style.cursor = s.url ? 'pointer' : '';
 
   const ticks=$('alTicks').children;
@@ -2000,6 +2041,14 @@ function boardPaint(index){
   screen.classList.add('in');
   requestAnimationFrame(()=>requestAnimationFrame(()=>screen.classList.remove('in')));
   board.painted=true;
+
+  clearTimeout(board.viewT);
+  const shownIndex=board.i;
+  board.viewT=setTimeout(()=>{
+    /* Still this slide, still on screen, board still up: then it was seen. */
+    if(board.i===shownIndex && board.slides[shownIndex]===s &&
+       document.visibilityState==='visible' && !board.exited) adCount(s.id,'view');
+  }, LOBBY_VIEW_MIN_MS);
 
   /* Text and images move on at the slide time. A video moves on when it ends
      (see above), with its own backstop, so it is not cut off here. */

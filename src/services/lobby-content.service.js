@@ -34,6 +34,19 @@ const CACHE_TTL = 60;
 const KINDS = ['text', 'image', 'video'];
 const MAX_LIVE_ITEMS = 12;
 const MAX_TITLE = 60;
+const MAX_ADVERTISER = 80;
+
+// ---- Advertising measurement ----
+// A view is a slide that stayed on a visible screen for LOBBY_VIEW_MIN_MS (the
+// browser enforces that; see play.html). Repeats are collapsed here: one
+// person's views of one slide within these windows count once, so a slide
+// that loops twice in ten seconds is not billed twice.
+const VIEW_DEDUPE_SECONDS = 10;
+const TAP_DEDUPE_SECONDS = 3;
+// A browser sends its views in batches. More than this in one batch is not a
+// lobby, it is something misbehaving.
+const MAX_EVENTS_PER_BATCH = 30;
+const MAX_REPORT_DAYS = 366;
 const MAX_BODY = 320;
 const MAX_URL = 500;
 const MAX_CTA = 28;
@@ -155,6 +168,28 @@ class LobbyContentService {
         // can delete the file. Null for a pasted link.
         await pool.query('ALTER TABLE lobby_content ADD COLUMN IF NOT EXISTS media_public_id TEXT');
         await pool.query('ALTER TABLE lobby_content ADD COLUMN IF NOT EXISTS media_resource TEXT');
+
+        // ADVERTISING. Who a slide is sold to, so several slides can be
+        // reported together as one client's campaign.
+        await pool.query('ALTER TABLE lobby_content ADD COLUMN IF NOT EXISTS advertiser TEXT');
+
+        // One row per counted view or tap. A ledger, not running totals: an
+        // advertiser's figures are always recomputed from what happened, never
+        // from a counter that could drift. The advertiser is copied onto each
+        // row, so a campaign's report survives the slide being renamed,
+        // reassigned or deleted after it ran. No foreign key for the same reason.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS lobby_ad_events (
+                id          BIGSERIAL PRIMARY KEY,
+                content_id  INTEGER NOT NULL,
+                advertiser  TEXT,
+                kind        TEXT NOT NULL CHECK (kind IN ('view', 'tap')),
+                user_id     INTEGER NOT NULL,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_lobby_ad_events_time ON lobby_ad_events (created_at)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_lobby_ad_events_adv ON lobby_ad_events (advertiser, created_at)');
         this._schemaReady = true;
     }
 
@@ -211,7 +246,7 @@ class LobbyContentService {
         const result = await pool.query(`
             SELECT id, kind, title, body, media_url, link_url, cta_label, duration_seconds,
                    priority, starts_at, ends_at, active, created_at, updated_at, updated_by,
-                   media_public_id, media_resource
+                   media_public_id, media_resource, advertiser
             FROM lobby_content
             ORDER BY active DESC, priority DESC, created_at DESC
         `);
@@ -224,6 +259,9 @@ class LobbyContentService {
         if (!KINDS.includes(kind)) return { ok: false, error: 'Kind must be text, image or video' };
 
         const title = String(fields.title || '').trim().slice(0, MAX_TITLE) || null;
+        // Free text, trimmed. Two spellings of one client would split their
+        // report, so the admin page offers existing names as suggestions.
+        const advertiser = String(fields.advertiser || '').replace(/\s+/g, ' ').trim().slice(0, MAX_ADVERTISER) || null;
         const body = String(fields.body || '').trim().slice(0, MAX_BODY) || null;
 
         if (kind === 'text' && !title && !body) {
@@ -265,7 +303,7 @@ class LobbyContentService {
         return {
             ok: true,
             values: {
-                kind, title, body, mediaUrl, mediaPublicId, mediaResource,
+                kind, title, body, mediaUrl, mediaPublicId, mediaResource, advertiser,
                 linkUrl: link.value,
                 cta, duration, priority,
                 startsAt: when(fields.starts_at),
@@ -284,12 +322,13 @@ class LobbyContentService {
         const result = await pool.query(`
             INSERT INTO lobby_content
                 (kind, title, body, media_url, link_url, cta_label, duration_seconds,
-                 priority, starts_at, ends_at, active, updated_by, media_public_id, media_resource)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                 priority, starts_at, ends_at, active, updated_by, media_public_id, media_resource,
+                 advertiser)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING id
         `, [v.kind, v.title, v.body, v.mediaUrl, v.linkUrl, v.cta, v.duration,
             v.priority, v.startsAt, v.endsAt, v.active, adminUsername || null,
-            v.mediaPublicId, v.mediaResource]);
+            v.mediaPublicId, v.mediaResource, v.advertiser]);
 
         await this.clearCache();
         logger.info(`Lobby slide ${result.rows[0].id} created by ${adminUsername || 'admin'}`);
@@ -311,12 +350,12 @@ class LobbyContentService {
                 cta_label = $6, duration_seconds = $7, priority = $8,
                 starts_at = $9, ends_at = $10, active = $11,
                 updated_at = NOW(), updated_by = $12,
-                media_public_id = $14, media_resource = $15
+                media_public_id = $14, media_resource = $15, advertiser = $16
             WHERE id = $13
             RETURNING id
         `, [v.kind, v.title, v.body, v.mediaUrl, v.linkUrl, v.cta, v.duration,
             v.priority, v.startsAt, v.endsAt, v.active, adminUsername || null, id,
-            v.mediaPublicId, v.mediaResource]);
+            v.mediaPublicId, v.mediaResource, v.advertiser]);
 
         if (!result.rowCount) return { ok: false, error: 'Slide not found' };
 
@@ -361,13 +400,157 @@ class LobbyContentService {
         logger.info(`Lobby slide ${id} deleted by ${adminUsername || 'admin'}`);
         return true;
     }
+
+    // ============================================
+    // ADVERTISING: COUNTING
+    // ============================================
+    // Called with a signed-in player's batch of views and taps. Returns how
+    // many were counted. Never throws: a failed count must not disturb a lobby.
+    async recordEvents(userId, events) {
+        try {
+            if (!Number.isInteger(userId) || !Array.isArray(events) || !events.length) return 0;
+            await this.ensureSchema();
+
+            const batch = events.slice(0, MAX_EVENTS_PER_BATCH)
+                .map(e => ({ id: parseInt(e && e.id, 10), kind: e && e.kind }))
+                .filter(e => Number.isInteger(e.id) && (e.kind === 'view' || e.kind === 'tap'));
+            if (!batch.length) return 0;
+
+            // Only slides that exist. A made-up id must not create a line in
+            // somebody's report.
+            const ids = [...new Set(batch.map(e => e.id))];
+            const known = await pool.query(
+                'SELECT id, advertiser FROM lobby_content WHERE id = ANY($1::int[])', [ids]);
+            const advertiserOf = new Map(known.rows.map(r => [r.id, r.advertiser]));
+
+            const counted = [];
+            for (const e of batch) {
+                if (!advertiserOf.has(e.id)) continue;
+                const ttl = e.kind === 'tap' ? TAP_DEDUPE_SECONDS : VIEW_DEDUPE_SECONDS;
+                let fresh = true;
+                try {
+                    fresh = (await redis.set(`lbe:${e.kind}:${userId}:${e.id}`, '1', 'EX', ttl, 'NX')) === 'OK';
+                } catch (err) { fresh = true; }   // without Redis, count rather than lose it
+                if (fresh) counted.push(e);
+            }
+            if (!counted.length) return 0;
+
+            const values = [], params = [];
+            counted.forEach((e, n) => {
+                const o = n * 4;
+                values.push(`($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4})`);
+                params.push(e.id, advertiserOf.get(e.id) || null, e.kind, userId);
+            });
+            await pool.query(
+                `INSERT INTO lobby_ad_events (content_id, advertiser, kind, user_id) VALUES ${values.join(', ')}`,
+                params);
+            return counted.length;
+        } catch (error) {
+            logger.error(`Could not record lobby ad events: ${error.message}`);
+            return 0;
+        }
+    }
+
+    // ============================================
+    // ADVERTISING: THE REPORT
+    // ============================================
+    // Days are Nigerian days (WAT, UTC+1, no daylight saving), inclusive of
+    // both ends, because that is what an advertiser means by "1 to 7 October".
+    static reportWindow(from, to) {
+        const ok = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+        const today = new Date(Date.now() + 3600000).toISOString().slice(0, 10);
+        const toDay = ok(to) ? to : today;
+        const fromDay = ok(from) ? from
+            : new Date(new Date(toDay + 'T00:00:00Z').getTime() - 6 * 86400000).toISOString().slice(0, 10);
+        const start = new Date(fromDay + 'T00:00:00+01:00');
+        const end = new Date(new Date(toDay + 'T00:00:00+01:00').getTime() + 86400000);
+        if (isNaN(start) || isNaN(end) || end <= start) return null;
+        if ((end - start) / 86400000 > MAX_REPORT_DAYS) return null;
+        return { fromDay, toDay, start, end };
+    }
+
+    async report({ from, to, advertiser } = {}) {
+        await this.ensureSchema();
+        const win = LobbyContentService.reportWindow(from, to);
+        if (!win) return { ok: false, error: 'Choose a date range of up to a year.' };
+
+        const params = [win.start, win.end];
+        let filter = '';
+        if (advertiser) { params.push(String(advertiser)); filter = 'AND e.advertiser = $3'; }
+
+        // PER ADVERTISER, COUNTED ACROSS THEIR SLIDES TOGETHER.
+        // Viewers are counted distinct over the whole campaign, not summed
+        // slide by slide: one person who saw three slides is one viewer, and
+        // adding per-slide counts would report them as three.
+        const totals = await pool.query(`
+            SELECT e.advertiser,
+                   COUNT(*) FILTER (WHERE e.kind = 'view')                  AS views,
+                   COUNT(DISTINCT e.user_id) FILTER (WHERE e.kind = 'view') AS viewers,
+                   COUNT(*) FILTER (WHERE e.kind = 'tap')                   AS taps,
+                   COUNT(DISTINCT e.content_id)                             AS slides
+            FROM lobby_ad_events e
+            WHERE e.created_at >= $1 AND e.created_at < $2 ${filter}
+            GROUP BY e.advertiser
+            ORDER BY views DESC
+        `, params);
+
+        const bySlide = await pool.query(`
+            SELECT e.advertiser, e.content_id, c.title, c.kind,
+                   COUNT(*) FILTER (WHERE e.kind = 'view')                  AS views,
+                   COUNT(DISTINCT e.user_id) FILTER (WHERE e.kind = 'view') AS viewers,
+                   COUNT(*) FILTER (WHERE e.kind = 'tap')                   AS taps
+            FROM lobby_ad_events e
+            LEFT JOIN lobby_content c ON c.id = e.content_id
+            WHERE e.created_at >= $1 AND e.created_at < $2 ${filter}
+            GROUP BY e.advertiser, e.content_id, c.title, c.kind
+            ORDER BY e.advertiser NULLS LAST, views DESC
+        `, params);
+
+        const n = (v) => Number(v) || 0;
+        const rate = (taps, views) => (views > 0 ? Math.round((taps / views) * 1000) / 10 : 0);
+        return {
+            ok: true,
+            from: win.fromDay,
+            to: win.toDay,
+            advertisers: totals.rows.map(r => ({
+                advertiser: r.advertiser || null,
+                slides: n(r.slides), views: n(r.views), viewers: n(r.viewers), taps: n(r.taps),
+                tapRate: rate(n(r.taps), n(r.views)),
+                bySlide: bySlide.rows
+                    .filter(s => (s.advertiser || null) === (r.advertiser || null))
+                    .map(s => ({
+                        id: s.content_id,
+                        // A slide deleted after its campaign still reports.
+                        title: s.title || `(deleted slide ${s.content_id})`,
+                        kind: s.kind || null,
+                        views: n(s.views), viewers: n(s.viewers), taps: n(s.taps),
+                        tapRate: rate(n(s.taps), n(s.views))
+                    }))
+            }))
+        };
+    }
+
+    // Names already in use, offered as suggestions so one client is not split
+    // across two spellings.
+    async advertisers() {
+        await this.ensureSchema();
+        const r = await pool.query(`
+            SELECT DISTINCT advertiser FROM lobby_content WHERE advertiser IS NOT NULL
+            UNION
+            SELECT DISTINCT advertiser FROM lobby_ad_events WHERE advertiser IS NOT NULL
+            ORDER BY 1`);
+        return r.rows.map(x => x.advertiser);
+    }
 }
+
 
 module.exports = LobbyContentService;
 module.exports.KINDS = KINDS;
 module.exports.MIN_SECONDS = MIN_SECONDS;
 module.exports.MAX_SECONDS = MAX_SECONDS;
 module.exports.DEFAULT_SECONDS = DEFAULT_SECONDS;
+module.exports.VIEW_DEDUPE_SECONDS = VIEW_DEDUPE_SECONDS;
+module.exports.MAX_EVENTS_PER_BATCH = MAX_EVENTS_PER_BATCH;
 module.exports.deliveryUrl = deliveryUrl;
 module.exports.posterUrl = posterUrl;
 module.exports.isOurHostedFile = isOurHostedFile;

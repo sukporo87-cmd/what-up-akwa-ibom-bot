@@ -110,6 +110,18 @@
     display: flex; gap: 14px; flex-wrap: wrap; }
   .row-actions { display: flex; gap: 8px; margin-top: 11px; justify-content: flex-end; flex-wrap: wrap; }
 
+  .report { margin-top: 36px; }
+  .report h2 { font-size: 18px; margin-bottom: 12px; }
+  .report-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 10px; }
+  .report-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-dim); }
+  .report-controls input, .report-controls select { padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .rtable { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13.5px; }
+  .rtable th, .rtable td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  .rtable th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .rtable td.num, .rtable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rtable tr.adv td { font-weight: 700; background: var(--surface); }
+  .rtable tr.slide td:first-child { padding-left: 28px; color: var(--text-dim); }
   .empty { text-align: center; color: var(--text-dim); padding: 54px 0; font-size: 14.5px; line-height: 1.8; }
   .loading { text-align: center; color: var(--text-dim); padding: 44px 0; }
   .toast { position: fixed; bottom: 22px; right: 22px; background: var(--surface2);
@@ -183,6 +195,14 @@
         <div class="hint">Between 4 and 60.</div>
       </div>
 
+      <div class="wide">
+        <label for="fAdvertiser">Advertiser</label>
+        <input id="fAdvertiser" maxlength="80" list="advertiserList" placeholder="Who this slide is sold to (leave blank for your own)">
+        <datalist id="advertiserList"></datalist>
+        <div class="hint">Slides with the same advertiser are reported together. Pick an existing
+          name from the suggestions so one client is not split across two spellings.</div>
+      </div>
+
       <div class="wide" id="rowTitle">
         <label for="fTitle">Headline <span class="counter" id="titleCount">0 / 60</span></label>
         <input id="fTitle" maxlength="60" placeholder="Weekend Championship, ₦100,000 pool">
@@ -250,6 +270,26 @@
   </div>
 
   <div id="list"><div class="loading">Loading slides…</div></div>
+
+  <!-- What each advertiser got. A view is a slide that stayed on a visible
+       screen for a full second; repeats by one player within 10 seconds count
+       once. Viewers are distinct people across the whole campaign. -->
+  <div class="report" id="report">
+    <h2>Advertising report</h2>
+    <div class="report-controls">
+      <label>From <input type="date" id="rFrom"></label>
+      <label>To <input type="date" id="rTo"></label>
+      <label>Advertiser
+        <select id="rAdvertiser"><option value="">All advertisers</option></select>
+      </label>
+      <button class="btn" onclick="loadReport()">Show</button>
+      <button class="btn" id="rCsv" onclick="downloadReport()" disabled>Download CSV</button>
+    </div>
+    <div class="hint">A <b>view</b> is a slide that stayed on a player's visible screen for at least
+      one second; the same player seeing the same slide again within 10 seconds counts once.
+      <b>Viewers</b> are distinct players across all of an advertiser's slides. Days are in WAT.</div>
+    <div id="reportBody"><div class="empty">Choose a date range and press Show.</div></div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -366,6 +406,7 @@ function openEditor(id) {
   document.getElementById('editorTitle').textContent = r ? 'Edit slide' : 'New slide';
   document.getElementById('fKind').value     = r ? r.kind : 'text';
   document.getElementById('fTitle').value    = r && r.title ? r.title : '';
+  document.getElementById('fAdvertiser').value = r && r.advertiser ? r.advertiser : '';
   document.getElementById('fBody').value     = r && r.body ? r.body : '';
   document.getElementById('fMedia').value    = r && r.media_url ? r.media_url : '';
   document.getElementById('fPublicId').value = r && r.media_public_id ? r.media_public_id : '';
@@ -501,6 +542,7 @@ async function save() {
   const payload = {
     kind: document.getElementById('fKind').value,
     title: document.getElementById('fTitle').value.trim(),
+    advertiser: document.getElementById('fAdvertiser').value.trim() || null,
     body: document.getElementById('fBody').value.trim(),
     media_url: document.getElementById('fMedia').value.trim(),
     media_public_id: document.getElementById('fPublicId').value.trim() || null,
@@ -588,9 +630,89 @@ async function remove(id) {
   await load();
 }
 
+// --------------------------------------------
+// ADVERTISING REPORT
+// --------------------------------------------
+let lastReport = null;
+
+async function loadAdvertisers() {
+  const d = await apiCall('/lobby-content/advertisers');
+  const names = (d && d.advertisers) || [];
+  document.getElementById('advertiserList').innerHTML =
+    names.map(n => '<option value="' + esc(n) + '"></option>').join('');
+  const sel = document.getElementById('rAdvertiser');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">All advertisers</option>' +
+    names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+  sel.value = keep;
+}
+
+async function loadReport() {
+  const q = new URLSearchParams();
+  const f = document.getElementById('rFrom').value, t = document.getElementById('rTo').value;
+  const a = document.getElementById('rAdvertiser').value;
+  if (f) q.set('from', f); if (t) q.set('to', t); if (a) q.set('advertiser', a);
+  const body = document.getElementById('reportBody');
+  body.innerHTML = '<div class="loading">Counting…</div>';
+  const d = await apiCall('/lobby-content/report?' + q.toString());
+  if (!d || !d.success) {
+    body.innerHTML = '<div class="empty">' + esc((d && d.error) || 'Could not load the report.') + '</div>';
+    document.getElementById('rCsv').disabled = true;
+    return;
+  }
+  lastReport = d;
+  document.getElementById('rFrom').value = d.from;
+  document.getElementById('rTo').value = d.to;
+  document.getElementById('rCsv').disabled = !d.advertisers.length;
+  if (!d.advertisers.length) {
+    body.innerHTML = '<div class="empty">No views between ' + esc(d.from) + ' and ' + esc(d.to) + '.</div>';
+    return;
+  }
+  const n = (x) => Number(x || 0).toLocaleString();
+  let html = '<table class="rtable"><thead><tr><th>Advertiser / slide</th>' +
+    '<th class="num">Views</th><th class="num">Viewers</th><th class="num">Taps</th><th class="num">Tap rate</th></tr></thead><tbody>';
+  d.advertisers.forEach(r => {
+    html += '<tr class="adv"><td>' + esc(r.advertiser || 'Own slides (no advertiser)') +
+      ' <span style="font-weight:400;color:var(--text-dim)">· ' + r.slides + ' slide' + (r.slides === 1 ? '' : 's') + '</span></td>' +
+      '<td class="num">' + n(r.views) + '</td><td class="num">' + n(r.viewers) + '</td>' +
+      '<td class="num">' + n(r.taps) + '</td><td class="num">' + r.tapRate + '%</td></tr>';
+    r.bySlide.forEach(sl => {
+      html += '<tr class="slide"><td>' + esc(sl.title) + '</td><td class="num">' + n(sl.views) + '</td>' +
+        '<td class="num">' + n(sl.viewers) + '</td><td class="num">' + n(sl.taps) + '</td>' +
+        '<td class="num">' + sl.tapRate + '%</td></tr>';
+    });
+  });
+  body.innerHTML = html + '</tbody></table>';
+}
+
+// A file the advertiser can open. Every cell is quoted, and a value that
+// starts with = + - @ is defused, because a spreadsheet would run it as a
+// formula — a slide title is free text someone typed.
+function downloadReport() {
+  if (!lastReport) return;
+  const cell = (v) => {
+    let x = String(v == null ? '' : v);
+    if (/^[=+\-@]/.test(x)) x = "'" + x;
+    return '"' + x.replace(/"/g, '""') + '"';
+  };
+  const lines = [['Advertiser', 'Slide', 'Views', 'Viewers', 'Taps', 'Tap rate %'].map(cell).join(',')];
+  lastReport.advertisers.forEach(r => {
+    const who = r.advertiser || 'Own slides';
+    lines.push([who, 'ALL SLIDES', r.views, r.viewers, r.taps, r.tapRate].map(cell).join(','));
+    r.bySlide.forEach(sl => lines.push([who, sl.title, sl.views, sl.viewers, sl.taps, sl.tapRate].map(cell).join(',')));
+  });
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'board-report_' + lastReport.from + '_to_' + lastReport.to + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 async function load() {
   const res = await apiCall('/lobby-content');
   rows = (res && res.slides) || [];
+  loadAdvertisers();
   render();
   await loadPreview();
 }

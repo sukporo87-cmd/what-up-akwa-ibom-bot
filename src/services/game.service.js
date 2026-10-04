@@ -633,6 +633,10 @@ class GameService {
                             tMs = watchlistTimerOverride.ms;
                             tSec = watchlistTimerOverride.seconds;
                         }
+                        // And turbo may not be more generous than the clock
+                        // everyone else is already playing to.
+                        const tBase = await this._baselineAnswerSeconds(sessionKey, questionNumber);
+                        if (tBase < tSec) { tSec = tBase; tMs = tBase * 1000; }
                         return {
                             timeoutMs: tMs,
                             timeoutSeconds: tSec,
@@ -648,11 +652,33 @@ class GameService {
             logger.error('Error getting session timeout:', error);
         }
 
+        // ============================================
+        // THE BASELINE, AND WHY IT IS READ HERE
+        //
+        // This is what an ordinary player on this platform would get: the
+        // admin's answer clock if one is set, otherwise the progressive
+        // ladder. Every anti-cheat clock below is capped to it.
+        //
+        // The rule has always been "the shorter, enforced clock wins", and it
+        // was written in the comments here, but the code simply RETURNED each
+        // anti-cheat clock and never compared it. So when the answer clock was
+        // set to 7 seconds on WhatsApp, a player serving a 10-second penalty
+        // got TEN — three seconds more than everybody else. The penalty was a
+        // reward, and the admin's setting was quietly ignored for exactly the
+        // accounts that should be held tightest.
+        //
+        // Capping, not replacing: anti-cheat can still shorten the clock as
+        // far as it likes. It can no longer lengthen it.
+        // ============================================
+        const baseSeconds = await this._baselineAnswerSeconds(sessionKey, questionNumber);
+        const capped = (seconds) => Math.min(seconds, baseSeconds);
+
         // Priority 1.5: Watchlist timers (before penalty/progressive)
         if (watchlistTimerOverride) {
+            const seconds = capped(watchlistTimerOverride.seconds);
             return {
-                timeoutMs: watchlistTimerOverride.ms,
-                timeoutSeconds: watchlistTimerOverride.seconds,
+                timeoutMs: seconds * 1000,
+                timeoutSeconds: seconds,
                 isTurboMode: false,
                 isWatchlist: true,
                 questionsRemaining: 0,
@@ -664,10 +690,10 @@ class GameService {
             try {
                 const penalty = await restrictionsService.isUserInPenaltyMode(userId);
                 if (penalty.inPenalty) {
-                    const penaltyMs = penalty.timerSeconds * 1000;
+                    const seconds = capped(penalty.timerSeconds);
                     return {
-                        timeoutMs: penaltyMs,
-                        timeoutSeconds: penalty.timerSeconds,
+                        timeoutMs: seconds * 1000,
+                        timeoutSeconds: seconds,
                         isTurboMode: false,
                         isPenaltyMode: true,
                         penaltyGamesRemaining: penalty.gamesRemaining,
@@ -686,20 +712,35 @@ class GameService {
         // FLAT: the same number of seconds on every question, replacing the
         // 12/11/10 progressive ladder below.
         //
-        // WHY IT SITS HERE AND NOT AT THE TOP
+        // HOW IT INTERACTS WITH ANTI-CHEAT
         // Everything above this line is anti-cheat: challenge parity,
-        // watchlist timers, turbo mode, penalty mode. Putting an admin
-        // control above them would mean that setting a comfortable 20-second
-        // clock for web players also silently handed a flagged account its
-        // full time back, and that "make the game friendlier" and "switch off
-        // fraud response" became the same button. They are different
-        // decisions, so they stay different controls, and the shorter,
-        // enforced clock always wins.
+        // watchlist timers, turbo mode, penalty mode. Each of those is now
+        // CAPPED to this clock rather than replacing it, so a flagged account
+        // can be given less time but never more. Setting a comfortable
+        // 20-second clock for web players does not hand a flagged account its
+        // full time back, and a 7-second clock is not quietly widened to 10
+        // for somebody serving a penalty — which is what used to happen.
         //
         // A change takes effect on the NEXT question served — the clock is
         // resolved per question, and the web client is sent an absolute
         // expiresAt — so nobody mid-round has the timer moved under them.
         // ============================================
+        // The baseline was resolved above; nothing below it may lengthen the
+        // clock, so it is simply returned here.
+        return {
+            timeoutMs: baseSeconds * 1000,
+            timeoutSeconds: baseSeconds,
+            isTurboMode: false,
+            isAdminOverride: baseSeconds !== this._ladderSeconds(questionNumber),
+            questionsRemaining: 0,
+        };
+
+    }
+
+    // What an ordinary player gets: the admin's answer clock for this mode and
+    // platform when one is set, otherwise the progressive ladder. Never throws
+    // — a settings lookup must not cost somebody their question.
+    async _baselineAnswerSeconds(sessionKey, questionNumber) {
         try {
             const gameSettings = require('./game-settings.service');
             const raw = await redis.get(`session:${sessionKey}`);
@@ -714,39 +755,17 @@ class GameService {
                            : s.game_type === 'tournament' ? 'tournament'
                            : (s.game_mode || 'classic');
                 const override = gameSettings.answerSeconds(mode, s.platform);
-                if (override) {
-                    return {
-                        timeoutMs: override * 1000,
-                        timeoutSeconds: override,
-                        isTurboMode: false,
-                        isAdminOverride: true,
-                        questionsRemaining: 0,
-                    };
-                }
+                if (override) return override;
             }
         } catch (error) {
-            // Never let a settings lookup cost somebody their question. Fall
-            // through to the built-in ladder, which is always a valid clock.
             logger.error('Error reading answer-time override, using default ladder:', error.message);
         }
+        return this._ladderSeconds(questionNumber);
+    }
 
-        // Priority 4: Progressive difficulty timer
-        if (questionNumber) {
-            const base = DIFFICULTY_TIMERS.getBaseTimeout(questionNumber);
-            return {
-                timeoutMs: base.ms,
-                timeoutSeconds: base.seconds,
-                isTurboMode: false,
-                questionsRemaining: 0,
-            };
-        }
-        
-        return {
-            timeoutMs: QUESTION_TIMEOUT_MS,
-            timeoutSeconds: QUESTION_TIMEOUT_SECONDS,
-            isTurboMode: false,
-            questionsRemaining: 0,
-        };
+    _ladderSeconds(questionNumber) {
+        if (questionNumber) return DIFFICULTY_TIMERS.getBaseTimeout(questionNumber).seconds;
+        return QUESTION_TIMEOUT_SECONDS;
     }
 
     /** Decrement turbo mode questions remaining */

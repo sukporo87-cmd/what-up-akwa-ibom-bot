@@ -443,8 +443,15 @@ class VictoryCardsService {
                     COUNT(*) FILTER (WHERE victory_card_shared = true) as cards_shared,
                     COUNT(*) FILTER (WHERE victory_card_shared = false OR victory_card_shared IS NULL) as cards_pending
                 FROM transactions
-                WHERE transaction_type = 'prize'
+                -- Every kind of win, so these totals agree with the winners
+                -- list below them. Counting only 'prize' meant the cards said
+                -- "today's wins" while ignoring every tournament and challenge
+                -- prize on the same page.
+                WHERE transaction_type IN ('prize', 'tournament_prize', 'challenge_prize')
                 AND amount > 0
+                -- A cancelled payout is not a win: the money was never paid
+                -- and never will be.
+                AND COALESCE(payout_status, 'pending') <> 'cancelled'
                 AND ${dateCondition}
             `);
             

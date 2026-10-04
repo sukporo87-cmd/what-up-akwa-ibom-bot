@@ -280,6 +280,35 @@ const SIGNAL_KINDS = {
     mouse_on_phone:    { family: 'automation', flag: true, phoneOnly: true, flagAt: 2 }
 };
 
+// ============================================
+// LOBBY BOARD: VIEWS AND TAPS
+// ============================================
+// The browser reports which board slides were actually seen, in batches. This
+// is what an advertiser is told they got, so it is only ever counted for a
+// signed-in player, never trusted for more than a lobby could produce, and
+// never allowed to slow a lobby down.
+const LobbyAdContentService = require('../services/lobby-content.service');
+const lobbyAdService = new LobbyAdContentService();
+
+router.post('/lobby-events', requireWebAuth, async (req, res) => {
+    try {
+        const user = req.webUser;
+        // Far above what a real lobby sends (about one batch every 15
+        // seconds), so only something looping or scripted hits it.
+        const rateKey = `lobby_ad_rate:${user.id}`;
+        const count = await redis.incr(rateKey);
+        if (count === 1) await redis.expire(rateKey, 60);
+        if (count > 20) return res.json({ success: true, recorded: 0 });
+
+        const events = Array.isArray(req.body && req.body.events) ? req.body.events : [];
+        const recorded = await lobbyAdService.recordEvents(user.id, events);
+        res.json({ success: true, recorded });
+    } catch (error) {
+        logger.error(`Lobby events failed: ${error.message}`);
+        res.json({ success: true, recorded: 0 });
+    }
+});
+
 router.post('/signal', requireWebAuth, async (req, res) => {
     try {
         const user = req.webUser;

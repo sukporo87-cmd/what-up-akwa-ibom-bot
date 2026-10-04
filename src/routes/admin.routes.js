@@ -4339,7 +4339,15 @@ router.get('/api/winners/recent', authenticateAdmin, async (req, res) => {
         const offset = (pageNum - 1) * limitNum;
         
         // Build query conditions
-        let conditions = [`t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')`, `t.amount > 0`];
+        // A CANCELLED PAYOUT IS NOT A WIN.
+        // Cancelling in the payout workspace sets payout_status to
+        // 'cancelled' — a wrong amount, a forfeited prize, a withheld one.
+        // The winners list filtered only on type and amount, so those rows
+        // stayed on it, and every count and total on the page included money
+        // that was never paid and never will be.
+        let conditions = [`t.transaction_type IN ('prize', 'tournament_prize', 'challenge_prize', 'challenge_refund')`,
+                          `t.amount > 0`,
+                          `COALESCE(t.payout_status, 'pending') <> 'cancelled'`];
         let params = [];
         let paramIndex = 1;
         
@@ -9500,6 +9508,29 @@ const lobbyContentService = new LobbyContentService();
 // STRAIGHT TO CLOUDINARY. The file never passes through this server; see
 // cloudinary.service for why. The secret stays here — the page only ever sees
 // the signature, which is good for this one folder and about an hour.
+// What each advertiser got, over a date range, for the report you send them.
+router.get('/api/lobby-content/report', authenticateAdmin, async (req, res) => {
+  try {
+    const out = await lobbyContentService.report({
+      from: req.query.from, to: req.query.to, advertiser: req.query.advertiser || null
+    });
+    if (!out.ok) return res.status(400).json({ success: false, error: out.error });
+    res.json({ success: true, ...out });
+  } catch (error) {
+    logger.error(`Error building lobby ad report: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Could not build the report' });
+  }
+});
+
+router.get('/api/lobby-content/advertisers', authenticateAdmin, async (req, res) => {
+  try {
+    res.json({ success: true, advertisers: await lobbyContentService.advertisers() });
+  } catch (error) {
+    logger.error(`Error listing advertisers: ${error.message}`);
+    res.json({ success: true, advertisers: [] });
+  }
+});
+
 router.post('/api/lobby-content/upload-signature', authenticateAdmin, async (req, res) => {
   try {
     const cloudinaryService = require('../services/cloudinary.service');
