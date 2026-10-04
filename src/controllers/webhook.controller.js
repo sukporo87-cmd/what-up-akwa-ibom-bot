@@ -4307,9 +4307,10 @@ You can now claim your prize! 💰
 
 
   // ============================================
-  // FIXED: handleLoveQuestPlayerName
-  // - Generates Paystack link FIRST
-  // - Includes actual URL in message
+  // handleLoveQuestPlayerName
+  // - Creates the card link through the platform's gateways
+  //   (naira locally, US dollars internationally)
+  // - Includes the actual URL in the message, or says plainly there isn't one
   // - Updated confirmation text
   // ============================================
   async handleLoveQuestPlayerName(phone, message, userState) {
@@ -4333,17 +4334,14 @@ You can now claim your prize! 💰
       const isInternational = currency === 'USD';
       const priceDisplay = isInternational ? `$${price}` : `₦${price.toLocaleString()}`;
       
-      // Generate Paystack link FIRST (for NGN bookings)
-      let paystackUrl = null;
-      if (!isInternational) {
-        try {
-          paystackUrl = await loveQuestService.generatePaystackLink(booking.id, phone, price);
-          logger.info(`💳 Paystack URL for ${booking.booking_code}: ${paystackUrl}`);
-        } catch (e) {
-          logger.error('Error generating Paystack link:', e);
-        }
-      }
-      
+      // A card link through the platform's own gateways: naira for local
+      // bookings through the default gateway, US dollars for international
+      // ones through the gateway chosen for them. It used to come straight
+      // from Paystack, and when that business was disabled every booking was
+      // told a link was "being generated" that never could be.
+      const link = await loveQuestService.createPaymentLink(
+        booking.id, phone, price, isInternational ? 'USD' : 'NGN');
+
       let msg = `🎉 *Love Quest Booking Created!*\n\n`;
       msg += `📋 Booking Code: *${booking.booking_code}*\n`;
       msg += `📦 Package: ${packageCode}\n`;
@@ -4354,16 +4352,22 @@ You can now claim your prize! 💰
       msg += `━━━━━━━━━━━━━━━━━━━━\n`;
       msg += `*💳 PAYMENT OPTIONS:*\n`;
       msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-      
-      if (!isInternational && paystackUrl) {
-        msg += `*Option 1: Pay with Paystack (Card/Transfer)*\n`;
-        msg += `Click here: ${paystackUrl}\n\n`;
-      } else if (!isInternational) {
-        msg += `*Option 1: Pay with Paystack (Card/Transfer)*\n`;
-        msg += `Link being generated... Check back in a moment or use bank transfer.\n\n`;
+
+      // Only ever offer a link that exists. If none could be made, say so
+      // plainly; never "check back in a moment" for something that won't come.
+      let option = 1;
+      if (link) {
+        msg += isInternational
+          ? `*Option ${option}: Pay by card (US dollars)*\n`
+          : `*Option ${option}: Pay by card or bank transfer*\n`;
+        msg += `Click here: ${link.url}\n\n`;
+        option++;
+      } else if (isInternational) {
+        msg += `*Card payment*\n`;
+        msg += `International card payment isn't available at this moment. Reply HELP with your booking code and we'll send you a payment link.\n\n`;
       }
-      
-      msg += `*Option ${isInternational ? '1' : '2'}: Direct Bank Transfer*\n`;
+
+      msg += `*Option ${option}: Direct Bank Transfer*${isInternational ? ' (Nigerian naira account)' : ''}\n`;
       msg += `🏦 Bank: Moniepoint\n`;
       msg += `💳 Account: 6529712162\n`;
       msg += `👤 Name: SummerIsland Systems\n`;

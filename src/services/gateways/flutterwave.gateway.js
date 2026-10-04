@@ -35,14 +35,22 @@ class FlutterwaveGateway extends PaymentGateway {
         }
     }
 
-    async initialize({ reference, amount, email, callbackUrl, metadata = {}, customerName }) {
+    // CURRENCY. Naira unless told otherwise. International Love Quest
+    // bookings are priced in dollars and charged in dollars; whether this
+    // account can actually COLLECT dollars is set on the Flutterwave
+    // dashboard, not here, and an account without it rejects the checkout.
+    async initialize({ reference, amount, email, callbackUrl, metadata = {}, customerName, currency = 'NGN' }) {
         try {
+            const cur = String(currency || 'NGN').toUpperCase();
             const payload = {
                 tx_ref: reference,
-                amount: Number(amount), // Flutterwave uses naira (no kobo)
-                currency: 'NGN',
+                amount: Number(amount), // whole units of the currency (naira, dollars), no kobo/cents
+                currency: cur,
                 redirect_url: callbackUrl,
-                payment_options: 'card,banktransfer,ussd',
+                // Bank transfer and USSD are naira-only. Offering them on a
+                // dollar checkout would show an overseas customer options that
+                // cannot work for them.
+                payment_options: cur === 'NGN' ? 'card,banktransfer,ussd' : 'card',
                 customer: {
                     email,
                     name: customerName || metadata.user_name || 'Player'
@@ -110,7 +118,8 @@ class FlutterwaveGateway extends PaymentGateway {
             return {
                 success,
                 status: status?.toLowerCase() === 'successful' ? 'success' : status?.toLowerCase(),
-                amount: data ? Number(data.amount) : 0, // naira
+                amount: data ? Number(data.amount) : 0, // whole units of `currency`
+                currency: data && data.currency ? String(data.currency).toUpperCase() : null,
                 reference,
                 gateway: this.getName(),
                 raw: data

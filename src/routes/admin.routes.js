@@ -9010,6 +9010,27 @@ router.post('/api/gateways/:name/set-default', authenticateAdmin, async (req, re
     }
 });
 
+// Which gateway takes international (US dollar) Love Quest payments.
+// Only Flutterwave and Korapay can; the manager refuses any other.
+router.post('/api/gateways/:name/set-love-quest-intl', authenticateAdmin, async (req, res) => {
+    try {
+        const { name } = req.params;
+        const adminId = req.adminId || null;
+
+        await gatewayManager.setLoveQuestIntl(name, adminId);
+
+        await pool.query(`
+            INSERT INTO admin_activity_log (admin_id, action_type, action_details)
+            VALUES ($1, 'gateway_set_love_quest_intl', $2)
+        `, [adminId, JSON.stringify({ gateway: name })]);
+
+        res.json({ success: true, message: `${name} now takes international Love Quest payments` });
+    } catch (error) {
+        logger.error('Error setting Love Quest international gateway:', error);
+        res.status(400).json({ success: false, error: error.message });
+    }
+});
+
 // ============================================
 // PROMO CODE MANAGEMENT
 // ============================================

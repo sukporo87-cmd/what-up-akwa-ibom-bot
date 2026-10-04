@@ -1340,110 +1340,190 @@ class LoveQuestService {
         }
     }
 
-    // Generate Paystack payment link
-    async generatePaystackLink(bookingId, email, amount) {
+    // ============================================
+    // CARD PAYMENTS, THROUGH THE PLATFORM'S GATEWAYS
+    // ============================================
+    //
+    // Love Quest used to build its card link straight through Paystack, so
+    // switching the platform to Flutterwave never reached it, and when the
+    // Paystack business was disabled every booking was promised a link that
+    // could not arrive. Its confirmation function was never called either,
+    // so card payments were only ever marked paid by hand.
+    //
+    // Now:
+    //   local bookings          naira, through the platform's default gateway
+    //   international bookings  US dollars, through the gateway the admin chose
+    //                           for international Love Quest (Flutterwave or
+    //                           Korapay), card only
+    // Every payment is recorded BEFORE the customer pays, with its gateway and
+    // amount, so the webhook or callback can find it, check it and confirm the
+    // booking. Bank transfer stays as it is, confirmed by hand.
+
+    async _ensurePaymentTable() {
+        if (this._lqPaymentsReady) return;
+        // Our own table, rather than love_quest_payments: no working code had
+        // ever written that one, so its columns are unconfirmed - the same
+        // trap that broke the cash-prize record.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS love_quest_gateway_payments (
+                id            SERIAL PRIMARY KEY,
+                booking_id    INTEGER NOT NULL,
+                reference     TEXT NOT NULL UNIQUE,
+                gateway       TEXT NOT NULL,
+                amount        NUMERIC(12,2) NOT NULL,
+                currency      TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending', 'confirmed', 'failed')),
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                confirmed_at  TIMESTAMPTZ
+            )
+        `);
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_lq_gw_pay_booking ON love_quest_gateway_payments (booking_id)');
+        this._lqPaymentsReady = true;
+    }
+
+    /**
+     * A card payment link for a booking.
+     * @returns {Promise<{url:string, gateway:string, currency:string}|null>}
+     *          null when no gateway can take this payment right now; the
+     *          caller then offers bank transfer instead of a link that never comes.
+     */
+    async createPaymentLink(bookingId, contactPhone, amount, currency = 'NGN') {
         try {
             const booking = await this.getBooking(bookingId);
             if (!booking) throw new Error('Booking not found');
-            
-            // Use PaymentService's Paystack instance (same as token purchases)
-            const PaymentService = require('./payment.service');
-            const paymentService = new PaymentService();
-            
-            // Use booking code as reference
-            const reference = `LQ-${booking.booking_code}-${Date.now()}`;
-            
-            logger.info(`💳 Generating Paystack link for booking ${booking.booking_code}, amount: ${amount}`);
-            
-            // Initialize Paystack transaction using PaymentService's paystack instance
-            const response = await paymentService.paystack.transaction.initialize({
-                email: email || `${booking.creator_phone}@lovequest.whatsuptrivia.com`,
-                amount: Math.round(amount * 100), // Paystack uses kobo
-                reference,
-                callback_url: `${process.env.APP_URL || 'https://whatsuptrivia.com.ng'}/payment/callback`,
-                metadata: {
-                    booking_id: bookingId,
-                    booking_code: booking.booking_code,
-                    type: 'love_quest',
-                    creator_phone: booking.creator_phone,
-                    custom_fields: [
-                        {
-                            display_name: "Booking Code",
-                            variable_name: "booking_code",
-                            value: booking.booking_code
-                        },
-                        {
-                            display_name: "Package",
-                            variable_name: "package",
-                            value: booking.package
-                        }
-                    ]
-                },
-                channels: ['card', 'bank', 'ussd', 'mobile_money']
-            });
-            
-            logger.info(`💳 Paystack response:`, JSON.stringify(response?.data || response));
-            
-            if (response?.data?.authorization_url) {
-                await pool.query(`
-                    UPDATE love_quest_bookings 
-                    SET paystack_reference = $1, paystack_access_code = $2
-                    WHERE id = $3
-                `, [reference, response.data.access_code, bookingId]);
-                
-                logger.info(`💳 Paystack link generated for Love Quest ${booking.booking_code}: ${response.data.authorization_url}`);
-                
-                return response.data.authorization_url;
+            await this._ensurePaymentTable();
+
+            const cur = String(currency || 'NGN').toUpperCase();
+            const gatewayManager = require('./payment-gateway-manager');
+            const gateway = cur === 'NGN'
+                ? await gatewayManager.getDefaultGateway()
+                : await gatewayManager.getLoveQuestIntlGateway();
+            if (!gateway) {
+                logger.warn(`No gateway can take a ${cur} Love Quest payment for ${booking.booking_code}`);
+                return null;
             }
-            
-            logger.error(`💳 Paystack returned no authorization_url:`, response);
-            return null;
+
+            const reference = `LQ-${booking.booking_code}-${Date.now()}`;
+            const value = Math.round(Number(amount) * 100) / 100;
+
+            // Recorded first: the webhook can arrive before this function
+            // returns, and it must find the payment it is confirming.
+            await pool.query(`
+                INSERT INTO love_quest_gateway_payments (booking_id, reference, gateway, amount, currency)
+                VALUES ($1, $2, $3, $4, $5)
+            `, [booking.id, reference, gateway.getName(), value, cur]);
+
+            const digits = String(contactPhone || booking.creator_phone || '').replace(/\D/g, '') || booking.booking_code;
+            const result = await gateway.initialize({
+                reference,
+                amount: value,
+                currency: cur,
+                // Gateways insist on an email. Love Quest customers book by
+                // phone, so a per-booking address stands in.
+                email: `${digits}@lovequest.whatsuptrivia.com`,
+                customerName: booking.creator_name || 'Love Quest customer',
+                callbackUrl: `${process.env.APP_URL || 'https://whatsuptrivia.com.ng'}/payment/callback`,
+                metadata: { description: `Love Quest ${booking.booking_code}`, user_name: booking.creator_name }
+            });
+
+            logger.info(`Love Quest ${booking.booking_code}: ${cur} ${value} link via ${gateway.getName()}`);
+            return { url: result.authorization_url, gateway: gateway.getName(), currency: cur };
         } catch (error) {
-            logger.error('Error generating Paystack link:', error);
+            logger.error(`Could not create Love Quest payment link: ${error.message}`);
             return null;
         }
     }
 
-    // Verify Paystack payment
-    async verifyPaystackPayment(reference) {
+    /**
+     * Confirm a card payment from the gateway's webhook or redirect.
+     * Safe to call more than once: the second call finds it already confirmed.
+     */
+    async confirmGatewayPayment(reference) {
         try {
-            const PaymentService = require('./payment.service');
-            const paymentService = new PaymentService();
-            
-            const verification = await paymentService.verifyPaystackTransaction(reference);
-            
-            if (verification?.data?.status === 'success') {
-                const metadata = verification.data.metadata;
-                const bookingId = metadata?.booking_id;
-                
-                if (bookingId) {
-                    // Update booking as paid
-                    await pool.query(`
-                        UPDATE love_quest_bookings 
-                        SET total_paid = $1, status = 'paid', payment_method = 'paystack', payment_reference = $2
-                        WHERE id = $3
-                    `, [verification.data.amount / 100, reference, bookingId]);
-                    
-                    // Record payment
-                    await pool.query(`
-                        INSERT INTO love_quest_payments (booking_id, amount, currency, payment_method, paystack_reference, status, confirmed_at, confirmed_by)
-                        VALUES ($1, $2, 'NGN', 'paystack', $3, 'confirmed', NOW(), 'paystack_webhook')
-                    `, [bookingId, verification.data.amount / 100, reference]);
-                    
-                    await this.logAuditEvent(bookingId, null, 'payment_confirmed', {
-                        amount: verification.data.amount / 100,
-                        reference,
-                        method: 'paystack'
-                    }, 'system', 'paystack');
-                    
-                    return { success: true, bookingId };
-                }
+            await this._ensurePaymentTable();
+            const rec = await pool.query(
+                'SELECT * FROM love_quest_gateway_payments WHERE reference = $1', [reference]);
+            const row = rec.rows[0];
+            if (!row) {
+                logger.warn(`Love Quest payment ${reference} is not one we created`);
+                return { success: false, reason: 'unknown_reference' };
             }
-            
-            return { success: false };
+            if (row.status === 'confirmed') return { success: true, bookingId: row.booking_id, already: true };
+
+            // Ask the gateway that took it, never the request that told us.
+            const gatewayManager = require('./payment-gateway-manager');
+            const v = await gatewayManager.getGateway(row.gateway).verify(reference);
+            if (!v || !v.success) return { success: false, reason: 'not_paid', pending: true };
+
+            // The right amount, in the right currency. A $50 booking settled as
+            // 50 naira must never confirm, and neither must a short payment.
+            if (v.currency && v.currency !== row.currency) {
+                logger.error(`Love Quest ${reference}: paid in ${v.currency}, expected ${row.currency}`);
+                return { success: false, reason: 'wrong_currency' };
+            }
+            if (Number(v.amount) + 0.009 < Number(row.amount)) {
+                logger.error(`Love Quest ${reference}: paid ${v.amount}, expected ${row.amount}`);
+                return { success: false, reason: 'short_payment' };
+            }
+
+            // Payment and booking change together, or not at all. The booking
+            // only moves from 'pending' to 'paid': one that is already being
+            // curated or has been sent is never dragged back.
+            const client = await pool.connect();
+            let confirmedNow = false;
+            try {
+                await client.query('BEGIN');
+                const upd = await client.query(`
+                    UPDATE love_quest_gateway_payments
+                    SET status = 'confirmed', confirmed_at = NOW()
+                    WHERE reference = $1 AND status = 'pending'
+                `, [reference]);
+                confirmedNow = upd.rowCount === 1;
+                if (confirmedNow) {
+                    // The same statement the admin "record payment" action uses.
+                    await client.query(`
+                        UPDATE love_quest_bookings
+                        SET total_paid = COALESCE(total_paid, 0) + $1,
+                            status = CASE WHEN status = 'pending' THEN 'paid' ELSE status END
+                        WHERE id = $2
+                    `, [row.amount, row.booking_id]);
+                }
+                await client.query('COMMIT');
+            } catch (txError) {
+                try { await client.query('ROLLBACK'); } catch (e) { /* already failed */ }
+                throw txError;
+            } finally {
+                client.release();
+            }
+
+            if (!confirmedNow) return { success: true, bookingId: row.booking_id, already: true };
+
+            await this.logAuditEvent(row.booking_id, null, 'payment_received', {
+                amount: Number(row.amount), currency: row.currency, reference, gateway: row.gateway
+            }, 'system', row.gateway);
+
+            // Tell the customer, in the chat they booked in.
+            try {
+                const booking = await this.getBooking(row.booking_id);
+                if (booking && booking.creator_phone) {
+                    const MessagingService = require('./messaging.service');
+                    const shown = row.currency === 'NGN'
+                        ? `₦${Number(row.amount).toLocaleString()}`
+                        : `${row.currency === 'USD' ? '$' : row.currency + ' '}${Number(row.amount).toFixed(2)}`;
+                    await new MessagingService().sendMessage(booking.creator_phone,
+                        `✅ *Payment received* — ${shown} for Love Quest *${booking.booking_code}*.\n\n` +
+                        `We'll be in touch right here to record your voice notes and video. 💕`);
+                }
+            } catch (msgError) {
+                logger.warn(`Love Quest payment confirmed but the message failed: ${msgError.message}`);
+            }
+
+            logger.info(`Love Quest payment confirmed: ${reference} (${row.currency} ${row.amount} via ${row.gateway})`);
+            return { success: true, bookingId: row.booking_id };
         } catch (error) {
-            logger.error('Error verifying Paystack payment:', error);
-            return { success: false, error: error.message };
+            logger.error(`Error confirming Love Quest payment ${reference}: ${error.message}`);
+            return { success: false, reason: 'error' };
         }
     }
 

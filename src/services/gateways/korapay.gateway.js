@@ -34,7 +34,10 @@ class KorapayGateway extends PaymentGateway {
         }
     }
 
-    async initialize({ reference, amount, email, callbackUrl, metadata = {}, customerName }) {
+    // CURRENCY: naira unless told otherwise. Dollar collection has to be
+    // activated on the Korapay account; an account without it rejects the
+    // checkout, which the caller reports honestly rather than hiding.
+    async initialize({ reference, amount, email, callbackUrl, metadata = {}, customerName, currency = 'NGN' }) {
         try {
             // Korapay limits metadata to max 5 keys — keep only what's needed for verification flow
             const trimmedMetadata = {
@@ -51,13 +54,14 @@ class KorapayGateway extends PaymentGateway {
             }
 
             const payload = {
-                amount: Number(amount), // Korapay uses naira (no kobo conversion)
+                amount: Number(amount), // whole units of the currency, no kobo/cents
                 redirect_url: callbackUrl,
-                currency: 'NGN',
+                currency: String(currency || 'NGN').toUpperCase(),
                 reference,
                 notification_url: `${process.env.APP_URL}/payment/korapay-webhook`,
                 narration: metadata.description || `Payment for ${reference}`,
-                channels: ['card', 'bank_transfer'],
+                // Bank transfer is a naira channel; a dollar checkout is card only.
+                channels: String(currency || 'NGN').toUpperCase() === 'NGN' ? ['card', 'bank_transfer'] : ['card'],
                 customer: {
                     name: customerName || metadata.user_name || 'Player',
                     email
@@ -100,7 +104,8 @@ class KorapayGateway extends PaymentGateway {
 
             return {
                 success,
-                amount: data ? Number(data.amount) : 0, // naira
+                amount: data ? Number(data.amount) : 0, // whole units of `currency`
+                currency: data && data.currency ? String(data.currency).toUpperCase() : null,
                 reference,
                 gateway: this.getName(),
                 raw: data

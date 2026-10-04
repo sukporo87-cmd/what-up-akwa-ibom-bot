@@ -32,6 +32,10 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
             // the challenge to participants — settled, not initiated. The
             // browser callback sets nothing, exactly like credit tokens.
             await handleChallengeSponsorshipWebhook(reference);
+        } else if (reference.startsWith('LQ-')) {
+            // A Love Quest booking, in naira or dollars. Confirmation checks
+            // the amount and currency with the gateway that took it.
+            await require('../services/love-quest.service').confirmGatewayPayment(reference);
         } else {
             // Handle regular game payment
             const verification = await paymentService.verifyPayment(reference);
@@ -87,6 +91,47 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
 // The browser landing back after checkout. The WEBHOOK is what settles a
 // challenge, so this page decides nothing \u2014 it reports where the sponsorship
 // has got to and sends the player somewhere useful.
+// ============================================
+// LOVE QUEST CARD PAYMENTS
+// ============================================
+// A Love Quest reference is LQ-{booking_code}-{timestamp}, recorded in
+// love_quest_gateway_payments before the customer pays. Confirming it marks
+// the booking paid; it never touches game credits, which is what the generic
+// path below would try to do with it.
+async function handleLoveQuestCallback(reference, req, res) {
+    const page = (title, colour, heading, body) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title}</title>
+<style>body{font-family:system-ui,Arial,sans-serif;text-align:center;padding:44px 20px;background:#14101f;color:#e9e4f5}
+.card{background:#1d1730;max-width:460px;margin:0 auto;padding:34px 26px;border-radius:16px;border:1px solid #2e2545}
+h1{color:${colour};font-size:22px;margin:0 0 10px}p{color:#b3a9c9;line-height:1.55}</style></head>
+<body><div class="card"><h1>${heading}</h1><p>${body}</p></div></body></html>`;
+
+    try {
+        const loveQuestService = require('../services/love-quest.service');
+        const out = await loveQuestService.confirmGatewayPayment(reference);
+        if (out.success) {
+            return res.send(page('Payment received', '#3ddc97', '\u2705 Payment received',
+                'Thank you. Your Love Quest is booked, and we have sent a confirmation to your chat. ' +
+                'You can close this page.'));
+        }
+        if (out.pending) {
+            // The gateway redirected before the payment settled. The webhook
+            // will confirm it; nothing for the customer to do.
+            return res.send(page('Payment processing', '#f0b429', '\u23f3 Almost there',
+                'Your payment is still being confirmed. You will get a message in your chat as soon ' +
+                'as it clears. You can close this page.'));
+        }
+        return res.send(page('Payment not confirmed', '#ff6b5b', 'Payment not confirmed',
+            'We could not confirm this payment. If you were charged, reply HELP in your chat with ' +
+            'your booking code and we will sort it out.'));
+    } catch (error) {
+        logger.error(`Love Quest callback error for ${reference}: ${error.message}`);
+        return res.send(page('Payment', '#f0b429', 'Checking your payment',
+            'We are confirming your payment and will message you in your chat once it clears.'));
+    }
+}
+
 async function handleChallengeCallback(reference, req, res) {
     const page = (title, colour, heading, body, link) => `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -535,6 +580,12 @@ router.get('/callback', async (req, res) => {
     // succeeded rendered "Payment Failed".
     if (reference.startsWith('CHS-')) {
         return handleChallengeCallback(reference, req, res);
+    }
+
+    // A Love Quest booking. Its reference carries a booking code, not a user
+    // id, so it must never reach the token-payment path below.
+    if (reference.startsWith('LQ-')) {
+        return handleLoveQuestCallback(reference, req, res);
     }
 
     // Resolve the player BEFORE verifying. Every exit path — success, still
