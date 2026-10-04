@@ -9756,7 +9756,10 @@ router.post('/api/payouts/:id(\\d+)/forfeit', authenticateAdmin, async (req, res
     const result = await pool.query(`
       UPDATE transactions
       SET payout_status = 'cancelled',
-          notes = COALESCE(notes, '') || $2
+          -- admin_notes, NOT notes. transactions has no "notes" column; every
+          -- other cancellation in this file writes admin_notes, and those work.
+          -- This line made every single forfeit fail with "column does not exist".
+          admin_notes = COALESCE(admin_notes, '') || $2
       WHERE id = $1
         AND transaction_type IN ('prize','tournament_prize')
         AND payout_status = 'pending'
@@ -9793,7 +9796,8 @@ router.post('/api/payouts/forfeit-expired', authenticateAdmin, async (req, res) 
     const result = await pool.query(`
       UPDATE transactions
       SET payout_status = 'cancelled',
-          notes = COALESCE(notes, '') || $1
+          -- admin_notes, NOT notes: see the single forfeit above.
+          admin_notes = COALESCE(admin_notes, '') || $1
       WHERE transaction_type IN ('prize','tournament_prize')
         AND payout_status = 'pending'
         AND claimed_at IS NULL

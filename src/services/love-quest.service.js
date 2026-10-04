@@ -1071,17 +1071,37 @@ class LoveQuestService {
                 // Player has bank details - credit to their wallet
                 const playerId = playerResult.rows[0].id;
                 
-                // Add to player's wallet
-                await pool.query(
-                    'UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2',
-                    [amount, playerId]
-                );
-                
-                // Record transaction
-                await pool.query(`
-                    INSERT INTO transactions (user_id, amount, transaction_type, status, notes)
-                    VALUES ($1, $2, 'love_quest_prize', 'confirmed', $3)
-                `, [playerId, amount, `Love Quest prize from booking ${booking.booking_code}`]);
+                // CREDIT AND RECORD TOGETHER, OR NOT AT ALL.
+                //
+                // This used to credit the wallet first and then insert the
+                // record — an insert naming two columns transactions does not
+                // have, `status` and `notes`. So every time it ran, the wallet
+                // was topped up, the record failed, the error was caught, and
+                // the player was never told: money paid out with no trace of it.
+                //
+                // The record now uses only columns that working code already
+                // writes on transactions (tournament prizes and challenge
+                // refunds both use payment_status and description), and the
+                // credit and the record share one database transaction, so a
+                // failure leaves the wallet exactly as it was.
+                const client = await pool.connect();
+                try {
+                    await client.query('BEGIN');
+                    await client.query(
+                        'UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2',
+                        [amount, playerId]
+                    );
+                    await client.query(`
+                        INSERT INTO transactions (user_id, amount, transaction_type, payment_status, description)
+                        VALUES ($1, $2, 'love_quest_prize', 'success', $3)
+                    `, [playerId, amount, `Love Quest prize from booking ${booking.booking_code}`]);
+                    await client.query('COMMIT');
+                } catch (creditError) {
+                    try { await client.query('ROLLBACK'); } catch (e) { /* already failed */ }
+                    throw creditError;
+                } finally {
+                    client.release();
+                }
                 
                 prizeMsg += `${t.cash_prize_wallet}\n\n`;
                 

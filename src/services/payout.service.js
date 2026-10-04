@@ -121,9 +121,9 @@ class PayoutService {
 
       let bankCode = bankResult.rows[0]?.bank_code || null;
 
-      // If no bank code found, try to get it from Paystack
+      // If no bank code found, ask the verification provider for its own code
       if (!bankCode) {
-        logger.info(`Bank code not found for ${bankName}, fetching from Paystack...`);
+        logger.info(`Bank code not found for ${bankName}, fetching from ${this.bankService.provider}...`);
         bankCode = await this.bankService.getBankCodeByName(bankName);
         
         if (bankCode) {
@@ -143,11 +143,20 @@ class PayoutService {
       if (bankCode) {
         logger.info(`🔍 Attempting to verify account ${accountNumber} with ${bankName} (code: ${bankCode})`);
         
-        const verificationResult = await this.bankService.verifyBankAccount(accountNumber, bankCode);
+        // The bank NAME goes too: a code cached from the old provider (999992
+        // is Paystack's OPay) is retried with the current provider's own code.
+        const verificationResult = await this.bankService.verifyBankAccount(accountNumber, bankCode, bankName);
         
         if (verificationResult.verified) {
           verified = true;
           verifiedAccountName = verificationResult.accountName;
+          // The cached code was the old provider's. Store the one that worked,
+          // so the next player at this bank verifies first time.
+          if (verificationResult.codeChanged) {
+            bankCode = verificationResult.bankCode;
+            await pool.query('UPDATE bank_codes SET bank_code = $1 WHERE bank_name = $2', [bankCode, bankName]);
+            logger.info(`Bank code for ${bankName} updated to ${bankCode} (${this.bankService.provider})`);
+          }
           logger.info(`✅ Account verified! Name: ${verifiedAccountName}`);
           
           // Check if provided name matches verified name (fuzzy match)
@@ -188,7 +197,7 @@ class PayoutService {
       await pool.query(
         `INSERT INTO payout_history (transaction_id, action, notes)
          VALUES ($1, 'details_collected', $2)`,
-        [transactionId, verified ? 'Bank details submitted and verified via Paystack' : 'Bank details submitted (verification unavailable)']
+        [transactionId, verified ? `Bank details submitted and verified via ${this.bankService.provider}` : 'Bank details submitted (verification unavailable)']
       );
 
       logger.info(`💾 Saved payout details for transaction ${transactionId} - Verified: ${verified}`);
@@ -276,21 +285,25 @@ class PayoutService {
         );
       }
 
-      const verification = await this.bankService.verifyBankAccount(account_number, bank_code || await this.bankService.getBankCodeByName(bank_name));
+      const verification = await this.bankService.verifyBankAccount(
+        account_number, bank_code || await this.bankService.getBankCodeByName(bank_name), bank_name);
 
       if (verification.verified) {
-        // Update verification status
+        // Update verification status, and the code if the provider's differed
         await pool.query(
           `UPDATE payout_details
            SET verified = true, account_name = $1, updated_at = NOW()
+               ${verification.codeChanged ? ', bank_code = $3' : ''}
            WHERE transaction_id = $2`,
-          [verification.accountName, transactionId]
+          verification.codeChanged
+            ? [verification.accountName, transactionId, verification.bankCode]
+            : [verification.accountName, transactionId]
         );
 
         await pool.query(
           `INSERT INTO payout_history (transaction_id, action, notes)
-           VALUES ($1, 'reverified', 'Account successfully re-verified via Paystack')`,
-          [transactionId]
+           VALUES ($1, 'reverified', $2)`,
+          [transactionId, `Account successfully re-verified via ${this.bankService.provider}`]
         );
 
         logger.info(`✅ Re-verified payout ${transactionId}: ${verification.accountName}`);
