@@ -2933,7 +2933,7 @@ async function loadForfeitableSummary() {
 }
 
 async function reverifyPayout(transactionId) {
-  if (!confirm('Re-verify this bank account with Paystack?')) return;
+  if (!confirm('Re-verify this bank account name with the bank?')) return;
   try {
     const response = await fetch(`/admin/api/payouts/${transactionId}/reverify`, { method: 'POST', headers: getAuthHeaders() });
     const result = await response.json();
@@ -2953,7 +2953,7 @@ async function showMarkPaidModal(transactionId) {
   try {
     const response = await fetch(`/admin/api/payouts/${transactionId}`, { headers: getAuthHeaders() });
     const payout = await response.json();
-    const verificationBadge = payout.verified ? '<span class="verified-badge">✓ Verified by Paystack</span>' : '<span class="unverified-badge">⚠ Not Verified</span>';
+    const verificationBadge = payout.verified ? '<span class="verified-badge">✓ Verified with bank</span>' : '<span class="unverified-badge">⚠ Not Verified</span>';
     document.getElementById('payoutDetails').innerHTML = `<div style="margin-bottom: 20px; padding: 15px; background: #f9fafb; border-radius: 8px;"><div class="detail-row"><span class="detail-label">Winner:</span><span class="detail-value">${payout.full_name}</span></div><div class="detail-row"><span class="detail-label">Amount:</span><span class="detail-value">₦${parseFloat(payout.amount).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">Account Name:</span><span class="detail-value">${payout.account_name}</span></div><div class="detail-row"><span class="detail-label">Account Number:</span><span class="detail-value">${payout.account_number}</span></div><div class="detail-row"><span class="detail-label">Bank:</span><span class="detail-value">${payout.bank_name}</span></div><div class="detail-row"><span class="detail-label">Verification Status:</span><span class="detail-value">${verificationBadge}</span></div></div>`;
     document.getElementById('markPaidModal').classList.add('show');
   } catch (error) {
@@ -3168,6 +3168,10 @@ async function loadGateways() {
         ? '<span style="background:#fbbf24;color:#78350f;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-left:6px;">⭐ DEFAULT</span>' 
         : '';
       
+      // The gateway that takes international (US dollar) Love Quest payments.
+      const lqBadge = gw.is_love_quest_intl
+        ? '<span style="background:#fce7f3;color:#9d174d;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-left:6px;">💕 LOVE QUEST INTL</span>'
+        : '';
       const enabledColor = gw.is_enabled ? '#059669' : '#9ca3af';
       const enabledLabel = gw.is_enabled ? 'ENABLED' : 'DISABLED';
       
@@ -3180,7 +3184,7 @@ async function loadGateways() {
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
               ${credBadge}
-              <span style="color:${enabledColor};font-weight:bold;font-size:13px;">${enabledLabel}${defaultBadge}</span>
+              <span style="color:${enabledColor};font-weight:bold;font-size:13px;">${enabledLabel}${defaultBadge}${lqBadge}</span>
             </div>
           </div>
           
@@ -3192,6 +3196,9 @@ async function loadGateways() {
             </button>
             ${!gw.is_default && gw.is_enabled ? `
               <button class="btn btn-sm btn-primary" onclick="setDefaultGateway('${gw.name}')">⭐ Make Default</button>
+            ` : ''}
+            ${gw.intl_capable && gw.is_enabled && !gw.is_love_quest_intl ? `
+              <button class="btn btn-sm btn-secondary" onclick="setLoveQuestIntlGateway('${gw.name}')">💕 Use for international Love Quest</button>
             ` : ''}
           </div>
           
@@ -3219,6 +3226,22 @@ async function toggleGateway(name, enabled) {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled })
+    });
+    const d = await r.json();
+    if (d.success) { showAlert(d.message, 'success'); loadGateways(); }
+    else showAlert(d.error || 'Failed', 'error');
+  } catch (e) { showAlert('Error: ' + e.message, 'error'); }
+}
+
+// International Love Quest bookings are charged in US dollars, card only,
+// through whichever capable gateway is chosen here. Dollar collection must
+// also be activated on that gateway's own account.
+async function setLoveQuestIntlGateway(name) {
+  if (!confirm(`Use ${name} for international Love Quest payments (US dollars)? Dollar collection must be activated on your ${name} account.`)) return;
+  try {
+    const r = await fetch(`/admin/api/gateways/${name}/set-love-quest-intl`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
     });
     const d = await r.json();
     if (d.success) { showAlert(d.message, 'success'); loadGateways(); }
