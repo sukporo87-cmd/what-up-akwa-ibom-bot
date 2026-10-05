@@ -85,6 +85,20 @@ function validateName(raw) {
     return { ok: true, name, key: nameKey(name) };
 }
 
+// Web usernames: 3 to 20 of letters, digits and underscore (web-auth.service).
+const USERNAME = /^[A-Za-z0-9_]{3,20}$/;
+
+/**
+ * The name a signed-in player shows on the TV: their username, as it is.
+ * Falls back to "Player" only if it is missing, malformed, or abusive.
+ */
+function accountName(username) {
+    const u = String(username || '').trim();
+    if (!USERNAME.test(u)) return 'Player';
+    if (isAbusive(u.replace(/_/g, ' '))) return 'Player';
+    return u;
+}
+
 function nameKey(name) {
     return String(name || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
@@ -131,6 +145,7 @@ function assignLook(used = []) {
 
 module.exports = {
     validateName,
+    accountName,
     nameKey,
     numberedName,
     isAbusive,

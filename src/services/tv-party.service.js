@@ -591,8 +591,13 @@ class TvPartyService {
 
             let name;
             if (ctx.account) {
-                const v = tvNames.validateName(String(ctx.account.username || ''));
-                name = v.ok ? v.name : 'Player';
+                // A signed-in player is shown by their web username. It was
+                // checked against the web rule (letters, digits, underscore)
+                // when it was made, so it is NOT put through the guest-name
+                // rule, which refuses digits and underscores and would turn
+                // most real usernames into "Player". It still passes the
+                // abuse filter, because it is going on a public screen.
+                name = tvNames.accountName(ctx.account.username);
             } else {
                 const v = tvNames.validateName(input.name);
                 if (!v.ok) return { ok: false, status: 400, reason: v.reason };
@@ -601,7 +606,10 @@ class TvPartyService {
 
             const takenKeys = Object.values(state.players).map(x => x.key);
             if (takenKeys.includes(tvNames.nameKey(name))) {
-                if (!input.allowNumber) {
+                // A guest can add an initial. An account's name is its
+                // username, so a clash is numbered at once rather than
+                // offered an initial that would only make them a guest.
+                if (!input.allowNumber && !ctx.account) {
                     // Offer an initial first. Only a player who declines it
                     // gets a number.
                     return {
