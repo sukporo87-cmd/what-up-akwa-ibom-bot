@@ -222,6 +222,31 @@ const REDIS_KEYS = {
         ttl: 900,            // 15 minutes
         owner: 'error-monitor.service',
         description: 'Prevents spam alerts (1 per 15 min)'
+    },
+
+    // ========================
+    // WUT TV KEYS
+    // ========================
+    TV_ROOM: {
+        pattern: 'tv_room:{roomId}',
+        build: (roomId) => `tv_room:${roomId}`,
+        ttl: 21600,          // 6 hours; 1 hour once finished or closed
+        owner: 'tv-room-store.service',
+        description: 'Live Party room state (players, host, current question, locked answers, rev), plus its :log and :p:{playerId} event logs'
+    },
+    TV_RATE: {
+        pattern: 'tv_rate:{kind}:{subject}',
+        build: (kind, subject) => `tv_rate:${kind}:${subject}`,
+        ttl: 3600,           // 10 minutes for joins, 1 hour for rooms and registrations
+        owner: 'tv-party.service',
+        description: 'Join, wrong-code, room-opening and TV-registration rate limits'
+    },
+    TV_SEEN: {
+        pattern: 'tv_seen:{deviceId}',
+        build: (deviceId) => `tv_seen:${deviceId}`,
+        ttl: 300,            // 5 minutes
+        owner: 'tv-auth.service',
+        description: 'Throttles tv_devices.last_seen writes to one per TV per window'
     }
 };
 

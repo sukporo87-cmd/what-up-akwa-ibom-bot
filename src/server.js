@@ -87,6 +87,21 @@ app.get(/^\/c\/[A-Z0-9]{8}$/, (req, res, next) => {
   return res.sendFile('play.html', { root: path.join(__dirname, 'views') });
 });
 
+// WUT TV: the page a phone opens from the QR code on the TV.
+// play.<domain>/p/482913 — served on the play host only, because that is where
+// the web login cookie lives, and "join with my account" needs it. Any other
+// host is sent there.
+app.get(/^\/p\/\d{6}$/, (req, res) => {
+  const base = process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng';
+  let playHost = '';
+  try { playHost = new URL(base).hostname; } catch (e) { /* keep '' */ }
+  const host = String(req.hostname || '').toLowerCase();
+  const servesHere = host.startsWith('play.') || host === playHost || host === 'localhost' || host === '127.0.0.1';
+  if (!servesHere) return res.redirect(302, base + req.path);
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  return res.sendFile('tv-controller.html', { root: path.join(__dirname, 'views') });
+});
+
 // ============================================
 // The marketing site (views/site) is served on the APEX domain and on
 // demo.<domain>, with clean URLs. play.<domain> keeps the game and every
@@ -213,6 +228,9 @@ app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
 app.use('/challenge', require('./routes/challenge.routes'));
 app.use('/web/payment', webPaymentRoutes);
+// What's Up Trivia TV. Its own routes, its own tables, its own room state;
+// nothing above this line is changed by it.
+app.use('/tv', require('./routes/tv.routes'));
 
 // Anything unmatched on the demo host gets the site's own 404 page.
 // Sits after the API routes so /api/public/* still works on that hostname.
@@ -370,6 +388,22 @@ app.listen(PORT, async () => {
     console.log('   Lobby reminders: ✅ armed');
   } catch (error) {
     console.error('   Lobby reminders: ❌', error.message);
+  }
+
+  // WUT TV rooms live in Redis, but their game timers live in this process
+  // and die with it on every deploy. Re-arm every live room from the
+  // deadlines it stored, then start the sweep that closes stale lobbies.
+  // Not awaited: nothing that already boots here waits on TV.
+  try {
+    const tvParty = require('./services/tv-party.service');
+    tvParty.recover()
+      .then(recovered => {
+        tvParty.startSweep();
+        console.log(`   WUT TV: ✅ ${recovered.rooms} live room(s) recovered`);
+      })
+      .catch(error => console.error('   WUT TV: ❌', error.message));
+  } catch (error) {
+    console.error('   WUT TV: ❌', error.message);
   }
 
   // Setup Telegram webhook ONCE, AFTER server is ready

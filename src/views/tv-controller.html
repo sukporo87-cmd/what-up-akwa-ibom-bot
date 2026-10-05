@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16121f">
+<meta name="robots" content="noindex">
+<title>What's Up Trivia TV — Join the game</title>
+<link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  WUT TV phone controller. Opened from the QR code on the TV; nothing to install.
+  It is deliberately small and separate from play.html: join, a name, four big
+  buttons, the clock, the result — and the host's screens.
+
+  THE QUESTION STAYS ON THE TV. This page only ever receives the letters and
+  the clock; it is told whether you were right at the reveal, never before.
+
+  Credentials: the server sets an httpOnly cookie on /tv when you join, which
+  is what EventSource sends. The same token is kept in localStorage so a phone
+  that locks, refreshes or drops signal comes straight back as the same player.
+-->
+<style>
+:root{
+  --night:#16121f; --slate:#241d33; --raise:#2e2540; --line:#3b3150;
+  --brass:#e8b64c; --mint:#35d39a; --ember:#ff6b5b;
+  --paper:#f2eee9; --mute:#9b8fb0;
+  --me:#e8b64c;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --body:'Inter',system-ui,-apple-system,sans-serif;
+  --pad:clamp(16px,5vw,28px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);
+  font-size:16px;line-height:1.45;min-height:100dvh;display:flex;flex-direction:column;
+  border-top:6px solid var(--me);transition:border-color .3s}
+main{flex:1;display:flex;flex-direction:column;padding:var(--pad);padding-bottom:calc(var(--pad) + env(safe-area-inset-bottom));
+  max-width:520px;width:100%;margin:0 auto;gap:18px}
+h1,h2{font-family:var(--display);font-weight:800;margin:0;line-height:1.08;letter-spacing:-.01em}
+h1{font-size:clamp(28px,8vw,38px)}
+h2{font-size:22px}
+p{margin:0}
+.mute{color:var(--mute)}
+.small{font-size:14px}
+.code{font-family:var(--display);font-weight:600;letter-spacing:.12em;color:var(--brass)}
+label{display:block;font-weight:600;margin-bottom:8px}
+input{width:100%;font:inherit;font-size:20px;padding:14px 16px;border-radius:14px;border:2px solid var(--line);
+  background:var(--slate);color:var(--paper);outline:none}
+input:focus{border-color:var(--brass)}
+button{font:inherit;font-weight:600;border:0;border-radius:14px;padding:16px 18px;cursor:pointer;
+  background:var(--raise);color:var(--paper);min-height:54px;width:100%}
+button:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+button.go{background:var(--brass);color:var(--night);font-size:18px}
+button.quiet{background:transparent;border:2px solid var(--line)}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:10px}
+.row>*{flex:1}
+.err{color:var(--ember);font-weight:600;min-height:1.4em}
+.spacer{flex:1}
+
+/* who you are, on every screen */
+.me{display:flex;align-items:center;gap:14px}
+.me .face{font-size:44px;width:68px;height:68px;border-radius:50%;display:grid;place-items:center;
+  background:var(--slate);border:4px solid var(--me)}
+.me .name{font-family:var(--display);font-weight:800;font-size:26px}
+
+/* the four answers: the one thing this page is for */
+.answers{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;min-height:300px}
+.ans{font-family:var(--display);font-weight:800;font-size:clamp(56px,20vw,96px);border-radius:22px;
+  color:var(--night);min-height:130px;transition:transform .08s}
+.ans:active{transform:scale(.97)}
+.ans[data-l="A"]{background:#e8b64c}.ans[data-l="B"]{background:#35d39a}
+.ans[data-l="C"]{background:#7aa7ff}.ans[data-l="D"]{background:#ff8fb1}
+.ans.gone{visibility:hidden}
+.ans.chosen{outline:6px solid var(--paper);outline-offset:-6px}
+.answers.locked .ans:not(.chosen){opacity:.25}
+
+.clock{height:12px;border-radius:6px;background:var(--slate);overflow:hidden}
+.clock i{display:block;height:100%;background:var(--brass);transform-origin:left;transition:transform .2s linear}
+.qhead{display:flex;justify-content:space-between;align-items:baseline}
+.qhead b{font-family:var(--display);font-size:22px}
+
+.verdict{font-family:var(--display);font-weight:800;font-size:clamp(40px,13vw,64px);line-height:1}
+.verdict.right{color:var(--mint)}.verdict.wrong{color:var(--ember)}
+.stat{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line)}
+.stat b{font-family:var(--display);font-size:20px}
+.place{font-family:var(--display);font-weight:800;font-size:clamp(72px,26vw,120px);line-height:.9;color:var(--brass)}
+
+.panel{background:var(--slate);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.cats{display:flex;flex-wrap:wrap;gap:8px}
+.cats span{background:var(--raise);border-radius:999px;padding:6px 12px;font-weight:600;text-transform:capitalize}
+.people{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.people li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;background:var(--raise)}
+.people .dot{width:12px;height:12px;border-radius:50%}
+.people .who{flex:1;font-weight:600}
+.people button{width:auto;min-height:40px;padding:8px 14px;background:transparent;border:2px solid var(--line);font-size:14px}
+.banner{background:var(--raise);border-radius:12px;padding:10px 14px;font-size:14px}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite"></main>
+<script>
+(function(){
+'use strict';
+
+var CODE = (location.pathname.match(/\/p\/(\d{6})$/) || [])[1] || '';
+var KEY = 'wut_tv:' + CODE;
+
+var S = {
+  roomId: null, token: null, account: null,
+  room: null, me: null, game: null, spectating: false,
+  screen: 'loading', error: '', nameTaken: null, ended: null,
+  offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
+};
+
+// ---------- tiny helpers ----------
+function h(tag, attrs, kids){
+  var el = document.createElement(tag);
+  if (attrs) for (var k in attrs){
+    var v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'text') el.textContent = v;
+    else if (k === 'on') for (var ev in v) el.addEventListener(ev, v[ev]);
+    else if (k === 'style') el.style.cssText = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  (kids || []).forEach(function(c){ if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+function save(){ try { localStorage.setItem(KEY, JSON.stringify({ roomId: S.roomId, token: S.token })); } catch(e){} }
+function load(){ try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch(e){ return null; } }
+function forget(){ try { localStorage.removeItem(KEY); } catch(e){} }
+function now(){ return Date.now() + S.offset; }
+function buzz(ms){ try { if (navigator.vibrate) navigator.vibrate(ms); } catch(e){} }
+
+function api(path, body){
+  var headers = { 'Content-Type': 'application/json' };
+  if (S.token) headers.Authorization = 'Bearer ' + S.token;
+  return fetch(path, { method: 'POST', headers: headers, credentials: 'same-origin', body: JSON.stringify(body || {}) })
+    .then(function(r){ return r.json().catch(function(){ return { success: false, reason: 'server_error' }; }); })
+    .catch(function(){ return { success: false, reason: 'offline' }; });
+}
+
+var WHY = {
+  no_room: "There's no game on with that code. Check the code on the TV.",
+  room_closed: 'This game has ended.',
+  already_started: 'This game has already started. Join the next one.',
+  room_full: 'This room is full: 20 players is the most.',
+  removed: 'The host removed you from this game.',
+  name_required: 'Type a name to show on the TV.',
+  name_too_short: 'Use at least 2 letters.',
+  name_too_long: 'Keep it to 20 characters.',
+  name_characters: 'Use letters, spaces, hyphens or apostrophes. No numbers or emoji.',
+  name_not_allowed: "That name can't go on the TV. Try another.",
+  too_many_attempts: 'Too many tries from this network. Wait a few minutes.',
+  not_signed_in: "You're not signed in on this phone. Sign in, then come back here.",
+  scoped_session: 'That sign-in only works for a challenge. Sign in normally, then come back.',
+  account_unavailable: "This account can't join. You can still play with a name.",
+  profile_incomplete: 'Finish setting up your profile first, or play with a name.',
+  host_taken: 'Someone else is already the host.',
+  not_host: 'Only the host can do that.',
+  no_categories: 'Pick the categories on the TV first.',
+  not_enough_players: 'You need at least 2 players to start.',
+  offline: 'No connection. Check your signal and try again.',
+  server_error: 'Something went wrong. Try again.'
+};
+function why(reason){ return WHY[reason] || 'That did not work. Try again.'; }
+
+// ---------- joining ----------
+function boot(){
+  if (!CODE){ S.screen = 'ended'; S.ended = 'no_room'; return render(); }
+  fetch('/web/auth/me', { credentials: 'same-origin' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ S.account = j && j.authenticated && j.user ? j.user : null; })
+    .catch(function(){ S.account = null; })
+    .then(function(){
+      var saved = load();
+      if (saved && saved.token){ S.token = saved.token; S.roomId = saved.roomId; return rejoin(); }
+      S.screen = 'join'; render();
+    });
+}
+
+// Comes back as the same player: the server recognises the token, or failing
+// that the phone cookie, and never creates a second player for this phone.
+function rejoin(){
+  return api('/tv/rooms/' + CODE + '/join', {}).then(function(j){
+    if (j.success){ joined(j); return; }
+    if (j.reason === 'removed' || j.reason === 'room_closed' || j.reason === 'no_room'){
+      forget(); S.token = null; S.screen = 'ended'; S.ended = j.reason; return render();
+    }
+    if (j.reason === 'name_required' || j.reason === 'name_too_short'){
+      forget(); S.token = null; S.screen = 'join'; return render();
+    }
+    S.error = why(j.reason); S.screen = 'join'; render();
+  });
+}
+
+function join(name, opts){
+  if (S.busy) return;
+  S.busy = true; S.error = ''; render();
+  var body = { name: name };
+  if (opts && opts.allowNumber) body.allowNumber = true;
+  if (opts && opts.asAccount) body.asAccount = true;
+  api('/tv/rooms/' + CODE + '/join', body).then(function(j){
+    S.busy = false;
+    if (j.success){ S.nameTaken = null; return joined(j); }
+    if (j.reason === 'name_taken'){ S.nameTaken = { name: j.name, numbered: j.suggestions && j.suggestions.numbered }; return render(); }
+    if (j.reason === 'removed' || j.reason === 'already_started' || j.reason === 'room_closed' || j.reason === 'no_room'){
+      S.screen = 'ended'; S.ended = j.reason; return render();
+    }
+    S.error = why(j.reason); render();
+  });
+}
+
+function joined(j){
+  S.roomId = j.roomId; S.token = j.token; S.me = j.player; save();
+  S.screen = 'play'; S.retry = 0;
+  connect();
+  render();
+}
+
+// ---------- the stream ----------
+function connect(){
+  if (S.es){ try { S.es.close(); } catch(e){} }
+  var es = new EventSource('/tv/rooms/' + S.roomId + '/player-stream');
+  S.es = es;
+  function on(type, fn){
+    es.addEventListener(type, function(ev){
+      var d; try { d = JSON.parse(ev.data); } catch(e){ return; }
+      if (typeof d.at === 'number') S.offset = d.at - Date.now();
+      if (typeof d.rev === 'number') S.lastRev = d.rev;
+      fn(d); render();
+    });
+  }
+  on('player.snapshot', function(d){ S.room = d.room; S.me = d.me; S.game = d.game; S.spectating = d.spectating; });
+  on('player.room', function(d){ S.room = Object.assign({}, S.room, d); });
+  on('player.question', function(d){
+    S.game = Object.assign({}, S.game, { phase: 'question', position: d.position, total: d.total,
+      expiresAt: d.expiresAt, letters: d.letters, locked: null, fiftyFiftyAvailable: d.fiftyFiftyAvailable });
+    S.error = '';
+  });
+  on('player.locked', function(d){ if (S.game && S.game.position === d.position) S.game.locked = d.chosen; });
+  on('player.fifty', function(d){
+    if (S.game && S.game.position === d.position){ S.game.letters = d.letters; S.game.expiresAt = d.expiresAt; S.game.fiftyFiftyAvailable = false; }
+  });
+  on('player.clock_extended', function(d){ if (S.game && S.game.position === d.position) S.game.expiresAt = d.expiresAt; });
+  on('player.result', function(d){ S.game = Object.assign({}, S.game, { phase: 'reveal', lastResult: d }); });
+  on('player.finished', function(d){ S.game = Object.assign({}, S.game, { phase: 'done', final: d }); });
+  on('player.removed', function(){ end('removed'); });
+  on('room.closed', function(d){ end(d.reason === 'host' || d.reason === 'tv' ? 'closed_by_host' : 'room_closed'); });
+  es.onopen = function(){ S.retry = 0; };
+  // EventSource retries by itself, sending Last-Event-ID. It only gives up
+  // when the server refuses outright — a new token elsewhere, or a restart
+  // that lost the cookie — and then the way back is to rejoin.
+  es.onerror = function(){
+    if (es.readyState !== 2 || S.screen !== 'play') return;
+    var wait = Math.min(15000, 1000 * Math.pow(2, S.retry++));
+    setTimeout(function(){ if (S.screen === 'play' && S.es === es) rejoin(); }, wait);
+  };
+}
+
+function end(reason){
+  if (S.es){ try { S.es.close(); } catch(e){} S.es = null; }
+  if (reason === 'removed' || reason === 'room_closed' || reason === 'closed_by_host') forget();
+  S.screen = 'ended'; S.ended = reason;
+}
+
+// A phone that slept may have a stream the OS killed without telling us.
+document.addEventListener('visibilitychange', function(){
+  if (document.visibilityState !== 'visible') return;
+  if (S.screen === 'play' && (!S.es || S.es.readyState === 2)) rejoin();
+  if (S.screen === 'join' && !S.account){
+    fetch('/web/auth/me', { credentials: 'same-origin' }).then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.authenticated){ S.account = j.user; render(); } }).catch(function(){});
+  }
+});
+
+// ---------- actions ----------
+function act(path, body){
+  if (S.busy) return Promise.resolve(null);
+  S.busy = true;
+  return api('/tv/rooms/' + S.roomId + path, body).then(function(j){
+    S.busy = false;
+    if (!j.success) S.error = why(j.reason);
+    render();
+    return j;
+  });
+}
+function answer(letter){
+  if (!S.game || S.game.locked || S.game.phase !== 'question') return;
+  S.game.locked = letter; buzz(30); render();          // shown at once, confirmed by the server
+  act('/answer', { position: S.game.position, choice: letter }).then(function(j){
+    if (j && !j.success && S.game && j.reason !== 'already_locked') S.game.locked = null;
+    render();
+  });
+}
+function fifty(){
+  if (!S.game || S.game.locked) return;
+  act('/fifty', { position: S.game.position }).then(function(j){
+    if (j && j.success){ S.game.letters = j.letters; S.game.expiresAt = j.expiresAt; S.game.fiftyFiftyAvailable = false; render(); }
+  });
+}
+
+// ---------- screens ----------
+function meBlock(){
+  if (!S.me) return null;
+  document.body.style.setProperty('--me', S.me.colour || '#e8b64c');
+  return h('div', { class: 'me' }, [
+    h('div', { class: 'face', 'aria-hidden': 'true', text: S.me.avatar || '' }),
+    h('div', {}, [ h('div', { class: 'name', text: S.me.name }),
+                   h('div', { class: 'mute small', text: S.room && S.room.youAreHost ? 'Host' : 'Player' }) ])
+  ]);
+}
+
+function joinScreen(){
+  var nameIn = h('input', { id: 'name', maxlength: '20', autocomplete: 'nickname', autocapitalize: 'words',
+                            enterkeyhint: 'go', placeholder: 'Your name', 'aria-describedby': 'err' });
+  var form = [
+    h('h1', { text: 'Join the game' }),
+    h('p', { class: 'mute' }, ['Room ', h('span', { class: 'code', text: CODE }), '. Your name shows on the TV.'])
+  ];
+  if (S.nameTaken){
+    var initial = h('input', { id: 'initial', maxlength: '1', autocapitalize: 'characters', placeholder: 'O',
+                               style: 'width:80px;text-align:center' });
+    form.push(h('div', { class: 'panel' }, [
+      h('p', { text: "There's already a " + S.nameTaken.name + ' here. Add the first letter of your surname?' }),
+      h('div', { class: 'row' }, [ initial,
+        h('button', { class: 'go', text: 'Use initial', on: { click: function(){
+          var i = (initial.value || '').trim().toUpperCase();
+          if (!/^\p{L}$/u.test(i)) { S.error = 'Type one letter.'; return render(); }
+          join(S.nameTaken.name + ' ' + i + '.');
+        } } }) ]),
+      h('button', { class: 'quiet', text: 'Skip, call me ' + (S.nameTaken.numbered || 'a number'), on: { click: function(){
+        join(S.nameTaken.name, { allowNumber: true });
+      } } })
+    ]));
+  } else {
+    form.push(h('div', {}, [ h('label', { for: 'name', text: 'Name' }), nameIn ]));
+    form.push(h('button', { class: 'go', text: S.busy ? 'Joining…' : 'Join', disabled: S.busy,
+                            on: { click: function(){ join(nameIn.value); } } }));
+    nameIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') join(nameIn.value); });
+    if (S.account && S.account.username){
+      form.push(h('button', { class: 'quiet', text: 'Join as ' + S.account.username,
+                              on: { click: function(){ join('', { asAccount: true }); } } }));
+      form.push(h('p', { class: 'mute small', text: 'Playing as your account keeps your TV points on it.' }));
+    } else {
+      form.push(h('p', { class: 'mute small' }, [ 'Have a What\u2019s Up Trivia account? ',
+        h('a', { href: '/', target: '_blank', rel: 'noopener', style: 'color:var(--brass)', text: 'Sign in' }),
+        ', then come back to this page to play as yourself.' ]));
+    }
+  }
+  form.push(h('p', { id: 'err', class: 'err', role: 'alert', text: S.error }));
+  setTimeout(function(){ var f = document.getElementById(S.nameTaken ? 'initial' : 'name'); if (f && !f.value) f.focus(); }, 0);
+  return form;
+}
+
+function lobbyScreen(){
+  var r = S.room || {};
+  var out = [ meBlock(), h('h1', { text: r.youAreHost ? 'You are the host' : 'You\u2019re in' }) ];
+  if (r.youAreHost){
+    var canStart = (r.playerCount || 0) >= 2 && r.categories && r.categories.length;
+    out.push(h('div', { class: 'panel' }, [
+      h('h2', { text: 'Categories' }),
+      r.categories && r.categories.length
+        ? h('div', { class: 'cats' }, r.categories.map(function(c){ return h('span', { text: c }); }))
+        : h('p', { class: 'mute', text: 'Pick up to three on the TV with the remote.' })
+    ]));
+    var list = (r.players || []).map(function(p){
+      return h('li', {}, [ h('span', { class: 'dot', style: 'background:' + p.colour }),
+        h('span', { 'aria-hidden': 'true', text: p.avatar }), h('span', { class: 'who', text: p.name + (p.host ? ' (host)' : '') }),
+        p.host ? null : h('button', { text: 'Remove', 'aria-label': 'Remove ' + p.name, on: { click: function(){
+          if (confirm('Remove ' + p.name + ' from this game? They will not be able to rejoin.')) act('/players/' + p.id + '/remove');
+        } } }) ]);
+    });
+    out.push(h('div', { class: 'panel' }, [ h('h2', { text: (r.playerCount || 0) + ' of ' + (r.maxPlayers || 20) + ' players' }),
+                                           h('ul', { class: 'people' }, list) ]));
+    out.push(h('div', { class: 'spacer' }));
+    out.push(h('button', { class: 'go', text: 'Start the game', disabled: !canStart || S.busy, on: { click: function(){ act('/start'); } } }));
+    if (!canStart) out.push(h('p', { class: 'mute small', text: !(r.categories && r.categories.length) ? WHY.no_categories : WHY.not_enough_players }));
+    out.push(h('button', { class: 'quiet', text: 'End this game', on: { click: function(){
+      if (confirm('End the game for everyone?')) act('/close');
+    } } }));
+  } else {
+    out.push(h('p', { class: 'mute', text: (r.playerCount || 0) + ' playing. Watch the TV — the game starts when the host is ready.' }));
+    if (r.categories && r.categories.length)
+      out.push(h('div', { class: 'cats' }, r.categories.map(function(c){ return h('span', { text: c }); })));
+    if (r.hostFree){
+      out.push(h('div', { class: 'panel' }, [
+        h('p', { text: 'Nobody is hosting yet. The host starts the game and can remove players.' }),
+        h('button', { class: 'go', text: 'Be the host', on: { click: function(){ act('/host'); } } })
+      ]));
+    }
+    out.push(h('div', { class: 'spacer' }));
+  }
+  out.push(h('button', { class: 'quiet', text: 'Leave', on: { click: function(){
+    if (!confirm('Leave this game?')) return;
+    act('/leave').then(function(j){ if (j && j.success){ end('left'); render(); } });
+  } } }));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  return out;
+}
+
+function questionScreen(){
+  var g = S.game;
+  var letters = g.letters || ['A','B','C','D'];
+  var grid = h('div', { class: 'answers' + (g.locked ? ' locked' : ''), role: 'group', 'aria-label': 'Answers' },
+    ['A','B','C','D'].map(function(l){
+      var gone = letters.indexOf(l) < 0;
+      return h('button', { class: 'ans' + (gone ? ' gone' : '') + (g.locked === l ? ' chosen' : ''), 'data-l': l,
+        text: l, disabled: gone || !!g.locked, 'aria-label': 'Answer ' + l,
+        on: { click: function(){ answer(l); } } });
+    }));
+  var bar = h('i', { id: 'bar' });
+  var secs = h('span', { id: 'secs', class: 'mute' });
+  var out = [
+    h('div', { class: 'qhead' }, [ h('b', { text: 'Question ' + g.position + ' of ' + (g.total || 15) }), secs ]),
+    h('div', { class: 'clock', 'aria-hidden': 'true' }, [ bar ]),
+    grid
+  ];
+  if (g.locked) out.push(h('p', { class: 'mute', text: 'Locked in. Watch the TV for the answer.' }));
+  else if (g.fiftyFiftyAvailable !== false && letters.length === 4)
+    out.push(h('button', { class: 'quiet', text: '50:50 — remove two wrong answers', on: { click: fifty } }));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  tick();
+  return out;
+}
+
+function tick(){
+  clearInterval(S.clockT);
+  var run = function(){
+    var g = S.game; if (!g || g.phase !== 'question') return clearInterval(S.clockT);
+    var left = Math.max(0, g.expiresAt - now());
+    var bar = document.getElementById('bar'), secs = document.getElementById('secs');
+    if (bar) bar.style.transform = 'scaleX(' + Math.min(1, left / 10000) + ')';
+    if (secs) secs.textContent = left > 0 ? Math.ceil(left / 1000) + 's' : 'Time';
+    if (left <= 0 && !g.locked){
+      // The clock is display only: the server decides. Options disable here
+      // so nobody taps into a refusal.
+      document.querySelectorAll('.ans').forEach(function(b){ b.disabled = true; });
+    }
+  };
+  setTimeout(run, 0);
+  S.clockT = setInterval(run, 200);
+}
+
+function resultScreen(){
+  var r = S.game.lastResult || {};
+  return [
+    meBlock(),
+    h('div', { class: 'verdict ' + (r.correct ? 'right' : 'wrong'),
+               text: r.correct ? 'Correct' : (r.chosen ? 'Not this time' : 'Out of time') }),
+    h('p', { class: 'mute', text: 'The answer was ' + (r.correctAnswer || '?') + (r.chosen ? '. You picked ' + r.chosen + '.' : '.') }),
+    h('div', {}, [
+      h('div', { class: 'stat' }, [ h('span', { text: 'Points this question' }), h('b', { text: '+' + (r.points || 0) }) ]),
+      h('div', { class: 'stat' }, [ h('span', { text: 'Correct so far' }), h('b', { text: String(r.score ? r.score.c : 0) }) ]),
+      h('div', { class: 'stat' }, [ h('span', { text: 'Your place' }), h('b', { text: r.rank ? r.rank + ' of ' + r.of : '—' }) ])
+    ]),
+    h('div', { class: 'spacer' }),
+    h('p', { class: 'mute small', text: (S.game.position || 0) < 15 ? 'Next question in a moment.' : 'That was the last question.' })
+  ];
+}
+
+function finishedScreen(){
+  var f = S.game.final || {};
+  var out = [ meBlock() ];
+  if (f.rank){
+    out.push(h('div', { class: 'place', text: f.won ? '1st' : ordinal(f.rank) }));
+    out.push(h('h1', { text: f.won ? 'You won' : 'of ' + f.of + ' players' }));
+  } else {
+    out.push(h('h1', { text: 'Game over' }));
+  }
+  out.push(h('div', {}, [
+    h('div', { class: 'stat' }, [ h('span', { text: 'Correct' }), h('b', { text: (f.correct || 0) + ' of 15' }) ]),
+    h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
+  ]));
+  if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
+  if (S.me && !S.me.signedIn && f.points) out.push(h('p', { class: 'mute small', text: 'You played as a guest, so these points stay with this game.' }));
+  out.push(h('div', { class: 'spacer' }));
+  out.push(h('p', { class: 'mute', text: 'To play again, scan the new code when the TV opens the next game.' }));
+  forget();
+  return out;
+}
+
+function endedScreen(){
+  var copy = {
+    removed: ['You were removed', 'The host removed you from this game.'],
+    closed_by_host: ['Game ended', 'The host ended this game.'],
+    room_closed: ['Game ended', 'This game is over. Scan the code on the TV to join the next one.'],
+    already_started: ['Already started', WHY.already_started],
+    no_room: ['No game found', WHY.no_room],
+    left: ['You left', 'Scan the code on the TV to join again.']
+  }[S.ended] || ['Game ended', ''];
+  return [ h('h1', { text: copy[0] }), h('p', { class: 'mute', text: copy[1] }) ];
+}
+
+function ordinal(n){ var s = ['th','st','nd','rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+function render(){
+  var app = document.getElementById('app');
+  var kids;
+  if (S.screen === 'loading') kids = [ h('p', { class: 'mute', text: 'Connecting…' }) ];
+  else if (S.screen === 'join') kids = joinScreen();
+  else if (S.screen === 'ended') kids = endedScreen();
+  else {
+    var g = S.game, st = S.room && S.room.status;
+    if (S.spectating) kids = [ meBlock(), h('h1', { text: 'Game in progress' }), h('p', { class: 'mute', text: 'You joined after it started. Watch the TV; you can play the next one.' }) ];
+    else if (g && g.phase === 'done') kids = finishedScreen();
+    else if (g && g.phase === 'question') kids = questionScreen();
+    else if (g && g.phase === 'reveal' && g.lastResult) kids = resultScreen();
+    else if (st === 'playing') kids = [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }) ];
+    else kids = lobbyScreen();
+  }
+  // Do not rebuild under a thumb that is typing.
+  var active = document.activeElement;
+  if (S.screen === 'join' && active && active.tagName === 'INPUT' && app.contains(active) && !S.nameTaken && !S.error && !S.busy) return;
+  app.replaceChildren.apply(app, kids.filter(Boolean));
+}
+
+window.__tv = S;   // for the test harness and for support on a real phone
+boot();
+})();
+</script>
+</body>
+</html>
