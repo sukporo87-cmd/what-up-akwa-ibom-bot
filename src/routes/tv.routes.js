@@ -34,7 +34,7 @@ const STATUS = {
     not_signed_in: 401,
     device_blocked: 403, removed: 403, not_host: 403, not_your_room: 403, wrong_room: 403,
     account_unavailable: 403, profile_incomplete: 403, scoped_session: 403,
-    no_room: 404, no_such_player: 404,
+    no_room: 404, no_such_player: 404, not_in_room: 404,
     room_closed: 410,
     too_many_attempts: 429, too_many_rooms: 429, too_many_registrations: 429
 };
@@ -279,6 +279,11 @@ router.get('/rooms/:id(\\d+)/player-stream', requirePlayer, async (req, res) => 
 router.post('/rooms/:id(\\d+)/host', requirePlayer, async (req, res) => {
     try { return reply(res, await party.takeHost(Number(req.params.id), req.tvPlayerId)); }
     catch (error) { return fail(res, 'host', error); }
+});
+
+router.post('/rooms/:id(\\d+)/avatar', requirePlayer, async (req, res) => {
+    try { return reply(res, await party.setAvatar(Number(req.params.id), req.tvPlayerId, (req.body || {}).avatar)); }
+    catch (error) { return fail(res, 'avatar', error); }
 });
 
 router.post('/rooms/:id(\\d+)/start', requirePlayer, async (req, res) => {

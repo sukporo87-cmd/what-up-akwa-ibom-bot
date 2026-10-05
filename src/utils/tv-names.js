@@ -117,11 +117,10 @@ function numberedName(name, takenKeys) {
 }
 
 // ============================================
-// COLOUR AND EMOJI
+// COLOUR AND AVATAR
 // ============================================
-// Twenty of each for a twenty-player room, so no two players in a room ever
-// share either. Colours are picked to stay distinct on a TV across the room,
-// and emoji are friendly, non-food, non-flag and unambiguous on every platform.
+// Twenty colours for a twenty-player room, so no two players ever share one.
+// Colours are always assigned: picked to stay distinct on a TV across a room.
 const COLOURS = [
     '#E53935', '#1E88E5', '#43A047', '#FDD835', '#8E24AA',
     '#FB8C00', '#00ACC1', '#D81B60', '#7CB342', '#5E35B1',
@@ -129,18 +128,42 @@ const COLOURS = [
     '#00897B', '#FFB300', '#EC407A', '#546E7A', '#26A69A'
 ];
 
-const EMOJI = [
-    '🦁', '🐘', '🦒', '🐆', '🦓', '🐢', '🦜', '🐬', '🦉', '🐝',
-    '🦋', '🐙', '🦊', '🐼', '🐨', '🐸', '🦄', '🐧', '🦩', '🐳'
+// Thirty-two avatars, so a twentieth player still has twelve to choose from.
+// Twenty animals, then vehicles and people. A player picks one or skips, and
+// a skip gets the first free one — an animal, since they come first.
+//
+// Every one of these is in Unicode Emoji 5.0 or earlier, so it draws as one
+// picture on Android 8.1 and later (older Android TVs included), not as two
+// glyphs side by side. That is why the people are the gendered forms (2016)
+// and not the newer gender-neutral ones, and why there is no parrot or
+// flamingo. Two need the U+FE0F selector to draw in colour: the racing car
+// and the aeroplane.
+const AVATARS = [
+    '\u{1F981}', '\u{1F418}', '\u{1F992}', '\u{1F406}', '\u{1F993}',   // lion elephant giraffe leopard zebra
+    '\u{1F422}', '\u{1F989}', '\u{1F41D}', '\u{1F98B}', '\u{1F419}',   // turtle owl bee butterfly octopus
+    '\u{1F98A}', '\u{1F43C}', '\u{1F428}', '\u{1F438}', '\u{1F984}',   // fox panda koala frog unicorn
+    '\u{1F427}', '\u{1F433}', '\u{1F42C}', '\u{1F985}', '\u{1F40A}',   // penguin whale dolphin eagle crocodile
+    '\u{1F680}', '\u{1F3CE}\u{FE0F}', '\u{1F697}', '\u{1F681}',          // rocket racing-car car helicopter
+    '\u{2708}\u{FE0F}', '\u{26F5}', '\u{26BD}', '\u{1F3B8}',             // aeroplane sailboat football guitar
+    '\u{1F469}\u{200D}\u{1F52C}', '\u{1F468}\u{200D}\u{1F680}',           // scientist astronaut
+    '\u{1F469}\u{200D}\u{1F3A4}', '\u{1F468}\u{200D}\u{1F373}'            // singer chef
 ];
+const ANIMALS = 20;
 
-/** First colour and emoji nobody in the room is using. */
+// Kept for anything that still says EMOJI.
+const EMOJI = AVATARS;
+
+/** First colour, and first avatar, that nobody active in the room is using. */
 function assignLook(used = []) {
     const usedColours = new Set(used.map(u => u.colour));
-    const usedEmoji = new Set(used.map(u => u.avatar));
+    const usedAvatars = new Set(used.map(u => u.avatar));
     const colour = COLOURS.find(c => !usedColours.has(c)) || COLOURS[used.length % COLOURS.length];
-    const avatar = EMOJI.find(e => !usedEmoji.has(e)) || EMOJI[used.length % EMOJI.length];
+    const avatar = AVATARS.find(e => !usedAvatars.has(e)) || AVATARS[used.length % AVATARS.length];
     return { colour, avatar };
+}
+
+function isAvatar(a) {
+    return typeof a === 'string' && AVATARS.includes(a);
 }
 
 module.exports = {
@@ -150,7 +173,10 @@ module.exports = {
     numberedName,
     isAbusive,
     assignLook,
+    isAvatar,
     COLOURS,
+    AVATARS,
+    ANIMALS,
     EMOJI,
     MIN_LEN,
     MAX_LEN

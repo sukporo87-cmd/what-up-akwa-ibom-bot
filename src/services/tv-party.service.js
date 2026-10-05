@@ -233,6 +233,12 @@ class TvPartyService {
                 categories: state.categories || [],
                 playerCount: this._activeIds(state).length,
                 maxPlayers: state.maxPlayers,
+                // While the room is open, each phone can change its avatar,
+                // so it is told which ones are already taken.
+                ...(state.status === 'lobby' ? {
+                    avatars: tvNames.AVATARS,
+                    takenAvatars: this._activeIds(state).filter(x => x !== pid).map(x => state.players[x].avatar)
+                } : {}),
                 // The host runs the room from their phone, so they see who is
                 // in it — the same names the TV is already showing everyone.
                 ...(state.hostPlayerId === pid ? {
@@ -672,6 +678,30 @@ class TvPartyService {
             tx.player(pid, 'player.room', this.playerSnapshot(state, pid).room);
             this._scheduleLobbyUpdate(state.id);
             return { ok: true };
+        });
+    }
+
+    /**
+     * A player picks their own avatar, in the lobby. Anyone who skips keeps
+     * the one they were given on joining. Two phones reaching for the same
+     * one at once are settled here, one change at a time: the second is told
+     * it has gone.
+     */
+    async setAvatar(roomId, pid, avatar) {
+        if (!tvNames.isAvatar(avatar)) return { ok: false, reason: 'bad_avatar' };
+        return store.withRoom(roomId, async (state, tx) => {
+            if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+            const me = state.players[pid];
+            if (!this._active(me)) return { ok: false, reason: 'not_in_room' };
+            if (me.avatar === avatar) return { ok: true, avatar };
+            const taken = this._activeIds(state).some(x => x !== pid && state.players[x].avatar === avatar);
+            if (taken) return { ok: false, reason: 'avatar_taken' };
+
+            me.avatar = avatar;
+            await pool.query(`UPDATE tv_players SET avatar = $2 WHERE id = $1`, [pid, avatar]);
+            tx.tv('room.player_updated', { player: this._publicPlayer(state, pid) });
+            this._scheduleLobbyUpdate(state.id);
+            return { ok: true, avatar };
         });
     }
 

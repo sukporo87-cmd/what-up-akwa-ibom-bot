@@ -97,6 +97,10 @@ button:disabled{opacity:.45;cursor:default}
 .people .dot{width:12px;height:12px;border-radius:50%}
 .people .who{flex:1;font-weight:600}
 .people button{width:auto;min-height:40px;padding:8px 14px;background:transparent;border:2px solid var(--line);font-size:14px}
+.avatars{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.av{font-size:36px;min-height:68px;padding:8px;border-radius:16px;background:var(--slate);border:3px solid transparent;line-height:1}
+.av.mine{border-color:var(--me);background:var(--raise)}
+.av:disabled{opacity:.25}
 .banner{background:var(--raise);border-radius:12px;padding:10px 14px;font-size:14px}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -114,7 +118,7 @@ var KEY = 'wut_tv:' + CODE;
 var S = {
   roomId: null, token: null, account: null,
   room: null, me: null, game: null, spectating: false,
-  screen: 'loading', error: '', nameTaken: null, ended: null,
+  screen: 'loading', error: '', nameTaken: null, ended: null, picking: false,
   offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
 };
 
@@ -220,6 +224,9 @@ function join(name, opts){
 function joined(j){
   S.roomId = j.roomId; S.token = j.token; S.me = j.player; save();
   S.screen = 'play'; S.retry = 0;
+  // A first-time joiner is offered the avatar picker once; someone coming
+  // back keeps what they had and goes straight to the game.
+  if (!j.rejoined) S.picking = true;
   connect();
   render();
 }
@@ -306,6 +313,18 @@ function fifty(){
   });
 }
 
+function pickAvatar(a){
+  act('/avatar', { avatar: a }).then(function(j){
+    if (!j) return;
+    if (j.success){ S.me.avatar = j.avatar; S.picking = false; S.error = ''; }
+    else if (j.reason === 'avatar_taken'){
+      S.error = 'Someone just took that one. Pick another.';
+      if (S.room && S.room.takenAvatars) S.room.takenAvatars.push(a);
+    }
+    render();
+  });
+}
+
 // ---------- screens ----------
 function meBlock(){
   if (!S.me) return null;
@@ -359,6 +378,28 @@ function joinScreen(){
   return form;
 }
 
+function pickerScreen(){
+  var r = S.room || {};
+  var all = r.avatars || [];
+  var taken = r.takenAvatars || [];
+  var out = [ meBlock(), h('h1', { text: 'Pick your avatar' }),
+              h('p', { class: 'mute', text: 'It shows next to your name on the TV.' }) ];
+  if (!all.length) out.push(h('p', { class: 'mute', text: 'Loading\u2026' }));
+  else out.push(h('div', { class: 'avatars', role: 'group', 'aria-label': 'Avatars' }, all.map(function(a){
+    var gone = taken.indexOf(a) >= 0;
+    var mine = S.me && S.me.avatar === a;
+    return h('button', { class: 'av' + (mine ? ' mine' : ''), text: a, disabled: gone || S.busy,
+                         'aria-label': gone ? 'Taken' : (mine ? 'Your avatar' : 'Choose this avatar'),
+                         'aria-pressed': mine ? 'true' : 'false',
+                         on: { click: function(){ if (mine){ S.picking = false; render(); } else pickAvatar(a); } } });
+  })));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  out.push(h('div', { class: 'spacer' }));
+  out.push(h('button', { class: 'quiet', text: 'Skip, keep ' + ((S.me && S.me.avatar) || 'this one'),
+                         on: { click: function(){ S.picking = false; S.error = ''; render(); } } }));
+  return out;
+}
+
 function lobbyScreen(){
   var r = S.room || {};
   var out = [ meBlock(), h('h1', { text: r.youAreHost ? 'You are the host' : 'You\u2019re in' }) ];
@@ -397,6 +438,7 @@ function lobbyScreen(){
     }
     out.push(h('div', { class: 'spacer' }));
   }
+  out.push(h('button', { class: 'quiet', text: 'Change avatar', on: { click: function(){ S.picking = true; S.error = ''; render(); } } }));
   out.push(h('button', { class: 'quiet', text: 'Leave', on: { click: function(){
     if (!confirm('Leave this game?')) return;
     act('/leave').then(function(j){ if (j && j.success){ end('left'); render(); } });
@@ -512,6 +554,7 @@ function render(){
     else if (g && g.phase === 'done') kids = finishedScreen();
     else if (g && g.phase === 'question') kids = questionScreen();
     else if (g && g.phase === 'reveal' && g.lastResult) kids = resultScreen();
+    else if (S.picking && (!st || st === 'lobby')) kids = pickerScreen();
     else if (st === 'playing') kids = [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }) ];
     else kids = lobbyScreen();
   }
