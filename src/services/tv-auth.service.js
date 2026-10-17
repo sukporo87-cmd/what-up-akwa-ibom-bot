@@ -11,6 +11,12 @@
 //   * a signed-in web user — the existing wut_session, read through
 //                      web-auth.service exactly as web play reads it
 //
+// AND, ON TOP OF A TV'S DEVICE TOKEN, A TV SIGN-IN (phase 4):
+//   * a TV session    — session token  "tvu_…"  in the X-TV-Session header,
+//                      sent alongside the device token. It names a person,
+//                      not a TV, and is only ever honoured together with the
+//                      device token of the TV it was issued to.
+//
 // TOKENS ARE STORED HASHED. Only SHA-256 of a token is ever written to the
 // database or Redis, so a leaked dump cannot impersonate a TV or a phone. The
 // tokens carry 256 bits of randomness, so a fast hash is the right one here;
@@ -20,9 +26,9 @@
 // token presented to another room is refused before any lookup, and a token
 // can only ever resolve to the one player it was issued to.
 //
-// The ensureSchema() statements are GENERATED from migrations/018-tv.sql and
-// 019-tv-solo.sql and are byte-identical to them; a test checks they have not
-// drifted.
+// The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
+// 019-tv-solo.sql and 020-tv-signin.sql and are byte-identical to them; a test
+// checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -32,6 +38,8 @@ const { logger } = require('../utils/logger');
 
 const DEVICE_PREFIX = 'tvd_';
 const PLAYER_PREFIX = 'tvp_';
+const SESSION_PREFIX = 'tvu_';
+const SESSION_HEADER = 'x-tv-session';
 const PLAYER_COOKIE = 'wut_tvp';
 const PHONE_COOKIE = 'wut_tvph';
 const COOKIE_PATH = '/tv';
@@ -56,8 +64,10 @@ class TvAuthService {
     // ============================================
     async ensureSchema() {
         if (this._schemaReady) return;
-        // 018 first (the tables), then 019 (Solo), which adds to tv_points.
-        for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS]) {
+        // 018 first (the tables), then 019 (Solo), which adds to tv_points,
+        // then 020 (signing in on a TV).
+        for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
+                           ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -87,6 +97,11 @@ class TvAuthService {
 
     mintPlayerToken(roomId, playerId) {
         const token = `${PLAYER_PREFIX}${roomId}.${playerId}.${this._secret()}`;
+        return { token, hash: this.hash(token) };
+    }
+
+    mintSessionToken() {
+        const token = SESSION_PREFIX + this._secret();
         return { token, hash: this.hash(token) };
     }
 
@@ -135,6 +150,13 @@ class TvAuthService {
         if (t && t.startsWith(PLAYER_PREFIX)) return t;
         const c = this._cookie(req, PLAYER_COOKIE);
         return c && c.startsWith(PLAYER_PREFIX) ? c : null;
+    }
+
+    /** A TV sign-in: only from its own header, never a cookie or the URL. */
+    sessionTokenFrom(req) {
+        const raw = req.headers && req.headers[SESSION_HEADER];
+        const t = typeof raw === 'string' ? raw.trim() : '';
+        return /^tvu_[A-Za-z0-9_-]{40,60}$/.test(t) ? t : null;
     }
 
     phoneRefFrom(req) {
@@ -365,8 +387,37 @@ TvAuthService.SOLO_SCHEMA_STATEMENTS = Object.freeze([
     WHERE tv_solo_round_id IS NOT NULL`
 ]);
 
+TvAuthService.SIGNIN_SCHEMA_STATEMENTS = Object.freeze([
+    `CREATE TABLE IF NOT EXISTS tv_sessions (
+    id                  SERIAL PRIMARY KEY,
+    tv_device_id        INTEGER NOT NULL REFERENCES tv_devices(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    token_hash          TEXT NOT NULL UNIQUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_active_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at            TIMESTAMPTZ,
+    end_reason          TEXT CHECK (end_reason IS NULL OR end_reason IN (
+                            'signout','idle','app_closed','replaced','blocked','account'
+                        )),
+    CONSTRAINT tv_sessions_end_pair CHECK ((ended_at IS NULL) = (end_reason IS NULL))
+)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_sessions_one_live
+    ON tv_sessions (tv_device_id)
+    WHERE ended_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_sessions_user
+    ON tv_sessions (user_id, created_at DESC)`,
+    `ALTER TABLE tv_points ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_points_board
+    ON tv_points (user_id, created_at)
+    WHERE user_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_points_party_player
+    ON tv_points (tv_player_id)
+    WHERE tv_player_id IS NOT NULL`
+]);
+
 module.exports = new TvAuthService();
 module.exports.PLATFORMS = PLATFORMS;
 module.exports.PLAYER_COOKIE = PLAYER_COOKIE;
 module.exports.PHONE_COOKIE = PHONE_COOKIE;
 module.exports.COOKIE_PATH = COOKIE_PATH;
+module.exports.SESSION_HEADER = SESSION_HEADER;

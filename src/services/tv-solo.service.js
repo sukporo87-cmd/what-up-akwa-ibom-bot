@@ -18,8 +18,10 @@
 //   * a question can score once per round (a unique index, not just a check)
 //
 // POINTS ARE A LEDGER. One tv_points row per correct answer: 10 for Q1-5,
-// 20 for Q6-10, 30 for Q11-15. A guest's rows are held by guest_ref
-// 'tvs:<round>' until phase 4 lets them be moved to an account.
+// 20 for Q6-10, 30 for Q11-15. A round started while someone is signed in on
+// the TV is theirs from the start; a guest's rows are held by guest_ref
+// 'tvs:<round>', and move to an account when the guest signs in within 24
+// hours (tv-session.service).
 //
 // RESTART-PROOF BY DESIGN. Solo has no server timers: the round lives in
 // Redis under tv_solo:<id>, and every request checks the time against the
@@ -179,14 +181,17 @@ class TvSoloService {
             [device.id]
         );
 
+        // Signed in on this TV (phase 4): the round and its points are the
+        // account's. The route has already checked the session.
+        const userId = Number.isInteger(opts.userId) && opts.userId > 0 ? opts.userId : null;
         const ins = await pool.query(
-            `INSERT INTO tv_solo_rounds (tv_device_id, category) VALUES ($1, $2) RETURNING id`,
-            [device.id, category]
+            `INSERT INTO tv_solo_rounds (tv_device_id, category, user_id) VALUES ($1, $2, $3) RETURNING id`,
+            [device.id, category, userId]
         );
         const state = {
             id: ins.rows[0].id,
             deviceId: device.id,
-            userId: null,
+            userId,
             category,
             status: 'playing',
             phase: 'starting',
@@ -209,7 +214,7 @@ class TvSoloService {
         // finished with end reason no_questions, and the TV says so.
         await this._serve(state, 1);
         await this._save(state);
-        logger.info(`📺 TV ${device.id} started Solo round ${state.id}${category ? ` (${category})` : ''}`);
+        logger.info(`📺 TV ${device.id} started Solo round ${state.id}${category ? ` (${category})` : ''}${userId ? ` for user ${userId}` : ''}`);
         return { ok: true, round: this.view(state) };
     }
 

@@ -102,6 +102,20 @@ app.get(/^\/p\/\d{6}$/, (req, res) => {
   return res.sendFile('tv-controller.html', { root: path.join(__dirname, 'views') });
 });
 
+// WUT TV, phase 4: the page a phone opens from the TV's sign-in QR code.
+// play.<domain>/t/K7P2M4RN — the player approves signing the TV in to their
+// account. Same host rule as /p: the web login cookie lives on the play host.
+app.get(/^\/t\/[A-Za-z0-9]{8}$/, (req, res) => {
+  const base = process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng';
+  let playHost = '';
+  try { playHost = new URL(base).hostname; } catch (e) { /* keep '' */ }
+  const host = String(req.hostname || '').toLowerCase();
+  const servesHere = host.startsWith('play.') || host === playHost || host === 'localhost' || host === '127.0.0.1';
+  if (!servesHere) return res.redirect(302, base + req.path);
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  return res.sendFile('tv-pair.html', { root: path.join(__dirname, 'views') });
+});
+
 // ============================================
 // The marketing site (views/site) is served on the APEX domain and on
 // demo.<domain>, with clean URLs. play.<domain> keeps the game and every

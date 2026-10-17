@@ -140,6 +140,7 @@ function save(){ try { localStorage.setItem(KEY, JSON.stringify({ roomId: S.room
 function load(){ try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch(e){ return null; } }
 function forget(){ try { localStorage.removeItem(KEY); } catch(e){} }
 function now(){ return Date.now() + S.offset; }
+function done(){ return !!(S.game && S.game.phase === 'done'); }
 function buzz(ms){ try { if (navigator.vibrate) navigator.vibrate(ms); } catch(e){} }
 
 function api(path, body){
@@ -168,6 +169,11 @@ var WHY = {
   profile_incomplete: 'Finish setting up your profile first, or play with a name.',
   host_taken: 'Someone else is already the host.',
   not_host: 'Only the host can do that.',
+  already_kept: 'Your account already has points from another phone in this game.',
+  account_in_room: 'Your account played in this game already, so these points can\u2019t be added to it too.',
+  already_signed_in: 'You played as your account, so your points are already on it.',
+  not_finished: 'Wait for the game to finish.',
+  bad_player_token: 'This phone is no longer in that game.',
   no_categories: 'Pick the categories on the TV first.',
   not_enough_players: 'You need at least 2 players to start.',
   offline: 'No connection. Check your signal and try again.',
@@ -280,8 +286,8 @@ function end(reason){
 // A phone that slept may have a stream the OS killed without telling us.
 document.addEventListener('visibilitychange', function(){
   if (document.visibilityState !== 'visible') return;
-  if (S.screen === 'play' && (!S.es || S.es.readyState === 2)) rejoin();
-  if (S.screen === 'join' && !S.account){
+  if (S.screen === 'play' && !done() && (!S.es || S.es.readyState === 2)) rejoin();
+  if ((S.screen === 'join' || done()) && !S.account){
     fetch('/web/auth/me', { credentials: 'same-origin' }).then(function(r){ return r.json(); })
       .then(function(j){ if (j && j.authenticated){ S.account = j.user; render(); } }).catch(function(){});
   }
@@ -521,11 +527,43 @@ function finishedScreen(){
     h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
   ]));
   if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
-  if (S.me && !S.me.signedIn && f.points) out.push(h('p', { class: 'mute small', text: 'You played as a guest, so these points stay with this game.' }));
+  if (S.me && !S.me.signedIn && f.points) out = out.concat(keepBlock(f.points));
   out.push(h('div', { class: 'spacer' }));
   out.push(h('p', { class: 'mute', text: 'To play again, scan the new code when the TV opens the next game.' }));
   forget();
   return out;
+}
+
+// ---------- a guest keeps their points (phase 4) ----------
+// Signing in happens in another tab; coming back here checks again. The
+// points move to the account within 24 hours of the game, once.
+function keepBlock(points){
+  if (S.kept) return [ h('p', { class: 'banner', text: (S.kept.kept || 0) + ' points added to ' + (S.kept.username || 'your account') + '.' }) ];
+  var out = [];
+  if (S.account && S.account.username){
+    out.push(h('button', { class: 'go', disabled: S.busy, on: { click: keepPoints },
+                           text: S.busy ? 'Adding\u2026' : 'Add ' + points + ' points to ' + S.account.username }));
+  } else {
+    out.push(h('p', { class: 'small', text: 'You played as a guest. Sign in within 24 hours to keep these ' + points + ' points on the leaderboard.' }));
+    out.push(h('p', { class: 'mute small' }, [
+      h('a', { href: '/', target: '_blank', rel: 'noopener', style: 'color:var(--brass)', text: 'Sign in' }),
+      ', then come back to this page.'
+    ]));
+  }
+  if (S.keepError) out.push(h('p', { class: 'banner', text: S.keepError }));
+  return out;
+}
+
+function keepPoints(){
+  if (S.busy) return;
+  S.busy = true; S.keepError = ''; render();
+  api('/tv/rooms/' + S.roomId + '/keep-points', {}).then(function(j){
+    S.busy = false;
+    if (j.success) S.kept = j;
+    else if (j.reason === 'not_signed_in'){ S.account = null; S.keepError = why(j.reason); }
+    else S.keepError = why(j.reason);
+    render();
+  });
 }
 
 function endedScreen(){

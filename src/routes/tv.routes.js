@@ -12,12 +12,17 @@
 //
 // Tokens are never read from the query string: morgan logs every URL.
 //
-// NO MONEY IN HERE YET. The sponsor and claim routes arrive in phase 5, and
-// QR sign-in on the TV and the leaderboard in phase 4. Solo is phase 3.
+// AND, ON TOP OF A TV'S DEVICE TOKEN, a TV sign-in (phase 4): the session
+// token in the X-TV-Session header, honoured only with its own TV's device
+// token. It credits Solo points to the account and shows its name; nothing
+// else.
+//
+// NO MONEY IN HERE YET. The sponsor and claim routes arrive in phase 5.
+// Solo is phase 3; QR sign-in on the TV and the leaderboard are phase 4.
 //
 // ROUTE ORDER: every path below is either fully literal or ends in a literal
-// action, and room ids and join codes are constrained by pattern, so no
-// parameter route can shadow a literal one.
+// action, and room ids, join codes and pairing codes are constrained by
+// pattern, so no parameter route can shadow a literal one.
 // ============================================
 
 const express = require('express');
@@ -27,16 +32,18 @@ const tvAuth = require('../services/tv-auth.service');
 const store = require('../services/tv-room-store.service');
 const party = require('../services/tv-party.service');
 const solo = require('../services/tv-solo.service');
+const tvSession = require('../services/tv-session.service');
 const webAuthService = require('../services/web-auth.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
-    not_signed_in: 401,
+    not_signed_in: 401, no_session: 401, session_unknown: 401, session_ended: 401,
     device_blocked: 403, removed: 403, not_your_round: 403, not_host: 403, not_your_room: 403, wrong_room: 403,
-    account_unavailable: 403, profile_incomplete: 403, scoped_session: 403,
+    account_unavailable: 403, profile_incomplete: 403, scoped_session: 403, not_your_pairing: 403,
     no_room: 404, no_round: 404, no_such_player: 404, not_in_room: 404,
-    room_closed: 410,
-    too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429
+    room_closed: 410, pair_expired: 410,
+    too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429,
+    try_again: 503
 };
 
 function getIp(req) {
@@ -121,6 +128,45 @@ async function webAccount(req) {
     if (ctx.user.is_suspended === true) return { ok: false, reason: 'account_unavailable' };
     if (ctx.user.profile_complete === false) return { ok: false, reason: 'profile_incomplete' };
     return { ok: true, user: ctx.user };
+}
+
+/**
+ * The person signed in on this TV, if the TV says someone is. Runs after
+ * requireDevice. Never refuses on its own: a route that needs the session
+ * checks req.tvSession, and one that only counts activity ignores it. A
+ * session that has ended is reported as req.tvSessionRefused, so a route can
+ * tell the TV to forget it.
+ */
+async function readSession(req, res, next) {
+    try {
+        const token = tvAuth.sessionTokenFrom(req);
+        if (token) {
+            const out = await tvSession.authenticate(req.tvDevice, token);
+            if (out.ok) req.tvSession = out.session;
+            else req.tvSessionRefused = out;
+        }
+        next();
+    } catch (error) {
+        // A sign-in that cannot be read is treated as absent: a Solo answer
+        // must never fail because the session check did.
+        logger.error(`TV session check failed: ${error.message}`);
+        next();
+    }
+}
+
+function requireSession(req, res, next) {
+    if (req.tvSession) return next();
+    return reply(res, req.tvSessionRefused || { ok: false, reason: 'no_session' });
+}
+
+/** A TV, if the caller is one. For the one route anybody may call. */
+async function optionalDevice(req, res, next) {
+    if (!tvAuth.deviceTokenFrom(req)) return next();
+    try {
+        const auth = await tvAuth.authenticateDevice(tvAuth.deviceTokenFrom(req));
+        if (auth.ok) req.tvDevice = auth.device;
+        next();
+    } catch (error) { return fail(res, 'device auth', error); }
 }
 
 // ============================================
@@ -215,17 +261,25 @@ router.post('/rooms/:id(\\d+)/close', requireDeviceOrPlayer, async (req, res) =>
 // Every Solo route is the TV's own: the device token decides, and a round
 // another TV started is refused.
 
-router.post('/solo', requireDevice, async (req, res) => {
-    try { return reply(res, await solo.start(req.tvDevice, { category: (req.body || {}).category })); }
+// Signed in (phase 4): the round is the account's. A sign-in that has ended
+// is refused here, so the TV says so rather than quietly playing as a guest.
+router.post('/solo', requireDevice, readSession, async (req, res) => {
+    try {
+        if (req.tvSessionRefused) return reply(res, req.tvSessionRefused);
+        return reply(res, await solo.start(req.tvDevice, {
+            category: (req.body || {}).category,
+            userId: req.tvSession ? req.tvSession.userId : null
+        }));
+    }
     catch (error) { return fail(res, 'solo start', error); }
 });
 
-router.get('/solo/:id(\\d+)', requireDevice, async (req, res) => {
+router.get('/solo/:id(\\d+)', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.get(req.tvDevice, Number(req.params.id))); }
     catch (error) { return fail(res, 'solo get', error); }
 });
 
-router.post('/solo/:id(\\d+)/answer', requireDevice, async (req, res) => {
+router.post('/solo/:id(\\d+)/answer', requireDevice, readSession, async (req, res) => {
     try {
         const body = req.body || {};
         return reply(res, await solo.answer(req.tvDevice, Number(req.params.id),
@@ -233,24 +287,89 @@ router.post('/solo/:id(\\d+)/answer', requireDevice, async (req, res) => {
     } catch (error) { return fail(res, 'solo answer', error); }
 });
 
-router.post('/solo/:id(\\d+)/next', requireDevice, async (req, res) => {
+router.post('/solo/:id(\\d+)/next', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.next(req.tvDevice, Number(req.params.id))); }
     catch (error) { return fail(res, 'solo next', error); }
 });
 
-router.post('/solo/:id(\\d+)/fifty', requireDevice, async (req, res) => {
+router.post('/solo/:id(\\d+)/fifty', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.fiftyFifty(req.tvDevice, Number(req.params.id), parseInt((req.body || {}).position, 10))); }
     catch (error) { return fail(res, 'solo fifty', error); }
 });
 
-router.post('/solo/:id(\\d+)/skip', requireDevice, async (req, res) => {
+router.post('/solo/:id(\\d+)/skip', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.skip(req.tvDevice, Number(req.params.id), parseInt((req.body || {}).position, 10))); }
     catch (error) { return fail(res, 'solo skip', error); }
 });
 
-router.post('/solo/:id(\\d+)/quit', requireDevice, async (req, res) => {
+router.post('/solo/:id(\\d+)/quit', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.quit(req.tvDevice, Number(req.params.id))); }
     catch (error) { return fail(res, 'solo quit', error); }
+});
+
+// ============================================
+// SIGNING IN ON THE TV, AND THE LEADERBOARD (phase 4)
+// ============================================
+// The TV shows a QR code; a phone signed in to its web account approves;
+// the TV is signed in until sign-out, 15 minutes idle, or the app closing.
+
+const PAIR = ':code([A-Za-z0-9]{8})';
+
+router.post('/pair', requireDevice, async (req, res) => {
+    try { return reply(res, await tvSession.startPairing(req.tvDevice, { carry: (req.body || {}).carry })); }
+    catch (error) { return fail(res, 'pair start', error); }
+});
+
+router.get(`/pair/${PAIR}/status`, requireDevice, async (req, res) => {
+    try { return reply(res, await tvSession.pairingStatus(req.tvDevice, req.params.code)); }
+    catch (error) { return fail(res, 'pair status', error); }
+});
+
+/** What the phone shows before approving: the TV's name and any guest points. */
+router.get(`/pair/${PAIR}`, async (req, res) => {
+    try { return reply(res, await tvSession.pairingForPhone(req.params.code, getIp(req))); }
+    catch (error) { return fail(res, 'pair look', error); }
+});
+
+router.post(`/pair/${PAIR}/approve`, async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvSession.approve(req.params.code, acct.user, getIp(req)));
+    } catch (error) { return fail(res, 'pair approve', error); }
+});
+
+router.post(`/pair/${PAIR}/deny`, async (req, res) => {
+    try { return reply(res, await tvSession.deny(req.params.code, getIp(req))); }
+    catch (error) { return fail(res, 'pair deny', error); }
+});
+
+router.get('/session', requireDevice, readSession, requireSession, async (req, res) => {
+    try { return reply(res, await tvSession.summary(req.tvSession)); }
+    catch (error) { return fail(res, 'session', error); }
+});
+
+/** The remote is being used. Keeps the session from going idle. */
+router.post('/session/touch', requireDevice, readSession, requireSession, (req, res) =>
+    reply(res, { ok: true }));
+
+router.post('/session/signout', requireDevice, async (req, res) => {
+    try {
+        return reply(res, await tvSession.signOut(req.tvDevice, tvAuth.sessionTokenFrom(req), (req.body || {}).reason));
+    } catch (error) { return fail(res, 'sign out', error); }
+});
+
+/** Anyone may look. A signed-in TV also gets its own place. */
+router.get('/leaderboard', optionalDevice, async (req, res, next) => {
+    if (req.tvDevice) return readSession(req, res, next);
+    next();
+}, async (req, res) => {
+    try {
+        return reply(res, await tvSession.leaderboard(req.query.period, {
+            limit: req.query.limit,
+            userId: req.tvSession ? req.tvSession.userId : null
+        }));
+    } catch (error) { return fail(res, 'leaderboard', error); }
 });
 
 // ============================================
@@ -363,6 +482,20 @@ router.post('/rooms/:id(\\d+)/players/:playerId(\\d+)/remove', requirePlayer, as
         return reply(res, await party.removePlayer(Number(req.params.id), req.tvPlayerId,
                                                    Number(req.params.playerId)));
     } catch (error) { return fail(res, 'remove', error); }
+});
+
+/**
+ * A guest keeps their points after the game by signing in on this phone.
+ * The player token proves which player; the web session, whose account.
+ */
+router.post('/rooms/:id(\\d+)/keep-points', async (req, res) => {
+    try {
+        const token = tvAuth.playerTokenFrom(req);
+        if (!token) return reply(res, { ok: false, reason: 'no_player_token' });
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvSession.keepPartyPoints(Number(req.params.id), token, acct.user));
+    } catch (error) { return fail(res, 'keep points', error); }
 });
 
 module.exports = router;
