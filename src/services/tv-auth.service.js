@@ -21,7 +21,8 @@
 // can only ever resolve to the one player it was issued to.
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql and
-// are byte-identical to it; a test checks they have not drifted.
+// 019-tv-solo.sql and are byte-identical to them; a test checks they have not
+// drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -55,7 +56,8 @@ class TvAuthService {
     // ============================================
     async ensureSchema() {
         if (this._schemaReady) return;
-        for (const sql of TvAuthService.SCHEMA_STATEMENTS) {
+        // 018 first (the tables), then 019 (Solo), which adds to tv_points.
+        for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -331,6 +333,36 @@ TvAuthService.SCHEMA_STATEMENTS = Object.freeze([
     WHERE user_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_tv_points_week
     ON tv_points (created_at)`
+]);
+
+TvAuthService.SOLO_SCHEMA_STATEMENTS = Object.freeze([
+    `CREATE TABLE IF NOT EXISTS tv_solo_rounds (
+    id                  SERIAL PRIMARY KEY,
+    tv_device_id        INTEGER NOT NULL REFERENCES tv_devices(id),
+    user_id             INTEGER REFERENCES users(id),
+    category            TEXT,
+    status              TEXT NOT NULL DEFAULT 'playing' CHECK (status IN ('playing','finished')),
+    end_reason          TEXT CHECK (end_reason IS NULL OR end_reason IN (
+                            'wrong','timeout','complete','quit','replaced','expired','no_questions'
+                        )),
+    reached             SMALLINT NOT NULL DEFAULT 0 CHECK (reached BETWEEN 0 AND 15),
+    correct             SMALLINT NOT NULL DEFAULT 0 CHECK (correct BETWEEN 0 AND 15),
+    points              SMALLINT NOT NULL DEFAULT 0 CHECK (points BETWEEN 0 AND 300),
+    fifty_used          BOOLEAN NOT NULL DEFAULT false,
+    skip_used           BOOLEAN NOT NULL DEFAULT false,
+    question_ids        INTEGER[] NOT NULL DEFAULT '{}',
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at         TIMESTAMPTZ
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_solo_rounds_device
+    ON tv_solo_rounds (tv_device_id, started_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_solo_rounds_live
+    ON tv_solo_rounds (started_at)
+    WHERE status = 'playing'`,
+    `ALTER TABLE tv_points ADD COLUMN IF NOT EXISTS tv_solo_round_id INTEGER REFERENCES tv_solo_rounds(id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_points_solo_once
+    ON tv_points (tv_solo_round_id, question_number)
+    WHERE tv_solo_round_id IS NOT NULL`
 ]);
 
 module.exports = new TvAuthService();

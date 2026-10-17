@@ -12,9 +12,8 @@
 //
 // Tokens are never read from the query string: morgan logs every URL.
 //
-// PHASE 1 HAS NO MONEY IN IT. The sponsor and claim routes arrive in phase 5;
-// QR sign-in on the TV and the leaderboard in phase 4; Solo in phase 3; the
-// /p/:code controller page in phase 2.
+// NO MONEY IN HERE YET. The sponsor and claim routes arrive in phase 5, and
+// QR sign-in on the TV and the leaderboard in phase 4. Solo is phase 3.
 //
 // ROUTE ORDER: every path below is either fully literal or ends in a literal
 // action, and room ids and join codes are constrained by pattern, so no
@@ -27,16 +26,17 @@ const { logger } = require('../utils/logger');
 const tvAuth = require('../services/tv-auth.service');
 const store = require('../services/tv-room-store.service');
 const party = require('../services/tv-party.service');
+const solo = require('../services/tv-solo.service');
 const webAuthService = require('../services/web-auth.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
     not_signed_in: 401,
-    device_blocked: 403, removed: 403, not_host: 403, not_your_room: 403, wrong_room: 403,
+    device_blocked: 403, removed: 403, not_your_round: 403, not_host: 403, not_your_room: 403, wrong_room: 403,
     account_unavailable: 403, profile_incomplete: 403, scoped_session: 403,
-    no_room: 404, no_such_player: 404, not_in_room: 404,
+    no_room: 404, no_round: 404, no_such_player: 404, not_in_room: 404,
     room_closed: 410,
-    too_many_attempts: 429, too_many_rooms: 429, too_many_registrations: 429
+    too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429
 };
 
 function getIp(req) {
@@ -207,6 +207,50 @@ router.post('/rooms/:id(\\d+)/close', requireDeviceOrPlayer, async (req, res) =>
         const out = await party.closeRoom(roomId, req.tvPlayerId ? 'host' : 'tv');
         return reply(res, out);
     } catch (error) { return fail(res, 'close', error); }
+});
+
+// ============================================
+// SOLO (phase 3) — the TV and its remote, nobody else
+// ============================================
+// Every Solo route is the TV's own: the device token decides, and a round
+// another TV started is refused.
+
+router.post('/solo', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.start(req.tvDevice, { category: (req.body || {}).category })); }
+    catch (error) { return fail(res, 'solo start', error); }
+});
+
+router.get('/solo/:id(\\d+)', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.get(req.tvDevice, Number(req.params.id))); }
+    catch (error) { return fail(res, 'solo get', error); }
+});
+
+router.post('/solo/:id(\\d+)/answer', requireDevice, async (req, res) => {
+    try {
+        const body = req.body || {};
+        return reply(res, await solo.answer(req.tvDevice, Number(req.params.id),
+                                            parseInt(body.position, 10), body.choice == null ? null : body.choice));
+    } catch (error) { return fail(res, 'solo answer', error); }
+});
+
+router.post('/solo/:id(\\d+)/next', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.next(req.tvDevice, Number(req.params.id))); }
+    catch (error) { return fail(res, 'solo next', error); }
+});
+
+router.post('/solo/:id(\\d+)/fifty', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.fiftyFifty(req.tvDevice, Number(req.params.id), parseInt((req.body || {}).position, 10))); }
+    catch (error) { return fail(res, 'solo fifty', error); }
+});
+
+router.post('/solo/:id(\\d+)/skip', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.skip(req.tvDevice, Number(req.params.id), parseInt((req.body || {}).position, 10))); }
+    catch (error) { return fail(res, 'solo skip', error); }
+});
+
+router.post('/solo/:id(\\d+)/quit', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.quit(req.tvDevice, Number(req.params.id))); }
+    catch (error) { return fail(res, 'solo quit', error); }
 });
 
 // ============================================
