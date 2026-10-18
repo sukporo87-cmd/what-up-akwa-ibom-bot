@@ -236,6 +236,8 @@ app.get('/health', (req, res) => {
 app.use('/api/public', publicRoutes);  // Public leaderboard API (no auth)
 app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
+// WUT TV's admin page, before the main admin router so admin.routes.js is untouched.
+app.use('/admin/tv', require('./routes/tv-admin.routes'));
 app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);

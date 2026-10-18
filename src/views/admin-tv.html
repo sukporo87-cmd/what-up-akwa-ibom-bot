@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📺 WUT TV | What's Up Trivia</title>
+<!--
+  WUT TV admin. Live and recent Party rooms (close one), registered TVs (block
+  one), who is signed in on a TV (sign them out), and the TV settings: the
+  Party and Solo clocks, the Race values, the room limits, which Party
+  categories the TV offers, and where Play Now's questions come from.
+
+  Settings apply to NEW games only, within 15 seconds. A game takes its
+  values when it starts and keeps them to the end.
+
+  Every value from the server is escaped with esc() before it is placed in
+  the page.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0f0f13; --surface: #1a1a23; --surface2: #22222f; --border: #2d2d3d;
+    --text: #e4e4ef; --text-dim: #8888a0; --green: #00d68f; --red: #ff3b5c;
+    --amber: #ffc233; --blue: #3b82f6; --yellow: #facc15;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--yellow); }
+  .topbar .when { font-size: 12px; color: var(--text-dim); }
+  .container { max-width: 1150px; margin: 0 auto; padding: 24px 22px 90px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .stat b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 26px; color: var(--yellow); }
+  .stat span { font-size: 12px; color: var(--text-dim); }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); border-radius: 9px;
+    padding: 9px 15px; font-weight: 600; font-size: 13.5px; cursor: pointer; font-family: inherit; }
+  .tab.on { color: var(--bg); background: var(--yellow); border-color: var(--yellow); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; margin-bottom: 20px; }
+  .card h2 { font-size: 15px; margin-bottom: 4px; }
+  .card .hint { font-size: 12.5px; color: var(--text-dim); margin-bottom: 14px; line-height: 1.55; }
+  .card .hint b { color: var(--text); }
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--text-dim); padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 600; white-space: nowrap; }
+  td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13.5px; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  .dim { color: var(--text-dim); font-size: 12px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 20px; letter-spacing: .03em; }
+  .pill.live { background: rgba(0,214,143,.15); color: var(--green); }
+  .pill.lobby { background: rgba(59,130,246,.15); color: #93b9ff; }
+  .pill.done { background: rgba(255,255,255,.06); color: var(--text-dim); }
+  .pill.race { background: rgba(255,59,92,.15); color: #ff8fa3; }
+  .pill.warn { background: rgba(255,194,51,.15); color: var(--amber); }
+  .players-row td { background: var(--surface2); }
+  .players-row table td { padding: 6px 8px; font-size: 12.5px; }
+
+  .btn { border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; }
+  .btn:hover { border-color: var(--blue); }
+  .btn.danger:hover { border-color: var(--red); color: #ff8fa3; }
+  .btn.primary { background: var(--yellow); color: var(--bg); border-color: var(--yellow); }
+  .btn:disabled { opacity: .45; cursor: default; }
+
+  .sw { position: relative; display: inline-block; width: 46px; height: 26px; vertical-align: middle; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .track { position: absolute; inset: 0; background: rgba(255,59,92,.28); border: 1px solid rgba(255,59,92,.5);
+    border-radius: 26px; cursor: pointer; transition: .18s; }
+  .track:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+    background: #ff8fa3; border-radius: 50%; transition: .18s; }
+  input:checked + .track { background: rgba(0,214,143,.26); border-color: rgba(0,214,143,.55); }
+  input:checked + .track:before { transform: translateX(20px); background: var(--green); }
+
+  .group-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--yellow);
+    margin: 18px 0 6px; font-weight: 700; }
+  .group-title:first-of-type { margin-top: 4px; }
+  .set { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .set .lbl { font-weight: 600; font-size: 14px; }
+  .set .help { font-size: 12px; color: var(--text-dim); margin-top: 2px; line-height: 1.5; }
+  .set .meta { font-size: 11px; color: #6c6c84; margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
+  .set .meta.changed { color: var(--amber); }
+  .ctl { display: flex; align-items: center; gap: 8px; }
+  .ctl input[type=number] { width: 88px; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 8px; font-size: 14px; font-family: 'JetBrains Mono', monospace; text-align: center; }
+  .ctl input:focus { outline: none; border-color: var(--blue); }
+  .ctl .unit { font-size: 11.5px; color: var(--text-dim); min-width: 18px; }
+
+  .src label { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; cursor: pointer; }
+  .src .cats { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 4px 0 10px 28px; }
+  .src .cats label { padding: 0; font-size: 13px; align-items: center; }
+  .warnbox { background: rgba(255,194,51,.1); border: 1px solid rgba(255,194,51,.4); color: #ffe0a3;
+    border-radius: 10px; padding: 10px 13px; font-size: 12.5px; line-height: 1.55; margin: 6px 0 12px; }
+
+  .toast { position: fixed; bottom: 22px; right: 22px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13.5px;
+    opacity: 0; transform: translateY(8px); transition: .3s; pointer-events: none; z-index: 50; max-width: 360px; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: rgba(0,214,143,.5); }
+  .toast.err { border-color: rgba(255,59,92,.5); }
+  .loading, .empty { text-align: center; color: var(--text-dim); padding: 26px 0; font-size: 13.5px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 760px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .topbar, .container { padding-left: 14px; padding-right: 14px; }
+    th, td { padding: 8px 6px; }
+    .set { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar"><h1>📺 WUT TV</h1><span class="when" id="when"></span></div>
+
+<div class="container">
+  <div class="stats">
+    <div class="stat"><b id="sRooms">–</b><span>Live rooms</span></div>
+    <div class="stat"><b id="sPlayers">–</b><span>Players in live rooms</span></div>
+    <div class="stat"><b id="sTvs">–</b><span>TVs seen in 24 hours</span></div>
+    <div class="stat"><b id="sSigned">–</b><span>Signed in on a TV now</span></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-tab="activity">Rooms and TVs</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="categories">Party categories</button>
+    <button class="tab" data-tab="playnow">Play Now questions</button>
+  </div>
+
+  <!-- ===== Rooms and TVs ===== -->
+  <section data-panel="activity">
+    <div class="card">
+      <h2>Party rooms</h2>
+      <div class="hint">Live rooms first, then the last 48 hours. <b>Close</b> ends a live game for everyone: each phone and the TV are told. Refreshes every 15 seconds.</div>
+      <div class="scroll" id="rooms"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Signed in on a TV now</h2>
+      <div class="hint">A sign-in ends by itself after 15 minutes without use, or when the app closes. <b>Sign out</b> ends it now.</div>
+      <div class="scroll" id="sessions"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>TVs</h2>
+      <div class="hint">Every TV that has registered, most recently seen first. <b>Blocking</b> a TV refuses its next request, closes its live room and signs out whoever is on it. Unblock to let it back.</div>
+      <div class="scroll" id="devices"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- ===== Settings ===== -->
+  <section data-panel="settings" hidden>
+    <div class="card">
+      <h2>Clocks, Race and room limits</h2>
+      <div class="hint">These apply to <b>new games only</b>, within 15 seconds. A game takes its values when it starts and keeps them to the end, so nobody has the clock moved under them. Each value has a floor and a ceiling; <b>Reset</b> goes back to the built-in default.</div>
+      <div id="numbers"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- ===== Party categories ===== -->
+  <section data-panel="categories" hidden>
+    <div class="card">
+      <h2>Party categories</h2>
+      <div class="hint">The categories the TV offers for Party, and on the Categories tile. A category is only offered when it is switched <b>on</b> and the bank can fill a full 15-question game: at least 10 questions at every difficulty from 1 to 15. To <b>add</b> a category, add its questions on the <a href="/admin/questions" style="color:var(--yellow)">Questions</a> page; it appears here, switched on, once it can fill a game. Switching one off does not affect a game already running.</div>
+      <div class="scroll" id="cats"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- ===== Play Now ===== -->
+  <section data-panel="playnow" hidden>
+    <div class="card">
+      <h2>Where Play Now's questions come from</h2>
+      <div class="hint">Play Now on the TV home screen. The 15-question ladder and the clock stay the same; only the questions change. Applies to rounds started after the change. The Categories tile is not affected: it always plays the category picked.</div>
+      <div id="playnow" class="src"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/admin/tv/api';
+let sessionToken = null;
+try { sessionToken = localStorage.getItem('adminSessionToken'); } catch (e) {}
+if (!sessionToken) window.location.href = '/admin';
+
+async function api(path, options = {}) {
+  const r = await fetch(API + path, {
+    ...options,
+    headers: { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json', ...(options.headers || {}) }
+  });
+  if (r.status === 401) { try { localStorage.removeItem('adminSessionToken'); } catch (e) {} window.location.href = '/admin'; return null; }
+  try { return await r.json(); } catch (e) { return { success: false, error: 'Server error' }; }
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function when(t) {
+  if (!t) return '—';
+  const d = new Date(t);
+  return d.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function ago(t) {
+  if (!t) return '—';
+  const s = Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+function pretty(c) { return String(c || '').replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()); }
+
+// ---------- tabs ----------
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== b.dataset.tab; });
+  if (b.dataset.tab !== 'activity') loadSettings();
+}));
+
+// ---------- rooms, sign-ins, TVs ----------
+const openRooms = new Set();
+const REASONS = { tv: 'closed on the TV', host: 'ended by the host', expired: 'never started', replaced: 'replaced by a new room',
+  state_lost: 'lost on a restart', no_questions: 'not enough questions', empty: 'everyone left', admin: 'closed by an admin' };
+
+async function loadOverview() {
+  const j = await api('/overview');
+  if (!j || !j.success) { document.getElementById('rooms').innerHTML = '<div class="empty">Could not load. ' + esc(j && j.error) + '</div>'; return; }
+  document.getElementById('when').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', { timeZone: 'Africa/Lagos' });
+  document.getElementById('sRooms').textContent = j.counts.liveRooms;
+  document.getElementById('sPlayers').textContent = j.counts.playersInLiveRooms;
+  document.getElementById('sTvs').textContent = j.counts.tvsSeenToday;
+  document.getElementById('sSigned').textContent = j.counts.signedIn;
+  renderRooms(j.rooms); renderSessions(j.sessions); renderDevices(j.devices);
+}
+
+function renderRooms(rooms) {
+  const el = document.getElementById('rooms');
+  if (!rooms.length) { el.innerHTML = '<div class="empty">No Party rooms in the last 48 hours.</div>'; return; }
+  el.innerHTML = '<table><thead><tr><th>Room</th><th>TV</th><th>Style</th><th>Status</th><th class="num">Players</th><th>Opened</th><th>Ended</th><th></th></tr></thead><tbody>' +
+    rooms.map(r => {
+      const live = r.status === 'lobby' || r.status === 'playing';
+      const status = r.status === 'playing' ? '<span class="pill live">Playing</span>' : r.status === 'lobby' ? '<span class="pill lobby">Lobby</span>'
+        : '<span class="pill done">' + (r.status === 'finished' ? 'Finished' : 'Closed') + '</span>';
+      const ended = live ? '' : (r.status === 'finished' ? (r.result_counted === false ? 'no result (under 2 finishers)' : 'played to the end') : (REASONS[r.close_reason] || r.close_reason || ''));
+      return '<tr><td><b class="mono">#' + esc(r.id) + '</b><div class="dim mono">' + esc(r.join_code) + '</div></td>' +
+        '<td>' + esc(r.tv_label || 'TV') + '<div class="dim">#' + esc(r.device_id) + '</div></td>' +
+        '<td>' + (r.style === 'race' ? '<span class="pill race">Race</span>' : 'Standard') +
+          (r.categories && r.categories.length ? '<div class="dim">' + esc(r.categories.map(pretty).join(', ')) + '</div>' : '') + '</td>' +
+        '<td>' + status + '</td><td class="num">' + esc(r.players) + '/' + esc(r.max_players) + '</td>' +
+        '<td>' + esc(when(r.created_at)) + '</td><td class="dim">' + (r.finished_at ? esc(when(r.finished_at)) + '<br>' : '') + esc(ended) + '</td>' +
+        '<td><button class="btn" data-players="' + esc(r.id) + '">' + (openRooms.has(r.id) ? 'Hide' : 'Players') + '</button> ' +
+          (live ? '<button class="btn danger" data-close="' + esc(r.id) + '">Close</button>' : '') + '</td></tr>' +
+        (openRooms.has(r.id) ? '<tr class="players-row"><td colspan="8" id="players-' + esc(r.id) + '"><div class="dim">Loading…</div></td></tr>' : '');
+    }).join('') + '</tbody></table>';
+  el.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => closeRoom(Number(b.dataset.close))));
+  el.querySelectorAll('[data-players]').forEach(b => b.addEventListener('click', () => {
+    const id = Number(b.dataset.players);
+    if (openRooms.has(id)) openRooms.delete(id); else openRooms.add(id);
+    loadOverview();
+  }));
+  openRooms.forEach(loadPlayers);
+}
+
+async function loadPlayers(id) {
+  const cell = document.getElementById('players-' + id);
+  if (!cell) return;
+  const j = await api('/rooms/' + id);
+  if (!j || !j.success) { cell.innerHTML = '<div class="dim">Could not load the players.</div>'; return; }
+  if (!j.players.length) { cell.innerHTML = '<div class="dim">Nobody joined.</div>'; return; }
+  cell.innerHTML = '<table><thead><tr><th>Place</th><th>Player</th><th>Account</th><th class="num">Correct</th><th class="num">TV points</th><th>Joined</th><th></th></tr></thead><tbody>' +
+    j.players.map(p => '<tr><td class="mono">' + (p.final_rank ? esc(p.final_rank) : '—') + '</td>' +
+      '<td>' + esc(p.avatar) + ' ' + esc(p.display_name) + '</td><td>' + (p.username ? esc(p.username) : '<span class="dim">guest</span>') + '</td>' +
+      '<td class="num">' + (p.final_correct != null ? esc(p.final_correct) : '—') + '</td><td class="num">' + esc(p.points) + '</td>' +
+      '<td class="dim">' + esc(when(p.joined_at)) + '</td><td class="dim">' + (p.removed_at ? 'removed by host' : p.left_at ? 'left' : '') + '</td></tr>').join('') +
+    '</tbody></table>';
+}
+
+async function closeRoom(id) {
+  if (!confirm('Close room #' + id + '? The game ends for everyone in it.')) return;
+  const j = await api('/rooms/' + id + '/close', { method: 'POST', body: '{}' });
+  toast(j && j.success ? 'Room #' + id + ' closed' : (j && j.error) || 'Could not close it', !!(j && j.success));
+  loadOverview();
+}
+
+function renderSessions(rows) {
+  const el = document.getElementById('sessions');
+  if (!rows.length) { el.innerHTML = '<div class="empty">Nobody is signed in on a TV.</div>'; return; }
+  el.innerHTML = '<table><thead><tr><th>TV</th><th>Account</th><th>Since</th><th>Last used</th><th></th></tr></thead><tbody>' +
+    rows.map(s => '<tr><td>' + esc(s.tv_label || 'TV') + ' <span class="dim">#' + esc(s.tv_device_id) + '</span></td><td><b>' + esc(s.username) + '</b></td>' +
+      '<td>' + esc(when(s.created_at)) + '</td><td>' + esc(ago(s.last_active_at)) + '</td>' +
+      '<td><button class="btn danger" data-end="' + esc(s.id) + '">Sign out</button></td></tr>').join('') + '</tbody></table>';
+  el.querySelectorAll('[data-end]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Sign this account out of the TV now?')) return;
+    const j = await api('/sessions/' + b.dataset.end + '/end', { method: 'POST', body: '{}' });
+    toast(j && j.success ? 'Signed out' : (j && j.error) || 'Could not sign out', !!(j && j.success));
+    loadOverview();
+  }));
+}
+
+function renderDevices(rows) {
+  const el = document.getElementById('devices');
+  if (!rows.length) { el.innerHTML = '<div class="empty">No TV has registered yet.</div>'; return; }
+  el.innerHTML = '<table><thead><tr><th>TV</th><th>Platform</th><th>App</th><th>Last seen</th><th class="num">Rooms 7d</th><th class="num">Solo 7d</th><th>First seen</th><th>Allowed</th></tr></thead><tbody>' +
+    rows.map(d => '<tr><td><b>' + esc(d.label || 'TV') + '</b> <span class="dim">#' + esc(d.id) + '</span>' +
+      (d.blocked ? '<div><span class="pill warn">Blocked</span> <span class="dim">' + esc(d.blocked_reason || '') + '</span></div>' : '') + '</td>' +
+      '<td>' + esc(d.platform === 'android_tv' ? 'Android TV' : d.platform === 'webos' ? 'LG webOS' : d.platform) + '</td>' +
+      '<td class="mono dim">' + esc(d.app_version || '—') + '</td><td>' + esc(ago(d.last_seen)) + '</td>' +
+      '<td class="num">' + esc(d.rooms_7d) + '</td><td class="num">' + esc(d.solo_7d) + '</td><td class="dim">' + esc(when(d.first_seen)) + '</td>' +
+      '<td><label class="sw" title="' + (d.blocked ? 'Blocked: switch on to allow' : 'Allowed: switch off to block') + '"><input type="checkbox" data-dev="' + esc(d.id) + '" ' + (d.blocked ? '' : 'checked') + '><span class="track"></span></label></td></tr>').join('') +
+    '</tbody></table>';
+  el.querySelectorAll('[data-dev]').forEach(cb => cb.addEventListener('change', async () => {
+    const id = cb.dataset.dev;
+    const blocking = !cb.checked;
+    let reason = null;
+    if (blocking) {
+      reason = prompt('Block TV #' + id + '? Its live room closes and anyone signed in on it is signed out. Reason (shown here only):', '');
+      if (reason === null) { cb.checked = true; return; }
+    }
+    const j = await api('/devices/' + id + '/block', { method: 'POST', body: JSON.stringify({ blocked: blocking, reason }) });
+    if (j && j.success) toast(blocking ? 'TV #' + id + ' blocked' + (j.closedRooms ? ', ' + j.closedRooms + ' room closed' : '') : 'TV #' + id + ' allowed again');
+    else { toast((j && j.error) || 'Could not change it', false); cb.checked = !cb.checked; }
+    loadOverview();
+  }));
+}
+
+// ---------- settings, categories, Play Now ----------
+let settings = null;
+
+async function loadSettings() {
+  const j = await api('/settings');
+  if (!j || !j.success) { toast((j && j.error) || 'Could not load the settings', false); return; }
+  settings = j;
+  renderNumbers(); renderCats(); renderPlayNow();
+}
+
+function renderNumbers() {
+  const el = document.getElementById('numbers');
+  let group = null, html = '';
+  for (const n of settings.numbers) {
+    if (n.group !== group) { group = n.group; html += '<div class="group-title">' + esc(group) + '</div>'; }
+    const unit = n.unit === 'ms' ? 'ms' : n.unit;
+    html += '<div class="set"><div><div class="lbl">' + esc(n.label) + '</div>' +
+      (n.help ? '<div class="help">' + esc(n.help) + '</div>' : '') +
+      '<div class="meta ' + (n.isDefault ? '' : 'changed') + '">' +
+        (n.isDefault ? 'Default: ' + esc(n.def) + esc(unit) : 'Changed from ' + esc(n.def) + esc(unit) + ' by ' + esc(n.updatedBy || 'admin') + ', ' + esc(when(n.updatedAt))) +
+        ' · allowed ' + esc(n.min) + '–' + esc(n.max) + esc(unit) + '</div></div>' +
+      '<div class="ctl"><input type="number" min="' + esc(n.min) + '" max="' + esc(n.max) + '" step="' + esc(n.step) + '" value="' + esc(n.value) + '" data-key="' + esc(n.key) + '">' +
+        '<span class="unit">' + esc(unit) + '</span>' +
+        '<button class="btn primary" data-save="' + esc(n.key) + '">Save</button>' +
+        '<button class="btn" data-reset="' + esc(n.key) + '"' + (n.isDefault ? ' disabled' : '') + '>Reset</button></div></div>';
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('[data-save]').forEach(b => b.addEventListener('click', async () => {
+    const key = b.dataset.save;
+    const input = el.querySelector('input[data-key="' + key + '"]');
+    const j = await api('/settings', { method: 'PUT', body: JSON.stringify({ key, value: Number(input.value) }) });
+    toast(j && j.success ? 'Saved. New games use it within 15 seconds.' : (j && j.error) || 'Could not save', !!(j && j.success));
+    loadSettings();
+  }));
+  el.querySelectorAll('[data-reset]').forEach(b => b.addEventListener('click', async () => {
+    const j = await api('/settings/' + encodeURIComponent(b.dataset.reset), { method: 'DELETE' });
+    toast(j && j.success ? 'Back to the default' : (j && j.error) || 'Could not reset', !!(j && j.success));
+    loadSettings();
+  }));
+}
+
+function renderCats() {
+  const el = document.getElementById('cats');
+  if (!settings.categories.length) { el.innerHTML = '<div class="empty">The Challenge question bank has no categories yet.</div>'; return; }
+  el.innerHTML = '<table><thead><tr><th>Category</th><th class="num">Questions</th><th>Can fill a game?</th><th class="num">Games before repeats</th><th>On the TV</th></tr></thead><tbody>' +
+    settings.categories.map(c => '<tr><td><b>' + esc(pretty(c.category)) + '</b></td><td class="num">' + esc(c.total) + '</td>' +
+      '<td>' + (c.ready ? '<span class="pill live">Yes</span>' : '<span class="pill warn">Not yet</span> <span class="dim">' +
+        (c.levels < 15 ? esc(15 - c.levels) + ' difficulty level(s) empty' : 'thinnest level has ' + esc(c.thinnest) + ', needs 10') + '</span>') + '</td>' +
+      '<td class="num">' + (c.ready ? esc(c.thinnest) : '—') + '</td>' +
+      '<td><label class="sw"><input type="checkbox" data-cat="' + esc(c.category) + '" ' + (c.on ? 'checked' : '') + '><span class="track"></span></label>' +
+        (c.on && !c.ready ? ' <span class="dim">on, but not offered until it can fill a game</span>' : '') + '</td></tr>').join('') +
+    '</tbody></table>';
+  el.querySelectorAll('[data-cat]').forEach(cb => cb.addEventListener('change', async () => {
+    const j = await api('/categories', { method: 'PUT', body: JSON.stringify({ category: cb.dataset.cat, on: cb.checked }) });
+    toast(j && j.success ? pretty(cb.dataset.cat) + (cb.checked ? ' switched on' : ' switched off') : (j && j.error) || 'Could not change it', !!(j && j.success));
+    loadSettings();
+  }));
+}
+
+function renderPlayNow() {
+  const el = document.getElementById('playnow');
+  const p = settings.playNow;
+  const offered = settings.categories.filter(c => c.ready && c.on);
+  let html = p.banks.map(b => '<label><input type="radio" name="bank" value="' + esc(b.id) + '" ' + (p.bank === b.id ? 'checked' : '') + '>' +
+    '<span><b>' + esc(b.label) + '</b>' + (b.id === 'practice' ? ' <span class="dim">(the default)</span>' : '') +
+    (b.cash ? ' <span class="pill warn">also used for cash games</span>' : '') +
+    (b.id === 'categories' ? ' <span class="dim">— a mix of the Party categories you pick below</span>' : '') + '</span></label>' +
+    (b.id === 'categories' ? '<div class="cats" id="srcCats">' + (offered.length ? offered.map(c => '<label><input type="checkbox" value="' + esc(c.category) + '" ' +
+      (p.bank === 'categories' && p.categories.includes(c.category) ? 'checked' : '') + '> ' + esc(pretty(c.category)) + '</label>').join('')
+      : '<span class="dim">No Party category is on offer yet.</span>') + '</div>' : '')).join('');
+  html += '<div class="warnbox" id="cashWarn" hidden>Classic and Tournament questions are also asked in games played for cash. Showing them on a TV lets anyone watching learn them before they meet them in a paid game. Use them for in-house testing only, and switch back to Practice before TVs go into public places.</div>';
+  html += '<div class="dim" style="margin-bottom:10px">' + (p.updatedAt ? 'Last changed by ' + esc(p.updatedBy || 'admin') + ', ' + esc(when(p.updatedAt)) : 'Never changed: Play Now uses the Practice questions.') + '</div>';
+  html += '<button class="btn primary" id="saveSrc">Save</button>';
+  el.innerHTML = html;
+  const showWarn = () => {
+    const bank = (el.querySelector('input[name=bank]:checked') || {}).value;
+    document.getElementById('cashWarn').hidden = !(bank === 'classic' || bank === 'tournament');
+  };
+  el.querySelectorAll('input[name=bank]').forEach(r => r.addEventListener('change', showWarn));
+  showWarn();
+  document.getElementById('saveSrc').addEventListener('click', async () => {
+    const bank = (el.querySelector('input[name=bank]:checked') || {}).value;
+    const cats = [...el.querySelectorAll('#srcCats input:checked')].map(x => x.value);
+    if ((bank === 'classic' || bank === 'tournament') && !confirm('Use questions that are also asked in cash games? Only for in-house testing.')) return;
+    const j = await api('/play-now', { method: 'PUT', body: JSON.stringify({ bank, categories: cats }) });
+    toast(j && j.success ? 'Saved. New Play Now rounds use it within 15 seconds.' : (j && j.error) || 'Could not save', !!(j && j.success));
+    loadSettings();
+  });
+}
+
+loadOverview();
+setInterval(() => { if (!document.querySelector('[data-panel="activity"]').hidden) loadOverview(); }, 15000);
+</script>
+<script src="/admin-nav.js"></script>
+</body>
+</html>

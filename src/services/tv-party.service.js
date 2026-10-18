@@ -51,6 +51,14 @@
 // first answer of a Race question arrives; it is held in memory, never in the
 // room state, and never sent anywhere before the reveal.
 //
+// ADMIN SETTINGS. The clock, the 50:50 bonus, the Race values, the room size
+// and the rooms-per-hour limit can be changed on the TV admin page
+// (tv-settings.service). The constants below are the defaults. A game takes
+// its values when it STARTS (g.rules) and keeps them to the end, so a change
+// never moves the clock under a game already running; a room takes its size
+// when it opens. The Party categories an admin switches off are left out of
+// the list the TV offers.
+//
 // NO MONEY IN HERE. Sponsored prizes arrive in phase 5.
 // ============================================
 
@@ -59,6 +67,7 @@ const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 const store = require('./tv-room-store.service');
+const tvSettings = require('./tv-settings.service');
 const tvNames = require('../utils/tv-names');
 const QuestionService = require('./question.service');
 
@@ -122,7 +131,7 @@ class TvPartyService {
         this.countTimers = new Map();
         /** @type {Map<number, NodeJS.Timeout>} */
         this.lobbyTimers = new Map();
-        this._categories = null;
+        this._readinessRows = null;
         this._categoriesAt = 0;
         this._sweep = null;
         /** @type {Map<number, Map<number, number[]>>} Race: each phone's measured round trips, by room */
@@ -162,12 +171,27 @@ class TvPartyService {
     // The ones the challenge bank can actually fill. A category that cannot
     // build a fifteen-question ladder would fail at Start, in front of a room.
 
-    async getCategories() {
-        if (this._categories && Date.now() - this._categoriesAt < CATEGORY_CACHE_MS) return this._categories;
-        const readiness = await questionService.getChallengeBankReadiness();
-        this._categories = readiness.filter(r => r.ready).map(r => r.category).sort();
+    async _readiness() {
+        if (this._readinessRows && Date.now() - this._categoriesAt < CATEGORY_CACHE_MS) return this._readinessRows;
+        this._readinessRows = await questionService.getChallengeBankReadiness();
         this._categoriesAt = Date.now();
-        return this._categories;
+        return this._readinessRows;
+    }
+
+    /** The categories the TV offers: ones the bank can fill, less any an admin switched off. */
+    async getCategories() {
+        const readiness = await this._readiness();
+        const off = new Set((await tvSettings.values())['party.categories_off']);
+        return readiness.filter(r => r.ready && !off.has(r.category)).map(r => r.category).sort();
+    }
+
+    /** Every category the bank holds, ready or not, for the admin page. Never cached stale after a change. */
+    async categoryReport() {
+        this._readinessRows = null;
+        const readiness = await this._readiness();
+        const off = new Set((await tvSettings.values())['party.categories_off']);
+        return readiness.map(r => ({ ...r, on: !off.has(r.category) }))
+            .sort((a, b) => String(a.category).localeCompare(String(b.category)));
     }
 
     // ============================================
@@ -367,7 +391,9 @@ class TvPartyService {
         }
         if (existing) await this.closeRoom(existing, 'replaced');
 
-        if (await this._overLimit(`tv_rate:rooms:${device.id}`, ROOMS_PER_DEVICE_PER_HOUR, 3600)) {
+        const settings = await tvSettings.values();
+        const maxPlayers = settings['rooms.max_players'];
+        if (await this._overLimit(`tv_rate:rooms:${device.id}`, settings['rooms.per_tv_per_hour'], 3600)) {
             return { ok: false, reason: 'too_many_rooms' };
         }
 
@@ -378,7 +404,7 @@ class TvPartyService {
                     `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at)
                      VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes')
                      RETURNING id, join_code, created_at, expires_at`,
-                    [device.id, this._newCode(), MAX_PLAYERS]
+                    [device.id, this._newCode(), maxPlayers]
                 );
                 row = r.rows[0];
             } catch (e) {
@@ -396,7 +422,7 @@ class TvPartyService {
             status: 'lobby',
             closeReason: null,
             hostPlayerId: null,
-            maxPlayers: MAX_PLAYERS,
+            maxPlayers,
             categories: [],
             style: 'standard',
             createdAt: now,
@@ -409,7 +435,7 @@ class TvPartyService {
         logger.info(`📺 TV ${device.id} opened room ${row.id} (code ${row.join_code})`);
         return {
             ok: true, resumed: false, roomId: row.id, joinCode: row.join_code,
-            joinUrl: this.joinUrl(row.join_code), status: 'lobby', maxPlayers: MAX_PLAYERS
+            joinUrl: this.joinUrl(row.join_code), status: 'lobby', maxPlayers
         };
     }
 
@@ -876,8 +902,16 @@ class TvPartyService {
             // The room locks here: late joiners are turned away from now on.
             state.status = 'playing';
             state.expiresAt = Date.now() + PLAYING_TTL_MS;
+            // This game's rules, fixed now for the whole game.
+            const set = await tvSettings.values();
             state.game = {
                 style: STYLES.includes(state.style) ? state.style : 'standard',
+                rules: {
+                    questionMs: set['party.question_seconds'] * 1000,
+                    fiftyBonusMs: set['party.fifty_bonus_seconds'] * 1000,
+                    raceLockMs: set['race.lock_ms'],
+                    raceWrong: set['race.wrong_penalty']
+                },
                 phase: 'starting', position: 0, enrolled: players,
                 locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now()
             };
@@ -978,8 +1012,9 @@ class TvPartyService {
             g.askedAt = now;
             // Race: the buttons open after a moment to read, and the clock
             // runs from then. Standard: they open at once.
-            g.opensAt = race ? now + RACE_LOCK_MS : now;
-            g.expiresAt = g.opensAt + QUESTION_MS;
+            const rules = this._rules(g);
+            g.opensAt = race ? now + rules.raceLockMs : now;
+            g.expiresAt = g.opensAt + rules.questionMs;
             g.extendedAt = null;
             g.locked = {};
             g.nextAt = null;
@@ -1085,6 +1120,17 @@ class TvPartyService {
         return out;
     }
 
+    /** This game's rules. A game started before the settings existed uses the defaults. */
+    _rules(g) {
+        const r = (g && g.rules) || {};
+        return {
+            questionMs: r.questionMs || QUESTION_MS,
+            fiftyBonusMs: r.fiftyBonusMs != null ? r.fiftyBonusMs : FIFTY_FIFTY_BONUS_MS,
+            raceLockMs: r.raceLockMs || RACE_LOCK_MS,
+            raceWrong: r.raceWrong || RACE_WRONG
+        };
+    }
+
     /** The correct answer to a Race question, from the database, kept in memory only. */
     async _raceKey(roomId, g) {
         const key = `${g.position}:${g.questionId}`;
@@ -1112,7 +1158,7 @@ class TvPartyService {
         if (!g.enrolled.includes(pid)) return { ok: true, counted: false };
         const rtt = Date.now() - g.askedAt;
         // Arriving after the buttons opened, it says nothing useful.
-        if (rtt < 0 || rtt > RACE_LOCK_MS) return { ok: true, counted: false };
+        if (rtt < 0 || rtt > this._rules(g).raceLockMs) return { ok: true, counted: false };
         if (!this.lag.has(id)) this.lag.set(id, new Map());
         const mine = this.lag.get(id).get(pid) || [];
         mine.push(rtt);
@@ -1193,7 +1239,7 @@ class TvPartyService {
             let extended = false;
             if (g.extendedAt !== g.position) {
                 g.extendedAt = g.position;
-                g.expiresAt += FIFTY_FIFTY_BONUS_MS;
+                g.expiresAt += this._rules(g).fiftyBonusMs;
                 extended = true;
                 tx.tv('game.clock_extended', { position: g.position, expiresAt: g.expiresAt });
                 for (const x of g.enrolled.filter(x => this._active(state.players[x]))) {
@@ -1312,7 +1358,7 @@ class TvPartyService {
                         ...(race ? {
                             style: 'race', won,
                             // +1 for taking it, -1 for a wrong answer, 0 otherwise
-                            change: won ? RACE_WIN : (mine && !right ? -RACE_WRONG : 0),
+                            change: won ? RACE_WIN : (mine && !right ? -this._rules(g).raceWrong : 0),
                             winnerName: won ? null : winnerName
                         } : {})
                     };
@@ -1371,7 +1417,7 @@ class TvPartyService {
             const p = state.players[pid];
             const v = rows.get(pid) || { w: 0, x: 0, t: 0 };
             return {
-                id: pid, c: v.w, t: v.t, s: v.w * RACE_WIN - v.x * RACE_WRONG, w: v.w, x: v.x,
+                id: pid, c: v.w, t: v.t, s: v.w * RACE_WIN - v.x * this._rules(state.game).raceWrong, w: v.w, x: v.x,
                 finisher: this._active(p), left: !!(p && p.leftAt), removed: !!(p && p.removedAt)
             };
         });

@@ -33,7 +33,8 @@
     { href: '/admin/announcements',     label: 'News Bar',     icon: '📣', color: '#06b6d4' },
     { href: '/admin/lobby',             label: 'Lobby Board',  icon: '📋', color: '#c084fc' },
     { href: '/admin/questions',         label: 'Questions',    icon: '❓', color: '#0ea5e9' },
-    { href: '/admin/rotation',          label: 'Rotation',     icon: '🔄', color: '#a855f7' }
+    { href: '/admin/rotation',          label: 'Rotation',     icon: '🔄', color: '#a855f7' },
+    { href: '/admin/tv',                label: 'WUT TV',       icon: '📺', color: '#facc15' }
   ];
 
   var CSS = [

@@ -35,6 +35,17 @@
 // position-to-difficulty map is question.service's own
 // (difficultiesForPosition), read, never changed.
 //
+// ADMIN SETTINGS (the TV admin page, tv-settings.service). The three clock
+// steps and the rounds-per-hour limit can be changed; the constants here are
+// the defaults. So can where Play Now's questions come from: the Practice
+// bank (the default), the Classic or Tournament bank, or a mix of Party
+// categories. A round takes its clock and its source when it STARTS and
+// keeps them, so a change never moves the clock under a round being played.
+// Classic and Tournament questions are read here by their bank and the same
+// difficulty bands Classic uses, with no fallback to another bank: if the
+// bank runs dry the round ends saying so, rather than quietly serving
+// questions from somewhere else.
+//
 // SEPARATE FROM PARTY. Party's engine, room store and routes are untouched;
 // the two share only tv-auth (the TV's identity) and the points ledger.
 // ============================================
@@ -45,12 +56,19 @@ const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 const QuestionService = require('./question.service');
+const tvSettings = require('./tv-settings.service');
 
 const questionService = new QuestionService();
 
 // ---- the rules (Practice's values, kept as TV's own) ----
 const QUESTIONS_PER_ROUND = 15;
+// The default ladder. A round uses its own copy, taken from the settings at start.
 const clockMsFor = n => (n <= 5 ? 12000 : n <= 10 ? 11000 : 10000);
+const DEFAULT_CLOCK = [12000, 11000, 10000];
+// Classic's difficulty bands by question number (question.service), for
+// reading the Classic and Tournament banks.
+const bandFor = n => (n <= 5 ? [1, 7] : n <= 10 ? [6, 12] : [11, 15]);
+const BANK_NAMES = { classic: 'classic_mode', tournament: 'tournaments' };
 const pointsFor = n => (n <= 5 ? 10 : n <= 10 ? 20 : 30);
 const ANSWER_GRACE_MS = 1500;
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -58,7 +76,7 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 // ---- housekeeping ----
 const STATE_TTL_SECONDS = 2 * 60 * 60;
 const FINISHED_TTL_SECONDS = 60 * 60;
-const ROUNDS_PER_DEVICE_PER_HOUR = 60;
+const ROUNDS_PER_DEVICE_PER_HOUR = 60;   // the default; the admin setting decides
 const HISTORY_DAYS = 7;
 const HISTORY_LIMIT = 300;
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
@@ -129,7 +147,8 @@ class TvSoloService {
             total: QUESTIONS_PER_ROUND,
             question: (asking || state.phase === 'answered') ? state.question : null,
             expiresAt: asking ? state.expiresAt : null,
-            clockMs: asking ? clockMsFor(state.position) : null,
+            clockMs: asking ? this._clockFor(state, state.position) : null,
+            source: (state.source && state.source.bank) || 'practice',
             letters: asking ? (f || LETTERS) : null,
             fiftyAvailable: asking && !state.fiftyUsed,
             skipAvailable: asking && !state.skipUsed,
@@ -156,11 +175,33 @@ class TvSoloService {
             if (!ready.includes(category)) return { ok: false, reason: 'unknown_category' };
         }
 
+        const settings = await tvSettings.values();
         try {
             const n = await redis.incr(`tv_rate:solo:${device.id}`);
             if (n === 1) await redis.expire(`tv_rate:solo:${device.id}`, 3600);
-            if (n > ROUNDS_PER_DEVICE_PER_HOUR) return { ok: false, reason: 'too_many_rounds' };
+            if (n > settings['solo.rounds_per_tv_per_hour']) return { ok: false, reason: 'too_many_rounds' };
         } catch (e) { /* Redis down: let them play */ }
+
+        // Where this round's questions come from. The Categories tile names
+        // one category; Play Now uses the admin's choice, and a choice of
+        // categories keeps only the ones still on offer.
+        let source;
+        if (category) {
+            source = { bank: 'categories', categories: [category] };
+        } else {
+            const chosen = settings['solo.play_now_source'];
+            source = { bank: chosen.bank, categories: [] };
+            if (chosen.bank === 'categories') {
+                const ready = await require('./tv-party.service').getCategories();
+                source.categories = chosen.categories.filter(c => ready.includes(c));
+                if (!source.categories.length) {
+                    logger.warn('Play Now: none of the chosen categories is on offer; using the practice questions');
+                    source = { bank: 'practice', categories: [] };
+                }
+            }
+        }
+        const clock = [settings['solo.seconds_q1_5'], settings['solo.seconds_q6_10'], settings['solo.seconds_q11_15']]
+            .map(x => x * 1000);
 
         // One round at a time per TV. Starting again ends the one before.
         const old = await pool.query(
@@ -193,6 +234,8 @@ class TvSoloService {
             deviceId: device.id,
             userId,
             category,
+            source,
+            clock,
             status: 'playing',
             phase: 'starting',
             position: 0,
@@ -221,14 +264,15 @@ class TvSoloService {
     /** Puts question `position` on screen. False if the bank could not fill it. */
     async _serve(state, position) {
         const exclude = [...new Set([...state.served, ...state.history])];
-        const pick = ex => state.category
-            ? this._categoryQuestion(state.category, position, ex)
+        const src = state.source || (state.category ? { bank: 'categories', categories: [state.category] } : { bank: 'practice' });
+        const pick = ex => src.bank === 'categories' ? this._categoryQuestion(src.categories, position, ex)
+            : BANK_NAMES[src.bank] ? this._bankQuestion(BANK_NAMES[src.bank], position, ex)
             : questionService.getQuestionByDifficulty(position, ex, 'practice');
         let q = await pick(exclude);
         if (!q && state.history.length) q = await pick(state.served);
         if (!q) {
-            logger.error(`Solo round ${state.id}: no question for position ${position}` +
-                         (state.category ? ` in ${state.category}` : ' in the practice bank'));
+            logger.error(`Solo round ${state.id}: no question for position ${position} from ${src.bank}` +
+                         (src.categories && src.categories.length ? ` (${src.categories.join(', ')})` : ''));
             await this._finish(state, 'no_questions');
             return false;
         }
@@ -244,7 +288,7 @@ class TvSoloService {
             options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d }
         };
         state.askedAt = now;
-        state.expiresAt = now + clockMsFor(position);
+        state.expiresAt = now + this._clockFor(state, position);
         state.served.push(q.id);
 
         await pool.query(
@@ -255,21 +299,46 @@ class TvSoloService {
         return true;
     }
 
-    /** One active question in this category at this rung of the ladder. Read only. */
-    async _categoryQuestion(category, position, exclude) {
+    /** This round's clock for question n: its own copy, or the default ladder. */
+    _clockFor(state, n) {
+        const c = Array.isArray(state.clock) && state.clock.length === 3 ? state.clock : DEFAULT_CLOCK;
+        return n <= 5 ? c[0] : n <= 10 ? c[1] : c[2];
+    }
+
+    /** One active question from the Classic or Tournament bank, at Classic's band for this rung. Read only. */
+    async _bankQuestion(bankName, position, exclude) {
+        const [lo, hi] = bandFor(position);
+        const r = await pool.query(
+            `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
+             FROM questions q
+             JOIN question_banks qb ON qb.id = q.question_bank_id
+             WHERE qb.bank_name = $1
+               AND q.difficulty BETWEEN $2 AND $3
+               AND q.is_active = true
+               AND (q.is_disabled = false OR q.is_disabled IS NULL)
+               AND NOT (q.id = ANY($4::int[]))
+             ORDER BY RANDOM()
+             LIMIT 1`,
+            [bankName, lo, hi, exclude.length ? exclude : [0]]
+        );
+        return r.rows[0] || null;
+    }
+
+    /** One active question in these categories at this rung of the ladder. Read only. */
+    async _categoryQuestion(categories, position, exclude) {
         const bankId = await questionService.getChallengeBankId();
         const r = await pool.query(
             `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
              FROM questions q
              WHERE q.question_bank_id = $1
-               AND LOWER(q.category) = $2
+               AND LOWER(q.category) = ANY($2::text[])
                AND q.difficulty = ANY($3::int[])
                AND q.is_active = true
                AND (q.is_disabled = false OR q.is_disabled IS NULL)
                AND NOT (q.id = ANY($4::int[]))
              ORDER BY RANDOM()
              LIMIT 1`,
-            [bankId, category, questionService.difficultiesForPosition(position), exclude.length ? exclude : [0]]
+            [bankId, categories, questionService.difficultiesForPosition(position), exclude.length ? exclude : [0]]
         );
         return r.rows[0] || null;
     }
