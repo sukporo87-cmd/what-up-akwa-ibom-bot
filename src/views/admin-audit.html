@@ -740,6 +740,44 @@
             </div>
             <div class="pagination" id="pagination"></div>
         </div>
+
+        <!-- WUT TV: Party games, Solo rounds and TV sign-ins (read from the TV tables; see tv-audit.service.js) -->
+        <div class="search-section" id="tvAudit">
+            <h3>📺 WUT TV</h3>
+            <p style="color: rgba(255,255,255,0.6); font-size: 13px; margin: -6px 0 14px;">TV games are kept apart from WhatsApp, Telegram and Web games, so they never touch cash games, payouts or player stats. Search them here. Last 7 days unless you pick dates.</p>
+            <div class="search-grid">
+                <div class="form-group">
+                    <label>Show</label>
+                    <select id="tvAuditKind">
+                        <option value="party">Party games</option>
+                        <option value="solo">Solo rounds</option>
+                        <option value="signin">TV sign-ins</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Username, player or TV name</label>
+                    <input type="text" id="tvAuditQ" placeholder="e.g. quizqueen or Sunny Iroko 27" maxlength="60">
+                </div>
+                <div class="form-group">
+                    <label>Date From</label>
+                    <input type="date" id="tvAuditFrom">
+                </div>
+                <div class="form-group">
+                    <label>Date To</label>
+                    <input type="date" id="tvAuditTo">
+                </div>
+            </div>
+            <div class="button-row">
+                <button class="btn btn-primary" onclick="tvAuditSearch(1)">🔍 Search WUT TV</button>
+            </div>
+            <div class="table-container" style="margin-top: 16px;">
+                <table>
+                    <thead id="tvAuditHead"></thead>
+                    <tbody id="tvAuditRows"><tr><td class="loading">Loading…</td></tr></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="tvAuditPages"></div>
+        </div>
     </div>
 
     <!-- Audit Detail Modal -->
@@ -752,6 +790,17 @@
             <div class="modal-body" id="modalBody">
                 <div class="loading">Loading audit data...</div>
             </div>
+        </div>
+    </div>
+
+    <!-- WUT TV game modal -->
+    <div class="modal" id="tvAuditModal">
+        <div class="modal-content" style="max-width: 1100px;">
+            <div class="modal-header">
+                <h2 id="tvAuditTitle">📺 WUT TV</h2>
+                <button class="modal-close" onclick="document.getElementById('tvAuditModal').classList.remove('active')">&times;</button>
+            </div>
+            <div class="modal-body" id="tvAuditBody"></div>
         </div>
     </div>
 
@@ -1341,6 +1390,128 @@ function wutBadge(o){
   return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">'
        + wutIcon(p)+' '+wutLabel(p)+'</span>';
 }
+</script>
+<script>
+/* ---- WUT TV in the Audit Trail (reads /admin/tv/api/audit; nothing here writes) ---- */
+(function () {
+  const TV_API = '/admin/tv/api/audit';
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const when = t => t ? new Date(t).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const secs = ms => ms == null ? '—' : (Number(ms) / 1000).toFixed(2) + ' s';
+  const pretty = c => String(c || '').replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase());
+  const badge = (txt, kind) => '<span class="status-badge status-' + kind + '">' + esc(txt) + '</span>';
+  const SOURCE = { practice: 'Practice', classic: 'Classic', tournament: 'Tournament', categories: 'Party categories' };
+  const ENDS = { wrong: 'wrong answer', timeout: 'ran out of time', complete: 'all 15 answered', quit: 'quit', replaced: 'new round started',
+                 expired: 'left unfinished', no_questions: 'ran out of questions', signout: 'signed out', idle: '15 minutes idle',
+                 app_closed: 'app closed', blocked: 'TV blocked', account: 'account changed', admin: 'ended by an admin',
+                 tv: 'closed on the TV', host: 'ended by the host', state_lost: 'lost on a restart', empty: 'everyone left' };
+  let page = 1;
+
+  async function get(path) {
+    const token = localStorage.getItem('adminSessionToken');
+    const r = await fetch(TV_API + path, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 401) { window.location.href = '/admin'; return null; }
+    try { return await r.json(); } catch (e) { return { success: false, error: 'Server error' }; }
+  }
+
+  window.tvAuditSearch = async function (p) {
+    page = p || 1;
+    const kind = document.getElementById('tvAuditKind').value;
+    const qs = new URLSearchParams({ kind, page: String(page) });
+    const q = document.getElementById('tvAuditQ').value.trim();
+    const from = document.getElementById('tvAuditFrom').value, to = document.getElementById('tvAuditTo').value;
+    if (q) qs.set('q', q);
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const rows = document.getElementById('tvAuditRows');
+    rows.innerHTML = '<tr><td class="loading">Loading…</td></tr>';
+    const j = await get('/search?' + qs.toString());
+    if (!j || !j.success) { rows.innerHTML = '<tr><td>' + esc((j && j.error) || 'Could not search') + '</td></tr>'; return; }
+    const head = document.getElementById('tvAuditHead');
+    if (kind === 'party') {
+      head.innerHTML = '<tr><th>Game</th><th>TV</th><th>Style</th><th>Players</th><th>Result</th><th>Started</th><th></th></tr>';
+      rows.innerHTML = j.rows.length ? j.rows.map(r => '<tr><td>#' + esc(r.id) + '</td><td>' + esc(r.tv) + '</td>' +
+        '<td>' + (r.style === 'race' ? 'Race' : 'Standard') + (r.categories && r.categories.length ? '<br><small style="opacity:.6">' + esc(r.categories.map(pretty).join(', ')) + '</small>' : '') + '</td>' +
+        '<td>' + esc(r.players) + '<br><small style="opacity:.6">' + esc(r.who || '') + '</small></td>' +
+        '<td>' + (r.status === 'finished' ? badge(r.result_counted === false ? 'no result' : 'finished', 'completed') : r.status === 'playing' ? badge('playing', 'active') : badge(ENDS[r.close_reason] || r.close_reason || r.status, 'cancelled')) + '</td>' +
+        '<td>' + esc(when(r.started_at)) + '</td><td><button class="btn btn-secondary" style="padding:6px 12px" onclick="tvAuditParty(' + Number(r.id) + ')">View</button></td></tr>').join('')
+        : '<tr><td colspan="7" style="opacity:.6">No Party games found.</td></tr>';
+    } else if (kind === 'solo') {
+      head.innerHTML = '<tr><th>Round</th><th>TV</th><th>Player</th><th>Questions</th><th>Reached</th><th>Points</th><th>Ended</th><th>Started</th><th></th></tr>';
+      rows.innerHTML = j.rows.length ? j.rows.map(r => '<tr><td>#' + esc(r.id) + '</td><td>' + esc(r.tv) + '</td><td>' + esc(r.username || 'guest') + '</td>' +
+        '<td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Play Now')) + '</td><td>' + esc(r.reached) + ' / 15</td><td>' + esc(r.points) + '</td>' +
+        '<td>' + (r.status === 'playing' ? badge('playing', 'active') : esc(ENDS[r.end_reason] || r.end_reason || '')) + '</td>' +
+        '<td>' + esc(when(r.started_at)) + '</td><td><button class="btn btn-secondary" style="padding:6px 12px" onclick="tvAuditSolo(' + Number(r.id) + ')">View</button></td></tr>').join('')
+        : '<tr><td colspan="9" style="opacity:.6">No Solo rounds found.</td></tr>';
+    } else {
+      head.innerHTML = '<tr><th>Sign-in</th><th>Account</th><th>TV</th><th>Signed in</th><th>Last used</th><th>Ended</th><th>How it ended</th></tr>';
+      rows.innerHTML = j.rows.length ? j.rows.map(r => '<tr><td>#' + esc(r.id) + '</td><td>' + esc(r.username) + '</td><td>' + esc(r.tv) + '</td>' +
+        '<td>' + esc(when(r.created_at)) + '</td><td>' + esc(when(r.last_active_at)) + '</td><td>' + (r.ended_at ? esc(when(r.ended_at)) : badge('signed in', 'active')) + '</td>' +
+        '<td>' + esc(r.end_reason ? (ENDS[r.end_reason] || r.end_reason) : '') + '</td></tr>').join('')
+        : '<tr><td colspan="7" style="opacity:.6">No TV sign-ins found.</td></tr>';
+    }
+    document.getElementById('tvAuditPages').innerHTML =
+      '<button ' + (page > 1 ? '' : 'disabled') + ' onclick="tvAuditSearch(' + (page - 1) + ')">← Newer</button>' +
+      '<span class="page-info">Page ' + page + '</span>' +
+      '<button ' + (j.more ? '' : 'disabled') + ' onclick="tvAuditSearch(' + (page + 1) + ')">Older →</button>';
+  };
+
+  function show(title, html) {
+    document.getElementById('tvAuditTitle').textContent = title;
+    document.getElementById('tvAuditBody').innerHTML = html;
+    document.getElementById('tvAuditModal').classList.add('active');
+  }
+
+  function question(q) {
+    return '<div style="margin-bottom:6px"><b>' + esc(q.text || '(question ' + q.questionId + ' no longer in the bank)') + '</b>' +
+      '<div style="opacity:.7;font-size:12.5px;margin-top:3px">' + ['A', 'B', 'C', 'D'].map(l =>
+        '<span style="margin-right:12px;' + (l === q.correct ? 'color:#4CAF50;font-weight:700' : '') + '">' + l + ': ' + esc(q.options && q.options[l]) + '</span>').join('') +
+      (q.category ? ' · ' + esc(pretty(q.category)) : '') + (q.difficulty ? ' · level ' + esc(q.difficulty) : '') + ' · question #' + esc(q.questionId) + '</div></div>';
+  }
+
+  window.tvAuditParty = async function (id) {
+    const j = await get('/party/' + id);
+    if (!j || !j.success) { alert((j && j.error) || 'Could not load the game'); return; }
+    const g = j.room, race = g.style === 'race';
+    const name = new Map(j.players.map(p => [p.id, p.display_name + (p.username ? ' (' + p.username + ')' : '')]));
+    let html = '<p style="opacity:.75;margin-bottom:14px">' + esc(g.tv) + (g.approx_location ? ' (' + esc(g.approx_location) + ')' : '') + ' · ' + (race ? 'Race' : 'Standard') +
+      ' · started ' + esc(when(g.started_at)) + (g.finished_at ? ' · finished ' + esc(when(g.finished_at)) : '') +
+      (g.status === 'closed' ? ' · ' + esc(ENDS[g.close_reason] || g.close_reason) : '') + '</p>';
+    html += '<table style="margin-bottom:18px"><thead><tr><th>Place</th><th>Player</th><th>Account</th><th>Correct</th><th>TV points</th><th>Joined</th><th></th></tr></thead><tbody>' +
+      j.players.map(p => '<tr><td>' + esc(p.final_rank || '—') + '</td><td>' + esc(p.avatar) + ' ' + esc(p.display_name) + '</td><td>' + esc(p.username || 'guest') + '</td>' +
+        '<td>' + esc(p.final_correct == null ? '—' : p.final_correct) + '</td><td>' + esc(p.points) + '</td><td>' + esc(when(p.joined_at)) + '</td>' +
+        '<td style="opacity:.6">' + (p.removed_at ? 'removed by host' : p.left_at ? 'left' : '') + '</td></tr>').join('') + '</tbody></table>';
+    html += j.questions.map(q => '<div style="border-top:1px solid rgba(255,255,255,0.1);padding:12px 0">' +
+      '<div style="font-size:12px;opacity:.6;margin-bottom:4px">Question ' + esc(q.position) + '</div>' + question(q) +
+      (q.answers.length ? '<table><thead><tr><th>Player</th><th>Answer</th><th>Result</th><th>Time</th>' + (race ? '<th>Took it</th><th>Delay allowed</th>' : '') + '</tr></thead><tbody>' +
+        q.answers.map(a => '<tr><td>' + esc(name.get(a.tv_player_id) || '#' + a.tv_player_id) + '</td><td>' + esc(a.chosen || '—') + '</td>' +
+          '<td>' + (a.chosen == null ? badge('no answer', 'cancelled') : a.is_correct ? badge('right', 'completed') : badge('wrong', 'cancelled')) + '</td><td>' + esc(secs(a.answer_ms)) + '</td>' +
+          (race ? '<td>' + (a.won ? '🏁 yes' : '') + '</td><td>' + esc(a.lag_ms == null ? '—' : a.lag_ms + ' ms') + '</td>' : '') + '</tr>').join('') + '</tbody></table>'
+        : '<div style="opacity:.6;font-size:13px">Nobody answered.</div>') + '</div>').join('');
+    show('📺 Party game #' + g.id, html);
+  };
+
+  window.tvAuditSolo = async function (id) {
+    const j = await get('/solo/' + id);
+    if (!j || !j.success) { alert((j && j.error) || 'Could not load the round'); return; }
+    const r = j.round;
+    let html = '<p style="opacity:.75;margin-bottom:14px">' + esc(r.tv) + (r.approx_location ? ' (' + esc(r.approx_location) + ')' : '') + ' · ' + esc(r.username || 'guest') +
+      ' · ' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Play Now')) + ' · reached ' + esc(r.reached) + ' of 15 · ' + esc(r.points) + ' points' +
+      (r.end_reason ? ' · ' + esc(ENDS[r.end_reason] || r.end_reason) : '') + (r.fifty_used ? ' · used 50:50' : '') + (r.skip_used ? ' · used skip' : '') +
+      ' · started ' + esc(when(r.started_at)) + '</p>';
+    if (!j.recorded) html += '<p style="color:#f59e0b;margin-bottom:12px">This round was played before answers were recorded (before migration 023), so only the questions asked are shown.</p>';
+    html += j.steps.map(st => '<div style="border-top:1px solid rgba(255,255,255,0.1);padding:12px 0">' +
+      (st.position ? '<div style="font-size:12px;opacity:.6;margin-bottom:4px">Question ' + esc(st.position) + '</div>' : '') + question(st) +
+      (j.recorded ? '<div style="font-size:13px">' + (st.result === 'skipped' ? badge('skipped', 'active') : st.result === 'timeout' ? badge('ran out of time', 'cancelled')
+        : st.result === 'correct' ? badge('right', 'completed') : badge('wrong', 'cancelled')) +
+        (st.chosen ? ' answered ' + esc(st.chosen) : '') + ' · ' + esc(secs(st.ms)) + (st.fifty ? ' · with 50:50' : '') + (st.points ? ' · +' + esc(st.points) + ' points' : '') + '</div>' : '') +
+      '</div>').join('');
+    show('📺 Solo round #' + r.id, html);
+  };
+
+  document.getElementById('tvAuditModal').addEventListener('click', function (e) { if (e.target === this) this.classList.remove('active'); });
+  tvAuditSearch(1);
+})();
 </script>
   <script src="/admin-nav.js"></script>
 </body>

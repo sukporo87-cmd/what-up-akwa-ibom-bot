@@ -13,6 +13,11 @@
 //                               out whoever is signed in on it
 //   * sign someone out of a TV  reason 'admin'
 //   * change a setting          tv-settings.service, within its limits
+//   * name a TV and keep notes  shown wherever the page names that TV
+//
+// A TV IS CALLED by the name an admin gave it, else the name the server gave
+// it (tv-identity.service), else its number. Its details pop-up shows what it
+// reports about itself and its approximate place, never its internet address.
 //
 // NOTHING HERE TOUCHES MONEY, A USER'S ACCOUNT, OR ANY NON-TV TABLE. It reads
 // users only for usernames.
@@ -34,7 +39,7 @@ class TvAdminService {
         const rooms = await pool.query(
             `SELECT r.id, r.join_code, r.status, r.style, r.close_reason, r.categories, r.max_players,
                     r.created_at, r.started_at, r.finished_at, r.result_counted,
-                    d.id AS device_id, d.label AS tv_label,
+                    d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label,
                     (SELECT COUNT(*) FROM tv_players p WHERE p.tv_room_id = r.id AND p.removed_at IS NULL)::int AS players
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id
              WHERE r.status IN ('lobby','playing') OR r.created_at > NOW() - INTERVAL '${RECENT_HOURS} hours'
@@ -43,6 +48,8 @@ class TvAdminService {
         );
         const devices = await pool.query(
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
+                    d.tv_name, d.admin_name, d.approx_location,
+                    d.details->>'manufacturer' AS maker, d.details->>'model' AS model, d.details->>'deviceName' AS own_name,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.created_at > NOW() - INTERVAL '7 days')::int AS rooms_7d,
                     (SELECT COUNT(*) FROM tv_solo_rounds s WHERE s.tv_device_id = d.id AND s.started_at > NOW() - INTERVAL '7 days')::int AS solo_7d
              FROM tv_devices d
@@ -50,7 +57,7 @@ class TvAdminService {
              LIMIT 200`
         );
         const sessions = await pool.query(
-            `SELECT s.id, s.tv_device_id, d.label AS tv_label, u.username, s.created_at, s.last_active_at
+            `SELECT s.id, s.tv_device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label, u.username, s.created_at, s.last_active_at
              FROM tv_sessions s
              JOIN tv_devices d ON d.id = s.tv_device_id
              JOIN users u ON u.id = s.user_id
@@ -76,7 +83,7 @@ class TvAdminService {
         await tvAuth.ensureSchema();
         const r = await pool.query(
             `SELECT r.id, r.join_code, r.status, r.style, r.close_reason, r.categories, r.created_at, r.started_at,
-                    r.finished_at, r.result_counted, d.label AS tv_label
+                    r.finished_at, r.result_counted, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id WHERE r.id = $1`,
             [roomId]
         );
@@ -91,6 +98,74 @@ class TvAdminService {
             [roomId]
         );
         return { ok: true, room: r.rows[0], players: players.rows };
+    }
+
+    /**
+     * Everything known about one TV, for the details pop-up. Its internet
+     * address is used here only to spot a reinstall; it is never sent to the
+     * page.
+     */
+    async device(deviceId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
+                    d.tv_name, d.admin_name, d.admin_notes, d.details, d.details_at, d.approx_location,
+                    (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id)::int AS rooms_total,
+                    (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.status = 'finished')::int AS games_finished,
+                    (SELECT COUNT(*) FROM tv_players p JOIN tv_rooms r ON r.id = p.tv_room_id
+                      WHERE r.tv_device_id = d.id AND p.removed_at IS NULL)::int AS players_total,
+                    (SELECT COUNT(*) FROM tv_solo_rounds s WHERE s.tv_device_id = d.id)::int AS solo_total,
+                    (SELECT COUNT(*) FROM tv_sessions s WHERE s.tv_device_id = d.id)::int AS signins_total
+             FROM tv_devices d WHERE d.id = $1`,
+            [deviceId]
+        );
+        if (!r.rows[0]) return { ok: false, error: 'No such TV' };
+        // Probably the same TV, installed again: same maker, model and own
+        // name, from the same local network (the same /24 of addresses).
+        const same = await pool.query(
+            `SELECT o.id, o.tv_name, o.admin_name, o.app_version, o.first_seen, o.last_seen
+             FROM tv_devices o JOIN tv_devices d ON d.id = $1
+             WHERE o.id <> d.id
+               AND o.details IS NOT NULL AND d.details IS NOT NULL
+               AND o.details->>'model' = d.details->>'model'
+               AND COALESCE(o.details->>'manufacturer', '') = COALESCE(d.details->>'manufacturer', '')
+               AND COALESCE(o.details->>'deviceName', '') = COALESCE(d.details->>'deviceName', '')
+               AND network(set_masklen(COALESCE(o.last_ip, o.register_ip), 24)) =
+                   network(set_masklen(COALESCE(d.last_ip, d.register_ip), 24))
+             ORDER BY o.last_seen DESC
+             LIMIT 5`,
+            [deviceId]
+        );
+        const recentRooms = await pool.query(
+            `SELECT r.id, r.status, r.style, r.created_at,
+                    (SELECT COUNT(*) FROM tv_players p WHERE p.tv_room_id = r.id AND p.removed_at IS NULL)::int AS players
+             FROM tv_rooms r WHERE r.tv_device_id = $1 ORDER BY r.created_at DESC LIMIT 5`,
+            [deviceId]
+        );
+        const recentSolo = await pool.query(
+            `SELECT s.id, s.status, s.end_reason, s.reached, s.points, s.category, s.source, s.started_at, u.username
+             FROM tv_solo_rounds s LEFT JOIN users u ON u.id = s.user_id
+             WHERE s.tv_device_id = $1 ORDER BY s.started_at DESC LIMIT 5`,
+            [deviceId]
+        );
+        return { ok: true, device: r.rows[0], sameTv: same.rows, recentRooms: recentRooms.rows, recentSolo: recentSolo.rows };
+    }
+
+    /** An admin's name and notes for a TV. Empty clears them. */
+    async nameDevice(deviceId, adminName, adminNotes) {
+        await tvAuth.ensureSchema();
+        const clean = (v, max) => {
+            const s = String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+            return s ? s.slice(0, max) : null;
+        };
+        const name = clean(adminName, 60);
+        const notes = adminNotes == null ? null : String(adminNotes).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500) || null;
+        const r = await pool.query(
+            `UPDATE tv_devices SET admin_name = $2, admin_notes = $3 WHERE id = $1 RETURNING id`,
+            [deviceId, name, notes]
+        );
+        if (!r.rows[0]) return { ok: false, error: 'No such TV' };
+        return { ok: true, adminName: name, adminNotes: notes };
     }
 
     async closeRoom(roomId) {

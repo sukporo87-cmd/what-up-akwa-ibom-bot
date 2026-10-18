@@ -226,8 +226,8 @@ class TvSoloService {
         // account's. The route has already checked the session.
         const userId = Number.isInteger(opts.userId) && opts.userId > 0 ? opts.userId : null;
         const ins = await pool.query(
-            `INSERT INTO tv_solo_rounds (tv_device_id, category, user_id) VALUES ($1, $2, $3) RETURNING id`,
-            [device.id, category, userId]
+            `INSERT INTO tv_solo_rounds (tv_device_id, category, user_id, source) VALUES ($1, $2, $3, $4) RETURNING id`,
+            [device.id, category, userId, source.bank]
         );
         const state = {
             id: ins.rows[0].id,
@@ -354,6 +354,25 @@ class TvSoloService {
         );
     }
 
+    /**
+     * One answer, as it was given, for the Audit Trail and for reviewing a
+     * round: the question, the letter (null for a timeout or a skip), how
+     * long it took, and the result. Never fails the answer itself.
+     */
+    async _record(state, letter, now, result) {
+        const entry = {
+            n: state.position, q: state.questionId, chosen: letter,
+            ms: Math.max(0, now - (state.askedAt || now)), result,
+            fifty: !!(state.fifty && state.fifty.position === state.position)
+        };
+        try {
+            await pool.query(
+                `UPDATE tv_solo_rounds SET answers = answers || $2::jsonb WHERE id = $1`,
+                [state.id, JSON.stringify([entry])]
+            );
+        } catch (e) { logger.error(`Solo round ${state.id}: answer not recorded: ${e.message}`); }
+    }
+
     async _correctAnswer(questionId) {
         const r = await pool.query(`SELECT correct_answer FROM questions WHERE id = $1`, [questionId]);
         const c = String((r.rows[0] && r.rows[0].correct_answer) || '').trim().toUpperCase();
@@ -383,12 +402,15 @@ class TvSoloService {
             const correctAnswer = await this._correctAnswer(state.questionId);
 
             if (letter === null || late) {
+                await this._record(state, null, now, 'timeout');
                 await this._finish(state, 'timeout');
                 return { ok: true, result: 'timeout', correctAnswer, scored: 0, round: this.view(state) };
             }
 
             const f = state.fifty && state.fifty.position === state.position ? state.fifty.keep : null;
             if (f && !f.includes(letter)) return { ok: false, reason: 'option_removed', __save: false };
+
+            await this._record(state, letter, now, letter === correctAnswer ? 'correct' : 'wrong');
 
             if (letter !== correctAnswer) {
                 await this._finish(state, 'wrong');
@@ -467,6 +489,7 @@ class TvSoloService {
             state.skipUsed = true;
             state.fifty = null;
             await pool.query(`UPDATE tv_solo_rounds SET skip_used = true WHERE id = $1`, [state.id]);
+            await this._record(state, null, Date.now(), 'skipped');
             await this._serve(state, state.position);
             return { ok: true, round: this.view(state) };
         });

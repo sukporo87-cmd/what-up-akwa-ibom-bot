@@ -27,8 +27,9 @@
 // can only ever resolve to the one player it was issued to.
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
-// 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql and 022-tv-admin.sql
-// and are byte-identical to them; a test checks they have not drifted.
+// 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql and
+// 023-tv-identity.sql and are byte-identical to them; a test checks they have
+// not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -66,10 +67,10 @@ class TvAuthService {
         if (this._schemaReady) return;
         // 018 first (the tables), then 019 (Solo), which adds to tv_points,
         // then 020 (signing in on a TV), then 021 (Race style), then 022 (the
-        // admin page's settings).
+        // admin page's settings), then 023 (which TV is which, Solo answers).
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
-                           ...TvAuthService.ADMIN_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -436,6 +437,23 @@ TvAuthService.ADMIN_SCHEMA_STATEMENTS = Object.freeze([
     ADD CONSTRAINT tv_sessions_end_reason_check CHECK (end_reason IS NULL OR end_reason IN (
         'signout','idle','app_closed','replaced','blocked','account','admin'
     ))`
+]);
+
+TvAuthService.IDENTITY_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS tv_name TEXT CHECK (tv_name IS NULL OR char_length(tv_name) <= 40),
+    ADD COLUMN IF NOT EXISTS admin_name TEXT CHECK (admin_name IS NULL OR char_length(admin_name) <= 60),
+    ADD COLUMN IF NOT EXISTS admin_notes TEXT CHECK (admin_notes IS NULL OR char_length(admin_notes) <= 500),
+    ADD COLUMN IF NOT EXISTS details JSONB,
+    ADD COLUMN IF NOT EXISTS details_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_ip INET,
+    ADD COLUMN IF NOT EXISTS approx_location TEXT CHECK (approx_location IS NULL OR char_length(approx_location) <= 80)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_devices_tv_name
+    ON tv_devices (tv_name)
+    WHERE tv_name IS NOT NULL`,
+    `ALTER TABLE tv_solo_rounds
+    ADD COLUMN IF NOT EXISTS source TEXT CHECK (source IS NULL OR source IN ('practice','classic','tournament','categories')),
+    ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb`
 ]);
 
 module.exports = new TvAuthService();

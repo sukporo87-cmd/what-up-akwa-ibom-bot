@@ -14,6 +14,11 @@
 //   DELETE /admin/tv/api/settings/:key    back to the default
 //   PUT  /admin/tv/api/categories         { category, on }
 //   PUT  /admin/tv/api/play-now           { bank, categories }
+//   GET  /admin/tv/api/devices/:id        one TV in full, for the details pop-up
+//   PUT  /admin/tv/api/devices/:id        { adminName, adminNotes }
+//   GET  /admin/tv/api/audit/search       Audit Trail: { kind, q, from, to, page }
+//   GET  /admin/tv/api/audit/party/:id    Audit Trail: one Party game in full
+//   GET  /admin/tv/api/audit/solo/:id     Audit Trail: one Solo round in full
 //
 // Every API route needs an admin session, checked exactly as the main admin
 // router checks it (admin-auth.service validateSession), and every change is
@@ -27,6 +32,7 @@ const { logger } = require('../utils/logger');
 const AdminAuthService = require('../services/admin-auth.service');
 const tvAdmin = require('../services/tv-admin.service');
 const tvSettings = require('../services/tv-settings.service');
+const tvAudit = require('../services/tv-audit.service');
 
 const adminAuth = new AdminAuthService();
 
@@ -89,7 +95,37 @@ router.get('/api/settings', requireAdmin, async (req, res) => {
     try { return send(res, await tvAdmin.settings()); } catch (e) { return fail(res, 'settings', e); }
 });
 
+router.get('/api/devices/:id(\\d+)', requireAdmin, async (req, res) => {
+    try { return send(res, await tvAdmin.device(Number(req.params.id))); } catch (e) { return fail(res, 'device', e); }
+});
+
+// ---- the Audit Trail's WUT TV section (read only) ----
+router.get('/api/audit/search', requireAdmin, async (req, res) => {
+    try {
+        const q = req.query || {};
+        return send(res, await tvAudit.search({ kind: q.kind, q: q.q, from: q.from, to: q.to, page: q.page }));
+    } catch (e) { return fail(res, 'audit search', e); }
+});
+
+router.get('/api/audit/party/:id(\\d+)', requireAdmin, async (req, res) => {
+    try { return send(res, await tvAudit.party(Number(req.params.id))); } catch (e) { return fail(res, 'audit party', e); }
+});
+
+router.get('/api/audit/solo/:id(\\d+)', requireAdmin, async (req, res) => {
+    try { return send(res, await tvAudit.solo(Number(req.params.id))); } catch (e) { return fail(res, 'audit solo', e); }
+});
+
 // ---- actions ----
+router.put('/api/devices/:id(\\d+)', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const body = req.body || {};
+        const out = await tvAdmin.nameDevice(id, body.adminName, body.adminNotes);
+        if (out.ok) await log(req, 'tv_device_named', { deviceId: id, adminName: out.adminName, notes: !!out.adminNotes });
+        return send(res, out);
+    } catch (e) { return fail(res, 'name device', e); }
+});
+
 router.post('/api/rooms/:id(\\d+)/close', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);

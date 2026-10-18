@@ -33,6 +33,7 @@ const store = require('../services/tv-room-store.service');
 const party = require('../services/tv-party.service');
 const solo = require('../services/tv-solo.service');
 const tvSession = require('../services/tv-session.service');
+const tvIdentity = require('../services/tv-identity.service');
 const webAuthService = require('../services/web-auth.service');
 
 const STATUS = {
@@ -183,8 +184,27 @@ router.post('/devices/register', async (req, res) => {
         const out = await tvAuth.registerDevice({
             platform: body.platform, label: body.label, appVersion: body.appVersion, ip
         });
+        if (out.ok) {
+            // Which TV this is: what it says about itself, its place, its name.
+            // Never fails the registration.
+            try {
+                const me = await tvIdentity.report(out.deviceId, { details: body.details, appVersion: body.appVersion, ip });
+                out.tvName = me.tvName;
+            } catch (e) { logger.error(`TV ${out.deviceId}: identity not recorded: ${e.message}`); }
+        }
         return reply(res, out);
     } catch (error) { return fail(res, 'register', error); }
+});
+
+// The app reports itself each time it starts (app 0.7.0 on): what the TV says
+// about itself, the app version, and where it is connecting from. Answers
+// with the TV's name, which the home screen shows.
+router.post('/devices/me', requireDevice, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const out = await tvIdentity.report(req.tvDevice.id, { details: body.details, appVersion: body.appVersion, ip: getIp(req) });
+        return reply(res, out);
+    } catch (error) { return fail(res, 'device report', error); }
 });
 
 router.get('/categories', requireDevice, async (req, res) => {
