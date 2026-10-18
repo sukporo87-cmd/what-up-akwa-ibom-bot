@@ -31,6 +31,26 @@
 // stored: a question whose clock ran out during the restart is revealed at
 // once; one still running gets the time it has left, never a fresh clock.
 //
+// TWO STYLES. 'standard' is the above. 'race' (fastest finger first) gives
+// each question to the quickest correct answer:
+//   * the answer buttons stay locked for RACE_LOCK_MS after the question
+//     appears, so everyone starts together and nobody taps before reading
+//   * the first correct answer ends the question — after a short settle
+//     window, so a phone on a slow connection is judged fairly (below)
+//   * a wrong answer costs a point in the game; winning a question earns
+//     one. Only the winner of a question earns ledger points (10/20/30),
+//     so leaderboard points stay positive
+//   * no 50:50
+// WHO WAS FASTEST is decided here, never by a phone. Each answer is timed by
+// its arrival. Each phone's round trip is measured quietly through the game
+// (the phone acknowledges every question the moment it arrives) and taken off
+// its arrival time, capped at RACE_LAG_CAP_MS, so faking a slow connection
+// gains at most the cap. Two answers closer than RACE_TIE_MS after that go to
+// the one that physically arrived first. Close to fair; never perfect over
+// mobile networks. To decide, the server reads the correct answer when the
+// first answer of a Race question arrives; it is held in memory, never in the
+// room state, and never sent anywhere before the reveal.
+//
 // NO MONEY IN HERE. Sponsored prizes arrive in phase 5.
 // ============================================
 
@@ -51,6 +71,16 @@ const FIFTY_FIFTY_BONUS_MS = 5000;
 const ANSWER_GRACE_MS = 1500;
 const REVEAL_PAUSE_MS = 4000;
 const MIN_FINISHERS = 2;
+
+// ---- Race style ----
+const STYLES = ['standard', 'race'];
+const RACE_LOCK_MS = 2500;          // buttons locked while the question is read
+const RACE_SETTLE_MS = 300;         // after the first correct answer, wait this long for faster-but-later ones
+const RACE_LAG_CAP_MS = 250;        // the most a phone's measured delay can take off its time
+const RACE_TIE_MS = 50;             // closer than this after adjustment is a tie: first to arrive wins
+const RACE_LAG_SAMPLES = 5;         // the delay used is the median of the last few
+const RACE_WIN = 1;                 // game score for taking a question
+const RACE_WRONG = 1;               // game score lost for a wrong answer
 
 // ---- the room ----
 const MAX_PLAYERS = 20;
@@ -95,6 +125,10 @@ class TvPartyService {
         this._categories = null;
         this._categoriesAt = 0;
         this._sweep = null;
+        /** @type {Map<number, Map<number, number[]>>} Race: each phone's measured round trips, by room */
+        this.lag = new Map();
+        /** @type {Map<number, {key: string, correct: string|null}>} Race: the current question's answer, never in room state */
+        this.raceKeys = new Map();
     }
 
     // ============================================
@@ -194,15 +228,18 @@ class TvPartyService {
                 closeReason: state.closeReason || null,
                 hostPlayerId: state.hostPlayerId || null,
                 categories: state.categories || [],
+                style: state.style || 'standard',
                 maxPlayers: state.maxPlayers,
                 playerCount: this._activeIds(state).length,
                 players: this._roster(state)
             },
             game: g ? {
+                style: g.style || 'standard',
                 phase: g.phase,
                 position: g.position,
                 total: QUESTIONS_PER_ROUND,
                 expiresAt: g.phase === 'question' ? g.expiresAt : null,
+                opensAt: g.phase === 'question' ? (g.opensAt || null) : null,
                 // Question text and options only while it is being asked or
                 // revealed. Never the correct answer before the reveal.
                 question: (g.phase === 'question' || g.phase === 'reveal') ? g.question : null,
@@ -231,6 +268,7 @@ class TvPartyService {
                 youAreHost: state.hostPlayerId === pid,
                 hostFree: !this._hostActive(state),
                 categories: state.categories || [],
+                style: state.style || 'standard',
                 playerCount: this._activeIds(state).length,
                 maxPlayers: state.maxPlayers,
                 // While the room is open, each phone can change its avatar,
@@ -250,13 +288,15 @@ class TvPartyService {
             },
             me: this._publicPlayer(state, pid),
             game: g && enrolled ? {
+                style: g.style || 'standard',
                 phase: g.phase,
                 position: g.position,
                 total: QUESTIONS_PER_ROUND,
                 expiresAt: g.phase === 'question' ? g.expiresAt : null,
+                opensAt: g.phase === 'question' ? (g.opensAt || null) : null,
                 letters: g.phase === 'question' ? this._lettersFor(g, pid) : null,
                 locked: g.phase === 'question' && lock ? lock.chosen : null,
-                fiftyFiftyAvailable: !fifty,
+                fiftyFiftyAvailable: g.style !== 'race' && !fifty,
                 lastResult: (g.results && g.results[pid]) || null,
                 final: (g.finalByPlayer && g.finalByPlayer[pid]) || null
             } : null,
@@ -358,6 +398,7 @@ class TvPartyService {
             hostPlayerId: null,
             maxPlayers: MAX_PLAYERS,
             categories: [],
+            style: 'standard',
             createdAt: now,
             expiresAt: now + LOBBY_TTL_MS,
             players: {},
@@ -402,6 +443,7 @@ class TvPartyService {
             hostPlayerId: room.host_player_id || null,
             maxPlayers: room.max_players,
             categories: room.categories || [],
+            style: STYLES.includes(room.style) ? room.style : 'standard',
             createdAt: new Date(room.created_at).getTime(),
             expiresAt: new Date(room.expires_at).getTime(),
             players: {},
@@ -726,6 +768,23 @@ class TvPartyService {
         });
     }
 
+    /** Standard or Race, chosen in the lobby on the TV (or by the host). Fixed at Start. */
+    async setStyle(roomId, actor, style) {
+        const wanted = String(style || '').trim().toLowerCase();
+        if (!STYLES.includes(wanted)) return { ok: false, reason: 'bad_style' };
+        return store.withRoom(roomId, async (state, tx) => {
+            if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+            if (actor.playerId && state.hostPlayerId !== actor.playerId) return { ok: false, reason: 'not_host' };
+            if (state.style === wanted) return { ok: true, style: wanted };
+
+            state.style = wanted;
+            await pool.query(`UPDATE tv_rooms SET style = $2 WHERE id = $1`, [state.id, wanted]);
+            tx.tv('room.style_set', { style: wanted });
+            this._scheduleLobbyUpdate(state.id);
+            return { ok: true, style: wanted };
+        });
+    }
+
     async leave(roomId, pid) {
         const out = await store.withRoom(roomId, async (state, tx) => {
             if (!state) return { ok: false, reason: 'no_room' };
@@ -818,6 +877,7 @@ class TvPartyService {
             state.status = 'playing';
             state.expiresAt = Date.now() + PLAYING_TTL_MS;
             state.game = {
+                style: STYLES.includes(state.style) ? state.style : 'standard',
                 phase: 'starting', position: 0, enrolled: players,
                 locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now()
             };
@@ -827,7 +887,7 @@ class TvPartyService {
                  WHERE id = $1 AND status = 'lobby'`,
                 [state.id]
             );
-            tx.tv('game.starting', { players: players.length, categories: state.categories });
+            tx.tv('game.starting', { players: players.length, categories: state.categories, style: state.game.style });
             for (const p of players) tx.player(p, 'player.room', this.playerSnapshot(state, p).room);
             return { ok: true, players: players.length };
         });
@@ -914,23 +974,30 @@ class TvPartyService {
                 text: row.question_text,
                 options: { A: row.option_a, B: row.option_b, C: row.option_c, D: row.option_d }
             };
+            const race = g.style === 'race';
             g.askedAt = now;
-            g.expiresAt = now + QUESTION_MS;
+            // Race: the buttons open after a moment to read, and the clock
+            // runs from then. Standard: they open at once.
+            g.opensAt = race ? now + RACE_LOCK_MS : now;
+            g.expiresAt = g.opensAt + QUESTION_MS;
             g.extendedAt = null;
             g.locked = {};
             g.nextAt = null;
             g.lastReveal = null;
+            g.raceFirstAt = null;
 
             const playing = g.enrolled.filter(pid => this._active(state.players[pid]));
             tx.tv('game.question', {
                 position, total: QUESTIONS_PER_ROUND, text: g.question.text, options: g.question.options,
-                expiresAt: g.expiresAt, answered: 0, of: playing.length, away: this._awayIds(state)
+                expiresAt: g.expiresAt, opensAt: g.opensAt, style: g.style || 'standard',
+                answered: 0, of: playing.length, away: this._awayIds(state)
             });
             // The phone gets the clock and the letters. The question stays on the TV.
             for (const pid of playing) {
                 tx.player(pid, 'player.question', {
-                    position, total: QUESTIONS_PER_ROUND, expiresAt: g.expiresAt,
-                    letters: LETTERS, fiftyFiftyAvailable: !g.fifty[pid]
+                    position, total: QUESTIONS_PER_ROUND, expiresAt: g.expiresAt, opensAt: g.opensAt,
+                    style: g.style || 'standard', at: now,
+                    letters: LETTERS, fiftyFiftyAvailable: !race && !g.fifty[pid]
                 });
             }
             return { armAt: g.expiresAt + ANSWER_GRACE_MS };
@@ -959,38 +1026,55 @@ class TvPartyService {
             if (g.locked[pid]) return { ok: false, reason: 'already_locked' };
 
             const now = Date.now();
+            const race = g.style === 'race';
+            // Race: a tap before the buttons open is refused, and costs nothing.
+            if (race && now < g.opensAt) return { ok: false, reason: 'too_early' };
             if (now > g.expiresAt + ANSWER_GRACE_MS) return { ok: false, reason: 'too_late' };
             const f = g.fifty[pid];
             if (f && f.position === g.position && !f.keep.includes(letter)) {
                 return { ok: false, reason: 'option_removed' };
             }
 
-            // Timed by the server, from the moment the server asked. Capped at
-            // the clock, so the grace window is never worth anything.
-            const clock = g.expiresAt - g.askedAt;
-            const ms = Math.max(0, Math.min(now - g.askedAt, clock));
+            // Timed by the server, from the moment the buttons opened (the
+            // moment it asked, in Standard). Capped at the clock, so the grace
+            // window is never worth anything.
+            const from = g.opensAt || g.askedAt;
+            const clock = g.expiresAt - from;
+            const ms = Math.max(0, Math.min(now - from, clock));
+            const lag = race ? this._lagFor(state.id, pid) : null;
 
             const ins = await pool.query(
-                `INSERT INTO tv_answers (tv_room_id, tv_player_id, position, question_id, chosen, answer_ms)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO tv_answers (tv_room_id, tv_player_id, position, question_id, chosen, answer_ms, lag_ms)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  ON CONFLICT (tv_player_id, position) DO NOTHING
                  RETURNING id`,
-                [state.id, pid, g.position, g.questionId, letter, ms]
+                [state.id, pid, g.position, g.questionId, letter, ms, lag]
             );
             if (!ins.rows[0]) return { ok: false, reason: 'already_locked' };
 
-            g.locked[pid] = { chosen: letter, ms };
+            g.locked[pid] = race ? { chosen: letter, ms, at: now, lag } : { chosen: letter, ms };
             // The player is told their answer is in, and nothing else. No
             // correctness, no broadcast. The TV hears a count, later, batched.
             tx.player(pid, 'player.locked', { position: g.position, chosen: letter });
 
+            // Race: the first correct answer starts the settle window. The
+            // answer is checked here, on the server, and goes nowhere.
+            let settleAt = null;
+            if (race && !g.raceFirstAt && letter === await this._raceKey(state.id, g)) {
+                g.raceFirstAt = now;
+                settleAt = now + RACE_SETTLE_MS;
+            }
+
             const playing = g.enrolled.filter(x => this._active(state.players[x]));
             const allIn = playing.every(x => g.locked[x]);
-            return { ok: true, locked: true, allIn, position: g.position };
+            return { ok: true, locked: true, allIn, settleAt, position: g.position };
         });
 
         if (out && out.ok) {
-            if (out.allIn) {
+            if (out.settleAt && !out.allIn) {
+                this._cancelCount(Number(roomId));
+                this._arm(Number(roomId), out.settleAt, () => this._reveal(roomId, 'won'));
+            } else if (out.allIn) {
                 this._cancelCount(Number(roomId));
                 this._queue(roomId, () => this._reveal(roomId, 'all_locked'));
             } else {
@@ -999,6 +1083,62 @@ class TvPartyService {
             return { ok: true, locked: true };
         }
         return out;
+    }
+
+    /** The correct answer to a Race question, from the database, kept in memory only. */
+    async _raceKey(roomId, g) {
+        const key = `${g.position}:${g.questionId}`;
+        const have = this.raceKeys.get(roomId);
+        if (have && have.key === key) return have.correct;
+        const c = await pool.query(`SELECT correct_answer FROM questions WHERE id = $1`, [g.questionId]);
+        const correct = String((c.rows[0] && c.rows[0].correct_answer) || '').trim().toUpperCase() || null;
+        this.raceKeys.set(roomId, { key, correct });
+        return correct;
+    }
+
+    /**
+     * Race: a phone says a question has just arrived. The round trip from the
+     * server sending it to this arriving is that phone's delay, both ways —
+     * the same path its answer takes. Kept in memory: after a restart the
+     * delays are measured again from the next question.
+     */
+    async seen(roomId, pid, position) {
+        const id = Number(roomId);
+        const state = await store.load(id);
+        const g = state && state.game;
+        if (!g || g.style !== 'race' || g.phase !== 'question' || Number(position) !== g.position) {
+            return { ok: true, counted: false };
+        }
+        if (!g.enrolled.includes(pid)) return { ok: true, counted: false };
+        const rtt = Date.now() - g.askedAt;
+        // Arriving after the buttons opened, it says nothing useful.
+        if (rtt < 0 || rtt > RACE_LOCK_MS) return { ok: true, counted: false };
+        if (!this.lag.has(id)) this.lag.set(id, new Map());
+        const mine = this.lag.get(id).get(pid) || [];
+        mine.push(rtt);
+        while (mine.length > RACE_LAG_SAMPLES) mine.shift();
+        this.lag.get(id).set(pid, mine);
+        return { ok: true, counted: true };
+    }
+
+    /** The delay taken off a phone's answers: the median of its last few, capped. */
+    _lagFor(roomId, pid) {
+        const samples = this.lag.get(Number(roomId)) && this.lag.get(Number(roomId)).get(pid);
+        if (!samples || !samples.length) return 0;
+        const sorted = [...samples].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        return Math.max(0, Math.min(RACE_LAG_CAP_MS, Math.round(median)));
+    }
+
+    /** Who took a Race question: the earliest adjusted arrival; a near tie goes to who arrived first. */
+    _raceWinner(g, correct) {
+        const right = Object.entries(g.locked)
+            .filter(([, l]) => correct && l.chosen === correct && typeof l.at === 'number')
+            .map(([pid, l]) => ({ pid: Number(pid), at: l.at, adj: l.at - (l.lag || 0), ms: l.ms }))
+            .sort((a, b) => a.adj - b.adj);
+        if (!right.length) return null;
+        const close = right.filter(c => c.adj - right[0].adj < RACE_TIE_MS);
+        return close.sort((a, b) => a.at - b.at || a.pid - b.pid)[0];
     }
 
     _scheduleCount(roomId) {
@@ -1035,6 +1175,7 @@ class TvPartyService {
             if (!state || state.status !== 'playing' || !state.game) return { ok: false, reason: 'not_playing' };
             const g = state.game;
             if (g.phase !== 'question' || Number(position) !== g.position) return { ok: false, reason: 'not_current_question' };
+            if (g.style === 'race') return { ok: false, reason: 'not_in_race' };
             if (!g.enrolled.includes(pid) || !this._active(state.players[pid])) return { ok: false, reason: 'not_in_match' };
             if (g.locked[pid]) return { ok: false, reason: 'already_locked' };
             if (g.fifty[pid]) return { ok: false, reason: 'already_used' };
@@ -1106,7 +1247,20 @@ class TvPartyService {
                     [id, g.position, correct]
                 );
 
-                // The ledger: one row per correct answer, never a total.
+                // Race: one answer takes the question, and that is recorded.
+                const race = g.style === 'race';
+                const winner = race ? this._raceWinner(g, correct) : null;
+                if (race) {
+                    await pool.query(
+                        `UPDATE tv_answers SET won = (tv_player_id = $3)
+                         WHERE tv_room_id = $1 AND position = $2`,
+                        [id, g.position, winner ? winner.pid : 0]
+                    );
+                    this.raceKeys.delete(id);
+                }
+
+                // The ledger: one row per correct answer, never a total. In
+                // Race, only the answer that took the question.
                 await pool.query(
                     `INSERT INTO tv_points (user_id, guest_ref, mode, question_number, points, tv_room_id, tv_player_id)
                      SELECT p.user_id,
@@ -1115,37 +1269,52 @@ class TvPartyService {
                      FROM tv_answers a
                      JOIN tv_players p ON p.id = a.tv_player_id
                      WHERE a.tv_room_id = $1 AND a.position = $2 AND a.is_correct = true
+                       AND ($4::boolean = false OR a.won = true)
                      ON CONFLICT (tv_player_id, question_number) WHERE tv_player_id IS NOT NULL DO NOTHING`,
-                    [id, g.position, pointsFor(g.position)]
+                    [id, g.position, pointsFor(g.position), race]
                 );
 
                 const board = await this._board(state);
                 g.board = board;
                 const byId = new Map(board.map(b => [b.id, b]));
                 const correctCount = g.enrolled.filter(pid => g.locked[pid] && g.locked[pid].chosen === correct).length;
-                g.lastReveal = { position: g.position, correctAnswer: correct, correctCount };
+                const winnerName = winner && state.players[winner.pid] ? state.players[winner.pid].name : null;
+                g.lastReveal = {
+                    position: g.position, correctAnswer: correct, correctCount,
+                    ...(race ? { winnerPlayerId: winner ? winner.pid : null, winnerName, winnerMs: winner ? winner.ms : null } : {})
+                };
                 g.nextAt = Date.now() + REVEAL_PAUSE_MS;
 
                 tx.tv('game.reveal', {
                     position: g.position, correctAnswer: correct, trigger,
                     correctCount, answered: Object.keys(g.locked).length,
-                    of: g.enrolled.filter(pid => this._active(state.players[pid])).length
+                    of: g.enrolled.filter(pid => this._active(state.players[pid])).length,
+                    style: g.style || 'standard',
+                    ...(race ? { winnerPlayerId: winner ? winner.pid : null, winnerName, winnerMs: winner ? winner.ms : null } : {})
                 });
-                tx.tv('game.standings', { position: g.position, board, away: this._awayIds(state) });
+                tx.tv('game.standings', { position: g.position, board, style: g.style || 'standard', away: this._awayIds(state) });
 
                 for (const pid of g.enrolled) {
                     if (!this._active(state.players[pid])) continue;
                     const mine = g.locked[pid] || null;
-                    const row = byId.get(pid) || { c: 0, t: 0, rank: null };
+                    const row = byId.get(pid) || { c: 0, t: 0, s: 0, rank: null };
+                    const right = !!(mine && mine.chosen === correct);
+                    const won = !!(winner && winner.pid === pid);
                     const result = {
                         position: g.position,
                         chosen: mine ? mine.chosen : null,
-                        correct: !!(mine && mine.chosen === correct),
+                        correct: right,
                         correctAnswer: correct,
-                        points: mine && mine.chosen === correct ? pointsFor(g.position) : 0,
-                        score: { c: row.c, t: row.t },
+                        points: race ? (won ? pointsFor(g.position) : 0) : (right ? pointsFor(g.position) : 0),
+                        score: race ? { c: row.c, t: row.t, s: row.s } : { c: row.c, t: row.t },
                         rank: row.rank,
-                        of: board.filter(b => b.rank != null).length
+                        of: board.filter(b => b.rank != null).length,
+                        ...(race ? {
+                            style: 'race', won,
+                            // +1 for taking it, -1 for a wrong answer, 0 otherwise
+                            change: won ? RACE_WIN : (mine && !right ? -RACE_WRONG : 0),
+                            winnerName: won ? null : winnerName
+                        } : {})
                     };
                     g.results[pid] = result;
                     tx.player(pid, 'player.result', result);
@@ -1161,8 +1330,14 @@ class TvPartyService {
         }
     }
 
-    /** Correct answers, then total time. Left and removed players are shown but unranked. */
+    /**
+     * Standard: correct answers, then total time. Race: the game score (one
+     * for each question taken, minus one for each wrong answer), then
+     * questions taken, then the time of the ones taken. Left and removed
+     * players are shown but unranked.
+     */
     async _board(state) {
+        if (state.game && state.game.style === 'race') return this._raceBoard(state);
         const r = await pool.query(
             `SELECT tv_player_id AS id,
                     COUNT(*) FILTER (WHERE is_correct = true)::int AS c,
@@ -1177,6 +1352,30 @@ class TvPartyService {
             return { id: pid, c: s.c, t: s.t, finisher: this._active(p), left: !!(p && p.leftAt), removed: !!(p && p.removedAt) };
         });
         const ranked = entries.filter(e => e.finisher).sort((a, b) => b.c - a.c || a.t - b.t);
+        ranked.forEach((e, i) => { e.rank = i + 1; });
+        const others = entries.filter(e => !e.finisher).map(e => ({ ...e, rank: null }));
+        return [...ranked, ...others].map(({ finisher, ...rest }) => rest);
+    }
+
+    async _raceBoard(state) {
+        const r = await pool.query(
+            `SELECT tv_player_id AS id,
+                    COUNT(*) FILTER (WHERE won = true)::int AS w,
+                    COUNT(*) FILTER (WHERE chosen IS NOT NULL AND is_correct = false)::int AS x,
+                    COALESCE(SUM(answer_ms) FILTER (WHERE won = true), 0)::int AS t
+             FROM tv_answers WHERE tv_room_id = $1 GROUP BY tv_player_id`,
+            [state.id]
+        );
+        const rows = new Map(r.rows.map(x => [Number(x.id), { w: Number(x.w), x: Number(x.x), t: Number(x.t) }]));
+        const entries = (state.game.enrolled || []).map(pid => {
+            const p = state.players[pid];
+            const v = rows.get(pid) || { w: 0, x: 0, t: 0 };
+            return {
+                id: pid, c: v.w, t: v.t, s: v.w * RACE_WIN - v.x * RACE_WRONG, w: v.w, x: v.x,
+                finisher: this._active(p), left: !!(p && p.leftAt), removed: !!(p && p.removedAt)
+            };
+        });
+        const ranked = entries.filter(e => e.finisher).sort((a, b) => b.s - a.s || b.w - a.w || a.t - b.t);
         ranked.forEach((e, i) => { e.rank = i + 1; });
         const others = entries.filter(e => !e.finisher).map(e => ({ ...e, rank: null }));
         return [...ranked, ...others].map(({ finisher, ...rest }) => rest);
@@ -1229,13 +1428,15 @@ class TvPartyService {
                 g.final = { counted, winnerPlayerId: winner ? winner.id : null };
                 g.finalByPlayer = {};
 
-                tx.tv('game.finished', { board, counted, winnerPlayerId: winner ? winner.id : null });
+                const race = g.style === 'race';
+                tx.tv('game.finished', { board, counted, winnerPlayerId: winner ? winner.id : null, style: g.style || 'standard' });
                 for (const b of board) {
                     if (!this._active(state.players[b.id])) continue;
                     const mine = {
                         rank: b.rank, of: finishers.length, correct: b.c, totalMs: b.t,
                         points: pointsBy.get(b.id) || 0, counted,
-                        won: !!(winner && winner.id === b.id)
+                        won: !!(winner && winner.id === b.id),
+                        ...(race ? { style: 'race', score: b.s, taken: b.w, wrong: b.x } : {})
                     };
                     g.finalByPlayer[b.id] = mine;
                     tx.player(b.id, 'player.finished', mine);
@@ -1273,6 +1474,9 @@ class TvPartyService {
 
     _clearTimers(roomId) {
         const id = Number(roomId);
+        // A room that has ended takes its measured delays and Race answer with it.
+        this.lag.delete(id);
+        this.raceKeys.delete(id);
         for (const map of [this.timers, this.countTimers, this.lobbyTimers]) {
             const t = map.get(id);
             if (t) clearTimeout(t);
@@ -1297,6 +1501,7 @@ class TvPartyService {
                 if (!state || state.status !== 'playing' || !state.game) continue;
                 const g = state.game;
                 if (g.phase === 'starting') this._queue(row.id, () => this._prepareSet(row.id));
+                else if (g.phase === 'question' && g.raceFirstAt) this._arm(row.id, g.raceFirstAt + RACE_SETTLE_MS, () => this._reveal(row.id, 'won'));
                 else if (g.phase === 'question') this._arm(row.id, g.expiresAt + ANSWER_GRACE_MS, () => this._reveal(row.id, 'timeout'));
                 else if (g.phase === 'reveal') this._arm(row.id, g.nextAt || Date.now(), () => this._nextQuestion(row.id));
                 else if (g.phase === 'grading') this._queue(row.id, () => this._finish(row.id));
@@ -1337,3 +1542,8 @@ module.exports.REVEAL_PAUSE_MS = REVEAL_PAUSE_MS;
 module.exports.MAX_PLAYERS = MAX_PLAYERS;
 module.exports.MIN_FINISHERS = MIN_FINISHERS;
 module.exports.pointsFor = pointsFor;
+module.exports.STYLES = STYLES;
+module.exports.RACE_LOCK_MS = RACE_LOCK_MS;
+module.exports.RACE_SETTLE_MS = RACE_SETTLE_MS;
+module.exports.RACE_LAG_CAP_MS = RACE_LAG_CAP_MS;
+module.exports.RACE_TIE_MS = RACE_TIE_MS;

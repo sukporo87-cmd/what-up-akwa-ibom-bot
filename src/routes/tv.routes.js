@@ -243,6 +243,14 @@ router.post('/rooms/:id(\\d+)/categories', requireDeviceOrPlayer, async (req, re
     } catch (error) { return fail(res, 'categories', error); }
 });
 
+/** Standard or Race. Chosen in the lobby, on the TV (or by the host), like the categories. */
+router.post('/rooms/:id(\\d+)/style', requireDeviceOrPlayer, async (req, res) => {
+    try {
+        const actor = req.tvPlayerId ? { playerId: req.tvPlayerId } : { deviceId: req.tvDevice.id };
+        return reply(res, await party.setStyle(Number(req.params.id), actor, (req.body || {}).style));
+    } catch (error) { return fail(res, 'style', error); }
+});
+
 router.post('/rooms/:id(\\d+)/close', requireDeviceOrPlayer, async (req, res) => {
     try {
         const roomId = Number(req.params.id);
@@ -460,6 +468,12 @@ router.post('/rooms/:id(\\d+)/answer', requirePlayer, async (req, res) => {
         return reply(res, await party.answer(Number(req.params.id), req.tvPlayerId,
                                              parseInt(body.position, 10), body.choice));
     } catch (error) { return fail(res, 'answer', error); }
+});
+
+/** Race: the phone says a question has just arrived, so its delay can be measured. */
+router.post('/rooms/:id(\\d+)/seen', requirePlayer, async (req, res) => {
+    try { return reply(res, await party.seen(Number(req.params.id), req.tvPlayerId, parseInt((req.body || {}).position, 10))); }
+    catch (error) { return fail(res, 'seen', error); }
 });
 
 router.post('/rooms/:id(\\d+)/fifty', requirePlayer, async (req, res) => {

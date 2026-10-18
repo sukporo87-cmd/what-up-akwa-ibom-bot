@@ -169,6 +169,8 @@ var WHY = {
   profile_incomplete: 'Finish setting up your profile first, or play with a name.',
   host_taken: 'Someone else is already the host.',
   not_host: 'Only the host can do that.',
+  too_early: 'Not yet \u2014 wait for the buttons to open.',
+  not_in_race: 'There\u2019s no 50:50 in Race.',
   already_kept: 'Your account already has points from another phone in this game.',
   account_in_room: 'Your account played in this game already, so these points can\u2019t be added to it too.',
   already_signed_in: 'You played as your account, so your points are already on it.',
@@ -254,7 +256,11 @@ function connect(){
   on('player.room', function(d){ S.room = Object.assign({}, S.room, d); });
   on('player.question', function(d){
     S.game = Object.assign({}, S.game, { phase: 'question', position: d.position, total: d.total,
-      expiresAt: d.expiresAt, letters: d.letters, locked: null, fiftyFiftyAvailable: d.fiftyFiftyAvailable });
+      expiresAt: d.expiresAt, opensAt: d.opensAt || null, style: d.style || 'standard',
+      letters: d.letters, locked: null, fiftyFiftyAvailable: d.fiftyFiftyAvailable });
+    // Race: say at once that the question has arrived. The server times the
+    // round trip, so a slow connection is judged fairly. Nothing else is sent.
+    if (d.style === 'race') api('/tv/rooms/' + S.roomId + '/seen', { position: d.position });
     S.error = '';
   });
   on('player.locked', function(d){ if (S.game && S.game.position === d.position) S.game.locked = d.chosen; });
@@ -406,9 +412,15 @@ function pickerScreen(){
   return out;
 }
 
+// Race style (fastest finger first): one line in the lobby says how it works.
+function styleNote(r){
+  if (!r || r.style !== 'race') return null;
+  return h('p', { class: 'banner', text: 'Race: the first right answer takes each question. A wrong answer costs a point, so read before you tap.' });
+}
+
 function lobbyScreen(){
   var r = S.room || {};
-  var out = [ meBlock(), h('h1', { text: r.youAreHost ? 'You are the host' : 'You\u2019re in' }) ];
+  var out = [ meBlock(), h('h1', { text: r.youAreHost ? 'You are the host' : 'You\u2019re in' }), styleNote(r) ];
   if (r.youAreHost){
     var canStart = (r.playerCount || 0) >= 2 && r.categories && r.categories.length;
     out.push(h('div', { class: 'panel' }, [
@@ -453,14 +465,18 @@ function lobbyScreen(){
   return out;
 }
 
+function shut(g){ return !!(g && g.opensAt && now() < g.opensAt); }
+
 function questionScreen(){
   var g = S.game;
   var letters = g.letters || ['A','B','C','D'];
+  var closed = shut(g);
+  S.wasShut = closed;
   var grid = h('div', { class: 'answers' + (g.locked ? ' locked' : ''), role: 'group', 'aria-label': 'Answers' },
     ['A','B','C','D'].map(function(l){
       var gone = letters.indexOf(l) < 0;
       return h('button', { class: 'ans' + (gone ? ' gone' : '') + (g.locked === l ? ' chosen' : ''), 'data-l': l,
-        text: l, disabled: gone || !!g.locked, 'aria-label': 'Answer ' + l,
+        text: l, disabled: gone || !!g.locked || closed, 'aria-label': 'Answer ' + l,
         on: { click: function(){ answer(l); } } });
     }));
   var bar = h('i', { id: 'bar' });
@@ -470,8 +486,9 @@ function questionScreen(){
     h('div', { class: 'clock', 'aria-hidden': 'true' }, [ bar ]),
     grid
   ];
-  if (g.locked) out.push(h('p', { class: 'mute', text: 'Locked in. Watch the TV for the answer.' }));
-  else if (g.fiftyFiftyAvailable !== false && letters.length === 4)
+  if (closed) out.push(h('p', { class: 'mute', id: 'opens', text: 'Read the question on the TV\u2026' }));
+  else if (g.locked) out.push(h('p', { class: 'mute', text: g.style === 'race' ? 'Locked in. Watch the TV to see who got it.' : 'Locked in. Watch the TV for the answer.' }));
+  else if (g.style !== 'race' && g.fiftyFiftyAvailable !== false && letters.length === 4)
     out.push(h('button', { class: 'quiet', text: '50:50 — remove two wrong answers', on: { click: fifty } }));
   out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
   tick();
@@ -482,6 +499,9 @@ function tick(){
   clearInterval(S.clockT);
   var run = function(){
     var g = S.game; if (!g || g.phase !== 'question') return clearInterval(S.clockT);
+    if (S.wasShut && !shut(g)) return render();          // the buttons open now
+    var opens = document.getElementById('opens');
+    if (opens && shut(g)) opens.textContent = 'Read the question on the TV\u2026 ' + Math.ceil((g.opensAt - now()) / 1000);
     var left = Math.max(0, g.expiresAt - now());
     var bar = document.getElementById('bar'), secs = document.getElementById('secs');
     if (bar) bar.style.transform = 'scaleX(' + Math.min(1, left / 10000) + ')';
@@ -498,6 +518,7 @@ function tick(){
 
 function resultScreen(){
   var r = S.game.lastResult || {};
+  if (r.style === 'race') return raceResultScreen(r);
   return [
     meBlock(),
     h('div', { class: 'verdict ' + (r.correct ? 'right' : 'wrong'),
@@ -513,6 +534,26 @@ function resultScreen(){
   ];
 }
 
+function raceResultScreen(r){
+  var verdict = r.won ? 'You got it!' : (r.correct ? 'Right, but ' + (r.winnerName || 'someone') + ' was faster'
+              : (r.chosen ? 'Wrong' : 'Out of time'));
+  var change = r.change > 0 ? '+' + r.change : String(r.change || 0);
+  return [
+    meBlock(),
+    h('div', { class: 'verdict ' + (r.won ? 'right' : (r.chosen && !r.correct ? 'wrong' : '')), text: verdict }),
+    h('p', { class: 'mute', text: 'The answer was ' + (r.correctAnswer || '?') + (r.chosen ? '. You picked ' + r.chosen + '.' : '.') +
+                                  (!r.won && !r.correct && r.winnerName ? ' ' + r.winnerName + ' got it.' : '') }),
+    h('div', {}, [
+      h('div', { class: 'stat' }, [ h('span', { text: 'Race score this question' }), h('b', { text: change }) ]),
+      h('div', { class: 'stat' }, [ h('span', { text: 'Race score' }), h('b', { text: String(r.score ? r.score.s : 0) }) ]),
+      h('div', { class: 'stat' }, [ h('span', { text: 'TV points this question' }), h('b', { text: '+' + (r.points || 0) }) ]),
+      h('div', { class: 'stat' }, [ h('span', { text: 'Your place' }), h('b', { text: r.rank ? r.rank + ' of ' + r.of : '\u2014' }) ])
+    ]),
+    h('div', { class: 'spacer' }),
+    h('p', { class: 'mute small', text: (S.game.position || 0) < 15 ? 'Next question in a moment.' : 'That was the last question.' })
+  ];
+}
+
 function finishedScreen(){
   var f = S.game.final || {};
   var out = [ meBlock() ];
@@ -522,7 +563,11 @@ function finishedScreen(){
   } else {
     out.push(h('h1', { text: 'Game over' }));
   }
-  out.push(h('div', {}, [
+  out.push(h('div', {}, f.style === 'race' ? [
+    h('div', { class: 'stat' }, [ h('span', { text: 'Race score' }), h('b', { text: String(f.score || 0) }) ]),
+    h('div', { class: 'stat' }, [ h('span', { text: 'Questions taken' }), h('b', { text: String(f.taken || 0) }) ]),
+    h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
+  ] : [
     h('div', { class: 'stat' }, [ h('span', { text: 'Correct' }), h('b', { text: (f.correct || 0) + ' of 15' }) ]),
     h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
   ]));

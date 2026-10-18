@@ -27,8 +27,8 @@
 // can only ever resolve to the one player it was issued to.
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
-// 019-tv-solo.sql and 020-tv-signin.sql and are byte-identical to them; a test
-// checks they have not drifted.
+// 019-tv-solo.sql, 020-tv-signin.sql and 021-tv-race.sql and are
+// byte-identical to them; a test checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -65,9 +65,9 @@ class TvAuthService {
     async ensureSchema() {
         if (this._schemaReady) return;
         // 018 first (the tables), then 019 (Solo), which adds to tv_points,
-        // then 020 (signing in on a TV).
+        // then 020 (signing in on a TV), then 021 (Race style).
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
-                           ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -413,6 +413,14 @@ TvAuthService.SIGNIN_SCHEMA_STATEMENTS = Object.freeze([
     `CREATE INDEX IF NOT EXISTS idx_tv_points_party_player
     ON tv_points (tv_player_id)
     WHERE tv_player_id IS NOT NULL`
+]);
+
+TvAuthService.RACE_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_rooms ADD COLUMN IF NOT EXISTS style TEXT NOT NULL DEFAULT 'standard'
+    CHECK (style IN ('standard','race'))`,
+    `ALTER TABLE tv_answers ADD COLUMN IF NOT EXISTS won BOOLEAN`,
+    `ALTER TABLE tv_answers ADD COLUMN IF NOT EXISTS lag_ms SMALLINT
+    CHECK (lag_ms IS NULL OR lag_ms BETWEEN 0 AND 1000)`
 ]);
 
 module.exports = new TvAuthService();
