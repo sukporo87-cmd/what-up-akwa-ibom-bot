@@ -19,7 +19,8 @@
 //     as the ones switched off, so a category that becomes ready later is on
 //     by default, as categories are today. The Categories tile uses the same
 //     list.
-//   * solo.play_now_source — where Play Now's questions come from: the
+//   * solo.play_now_source — where Solo Mode's questions come from (Solo Mode was
+//     called Play Now before app 0.8.0): the
 //     Practice bank (the default), the Classic or Tournament bank, or a mix
 //     of Party categories. Classic and Tournament questions are also used in
 //     games played for cash, so the admin page warns before choosing them.
@@ -47,7 +48,7 @@ const NUMBERS = Object.freeze({
     },
     'solo.seconds_q1_5': {
         group: 'Solo clock', label: 'Questions 1 to 5', min: 5, max: 30, step: 1, def: 12, unit: 's',
-        help: 'Play Now and Categories rounds on the TV.'
+        help: 'Solo Mode and Categories rounds on the TV.'
     },
     'solo.seconds_q6_10': {
         group: 'Solo clock', label: 'Questions 6 to 10', min: 5, max: 30, step: 1, def: 11, unit: 's'
@@ -187,7 +188,7 @@ class TvSettingsService {
         return { ok: true, category: c, on: !!on };
     }
 
-    /** Where Play Now's questions come from. `ready` is the categories that can fill a round. */
+    /** Where Solo Mode's (Play Now's) questions come from. `ready` is the categories that can fill a round. */
     async setSource(bank, categories, ready, admin) {
         if (!BANKS[bank]) return { ok: false, error: 'Unknown question source' };
         let cats = [];

@@ -15,8 +15,9 @@
 //   * change a setting          tv-settings.service, within its limits
 //   * name a TV and keep notes  shown wherever the page names that TV
 //
-// A TV IS CALLED by the name an admin gave it, else the name the server gave
-// it (tv-identity.service), else its number. Its details pop-up shows what it
+// A TV IS CALLED by the name an admin gave it, else its own name (the one
+// its owner set in the TV's settings, when that says which TV it is), else
+// the name the server gave it (tv-identity.service), else its number. Its details pop-up shows what it
 // reports about itself and its approximate place, never its internet address.
 //
 // NOTHING HERE TOUCHES MONEY, A USER'S ACCOUNT, OR ANY NON-TV TABLE. It reads
@@ -39,7 +40,7 @@ class TvAdminService {
         const rooms = await pool.query(
             `SELECT r.id, r.join_code, r.status, r.style, r.close_reason, r.categories, r.max_players,
                     r.created_at, r.started_at, r.finished_at, r.result_counted,
-                    d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label,
+                    d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv_label,
                     (SELECT COUNT(*) FROM tv_players p WHERE p.tv_room_id = r.id AND p.removed_at IS NULL)::int AS players
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id
              WHERE r.status IN ('lobby','playing') OR r.created_at > NOW() - INTERVAL '${RECENT_HOURS} hours'
@@ -50,6 +51,7 @@ class TvAdminService {
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
                     d.tv_name, d.admin_name, d.approx_location,
                     d.details->>'manufacturer' AS maker, d.details->>'model' AS model, d.details->>'deviceName' AS own_name,
+                    d.details->>'ownName' AS own_label,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.created_at > NOW() - INTERVAL '7 days')::int AS rooms_7d,
                     (SELECT COUNT(*) FROM tv_solo_rounds s WHERE s.tv_device_id = d.id AND s.started_at > NOW() - INTERVAL '7 days')::int AS solo_7d
              FROM tv_devices d
@@ -57,7 +59,7 @@ class TvAdminService {
              LIMIT 200`
         );
         const sessions = await pool.query(
-            `SELECT s.id, s.tv_device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label, u.username, s.created_at, s.last_active_at
+            `SELECT s.id, s.tv_device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv_label, u.username, s.created_at, s.last_active_at
              FROM tv_sessions s
              JOIN tv_devices d ON d.id = s.tv_device_id
              JOIN users u ON u.id = s.user_id
@@ -83,7 +85,7 @@ class TvAdminService {
         await tvAuth.ensureSchema();
         const r = await pool.query(
             `SELECT r.id, r.join_code, r.status, r.style, r.close_reason, r.categories, r.created_at, r.started_at,
-                    r.finished_at, r.result_counted, COALESCE(d.admin_name, d.tv_name, d.label) AS tv_label
+                    r.finished_at, r.result_counted, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv_label
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id WHERE r.id = $1`,
             [roomId]
         );

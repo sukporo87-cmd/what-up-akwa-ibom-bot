@@ -8,7 +8,7 @@
   WUT TV admin. Live and recent Party rooms (close one), registered TVs (block
   one), who is signed in on a TV (sign them out), and the TV settings: the
   Party and Solo clocks, the Race values, the room limits, which Party
-  categories the TV offers, and where Play Now's questions come from.
+  categories the TV offers, and where Solo Mode's questions come from.
 
   Settings apply to NEW games only, within 15 seconds. A game takes its
   values when it starts and keeps them to the end.
@@ -179,7 +179,7 @@
     <button class="tab on" data-tab="activity">Rooms and TVs</button>
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="categories">Party categories</button>
-    <button class="tab" data-tab="playnow">Play Now questions</button>
+    <button class="tab" data-tab="playnow">Solo Mode questions</button>
   </div>
 
   <!-- ===== Rooms and TVs ===== -->
@@ -219,11 +219,11 @@
     </div>
   </section>
 
-  <!-- ===== Play Now ===== -->
+  <!-- ===== Solo Mode (was Play Now) ===== -->
   <section data-panel="playnow" hidden>
     <div class="card">
-      <h2>Where Play Now's questions come from</h2>
-      <div class="hint">Play Now on the TV home screen. The 15-question ladder and the clock stay the same; only the questions change. Applies to rounds started after the change. The Categories tile is not affected: it always plays the category picked.</div>
+      <h2>Where Solo Mode's questions come from</h2>
+      <div class="hint">Solo Mode on the TV home screen (called Play Now before app 0.8.0). The 15-question ladder and the clock stay the same; only the questions change. Applies to rounds started after the change. The Categories tile is not affected: it always plays the category picked.</div>
       <div id="playnow" class="src"><div class="loading">Loading…</div></div>
     </div>
   </section>
@@ -357,7 +357,11 @@ function renderSessions(rows) {
   }));
 }
 
-function tvName(d) { return d.admin_name || d.tv_name || ('TV #' + d.id); }
+// What the page calls a TV: your name for it, else its own name (when that
+// says which TV it is), else the name the server gave it.
+function ownLabel(d) { return d.own_label || (d.details && d.details.ownName) || null; }
+function screenName(d) { return ownLabel(d) || d.tv_name || null; }
+function tvName(d) { return d.admin_name || screenName(d) || ('TV #' + d.id); }
 function maker(d) {
   const m = [d.maker, d.model].filter(Boolean);
   // "Xiaomi MiTV-AXSO0", without saying Xiaomi twice when the model already does.
@@ -370,8 +374,7 @@ function renderDevices(rows) {
   if (!rows.length) { el.innerHTML = '<div class="empty">No TV has registered yet.</div>'; return; }
   el.innerHTML = '<table><thead><tr><th>TV</th><th>Model</th><th>Approximate place</th><th>App</th><th>Last seen</th><th class="num">Rooms 7d</th><th class="num">Solo 7d</th><th>Allowed</th></tr></thead><tbody>' +
     rows.map(d => '<tr><td><span class="tvname" data-tv="' + esc(d.id) + '">' + esc(tvName(d)) + '</span> <span class="dim">#' + esc(d.id) + '</span>' +
-      (d.admin_name && d.tv_name ? '<div class="dim">shows as ' + esc(d.tv_name) + '</div>' : '') +
-      (d.own_name ? '<div class="dim">its own name: ' + esc(d.own_name) + '</div>' : '') +
+      (d.admin_name && screenName(d) ? '<div class="dim">shows on screen as ' + esc(screenName(d)) + '</div>' : '') +
       (d.blocked ? '<div><span class="pill warn">Blocked</span> <span class="dim">' + esc(d.blocked_reason || '') + '</span></div>' : '') + '</td>' +
       '<td>' + (maker(d) ? esc(maker(d)) : '<span class="dim">not reported yet</span>') + '</td>' +
       '<td>' + (d.approx_location ? esc(d.approx_location) : '<span class="dim">—</span>') + '</td>' +
@@ -407,7 +410,7 @@ async function openTv(id) {
   const o = document.createElement('div');
   o.className = 'overlay';
   o.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><div>' +
-      '<h3>' + esc(tvName(d)) + '</h3><div class="sub">#' + esc(d.id) + (d.tv_name ? ' · shows on screen as <span class="pill name">' + esc(d.tv_name) + '</span>' : '') +
+      '<h3>' + esc(tvName(d)) + '</h3><div class="sub">#' + esc(d.id) + (screenName(d) ? ' · shows on screen as <span class="pill name">' + esc(screenName(d)) + '</span>' : '') +
       (d.blocked ? ' · <span class="pill warn">Blocked</span>' : '') + '</div></div><button class="x" aria-label="Close">×</button></div>' +
     '<div class="modal-body">' +
       (j.sameTv.length ? '<div class="samebox"><b>Probably the same TV, installed again:</b> ' +
@@ -418,13 +421,13 @@ async function openTv(id) {
           .map(([k, v]) => '<div class="mini"><b>' + esc(v) + '</b><span>' + esc(k) + '</span></div>').join('') + '</div>' +
       '<div class="facts">' +
         fact('Maker', x.manufacturer) + fact('Brand', x.brand && x.brand !== x.manufacturer ? x.brand : null) + fact('Model', x.model) +
-        fact('Its own name', x.deviceName) + fact('Android', x.androidVersion ? x.androidVersion + (x.sdk ? ' (API ' + x.sdk + ')' : '') : null) +
+        fact('Its own name', x.deviceName) + fact('Backup name', d.tv_name) + fact('Android', x.androidVersion ? x.androidVersion + (x.sdk ? ' (API ' + x.sdk + ')' : '') : null) +
         fact('Screen', x.screen) + fact('Platform', PLATFORM[d.platform] || d.platform) + fact('App', d.app_version) +
         fact('Approximate place', d.approx_location) + fact('First seen', when(d.first_seen)) + fact('Last seen', ago(d.last_seen)) +
         fact('Details reported', d.details_at ? when(d.details_at) : 'not yet: needs app 0.7.0') +
       '</div>' +
       '<div class="section-title">Your name and notes for this TV</div>' +
-      '<div class="field"><label for="tvAdminName">Name (shown on this page; the TV keeps showing ' + esc(d.tv_name || 'its own name') + ')</label>' +
+      '<div class="field"><label for="tvAdminName">Name (shown on this page; the TV keeps showing ' + esc(screenName(d) || 'its own name') + ')</label>' +
         '<input id="tvAdminName" maxlength="60" placeholder="e.g. Wuse 2, Chicken Republic lounge" value="' + esc(d.admin_name || '') + '"></div>' +
       '<div class="field"><label for="tvAdminNotes">Notes</label><textarea id="tvAdminNotes" maxlength="500" placeholder="Who runs it, contact, anything useful">' + esc(d.admin_notes || '') + '</textarea></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="tvSave">Save name and notes</button>' +
@@ -433,7 +436,7 @@ async function openTv(id) {
         '<tr><td class="mono">#' + esc(r.id) + '</td><td>' + (r.style === 'race' ? '<span class="pill race">Race</span>' : 'Standard') + '</td><td>' + esc(r.status) +
         '</td><td class="num">' + esc(r.players) + ' players</td><td class="dim">' + esc(when(r.created_at)) + '</td></tr>').join('') + '</tbody></table>' : '') +
       (j.recentSolo.length ? '<div class="section-title">Latest Solo rounds</div><table><tbody>' + j.recentSolo.map(r =>
-        '<tr><td class="mono">#' + esc(r.id) + '</td><td>' + esc(r.username || 'guest') + '</td><td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Play Now')) +
+        '<tr><td class="mono">#' + esc(r.id) + '</td><td>' + esc(r.username || 'guest') + '</td><td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Solo Mode')) +
         '</td><td class="num">reached ' + esc(r.reached) + ', ' + esc(r.points) + ' pts</td><td class="dim">' + esc(when(r.started_at)) + '</td></tr>').join('') + '</tbody></table>' : '') +
     '</div></div>';
   const close = () => { o.remove(); document.removeEventListener('keydown', onKey); };
@@ -461,7 +464,7 @@ document.addEventListener('click', e => {
   if (t && !t.closest('.overlay')) { e.preventDefault(); openTv(t.dataset.tv); }
 });
 
-// ---------- settings, categories, Play Now ----------
+// ---------- settings, categories, Solo Mode ----------
 let settings = null;
 
 async function loadSettings() {
@@ -532,7 +535,7 @@ function renderPlayNow() {
       (p.bank === 'categories' && p.categories.includes(c.category) ? 'checked' : '') + '> ' + esc(pretty(c.category)) + '</label>').join('')
       : '<span class="dim">No Party category is on offer yet.</span>') + '</div>' : '')).join('');
   html += '<div class="warnbox" id="cashWarn" hidden>Classic and Tournament questions are also asked in games played for cash. Showing them on a TV lets anyone watching learn them before they meet them in a paid game. Use them for in-house testing only, and switch back to Practice before TVs go into public places.</div>';
-  html += '<div class="dim" style="margin-bottom:10px">' + (p.updatedAt ? 'Last changed by ' + esc(p.updatedBy || 'admin') + ', ' + esc(when(p.updatedAt)) : 'Never changed: Play Now uses the Practice questions.') + '</div>';
+  html += '<div class="dim" style="margin-bottom:10px">' + (p.updatedAt ? 'Last changed by ' + esc(p.updatedBy || 'admin') + ', ' + esc(when(p.updatedAt)) : 'Never changed: Solo Mode uses the Practice questions.') + '</div>';
   html += '<button class="btn primary" id="saveSrc">Save</button>';
   el.innerHTML = html;
   const showWarn = () => {
@@ -546,7 +549,7 @@ function renderPlayNow() {
     const cats = [...el.querySelectorAll('#srcCats input:checked')].map(x => x.value);
     if ((bank === 'classic' || bank === 'tournament') && !confirm('Use questions that are also asked in cash games? Only for in-house testing.')) return;
     const j = await api('/play-now', { method: 'PUT', body: JSON.stringify({ bank, categories: cats }) });
-    toast(j && j.success ? 'Saved. New Play Now rounds use it within 15 seconds.' : (j && j.error) || 'Could not save', !!(j && j.success));
+    toast(j && j.success ? 'Saved. New Solo Mode rounds use it within 15 seconds.' : (j && j.error) || 'Could not save', !!(j && j.success));
     loadSettings();
   });
 }

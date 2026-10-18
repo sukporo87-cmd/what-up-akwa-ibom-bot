@@ -57,7 +57,7 @@ class TvAuditService {
             r = await pool.query(
                 `SELECT r.id, r.status, r.style, r.close_reason, r.categories, r.result_counted,
                         r.created_at, r.started_at, r.finished_at,
-                        d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv,
+                        d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv,
                         (SELECT COUNT(*) FROM tv_players p WHERE p.tv_room_id = r.id AND p.removed_at IS NULL)::int AS players,
                         (SELECT string_agg(COALESCE(u.username, p.display_name), ', ' ORDER BY p.final_rank NULLS LAST, p.id)
                            FROM tv_players p LEFT JOIN users u ON u.id = p.user_id
@@ -65,7 +65,7 @@ class TvAuditService {
                  FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id
                  WHERE r.started_at IS NOT NULL AND r.started_at >= $1 AND r.started_at < $2
                    AND ($3::text IS NULL
-                        OR COALESCE(d.admin_name, d.tv_name, '') ILIKE $3
+                        OR COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, '') ILIKE $3
                         OR EXISTS (SELECT 1 FROM tv_players p LEFT JOIN users u ON u.id = p.user_id
                                     WHERE p.tv_room_id = r.id AND (u.username ILIKE $3 OR p.display_name ILIKE $3)))
                  ORDER BY r.started_at DESC
@@ -76,25 +76,25 @@ class TvAuditService {
             r = await pool.query(
                 `SELECT s.id, s.status, s.end_reason, s.reached, s.correct, s.points, s.category, s.source,
                         s.fifty_used, s.skip_used, s.started_at, s.finished_at, u.username,
-                        d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv
+                        d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv
                  FROM tv_solo_rounds s
                  JOIN tv_devices d ON d.id = s.tv_device_id
                  LEFT JOIN users u ON u.id = s.user_id
                  WHERE s.started_at >= $1 AND s.started_at < $2
-                   AND ($3::text IS NULL OR u.username ILIKE $3 OR COALESCE(d.admin_name, d.tv_name, '') ILIKE $3)
+                   AND ($3::text IS NULL OR u.username ILIKE $3 OR COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, '') ILIKE $3)
                  ORDER BY s.started_at DESC
                  LIMIT $4 OFFSET $5`,
                 params
             );
         } else {
             r = await pool.query(
-                `SELECT s.id, u.username, d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv,
+                `SELECT s.id, u.username, d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv,
                         s.created_at, s.last_active_at, s.ended_at, s.end_reason
                  FROM tv_sessions s
                  JOIN users u ON u.id = s.user_id
                  JOIN tv_devices d ON d.id = s.tv_device_id
                  WHERE s.created_at >= $1 AND s.created_at < $2
-                   AND ($3::text IS NULL OR u.username ILIKE $3 OR COALESCE(d.admin_name, d.tv_name, '') ILIKE $3)
+                   AND ($3::text IS NULL OR u.username ILIKE $3 OR COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, '') ILIKE $3)
                  ORDER BY s.created_at DESC
                  LIMIT $4 OFFSET $5`,
                 params
@@ -120,7 +120,7 @@ class TvAuditService {
         const room = await pool.query(
             `SELECT r.id, r.status, r.style, r.close_reason, r.categories, r.result_counted, r.join_code,
                     r.created_at, r.started_at, r.finished_at,
-                    d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv, d.approx_location
+                    d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv, d.approx_location
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id WHERE r.id = $1`,
             [roomId]
         );
@@ -162,7 +162,7 @@ class TvAuditService {
         const r = await pool.query(
             `SELECT s.id, s.status, s.end_reason, s.reached, s.correct, s.points, s.category, s.source,
                     s.fifty_used, s.skip_used, s.question_ids, s.answers, s.started_at, s.finished_at,
-                    u.username, d.id AS device_id, COALESCE(d.admin_name, d.tv_name, d.label) AS tv, d.approx_location
+                    u.username, d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv, d.approx_location
              FROM tv_solo_rounds s
              JOIN tv_devices d ON d.id = s.tv_device_id
              LEFT JOIN users u ON u.id = s.user_id

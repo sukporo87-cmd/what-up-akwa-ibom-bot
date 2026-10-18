@@ -5,12 +5,17 @@
 // THREE WAYS A TV IS KNOWN:
 //   * what it reports about itself when the app starts: maker, brand, model,
 //     Android version, the name its owner gave it in the TV's own settings
-//     ("Living Room TV"), and the screen. Sent by the app, so only ever as
+//     ("The Ukporo's TV"), and the screen. Sent by the app, so only ever as
 //     good as the TV's answer; every field is cleaned and capped here.
-//   * a name this server gives it, unique, such as "Sunny Iroko 27". The app
-//     shows it small on the home screen, so whoever is standing at a TV can
-//     tell us which one it is.
+//   * a name this server gives it, unique, such as "Sunny Iroko 27": the
+//     fallback, for a TV whose own name says nothing ("Android TV", or just
+//     its model) or that reports none.
 //   * a name and notes an admin sets on the TV admin page.
+//
+// WHAT A TV IS CALLED. On the TV's home screen: its own name, else the
+// server's. On the admin page: the admin's name, else its own, else the
+// server's. Its own name is kept as details.ownName only when it says
+// something; the raw deviceName is kept too, for the details pop-up.
 //
 // THE PLACE IS APPROXIMATE. It comes from the TV's internet address, looked
 // up in src/data/tv-ng-ip-places.json: a Nigeria-only cut of DB-IP's free
@@ -40,6 +45,13 @@ const NAME_THINGS = Object.freeze([
     'Akara', 'Suya', 'Zobo', 'Kunu', 'Egret', 'Hornbill', 'Weaver', 'Kestrel', 'Falcon', 'Antelope'
 ]);
 const NAME_ATTEMPTS = 12;
+
+// Names TVs come with, which say nothing about which TV it is. Compared with
+// letters and digits only, in lower case.
+const GENERIC_NAMES = Object.freeze([
+    'androidtv', 'googletv', 'smarttv', 'tv', 'mytv', 'android', 'tvbox', 'androidtvbox', 'smartbox',
+    'mibox', 'mitv', 'firetv', 'chromecast', 'bravia', 'unknown'
+]);
 
 // ---- what a TV may report about itself ----
 // Strings only, each capped; anything not listed is dropped.
@@ -148,7 +160,25 @@ class TvIdentityService {
             const v = clean(raw[k], max);
             if (v) out[k] = v;
         }
+        const own = TvIdentityService.ownName(out);
+        if (own) out.ownName = own;
         return Object.keys(out).length ? out : null;
+    }
+
+    /**
+     * The TV's own name, if it says which TV this is. Not when it is one of
+     * the names TVs come with ("Android TV", "Smart TV"), or only repeats the
+     * maker or the model, which every TV of that kind shares.
+     */
+    static ownName(d) {
+        const name = d && d.deviceName ? String(d.deviceName).trim() : '';
+        if (!name) return null;
+        const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+        if (!key || GENERIC_NAMES.includes(key)) return null;
+        for (const f of ['model', 'brand', 'manufacturer', 'device', 'product']) {
+            if (d[f] && String(d[f]).toLowerCase().replace(/[^a-z0-9]+/g, '') === key) return null;
+        }
+        return name.slice(0, 40);
     }
 
     _newName() {
@@ -200,13 +230,21 @@ class TvIdentityService {
               WHERE id = $1`,
             [deviceId, d ? JSON.stringify(d) : null, version, addr, place]
         );
-        const tvName = await this.ensureName(deviceId);
-        return { ok: true, tvName };
+        const serverName = await this.ensureName(deviceId);
+        // What the TV shows: its own name when it says which TV this is,
+        // else the server's. If this report has no details, the ones stored
+        // earlier decide.
+        let own = d ? d.ownName || null : undefined;
+        if (own === undefined) {
+            const r = await pool.query(`SELECT details->>'ownName' AS own FROM tv_devices WHERE id = $1`, [deviceId]);
+            own = r.rows[0] ? r.rows[0].own : null;
+        }
+        return { ok: true, tvName: own || serverName, serverName };
     }
 
-    /** What the admin page calls a TV: the admin's name, else the server's, else its number. */
+    /** What the admin page calls a TV: the admin's name, else its own, else the server's, else its number. */
     static displayName(row) {
-        return (row && (row.admin_name || row.tv_name)) || `TV #${row && row.id}`;
+        return (row && (row.admin_name || (row.details && row.details.ownName) || row.tv_name)) || `TV #${row && row.id}`;
     }
 
     placesRelease() { return this._table().release; }
@@ -217,4 +255,5 @@ module.exports.TvIdentityService = TvIdentityService;
 module.exports.NAME_WORDS = NAME_WORDS;
 module.exports.NAME_THINGS = NAME_THINGS;
 module.exports.DETAIL_FIELDS = DETAIL_FIELDS;
+module.exports.GENERIC_NAMES = GENERIC_NAMES;
 module.exports.displayName = TvIdentityService.displayName;

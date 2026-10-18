@@ -1439,7 +1439,7 @@ function wutBadge(o){
     } else if (kind === 'solo') {
       head.innerHTML = '<tr><th>Round</th><th>TV</th><th>Player</th><th>Questions</th><th>Reached</th><th>Points</th><th>Ended</th><th>Started</th><th></th></tr>';
       rows.innerHTML = j.rows.length ? j.rows.map(r => '<tr><td>#' + esc(r.id) + '</td><td>' + esc(r.tv) + '</td><td>' + esc(r.username || 'guest') + '</td>' +
-        '<td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Play Now')) + '</td><td>' + esc(r.reached) + ' / 15</td><td>' + esc(r.points) + '</td>' +
+        '<td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Solo Mode')) + '</td><td>' + esc(r.reached) + ' / 15</td><td>' + esc(r.points) + '</td>' +
         '<td>' + (r.status === 'playing' ? badge('playing', 'active') : esc(ENDS[r.end_reason] || r.end_reason || '')) + '</td>' +
         '<td>' + esc(when(r.started_at)) + '</td><td><button class="btn btn-secondary" style="padding:6px 12px" onclick="tvAuditSolo(' + Number(r.id) + ')">View</button></td></tr>').join('')
         : '<tr><td colspan="9" style="opacity:.6">No Solo rounds found.</td></tr>';
@@ -1496,7 +1496,7 @@ function wutBadge(o){
     if (!j || !j.success) { alert((j && j.error) || 'Could not load the round'); return; }
     const r = j.round;
     let html = '<p style="opacity:.75;margin-bottom:14px">' + esc(r.tv) + (r.approx_location ? ' (' + esc(r.approx_location) + ')' : '') + ' · ' + esc(r.username || 'guest') +
-      ' · ' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Play Now')) + ' · reached ' + esc(r.reached) + ' of 15 · ' + esc(r.points) + ' points' +
+      ' · ' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Solo Mode')) + ' · reached ' + esc(r.reached) + ' of 15 · ' + esc(r.points) + ' points' +
       (r.end_reason ? ' · ' + esc(ENDS[r.end_reason] || r.end_reason) : '') + (r.fifty_used ? ' · used 50:50' : '') + (r.skip_used ? ' · used skip' : '') +
       ' · started ' + esc(when(r.started_at)) + '</p>';
     if (!j.recorded) html += '<p style="color:#f59e0b;margin-bottom:12px">This round was played before answers were recorded (before migration 023), so only the questions asked are shown.</p>';

@@ -80,6 +80,9 @@ const FIFTY_FIFTY_BONUS_MS = 5000;
 const ANSWER_GRACE_MS = 1500;
 const REVEAL_PAUSE_MS = 4000;
 const MIN_FINISHERS = 2;
+// 3, 2, 1, Go!: the first question appears this long after the host starts,
+// at the same moment on the TV and every phone (goAt, in server time).
+const COUNTDOWN_MS = 4000;
 
 // ---- Race style ----
 const STYLES = ['standard', 'race'];
@@ -125,6 +128,10 @@ const pointsFor = n => (n <= 5 ? 10 : n <= 10 ? 20 : 30);
 class TvPartyService {
 
     constructor() {
+        // The countdown's length. The test suites shorten it with
+        // WUT_TV_COUNTDOWN_MS; nothing sets that in production.
+        const cd = Number(process.env.WUT_TV_COUNTDOWN_MS);
+        this.countdownMs = Number.isFinite(cd) && cd >= 0 && cd <= 10000 ? cd : COUNTDOWN_MS;
         /** @type {Map<number, NodeJS.Timeout>} one game timer per room */
         this.timers = new Map();
         /** @type {Map<number, NodeJS.Timeout>} */
@@ -264,6 +271,7 @@ class TvPartyService {
                 total: QUESTIONS_PER_ROUND,
                 expiresAt: g.phase === 'question' ? g.expiresAt : null,
                 opensAt: g.phase === 'question' ? (g.opensAt || null) : null,
+                goAt: g.phase === 'starting' ? (g.goAt || null) : null,
                 // Question text and options only while it is being asked or
                 // revealed. Never the correct answer before the reveal.
                 question: (g.phase === 'question' || g.phase === 'reveal') ? g.question : null,
@@ -295,6 +303,8 @@ class TvPartyService {
                 style: state.style || 'standard',
                 playerCount: this._activeIds(state).length,
                 maxPlayers: state.maxPlayers,
+                // The countdown to the first question, for the phone to show.
+                ...(g && g.phase === 'starting' && g.goAt ? { goAt: g.goAt } : {}),
                 // While the room is open, each phone can change its avatar,
                 // so it is told which ones are already taken.
                 ...(state.status === 'lobby' ? {
@@ -913,7 +923,10 @@ class TvPartyService {
                     raceWrong: set['race.wrong_penalty']
                 },
                 phase: 'starting', position: 0, enrolled: players,
-                locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now()
+                locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now(),
+                // The countdown: everyone sees 3, 2, 1, Go! and the first
+                // question lands at goAt, whatever else happens meanwhile.
+                goAt: Date.now() + this.countdownMs
             };
             await pool.query(
                 `UPDATE tv_rooms SET status = 'playing', started_at = NOW(),
@@ -921,7 +934,7 @@ class TvPartyService {
                  WHERE id = $1 AND status = 'lobby'`,
                 [state.id]
             );
-            tx.tv('game.starting', { players: players.length, categories: state.categories, style: state.game.style });
+            tx.tv('game.starting', { players: players.length, categories: state.categories, style: state.game.style, goAt: state.game.goAt });
             for (const p of players) tx.player(p, 'player.room', this.playerSnapshot(state, p).room);
             return { ok: true, players: players.length };
         });
@@ -967,6 +980,15 @@ class TvPartyService {
                  ON CONFLICT (tv_room_id, position) DO NOTHING`,
                 params
             );
+        }
+        // The first question waits for the end of the countdown. Building the
+        // set happens during it, so it costs no extra time. A game started
+        // before the countdown existed has no goAt and goes straight on.
+        const now = await store.load(id);
+        const goAt = now && now.game && now.game.phase === 'starting' ? Number(now.game.goAt) || 0 : 0;
+        if (goAt > Date.now()) {
+            this._arm(id, goAt, () => this._nextQuestion(id));
+            return;
         }
         return this._nextQuestion(id);
     }
@@ -1593,3 +1615,4 @@ module.exports.RACE_LOCK_MS = RACE_LOCK_MS;
 module.exports.RACE_SETTLE_MS = RACE_SETTLE_MS;
 module.exports.RACE_LAG_CAP_MS = RACE_LAG_CAP_MS;
 module.exports.RACE_TIE_MS = RACE_TIE_MS;
+module.exports.COUNTDOWN_MS = COUNTDOWN_MS;

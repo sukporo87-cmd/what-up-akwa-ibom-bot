@@ -102,6 +102,13 @@ button:disabled{opacity:.45;cursor:default}
 .av.mine{border-color:var(--me);background:var(--raise)}
 .av:disabled{opacity:.25}
 .banner{background:var(--raise);border-radius:12px;padding:10px 14px;font-size:14px}
+
+/* 3, 2, 1, Go! — in step with the TV */
+.countdown{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+.countdown .n{font-family:var(--display);font-weight:800;font-size:clamp(120px,46vw,220px);line-height:.9;color:var(--me);
+  animation:pop .9s ease-out both}
+.countdown .n.go{color:var(--mint);font-size:clamp(84px,30vw,150px)}
+@keyframes pop{0%{transform:scale(.4);opacity:0}25%{transform:scale(1.08);opacity:1}100%{transform:scale(1);opacity:1}}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -516,6 +523,39 @@ function tick(){
   S.clockT = setInterval(run, 200);
 }
 
+// ---------- 3, 2, 1, Go! ----------
+// The server says when the first question lands (goAt, in its own time). The
+// phone counts down to it with the TV, buzzing on each number, so everyone
+// is looking up and ready, not only the host.
+function countdownStep(){
+  var goAt = S.room && S.room.goAt;
+  if (!goAt) return null;
+  var left = goAt - now();
+  if (left > 3000) return '3';
+  if (left > 2000) return '2';
+  if (left > 1000) return '1';
+  if (left > -1500) return 'Go!';
+  return null;
+}
+
+function countdownScreen(){
+  var step = countdownStep();
+  if (!S.cdT && step) S.cdT = setInterval(function(){
+    var now2 = countdownStep();
+    if (now2 !== S.cdShown){ render(); }
+    if (!now2 || (S.game && S.game.phase === 'question')){ clearInterval(S.cdT); S.cdT = null; }
+  }, 100);
+  if (step && step !== S.cdShown){
+    S.cdShown = step;
+    try { if (navigator.vibrate) navigator.vibrate(step === 'Go!' ? 220 : 60); } catch(e){}
+  }
+  if (!step) return [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }) ];
+  return [ meBlock(), h('div', { class: 'countdown' }, [
+    h('div', { class: 'n' + (step === 'Go!' ? ' go' : ''), text: step }),
+    h('p', { class: 'mute', text: step === 'Go!' ? 'Eyes on the TV!' : 'Get ready…' })
+  ]) ];
+}
+
 function resultScreen(){
   var r = S.game.lastResult || {};
   if (r.style === 'race') return raceResultScreen(r);
@@ -638,7 +678,7 @@ function render(){
     else if (g && g.phase === 'question') kids = questionScreen();
     else if (g && g.phase === 'reveal' && g.lastResult) kids = resultScreen();
     else if (S.picking && (!st || st === 'lobby')) kids = pickerScreen();
-    else if (st === 'playing') kids = [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }) ];
+    else if (st === 'playing') kids = countdownScreen();
     else kids = lobbyScreen();
   }
   // Do not rebuild under a thumb that is typing.
