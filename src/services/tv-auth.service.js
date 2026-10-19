@@ -28,8 +28,8 @@
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
 // 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
-// 023-tv-identity.sql and 024-tv-venue.sql and are byte-identical to them; a
-// test checks they have not drifted.
+// 023-tv-identity.sql, 024-tv-venue.sql and 025-tv-prizes.sql and are
+// byte-identical to them; a test checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -68,11 +68,11 @@ class TvAuthService {
         // 018 first (the tables), then 019 (Solo), which adds to tv_points,
         // then 020 (signing in on a TV), then 021 (Race style), then 022 (the
         // admin page's settings), then 023 (which TV is which, Solo answers),
-        // then 024 (venue TVs).
+        // then 024 (venue TVs), then 025 (prizes and payouts).
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
-                           ...TvAuthService.VENUE_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -461,6 +461,67 @@ TvAuthService.IDENTITY_SCHEMA_STATEMENTS = Object.freeze([
 TvAuthService.VENUE_SCHEMA_STATEMENTS = Object.freeze([
     `ALTER TABLE tv_devices
     ADD COLUMN IF NOT EXISTS venue BOOLEAN NOT NULL DEFAULT false`
+]);
+
+TvAuthService.PRIZE_SCHEMA_STATEMENTS = Object.freeze([
+    `CREATE TABLE IF NOT EXISTS tv_prizes (
+    id                  SERIAL PRIMARY KEY,
+    tv_room_id          INTEGER NOT NULL REFERENCES tv_rooms(id),
+    sponsor_user_id     INTEGER NOT NULL REFERENCES users(id),
+    sponsor_player_id   INTEGER REFERENCES tv_players(id),
+    seats               SMALLINT NOT NULL CHECK (seats BETWEEN 2 AND 20),
+    prize_amount        INTEGER NOT NULL CHECK (prize_amount > 0),
+    setup_charge        INTEGER NOT NULL CHECK (setup_charge >= 0),
+    prize_fee           INTEGER NOT NULL CHECK (prize_fee >= 0),
+    total_charged       INTEGER NOT NULL,
+    gateway             TEXT,
+    payment_reference   TEXT NOT NULL UNIQUE,
+    paid_amount         NUMERIC(12,2),
+    status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+                            'pending','settled','awarded','refunded','cancelled','failed'
+                        )),
+    outcome_reason      TEXT,
+    retained_amount     INTEGER CHECK (retained_amount IS NULL OR retained_amount >= 0),
+    winner_user_id      INTEGER REFERENCES users(id),
+    winner_player_id    INTEGER REFERENCES tv_players(id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    settled_at          TIMESTAMPTZ,
+    resolved_at         TIMESTAMPTZ,
+    CONSTRAINT tv_prizes_total CHECK (total_charged = prize_amount + setup_charge + prize_fee)
+)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_prizes_one_live_per_room
+    ON tv_prizes (tv_room_id)
+    WHERE status IN ('pending','settled')`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_prizes_status
+    ON tv_prizes (status, created_at)`,
+    `CREATE TABLE IF NOT EXISTS tv_payouts (
+    id                  SERIAL PRIMARY KEY,
+    tv_prize_id         INTEGER NOT NULL REFERENCES tv_prizes(id),
+    kind                TEXT NOT NULL CHECK (kind IN ('prize','refund')),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    amount              INTEGER NOT NULL CHECK (amount > 0),
+    status              TEXT NOT NULL DEFAULT 'awaiting_details' CHECK (status IN (
+                            'awaiting_details','ready','held','sending','paid','failed','cancelled'
+                        )),
+    hold_reason         TEXT CHECK (hold_reason IS NULL OR char_length(hold_reason) <= 200),
+    bank_name           TEXT,
+    bank_code           TEXT,
+    account_number      TEXT CHECK (account_number IS NULL OR account_number ~ '^[0-9]{10}$'),
+    account_name        TEXT,
+    details_verified    BOOLEAN NOT NULL DEFAULT false,
+    details_at          TIMESTAMPTZ,
+    transfer_reference  TEXT,
+    paid_at             TIMESTAMPTZ,
+    paid_reference      TEXT,
+    paid_by             TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT tv_payouts_one_per_kind UNIQUE (tv_prize_id, kind)
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_payouts_user
+    ON tv_payouts (user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_payouts_open
+    ON tv_payouts (status, created_at)
+    WHERE status IN ('awaiting_details','ready','held','sending','failed')`
 ]);
 
 module.exports = new TvAuthService();

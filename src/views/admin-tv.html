@@ -11,6 +11,8 @@
   categories the TV offers, and where Solo Mode's questions come from.
   Batch 3: venue TVs (a switch in each TV's details), when the attract
   screen comes on, and the newest app version, which tells older TVs to update.
+  Phase 5: the Prizes tab (Super Admin and Finance Officer only): prizes on
+  Party games, the queue of what WUT TV owes, and switching prizes on or off.
 
   Settings apply to NEW games only, within 15 seconds. A game takes its
   values when it starts and keeps them to the end.
@@ -192,6 +194,7 @@
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="categories">Party categories</button>
     <button class="tab" data-tab="playnow">Solo Mode questions</button>
+    <button class="tab" data-tab="prizes">Prizes</button>
   </div>
 
   <!-- ===== Rooms and TVs ===== -->
@@ -244,6 +247,25 @@
       <div id="playnow" class="src"><div class="loading">Loading…</div></div>
     </div>
   </section>
+  <!-- ===== Prizes (phase 5): finance roles only ===== -->
+  <section data-panel="prizes" hidden>
+    <div class="stats" id="prizeStats"></div>
+    <div class="card">
+      <h2>Prizes on or off</h2>
+      <div class="hint">When on, a Party host playing as their account can put up a prize from their phone and pay for it before the game, at the Challenge price list's setup charge for the seats, plus its fee. Only signed-in players can win. <b>Get regulatory advice before switching prizes on for TVs in public places.</b></div>
+      <div id="prizeConfig"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>What WUT TV owes</h2>
+      <div class="hint">Winners, and hosts whose prize came back. A payout is <b>ready</b> once its bank details have been checked with the bank. Send the money from the bank, then <b>Mark paid</b> with the transfer's reference. <b>Hold</b> stops one from being paid until you release it. This queue is separate from Classic and Challenge payouts, so it can be made automatic later.</div>
+      <div class="scroll" id="payoutQueue"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Prizes</h2>
+      <div class="hint">The last 100. <b>Check payment</b> asks the payment gateway again about one still waiting.</div>
+      <div class="scroll" id="prizeList"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
   <div class="credit">Approximate places: <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a></div>
 </div>
 
@@ -291,7 +313,8 @@ function pretty(c) { return String(c || '').replace(/_/g, ' ').replace(/\b\w/g, 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-  if (b.dataset.tab !== 'activity') loadSettings();
+  if (b.dataset.tab === 'prizes') loadPrizes();
+  else if (b.dataset.tab !== 'activity') loadSettings();
 }));
 
 // ---------- rooms, sign-ins, TVs ----------
@@ -610,6 +633,111 @@ function renderPlayNow() {
     toast(j && j.success ? 'Saved. New Solo Mode rounds use it within 15 seconds.' : (j && j.error) || 'Could not save', !!(j && j.success));
     loadSettings();
   });
+}
+
+// ---------- prizes (phase 5) ----------
+const PAYOUT = { awaiting_details: ['Waiting for bank details', 'lobby'], ready: ['Ready to pay', 'live'], held: ['Held', 'warn'],
+                 sending: ['Being sent', 'live'], paid: ['Paid', 'done'], failed: ['Failed', 'race'], cancelled: ['Cancelled', 'done'] };
+const PRIZE = { pending: ['Waiting for payment', 'lobby'], settled: ['Paid, game to play', 'live'], awarded: ['Won', 'done'],
+                refunded: ['Refunded', 'warn'], cancelled: ['Taken off', 'done'], failed: ['Not paid', 'done'] };
+const OUTCOME = { won: 'won', not_played: 'game never started', ended_before_a_result: 'ended before any question was answered', too_few_signed_in: 'fewer than two signed-in finishers',
+                  room_closed_before_payment: 'room closed before payment, all refunded', paid_after_cancel: 'paid after taken off, all refunded',
+                  cancelled_by_host: 'taken off by the host', payment_not_completed: 'payment never completed', payment_not_started: 'payment page did not open' };
+const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
+
+async function loadPrizes() {
+  const j = await api('/prizes');
+  if (!j || !j.success) {
+    const msg = '<div class="empty">' + esc((j && j.error) || 'Could not load prizes') + '</div>';
+    ['prizeConfig', 'payoutQueue', 'prizeList'].forEach(id => { document.getElementById(id).innerHTML = msg; });
+    document.getElementById('prizeStats').innerHTML = '';
+    return;
+  }
+  const m = j.summary;
+  document.getElementById('prizeStats').innerHTML = [
+    [naira(m.revenue), 'Kept: setup charges and fees'], [naira(m.prize_collected), 'Prizes paid in by hosts'],
+    [naira(m.owed), m.owed_count + ' payout(s) owed now'], [naira(m.paid_out), m.paid_count + ' paid out']
+  ].map(([b, t]) => '<div class="stat"><b>' + esc(b) + '</b><span>' + esc(t) + '</span></div>').join('');
+
+  const c = j.config;
+  document.getElementById('prizeConfig').innerHTML =
+    '<div class="set"><div><div class="lbl">Prizes</div><div class="help">' + (c.on ? 'On: hosts can add prizes.' : 'Off: no host can add a prize. Prizes already paid still play out.') + '</div></div>' +
+      '<div class="ctl"><label class="sw"><input type="checkbox" id="prizesOn" ' + (c.on ? 'checked' : '') + '><span class="track"></span></label></div></div>' +
+    '<div class="set"><div><div class="lbl">Smallest and largest prize</div><div class="help">In naira. Between ₦100 and ₦1,000,000.</div></div>' +
+      '<div class="ctl"><input type="number" id="prizeMin" min="100" step="100" value="' + esc(c.min) + '"><span class="unit">to</span>' +
+      '<input type="number" id="prizeMax" min="100" step="100" value="' + esc(c.max) + '"><button class="btn primary" id="prizeLimits">Save</button></div></div>';
+  document.getElementById('prizesOn').addEventListener('change', async e => {
+    const on = e.target.checked;
+    if (on && !confirm('Switch prizes on? Hosts will be able to take payments for prizes.')) { e.target.checked = false; return; }
+    const r = await api('/prizes/config', { method: 'PUT', body: JSON.stringify({ on }) });
+    toast(r && r.success ? (on ? 'Prizes are on' : 'Prizes are off') : (r && r.error) || 'Could not change it', !!(r && r.success));
+    loadPrizes();
+  });
+  document.getElementById('prizeLimits').addEventListener('click', async () => {
+    const r = await api('/prizes/config', { method: 'PUT', body: JSON.stringify({
+      min: Number(document.getElementById('prizeMin').value), max: Number(document.getElementById('prizeMax').value) }) });
+    toast(r && r.success ? 'Saved' : (r && r.error) || 'Could not save', !!(r && r.success));
+    loadPrizes();
+  });
+
+  const q = document.getElementById('payoutQueue');
+  q.innerHTML = !j.payouts.length ? '<div class="empty">Nothing owed yet.</div>' :
+    '<table><thead><tr><th>#</th><th>To</th><th>For</th><th class="num">Amount</th><th>Bank details</th><th>Status</th><th>Since</th><th></th></tr></thead><tbody>' +
+    j.payouts.map(x => {
+      const st = PAYOUT[x.status] || [x.status, 'done'];
+      const bank = x.account_number ? esc(x.bank_name || '') + ' <span class="mono">' + esc(x.account_number) + '</span><div class="dim">' + esc(x.account_name || '') +
+        (x.details_verified ? ' · checked with the bank' : ' · not checked') + '</div>' : '<span class="dim">none yet</span>';
+      const acts = [];
+      if (['ready', 'failed'].includes(x.status)) acts.push('<button class="btn primary" data-paid="' + esc(x.id) + '">Mark paid</button>');
+      if (['awaiting_details', 'ready', 'failed'].includes(x.status)) acts.push('<button class="btn danger" data-hold="' + esc(x.id) + '">Hold</button>');
+      if (x.status === 'held') acts.push('<button class="btn" data-release="' + esc(x.id) + '">Release</button>');
+      return '<tr><td class="mono">' + esc(x.id) + '</td><td><b>' + esc(x.username) + '</b></td>' +
+        '<td>' + (x.kind === 'refund' ? 'Refund' : 'Prize') + ' <span class="dim">room #' + esc(x.tv_room_id) + '</span></td>' +
+        '<td class="num"><b>' + esc(naira(x.amount)) + '</b></td><td>' + bank + '</td>' +
+        '<td><span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + (x.hold_reason ? '<div class="dim">' + esc(x.hold_reason) + '</div>' : '') +
+          (x.paid_reference ? '<div class="dim">ref ' + esc(x.paid_reference) + ' by ' + esc(x.paid_by || '') + '</div>' : '') + '</td>' +
+        '<td class="dim">' + esc(when(x.paid_at || x.created_at)) + '</td><td>' + acts.join(' ') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  q.querySelectorAll('[data-paid]').forEach(b => b.addEventListener('click', async () => {
+    const ref = prompt('Transfer reference for payout #' + b.dataset.paid + ' (from your bank):', '');
+    if (ref === null) return;
+    const r = await api('/payouts/' + encodeURIComponent(b.dataset.paid) + '/paid', { method: 'POST', body: JSON.stringify({ reference: ref }) });
+    toast(r && r.success ? 'Marked paid' : (r && r.error) || 'Could not mark it paid', !!(r && r.success));
+    loadPrizes();
+  }));
+  q.querySelectorAll('[data-hold]').forEach(b => b.addEventListener('click', async () => {
+    const why = prompt('Why hold payout #' + b.dataset.hold + '? (shown here only)', '');
+    if (why === null) return;
+    const r = await api('/payouts/' + encodeURIComponent(b.dataset.hold) + '/hold', { method: 'POST', body: JSON.stringify({ reason: why }) });
+    toast(r && r.success ? 'Held' : (r && r.error) || 'Could not hold it', !!(r && r.success));
+    loadPrizes();
+  }));
+  q.querySelectorAll('[data-release]').forEach(b => b.addEventListener('click', async () => {
+    const r = await api('/payouts/' + encodeURIComponent(b.dataset.release) + '/release', { method: 'POST', body: '{}' });
+    toast(r && r.success ? 'Released' : (r && r.error) || 'Could not release it', !!(r && r.success));
+    loadPrizes();
+  }));
+
+  const l = document.getElementById('prizeList');
+  l.innerHTML = !j.prizes.length ? '<div class="empty">No prize has been added yet.</div>' :
+    '<table><thead><tr><th>Room</th><th>Host</th><th class="num">Prize</th><th class="num">Charged</th><th class="num">Kept</th><th>Status</th><th>Winner</th><th>Added</th><th></th></tr></thead><tbody>' +
+    j.prizes.map(x => {
+      const st = PRIZE[x.status] || [x.status, 'done'];
+      return '<tr><td class="mono">#' + esc(x.tv_room_id) + '</td><td>' + esc(x.sponsor) + '</td>' +
+        '<td class="num"><b>' + esc(naira(x.prize_amount)) + '</b><div class="dim">' + esc(x.seats) + ' seats</div></td>' +
+        '<td class="num">' + esc(naira(x.total_charged)) + '<div class="dim">' + esc(naira(x.setup_charge)) + ' + ' + esc(naira(x.prize_fee)) + ' fee</div></td>' +
+        '<td class="num">' + (x.retained_amount == null ? (['settled'].includes(x.status) ? esc(naira(x.setup_charge + x.prize_fee)) : '—') : esc(naira(x.retained_amount))) + '</td>' +
+        '<td><span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + (x.outcome_reason && OUTCOME[x.outcome_reason] && x.status !== 'awarded' ? '<div class="dim">' + esc(OUTCOME[x.outcome_reason]) + '</div>' : '') + '</td>' +
+        '<td>' + (x.winner ? '<b>' + esc(x.winner) + '</b>' : '<span class="dim">—</span>') + '</td>' +
+        '<td class="dim">' + esc(when(x.created_at)) + '<div class="mono">' + esc(x.payment_reference) + '</div></td>' +
+        '<td>' + (x.status === 'pending' ? '<button class="btn" data-check="' + esc(x.id) + '">Check payment</button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  l.querySelectorAll('[data-check]').forEach(b => b.addEventListener('click', async () => {
+    const r = await api('/prizes/' + encodeURIComponent(b.dataset.check) + '/check', { method: 'POST', body: '{}' });
+    const said = { settled: 'Paid: the prize is on', already: 'Already settled', refunded: 'Paid, and refunded in full', not_paid: 'Not paid yet', short_payment: 'Paid short: check it in the gateway' };
+    toast(r && r.success ? (said[r.result] || r.result) : (r && r.error) || 'Could not check', !!(r && r.success));
+    loadPrizes();
+  }));
 }
 
 loadOverview();

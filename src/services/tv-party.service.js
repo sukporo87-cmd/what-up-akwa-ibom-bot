@@ -59,7 +59,11 @@
 // when it opens. The Party categories an admin switches off are left out of
 // the list the TV offers.
 //
-// NO MONEY IN HERE. Sponsored prizes arrive in phase 5.
+// PRIZES (phase 5) live in tv-prize.service. This engine only carries the
+// prize on the room for the screens, refuses to start while its payment is
+// still out, writes the places of a prize game that is ended early (so the
+// leader can be paid), and asks tv-prize to settle the prize once a room has
+// ended. It never decides who is paid.
 // ============================================
 
 const pool = require('../config/database');
@@ -262,7 +266,8 @@ class TvPartyService {
                 style: state.style || 'standard',
                 maxPlayers: state.maxPlayers,
                 playerCount: this._activeIds(state).length,
-                players: this._roster(state)
+                players: this._roster(state),
+                prize: state.prize || null
             },
             game: g ? {
                 style: g.style || 'standard',
@@ -303,6 +308,7 @@ class TvPartyService {
                 style: state.style || 'standard',
                 playerCount: this._activeIds(state).length,
                 maxPlayers: state.maxPlayers,
+                prize: state.prize || null,
                 // The countdown to the first question, for the phone to show.
                 ...(g && g.phase === 'starting' && g.goAt ? { goAt: g.goAt } : {}),
                 // While the room is open, each phone can change its avatar,
@@ -464,6 +470,8 @@ class TvPartyService {
         if (room.status === 'playing') {
             await this._closeInDb(roomId, 'state_lost');
             logger.error(`TV room ${roomId}: live state lost mid-game — closed`);
+            // No places can be written honestly: a paid prize goes back.
+            this._settlePrize(roomId);
             return null;
         }
 
@@ -499,6 +507,13 @@ class TvPartyService {
             };
             rebuilt.order.push(p.id);
         }
+        // The room's prize, if one has been added and not taken off.
+        try {
+            const pr = await pool.query(
+                `SELECT * FROM tv_prizes WHERE tv_room_id = $1 AND status IN ('pending','settled')`, [roomId]
+            );
+            if (pr.rows[0]) rebuilt.prize = require('./tv-prize.service').view(pr.rows[0]);
+        } catch (e) { logger.error(`TV room ${roomId}: prize not read on rebuild — ${e.message}`); }
         // rev restarts above anything a screen could have seen: the old
         // numbers are gone with the old log, so every reconnect gets a snapshot.
         rebuilt.rev = Date.now();
@@ -517,13 +532,24 @@ class TvPartyService {
 
     async closeRoom(roomId, reason) {
         const id = Number(roomId);
+        let hadPrize = false;
         const out = await store.withRoom(id, async (state, tx) => {
             if (!state) {
                 await this._closeInDb(id, reason);
+                hadPrize = true; // unknown without the state: let tv-prize look
                 return { ok: true };
             }
             if (state.status === 'closed' || state.status === 'finished') return { ok: true, already: true };
 
+            // A prize game ended after it started: its places are written as
+            // they stand, so the prize goes to whoever is ahead rather than
+            // back to the host (tv-prize.resolveRoom).
+            const g = state.game;
+            if (state.status === 'playing' && g && state.prize && state.prize.status === 'settled') {
+                const revealed = g.phase === 'reveal' ? g.position : Math.max(0, (g.position || 0) - 1);
+                if (revealed >= 1) await this._writePlaces(await this._board(state));
+            }
+            hadPrize = !!(state.prize && state.prize.status === 'settled');
             state.status = 'closed';
             state.closeReason = reason;
             if (state.game) state.game.phase = 'closed';
@@ -535,8 +561,65 @@ class TvPartyService {
             return { ok: true };
         });
         this._clearTimers(id);
+        if (hadPrize) this._settlePrize(id);
         logger.info(`📺 TV room ${id} closed (${reason})`);
         return out;
+    }
+
+    /** Asks tv-prize to settle a room's prize, outside the room's queue. */
+    _settlePrize(roomId) {
+        this._queue(roomId, () => require('./tv-prize.service').resolveRoom(roomId));
+    }
+
+    async _writePlaces(board) {
+        if (!board.length) return;
+        const values = board.map((b, i) => `($${i * 4 + 1}::int, $${i * 4 + 2}::smallint, $${i * 4 + 3}::int, $${i * 4 + 4}::smallint)`).join(', ');
+        const params = [];
+        for (const b of board) params.push(b.id, b.c, b.t, b.rank);
+        await pool.query(
+            `UPDATE tv_players p SET final_correct = v.c, final_total_ms = v.t, final_rank = v.r
+             FROM (VALUES ${values}) AS v(id, c, t, r) WHERE p.id = v.id`,
+            params
+        );
+    }
+
+    /**
+     * A guest in the lobby switches to the account signed in on their phone
+     * (phase 5: only signed-in players can win a prize). Same player, same
+     * avatar; the name becomes the username.
+     */
+    async useAccount(roomId, pid, account) {
+        return store.withRoom(roomId, async (state, tx) => {
+            if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+            const me = state.players[pid];
+            if (!this._active(me)) return { ok: false, reason: 'not_in_room' };
+            if (me.userId === account.id) return { ok: true, already: true, player: this._publicPlayer(state, pid) };
+            if (me.userId) return { ok: false, reason: 'already_signed_in' };
+            if (Object.values(state.players).some(x => x.userId === account.id && !x.removedAt)) {
+                return { ok: false, reason: 'account_in_room' };
+            }
+            let name = tvNames.accountName(account.username);
+            const takenKeys = Object.values(state.players).filter(x => x.id !== pid).map(x => x.key);
+            if (takenKeys.includes(tvNames.nameKey(name))) name = tvNames.numberedName(name, takenKeys);
+            if (!name) return { ok: false, reason: 'name_taken' };
+            try {
+                await pool.query(
+                    `UPDATE tv_players SET user_id = $2, display_name = $3, name_key = $4 WHERE id = $1`,
+                    [pid, account.id, name, tvNames.nameKey(name)]
+                );
+            } catch (e) {
+                if (e.code === '23505') return { ok: false, reason: 'account_in_room' };
+                throw e;
+            }
+            me.userId = account.id;
+            me.name = name;
+            me.key = tvNames.nameKey(name);
+            tx.dirty = true;
+            tx.tv('room.player_updated', { player: this._publicPlayer(state, pid) });
+            tx.player(pid, 'player.snapshot', this.playerSnapshot(state, pid));
+            this._scheduleLobbyUpdate(state.id);
+            return { ok: true, player: this._publicPlayer(state, pid) };
+        });
     }
 
     // ============================================
@@ -987,6 +1070,8 @@ class TvPartyService {
             if (state.status !== 'lobby') return { ok: false, reason: 'already_started' };
             if (state.hostPlayerId !== pid) return { ok: false, reason: 'not_host' };
             if (!state.categories || !state.categories.length) return { ok: false, reason: 'no_categories' };
+            // A prize whose payment has not cleared: not until it has.
+            if (state.prize && state.prize.status === 'pending') return { ok: false, reason: 'prize_pending' };
             const players = this._activeIds(state);
             if (players.length < MIN_PLAYERS_TO_START) return { ok: false, reason: 'not_enough_players' };
 
@@ -1536,6 +1621,7 @@ class TvPartyService {
 
     async _finish(roomId) {
         const id = Number(roomId);
+        let prizeToSettle = false;
         try {
             await store.withRoom(id, async (state, tx) => {
                 if (!state || state.status !== 'playing' || !state.game) return;
@@ -1555,16 +1641,8 @@ class TvPartyService {
                 );
                 const pointsBy = new Map(pts.rows.map(x => [Number(x.id), Number(x.points)]));
 
-                if (board.length) {
-                    const values = board.map((b, i) => `($${i * 4 + 1}::int, $${i * 4 + 2}::smallint, $${i * 4 + 3}::int, $${i * 4 + 4}::smallint)`).join(', ');
-                    const params = [];
-                    for (const b of board) params.push(b.id, b.c, b.t, b.rank);
-                    await pool.query(
-                        `UPDATE tv_players p SET final_correct = v.c, final_total_ms = v.t, final_rank = v.r
-                         FROM (VALUES ${values}) AS v(id, c, t, r) WHERE p.id = v.id`,
-                        params
-                    );
-                }
+                await this._writePlaces(board);
+                if (state.prize && state.prize.status === 'settled') prizeToSettle = true;
                 await pool.query(
                     `UPDATE tv_rooms SET status = 'finished', finished_at = NOW(), result_counted = $2
                      WHERE id = $1`,
@@ -1596,6 +1674,7 @@ class TvPartyService {
             await this.closeRoom(id, 'state_lost').catch(() => {});
         }
         this._clearTimers(id);
+        if (prizeToSettle) this._settlePrize(id);
     }
 
     // ============================================
@@ -1675,7 +1754,10 @@ class TvPartyService {
 
     startSweep() {
         if (this._sweep) return;
-        const run = () => this.sweepExpired().catch(e => logger.error('TV sweep failed:', e.message));
+        const run = () => {
+            this.sweepExpired().catch(e => logger.error('TV sweep failed:', e.message));
+            require('./tv-prize.service').sweep().catch(e => logger.error('TV prize sweep failed:', e.message));
+        };
         run();
         this._sweep = setInterval(run, SWEEP_MS);
         if (this._sweep.unref) this._sweep.unref();

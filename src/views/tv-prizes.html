@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16121f">
+<meta name="robots" content="noindex">
+<title>Your WUT TV prizes — What's Up Trivia</title>
+<link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  WUT TV, phase 5: where a winner of a TV prize, or a host whose prize came
+  back, says where to send the money. Served at /tv/prizes. The signed-in web
+  account decides whose payouts are shown; the account name comes from the
+  bank, never from what is typed. Every value goes on the page as text.
+-->
+<style>
+:root{
+  --night:#16121f; --slate:#241d33; --raise:#2e2540; --line:#3b3150;
+  --brass:#e8b64c; --mint:#35d39a; --ember:#ff6b5b; --paper:#f2eee9; --mute:#9b8fb0;
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --body:'Inter',system-ui,-apple-system,sans-serif;
+  --pad:clamp(16px,5vw,28px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);font-size:16px;line-height:1.45;
+  min-height:100dvh;border-top:6px solid var(--brass)}
+main{padding:var(--pad);padding-bottom:calc(var(--pad) + env(safe-area-inset-bottom));max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2{font-family:var(--display);font-weight:800;margin:0;line-height:1.1}
+h1{font-size:clamp(28px,8vw,36px)}
+h2{font-size:22px}
+p{margin:0}
+.mute{color:var(--mute)}
+.small{font-size:14px}
+.card{background:var(--slate);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.amount{font-family:var(--display);font-weight:800;font-size:34px;color:var(--brass)}
+.tag{display:inline-block;font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--raise)}
+.tag.ok{color:var(--mint)}.tag.wait{color:var(--brass)}.tag.bad{color:var(--ember)}
+label{display:block;font-weight:600;margin-bottom:6px}
+input,select{width:100%;font:inherit;font-size:18px;padding:12px 14px;border-radius:14px;border:2px solid var(--line);background:var(--night);color:var(--paper)}
+input:focus,select:focus{outline:none;border-color:var(--brass)}
+button{font:inherit;font-weight:600;border:0;border-radius:14px;padding:15px 18px;cursor:pointer;background:var(--raise);color:var(--paper);width:100%;min-height:52px}
+button.go{background:var(--brass);color:var(--night)}
+button:disabled{opacity:.45;cursor:default}
+.err{color:var(--ember);font-weight:600;min-height:1.2em}
+a{color:var(--brass)}
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite"><p class="mute">Loading…</p></main>
+<script>
+(function(){
+'use strict';
+var S = { account: null, payouts: [], saved: null, banks: null, busy: false, errors: {}, open: {} };
+
+function h(tag, attrs, kids){
+  var el = document.createElement(tag);
+  if (attrs) for (var k in attrs){
+    var v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'text') el.textContent = v;
+    else if (k === 'on') for (var ev in v) el.addEventListener(ev, v[ev]);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  (kids || []).forEach(function(c){ if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+function naira(n){ return '₦' + Number(n || 0).toLocaleString('en-NG'); }
+function day(t){ try { return new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Africa/Lagos' }); } catch (e) { return ''; } }
+function json(r){ return r.json().catch(function(){ return { success: false, reason: 'server_error' }; }); }
+function get(path){ return fetch(path, { credentials: 'same-origin' }).then(json).catch(function(){ return { success: false, reason: 'offline' }; }); }
+function post(path, body){
+  return fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(json).catch(function(){ return { success: false, reason: 'offline' }; });
+}
+var WHY = {
+  bad_account_number: 'An account number is ten digits.',
+  pick_a_bank: 'Pick your bank from the list.',
+  account_not_verified: 'The bank did not recognise that account. Check the number and the bank.',
+  no_saved_details: 'There is no saved account to use.',
+  too_late: 'This one can no longer be changed.',
+  too_many_attempts: 'Too many tries for now. Wait a while and try again.',
+  not_signed_in: 'Your sign-in has ended. Sign in again.',
+  offline: 'No connection. Check your signal and try again.'
+};
+function why(r){ return WHY[r] || 'That did not work. Try again.'; }
+
+var STATUS = {
+  awaiting_details: ['Waiting for your bank details', 'wait'],
+  ready: ['Ready to send', 'ok'],
+  held: ['Being checked by our team', 'wait'],
+  sending: ['Being sent', 'ok'],
+  paid: ['Paid', 'ok'],
+  failed: ['Could not be sent: check your details', 'bad'],
+  cancelled: ['Cancelled', 'bad']
+};
+
+function load(){
+  get('/web/auth/me').then(function(j){
+    S.account = j && j.authenticated && j.user ? j.user : null;
+    if (!S.account) return render();
+    return get('/tv/payouts').then(function(p){
+      if (p.success){ S.payouts = p.payouts || []; S.saved = p.saved || null; }
+      else if (p.reason === 'not_signed_in') S.account = null;
+      render();
+    });
+  });
+}
+function loadBanks(){
+  if (S.banks) return;
+  S.banks = [];
+  get('/tv/banks').then(function(j){ S.banks = j.success ? j.banks : []; render(); });
+}
+
+function save(po, body){
+  if (S.busy) return;
+  S.busy = true; S.errors[po.id] = ''; render();
+  post('/tv/payouts/' + po.id + '/details', body).then(function(j){
+    S.busy = false;
+    if (!j.success){ S.errors[po.id] = why(j.reason); return render(); }
+    S.open[po.id] = false;
+    load();
+  });
+}
+
+function form(po){
+  loadBanks();
+  var kids = [];
+  if (S.saved){
+    kids.push(h('button', { class: 'go', disabled: S.busy,
+      text: 'Use ' + S.saved.bankName + ' ••' + S.saved.last4 + ' (' + S.saved.accountName + ')',
+      on: { click: function(){ save(po, { useSaved: true }); } } }));
+    kids.push(h('p', { class: 'mute small', text: 'Or send it to another account:' }));
+  }
+  var bank = h('select', { id: 'bank' + po.id, 'aria-label': 'Bank' },
+    [ h('option', { value: '', text: S.banks && S.banks.length ? 'Choose your bank' : 'Loading banks…' }) ]
+      .concat((S.banks || []).map(function(b){ return h('option', { value: b.code, text: b.name }); })));
+  var num = h('input', { id: 'num' + po.id, inputmode: 'numeric', maxlength: '10', placeholder: 'Account number (10 digits)', 'aria-label': 'Account number' });
+  kids.push(h('div', {}, [ h('label', { for: 'bank' + po.id, text: 'Bank' }), bank ]));
+  kids.push(h('div', {}, [ h('label', { for: 'num' + po.id, text: 'Account number' }), num ]));
+  kids.push(h('button', { class: S.saved ? '' : 'go', disabled: S.busy, text: S.busy ? 'Checking with your bank…' : 'Check and save',
+    on: { click: function(){ save(po, { bankCode: bank.value, accountNumber: num.value.replace(/\s+/g, '') }); } } }));
+  kids.push(h('p', { class: 'mute small', text: 'The name on the account comes from your bank.' }));
+  return kids;
+}
+
+function card(po){
+  var st = STATUS[po.status] || [po.status, 'wait'];
+  var kids = [
+    h('p', { class: 'mute small', text: (po.kind === 'refund' ? 'Your prize, coming back to you' : 'A prize you won') + ' · ' + day(po.created_at) }),
+    h('div', { class: 'amount', text: naira(po.amount) }),
+    h('div', {}, [ h('span', { class: 'tag ' + st[1], text: st[0] }) ])
+  ];
+  if (po.account_name && po.last4){
+    kids.push(h('p', { class: 'small', text: (po.status === 'paid' ? 'Sent to ' : 'To be sent to ') + (po.bank_name || '') +
+                                             ' ••' + po.last4 + ' (' + po.account_name + ')' + (po.paid_at ? ' on ' + day(po.paid_at) : '') + '.' }));
+  }
+  var editable = ['awaiting_details', 'ready', 'failed'].indexOf(po.status) >= 0;
+  if (editable){
+    if (po.status === 'awaiting_details' || S.open[po.id]) kids = kids.concat(form(po));
+    else kids.push(h('button', { text: 'Change the account', on: { click: function(){ S.open[po.id] = true; render(); } } }));
+  }
+  kids.push(h('p', { class: 'err', role: 'alert', text: S.errors[po.id] || '' }));
+  return h('div', { class: 'card' }, kids);
+}
+
+function render(){
+  var app = document.getElementById('app');
+  var active = document.activeElement;
+  if (active && active.tagName === 'INPUT' && app.contains(active) && !S.busy) return;
+  var kids = [ h('h1', { text: 'Your WUT TV prizes' }) ];
+  if (!S.account){
+    kids.push(h('p', { class: 'mute', text: 'Sign in to the account you played with to see your prizes.' }));
+    kids.push(h('p', {}, [ h('a', { href: '/', text: 'Sign in' }), ', then come back to this page.' ]));
+  } else if (!S.payouts.length){
+    kids.push(h('p', { class: 'mute', text: 'Nothing here yet, ' + S.account.username + '. Prizes you win in a WUT TV Party game show here.' }));
+  } else {
+    kids.push(h('p', { class: 'mute', text: 'Signed in as ' + S.account.username + '.' }));
+    S.payouts.forEach(function(po){ kids.push(card(po)); });
+  }
+  app.replaceChildren.apply(app, kids);
+}
+
+load();
+})();
+</script>
+</body>
+</html>

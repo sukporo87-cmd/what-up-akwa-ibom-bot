@@ -30,6 +30,13 @@
 //     on its home screen. Empty (the default) means no TV is told anything.
 //     Set by hand when a new build has passed on a TV: the server cannot know
 //     which build that is, and a test build must never send every TV a notice.
+//
+// AND THE PRIZES (phase 5), one setting with three parts:
+//   * prizes.config — { on, min, max }: whether a host can put a prize on a
+//     Party game, and the smallest and largest prize in naira. OFF by default:
+//     prizes are switched on deliberately, on the Prizes tab, which only Super
+//     Admins and Finance Officers can open. Not one of the numbers above, so
+//     the general settings route cannot change it.
 // ============================================
 
 const pool = require('../config/database');
@@ -111,8 +118,14 @@ const CASH_BANKS = ['classic', 'tournament'];
 const LISTS = Object.freeze({
     'party.categories_off': { def: [] },
     'solo.play_now_source': { def: { bank: 'practice', categories: [] } },
-    'app.latest_version': { def: '' }
+    'app.latest_version': { def: '' },
+    'prizes.config': { def: { on: false, min: 500, max: 50000 } }
 });
+
+// The limits on the prize limits: a prize under ₦100 is not worth a payment,
+// and one over ₦1,000,000 should not start from a TV.
+const PRIZE_FLOOR = 100;
+const PRIZE_CEILING = 1000000;
 
 class TvSettingsService {
 
@@ -153,7 +166,36 @@ class TvSettingsService {
         out['party.categories_off'] = this._categoriesOff(stored.get('party.categories_off'));
         out['solo.play_now_source'] = this._source(stored.get('solo.play_now_source'));
         out['app.latest_version'] = this._version(stored.get('app.latest_version'));
+        out['prizes.config'] = this._prizes(stored.get('prizes.config'));
         return out;
+    }
+
+    _prizes(row) {
+        const v = row && row.value && typeof row.value === 'object' ? row.value : {};
+        const d = LISTS['prizes.config'].def;
+        const num = (x, def) => Number.isInteger(x) && x >= PRIZE_FLOOR && x <= PRIZE_CEILING ? x : def;
+        const min = num(v.min, d.min);
+        const max = num(v.max, d.max);
+        return { on: v.on === true, min: Math.min(min, max), max: Math.max(min, max) };
+    }
+
+    /** Prizes on or off, and their smallest and largest amount. Refused, with the reason, if the amounts do not make sense. */
+    async setPrizeConfig({ on, min, max } = {}, admin) {
+        const cur = (await this.values())['prizes.config'];
+        const next = {
+            on: on === undefined ? cur.on : on === true,
+            min: min === undefined ? cur.min : Number(min),
+            max: max === undefined ? cur.max : Number(max)
+        };
+        for (const k of ['min', 'max']) {
+            if (!Number.isInteger(next[k])) return { ok: false, error: 'Enter whole naira' };
+            if (next[k] < PRIZE_FLOOR || next[k] > PRIZE_CEILING) {
+                return { ok: false, error: `Prizes must be between ₦${PRIZE_FLOOR.toLocaleString()} and ₦${PRIZE_CEILING.toLocaleString()}` };
+            }
+        }
+        if (next.min > next.max) return { ok: false, error: 'The smallest prize cannot be more than the largest' };
+        await this._write('prizes.config', next, admin);
+        return { ok: true, ...next };
     }
 
     _version(row) {
@@ -253,6 +295,7 @@ class TvSettingsService {
         });
         const src = stored.get('solo.play_now_source');
         const app = stored.get('app.latest_version');
+        const prizes = stored.get('prizes.config');
         return {
             numbers,
             categoriesOff: values['party.categories_off'],
@@ -260,6 +303,10 @@ class TvSettingsService {
                 ...values['solo.play_now_source'],
                 banks: Object.entries(BANKS).map(([id, label]) => ({ id, label, cash: CASH_BANKS.includes(id) })),
                 updatedAt: src ? src.updated_at : null, updatedBy: src ? src.updated_by : null
+            },
+            prizes: {
+                ...values['prizes.config'],
+                updatedAt: prizes ? prizes.updated_at : null, updatedBy: prizes ? prizes.updated_by : null
             },
             app: {
                 latestVersion: values['app.latest_version'],
@@ -279,4 +326,6 @@ module.exports.BANKS = BANKS;
 module.exports.CASH_BANKS = CASH_BANKS;
 module.exports.REFRESH_MS = REFRESH_MS;
 module.exports.VERSION_RE = VERSION_RE;
+module.exports.PRIZE_FLOOR = PRIZE_FLOOR;
+module.exports.PRIZE_CEILING = PRIZE_CEILING;
 module.exports.newer = newer;

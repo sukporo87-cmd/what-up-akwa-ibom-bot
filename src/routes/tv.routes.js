@@ -17,7 +17,11 @@
 // token. It credits Solo points to the account and shows its name; nothing
 // else.
 //
-// NO MONEY IN HERE YET. The sponsor and claim routes arrive in phase 5.
+// PRIZES (phase 5): the host adds a prize and pays for it from their phone,
+// signed in; a winner (or a refunded host) adds bank details on the
+// /tv/prizes page. Every money route needs the signed-in web account, and
+// the prize routes the host's player token too. Who is paid is decided in
+// tv-prize.service, never here.
 // Solo is phase 3; QR sign-in on the TV and the leaderboard are phase 4.
 //
 // ROUTE ORDER: every path below is either fully literal or ends in a literal
@@ -35,6 +39,7 @@ const solo = require('../services/tv-solo.service');
 const tvSession = require('../services/tv-session.service');
 const tvIdentity = require('../services/tv-identity.service');
 const webAuthService = require('../services/web-auth.service');
+const tvPrize = require('../services/tv-prize.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
@@ -43,6 +48,8 @@ const STATUS = {
     account_unavailable: 403, profile_incomplete: 403, scoped_session: 403, not_your_pairing: 403,
     no_room: 404, no_round: 404, no_such_player: 404, not_in_room: 404, not_finished: 409,
     room_closed: 410, pair_expired: 410,
+    prizes_off: 403, host_not_signed_in: 403, sponsor_too_young: 403, not_yours: 403, prize_out_of_range: 400,
+    account_not_verified: 400, no_saved_details: 400, payment_unavailable: 503,
     too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429,
     try_again: 503
 };
@@ -530,6 +537,85 @@ router.post('/rooms/:id(\\d+)/players/:playerId(\\d+)/remove', requirePlayer, as
         return reply(res, await party.removePlayer(Number(req.params.id), req.tvPlayerId,
                                                    Number(req.params.playerId)));
     } catch (error) { return fail(res, 'remove', error); }
+});
+
+// ============================================
+// PRIZES (phase 5)
+// ============================================
+
+/** The host's prize form: on or off, the limits, the seat choices, and the room's prize if it has one. */
+router.get('/rooms/:id(\\d+)/prize', requirePlayer, async (req, res) => {
+    try { return reply(res, await tvPrize.options(Number(req.params.id), req.tvPlayerId)); }
+    catch (error) { return fail(res, 'prize options', error); }
+});
+
+/** What a prize would cost, itemised. Changes nothing. */
+router.get('/rooms/:id(\\d+)/prize/quote', requirePlayer, async (req, res) => {
+    try {
+        return reply(res, await tvPrize.quote(Number(req.params.id), req.tvPlayerId,
+                                              parseInt(req.query.amount, 10), parseInt(req.query.seats, 10)));
+    } catch (error) { return fail(res, 'prize quote', error); }
+});
+
+/** The host adds a prize, playing as their account; the phone then goes to the payment page. */
+router.post('/rooms/:id(\\d+)/prize', requirePlayer, async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        const body = req.body || {};
+        return reply(res, await tvPrize.add(Number(req.params.id), req.tvPlayerId, acct.user,
+                                            { amount: parseInt(body.amount, 10), seats: parseInt(body.seats, 10) }, 'web'));
+    } catch (error) { return fail(res, 'prize add', error); }
+});
+
+/** Takes off a prize that has not been paid. */
+router.post('/rooms/:id(\\d+)/prize/cancel', requirePlayer, async (req, res) => {
+    try { return reply(res, await tvPrize.cancel(Number(req.params.id), req.tvPlayerId)); }
+    catch (error) { return fail(res, 'prize cancel', error); }
+});
+
+/** A guest in the lobby plays as the account signed in on this phone instead. */
+router.post('/rooms/:id(\\d+)/use-account', requirePlayer, async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await party.useAccount(Number(req.params.id), req.tvPlayerId, acct.user));
+    } catch (error) { return fail(res, 'use account', error); }
+});
+
+/** The page where a winner, or a refunded host, says where to send the money. */
+router.get('/prizes', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile('tv-prizes.html', { root: require('path').join(__dirname, '..', 'views') });
+});
+
+/** What WUT TV owes the signed-in account. */
+router.get('/payouts', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.mine(acct.user.id));
+    } catch (error) { return fail(res, 'payouts', error); }
+});
+
+router.get('/banks', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.banks());
+    } catch (error) { return fail(res, 'banks', error); }
+});
+
+/** Bank details for one payout: checked with the bank, or the account's saved ones. */
+router.post('/payouts/:id(\\d+)/details', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        const body = req.body || {};
+        return reply(res, await tvPrize.submitDetails(acct.user.id, Number(req.params.id), {
+            useSaved: body.useSaved === true, bankCode: body.bankCode, accountNumber: body.accountNumber
+        }));
+    } catch (error) { return fail(res, 'payout details', error); }
 });
 
 /**

@@ -18,6 +18,15 @@
 //   PUT  /admin/tv/api/devices/:id        { adminName, adminNotes }
 //   PUT  /admin/tv/api/devices/:id/venue  { venue }        (batch 3)
 //   PUT  /admin/tv/api/app-version        { version }      (batch 3)
+//
+// PRIZES (phase 5), Super Admin and Finance Officer only, as Financials is:
+//   GET  /admin/tv/api/prizes                 prizes, payouts, totals, settings
+//   PUT  /admin/tv/api/prizes/config          { on, min, max }
+//   POST /admin/tv/api/prizes/:id/check       ask the gateway about a payment again
+//   POST /admin/tv/api/payouts/:id/paid       { reference }  recorded as paid
+//   POST /admin/tv/api/payouts/:id/hold       { reason }
+//   POST /admin/tv/api/payouts/:id/release
+//   GET  /admin/tv/api/financials             for the Financials page
 //   GET  /admin/tv/api/audit/search       Audit Trail: { kind, q, from, to, page }
 //   GET  /admin/tv/api/audit/party/:id    Audit Trail: one Party game in full
 //   GET  /admin/tv/api/audit/solo/:id     Audit Trail: one Solo round in full
@@ -35,6 +44,7 @@ const AdminAuthService = require('../services/admin-auth.service');
 const tvAdmin = require('../services/tv-admin.service');
 const tvSettings = require('../services/tv-settings.service');
 const tvAudit = require('../services/tv-audit.service');
+const tvPrize = require('../services/tv-prize.service');
 
 const adminAuth = new AdminAuthService();
 
@@ -51,6 +61,16 @@ async function requireAdmin(req, res, next) {
         logger.error(`TV admin auth failed: ${error.message}`);
         return res.status(500).json({ success: false, error: 'Server error' });
     }
+}
+
+/** Money: the same roles the Financials page allows. */
+const FINANCE_ROLES = ['super_admin', 'finance_officer', 'super admin', 'finance officer'];
+function requireFinance(req, res, next) {
+    const role = String((req.adminSession && req.adminSession.role_name) || '').toLowerCase();
+    if (!FINANCE_ROLES.includes(role)) {
+        return res.status(403).json({ success: false, error: 'Prizes and payouts need a Super Admin or Finance Officer.' });
+    }
+    next();
 }
 
 function ip(req) {
@@ -208,4 +228,68 @@ router.put('/api/play-now', requireAdmin, async (req, res) => {
     } catch (e) { return fail(res, 'set Play Now source', e); }
 });
 
+// ---- prizes and payouts (phase 5): money, so finance roles only ----
+router.get('/api/prizes', requireAdmin, requireFinance, async (req, res) => {
+    try { return send(res, await tvPrize.adminOverview()); } catch (e) { return fail(res, 'prizes', e); }
+});
+
+router.get('/api/financials', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const q = req.query || {};
+        return send(res, { ok: true, data: await tvPrize.financials(q.start_date || null, q.end_date || null) });
+    } catch (e) { return fail(res, 'financials', e); }
+});
+
+router.put('/api/prizes/config', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const out = await tvSettings.setPrizeConfig({
+            on: body.on === undefined ? undefined : body.on === true,
+            min: body.min === undefined ? undefined : Number(body.min),
+            max: body.max === undefined ? undefined : Number(body.max)
+        }, who(req));
+        if (out.ok) await log(req, 'tv_prizes_config_set', { on: out.on, min: out.min, max: out.max });
+        return send(res, out);
+    } catch (e) { return fail(res, 'prize config', e); }
+});
+
+router.post('/api/prizes/:id(\\d+)/check', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const ref = await tvPrize.referenceOf(id);
+        if (!ref) return send(res, { ok: false, error: 'No such prize' });
+        const out = await tvPrize.settle(ref);
+        await log(req, 'tv_prize_checked', { prizeId: id, result: out.ok ? (out.already ? 'already' : 'settled') : out.reason });
+        return send(res, { ok: true, result: out.ok ? (out.already ? 'already' : (out.refunded ? 'refunded' : 'settled')) : out.reason });
+    } catch (e) { return fail(res, 'prize check', e); }
+});
+
+router.post('/api/payouts/:id(\\d+)/paid', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvPrize.markPaid(id, (req.body || {}).reference, who(req));
+        if (out.ok) await log(req, 'tv_payout_paid', { payoutId: id, amount: out.payout.amount, reference: out.payout.paid_reference });
+        return send(res, out.ok ? { ok: true, payoutId: id } : out);
+    } catch (e) { return fail(res, 'payout paid', e); }
+});
+
+router.post('/api/payouts/:id(\\d+)/hold', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvPrize.hold(id, (req.body || {}).reason);
+        if (out.ok) await log(req, 'tv_payout_held', { payoutId: id, reason: out.payout.hold_reason });
+        return send(res, out.ok ? { ok: true, payoutId: id } : out);
+    } catch (e) { return fail(res, 'payout hold', e); }
+});
+
+router.post('/api/payouts/:id(\\d+)/release', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvPrize.release(id);
+        if (out.ok) await log(req, 'tv_payout_released', { payoutId: id });
+        return send(res, out.ok ? { ok: true, payoutId: id } : out);
+    } catch (e) { return fail(res, 'payout release', e); }
+});
+
 module.exports = router;
+module.exports.FINANCE_ROLES = FINANCE_ROLES;

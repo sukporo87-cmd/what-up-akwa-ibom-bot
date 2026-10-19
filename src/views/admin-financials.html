@@ -189,7 +189,7 @@
       <div class="hero-card gross">
         <div class="label">Gross Revenue</div>
         <div class="value currency" id="grossRevenue">0</div>
-        <div class="sub-value">Tokens, tournaments, challenges and Love Quest</div>
+        <div class="sub-value">Tokens, tournaments, challenges, Love Quest and WUT TV</div>
       </div>
       <div class="hero-card net">
         <div class="label">Net Revenue</div>
@@ -213,6 +213,9 @@
            adding to it. -->
       <div class="overview-card revenue"><div class="label">Challenges</div><div class="value currency" id="challengeRevenue">0</div><div class="sub-value" id="challengeSub">setup + fees</div></div>
       <div class="overview-card revenue" style="border-top: 3px solid #ec4899;"><div class="label">💘 Love Quest</div><div class="value currency" id="loveQuestRevenue">0</div><div class="sub-value" id="loveQuestCount">0 bookings</div></div>
+      <!-- WUT TV prizes (phase 5): the setup charges and fees kept on Party
+           prizes. The prizes themselves pass through, like Challenge's. -->
+      <div class="overview-card revenue" style="border-top: 3px solid #5b12fc;"><div class="label">📺 WUT TV prizes</div><div class="value currency" id="tvRevenue">0</div><div class="sub-value" id="tvSub">setup + fees</div></div>
     </div>
 
     <div class="strip-title">Where it went</div>
@@ -224,6 +227,8 @@
            down: it is a liability, not a balance. -->
       <div class="overview-card passthrough"><div class="label">Sponsor Prizes Held</div><div class="value currency" id="challengeHeld">0</div><div class="sub-value">held for winners &mdash; not ours</div></div>
       <div class="overview-card passthrough"><div class="label">Sponsor Prizes Paid</div><div class="value currency" id="challengePassThrough">0</div><div class="sub-value">passed through to winners</div></div>
+      <div class="overview-card passthrough"><div class="label">📺 TV Prizes Held</div><div class="value currency" id="tvHeld">0</div><div class="sub-value" id="tvHeldSub">owed or waiting for a result</div></div>
+      <div class="overview-card passthrough"><div class="label">📺 TV Prizes Paid</div><div class="value currency" id="tvPaid">0</div><div class="sub-value" id="tvPaidSub">from the WUT TV queue</div></div>
     </div>
 
     <!-- ============================================
@@ -412,7 +417,14 @@
     // Also fetch Love Quest revenue to add to gross
     let lqRevenue=0;
     try{const lqr=await apiCall('/love-quest-revenue');if(lqr?.success)lqRevenue=parseFloat(lqr.data.total_revenue)||0;}catch(e){}
-    const totalGross=parseFloat(d.gross_revenue||0)+lqRevenue;
+    // And WUT TV prize revenue (setup charges and fees kept), from the TV
+    // admin routes: the TV keeps its own payout queue, so its figures are
+    // read from there rather than from transactions.
+    let tv=null;
+    try{const u=new URL('/admin/tv/api/financials',window.location.origin);if(startDate)u.searchParams.append('start_date',startDate);if(endDate)u.searchParams.append('end_date',endDate);
+      const tr=await fetch(u,{headers:{'Authorization':'Bearer '+authToken}});const tj=tr.ok?await tr.json():null;if(tj&&tj.success)tv=tj.data;}catch(e){console.warn('financials: WUT TV figures unavailable')}
+    const tvRevenue=tv?parseFloat(tv.revenue)||0:0;
+    const totalGross=parseFloat(d.gross_revenue||0)+lqRevenue+tvRevenue;
 
     /* house_payouts excludes sponsor prizes. Those are the sponsor's money
        moving through us — counting them as a cost understated profit by the
@@ -446,7 +458,13 @@
     set('pendingCount',d.pending_count+' pending');
 
     set('challengeHeld',fmt(d.challenge_prize_held||0));
-    set('challengePassThrough',fmt(d.challenge_pass_through||0));}
+    set('challengePassThrough',fmt(d.challenge_pass_through||0));
+    set('tvRevenue',fmt(tvRevenue));
+    set('tvSub',tv?(tv.paid_prizes+' paid · ₦'+fmt(tv.fee_revenue)+' in fees'):'not available');
+    set('tvHeld',fmt(tv?tv.held:0));
+    set('tvHeldSub',tv?(tv.owed_count+' payout(s) owed now'):'owed or waiting for a result');
+    set('tvPaid',fmt(tv?tv.paid_out:0));
+    set('tvPaidSub',tv?(tv.paid_count+' paid from the WUT TV queue'):'from the WUT TV queue');}
     async function loadKPIs(){const r=await apiCall('/kpis');if(!r?.success)return;const d=r.data;document.getElementById('kpiARPU').textContent='₦'+fmt(d.arpu);document.getElementById('kpiARPPU').textContent='₦'+fmt(d.arppu);document.getElementById('kpiLTV').textContent='₦'+fmt(d.net_revenue_per_user ?? d.ltv);document.getElementById('kpiConversion').textContent=d.conversion_rate+'%';document.getElementById('kpiPayingUsers').textContent=fmt(d.paying_users);document.getElementById('kpiPayoutRatio').textContent=(d.total_revenue>0?((d.total_payouts/d.total_revenue)*100).toFixed(1):0)+'%'}
     async function loadTokenRevenue(){const r=await apiCall('/token-revenue');if(!r?.success)return;const p=r.data.by_package,tb=document.getElementById('tokenPackageTable');if(!p.length){tb.innerHTML='<tr><td colspan="5" class="empty-state">No sales</td></tr>';return}tb.innerHTML=p.map(x=>'<tr><td><strong>'+x.package_name+'</strong></td><td>₦'+fmt(x.price)+'</td><td>'+x.games_count+'</td><td class="text-right">'+fmt(x.sales_count)+'</td><td class="text-right amount positive">₦'+fmt(x.total_revenue)+'</td></tr>').join('')+'<tr style="background:var(--gray-50);font-weight:600"><td colspan="3">Total</td><td class="text-right">'+fmt(r.data.total_sales)+'</td><td class="text-right amount positive">₦'+fmt(r.data.total_revenue)+'</td></tr>';renderPkgChart(p)}
     function renderPkgChart(p){const ctx=document.getElementById('packagePieChart').getContext('2d');if(charts.pkg)charts.pkg.destroy();charts.pkg=new Chart(ctx,{type:'doughnut',data:{labels:p.map(x=>x.package_name),datasets:[{data:p.map(x=>parseFloat(x.total_revenue)),backgroundColor:['#10b981','#3b82f6','#f59e0b'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}})}

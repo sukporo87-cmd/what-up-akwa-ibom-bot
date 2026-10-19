@@ -36,6 +36,10 @@ async function processWebhookEvent(reference, metadata, gatewayName) {
             // A Love Quest booking, in naira or dollars. Confirmation checks
             // the amount and currency with the gateway that took it.
             await require('../services/love-quest.service').confirmGatewayPayment(reference);
+        } else if (reference.startsWith('TVP-')) {
+            // A WUT TV Party prize (phase 5). Settling asks the gateway for the
+            // amount itself, and is safe to repeat.
+            await require('../services/tv-prize.service').settle(reference);
         } else {
             // Handle regular game payment
             const verification = await paymentService.verifyPayment(reference);
@@ -130,6 +134,25 @@ h1{color:${colour};font-size:22px;margin:0 0 10px}p{color:#b3a9c9;line-height:1.
         return res.send(page('Payment', '#f0b429', 'Checking your payment',
             'We are confirming your payment and will message you in your chat once it clears.'));
     }
+}
+
+// ============================================
+// WUT TV PRIZE CALLBACK (phase 5)
+// ============================================
+// The host's phone lands here after paying. It asks the gateway (the same
+// check the webhook makes, safe to repeat) and sends the phone straight back
+// to the game, which shows whether the prize is on.
+async function handleTvPrizeCallback(reference, req, res) {
+    const tvPrize = require('../services/tv-prize.service');
+    try { await tvPrize.settle(reference); } catch (e) { logger.error(`TV prize callback ${reference}: ${e.message}`); }
+    let st = null;
+    try { st = await tvPrize.status(reference); } catch (e) { /* shown below */ }
+    if (st && /^\d{6}$/.test(String(st.join_code))) return res.redirect(302, `/p/${st.join_code}`);
+    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment</title>
+<style>body{font-family:system-ui,Arial,sans-serif;text-align:center;padding:44px 20px;background:#16121f;color:#f2eee9}
+.card{background:#241d33;max-width:460px;margin:0 auto;padding:34px 26px;border-radius:16px}p{color:#9b8fb0;line-height:1.55}</style></head>
+<body><div class="card"><h1>Checking your payment</h1><p>Go back to the game on your phone. The prize shows there as soon as your payment clears.</p></div></body></html>`);
 }
 
 async function handleChallengeCallback(reference, req, res) {
@@ -586,6 +609,12 @@ router.get('/callback', async (req, res) => {
     // id, so it must never reach the token-payment path below.
     if (reference.startsWith('LQ-')) {
         return handleLoveQuestCallback(reference, req, res);
+    }
+
+    // A WUT TV Party prize (phase 5): TVP-{roomId}-{userId}-{timestamp}. Its
+    // record is in tv_prizes, so it must never reach the token path below.
+    if (reference.startsWith('TVP-')) {
+        return handleTvPrizeCallback(reference, req, res);
     }
 
     // Resolve the player BEFORE verifying. Every exit path — success, still
