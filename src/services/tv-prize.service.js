@@ -4,16 +4,18 @@
 // WUT TV then owes: the winner's prize, or the host's refund.
 //
 // WHO. The host adds the prize from their phone, playing as their own
-// account (18 or over, as for a Challenge prize), and pays the prize, the
-// setup charge and the fee in one payment.
-// Only signed-in players can win it; guests still play for points. Standard
-// and Race games alike.
+// account (18 or over, as for a Challenge prize), and pays the prize and
+// WUT TV's fee in one payment.
+// Anyone who plays can win it, guest or signed in (026). Standard and Race
+// games alike.
 //
-// THE PRICE is the Challenge price list's (challenge-pricing.service, read
-// only): the setup charge for the seats chosen, plus the prize fee. It is
-// written onto the prize row when the prize is added and never looked up
-// again, so a change to the list never changes what an earlier game owes or
-// returns. The room is capped at the seats paid for.
+// THE PRICE (decided Oct 19): the prize plus WUT TV's own fee of 15% of the
+// prize, rounded up to the naira. No setup charge and no seats to choose:
+// those are Challenge's, for the service Challenge gives, and nothing here
+// reads Challenge's price list or its settings. The fee is written onto the
+// prize row when the prize is added, so a later change never alters what an
+// earlier game owes or returns. setup_charge is kept on the row, always 0,
+// and seats records the room's size when the prize was added.
 //
 // SETTLED, NOT INITIATED. A prize counts only once the payment gateway says
 // the money arrived, for at least the amount charged. settle() asks the
@@ -23,14 +25,20 @@
 //
 // WHO WINS, decided from the database after the game, so a restart cannot
 // lose it (resolveRoom):
-//   * the best-placed signed-in player who finished, provided at least two
-//     signed-in players finished (the Challenge rule)
-//   * fewer than two: the prize goes back to the host; the setup charge and
-//     the fee do not (also the Challenge rule)
+//   * whoever finished first, provided at least two players finished (the
+//     Challenge rule)
+//   * fewer than two: the prize goes back to the host; the fee does not
+//     (the Challenge rule)
+//   * a GUEST winner has 24 hours to collect it, by signing in (or making an
+//     account and signing in) on the phone they played on, or with the claim
+//     code that phone showed. After that it cannot be claimed. The host is
+//     then told and has 48 hours to ask for it back with one tap; a prize not
+//     asked for in that time is forfeited. Both rules are shown to the host
+//     before paying and to every player when the prize is announced.
 //   * a prize game ended after it started: whoever was ahead wins, so a host
 //     who is losing cannot end the game to get their prize back
 //   * a room closed before the game started: the prize goes back to the host,
-//     the setup charge and fee do not
+//     the fee does not
 //   * a room that closed before the payment cleared, or a prize the host
 //     cancelled whose payment cleared anyway: everything goes back, fees too,
 //     because nothing was delivered
@@ -57,14 +65,23 @@ const PREFIX = 'TVP-';
 // 13 and over play; 18 and over put up a prize (the Challenge rule). An age
 // that is not recorded is not taken as adult.
 const SPONSOR_MIN_AGE = 18;
-// The seat counts a host can pay for: the Challenge price list's bands.
-const SEAT_CHOICES = Object.freeze([2, 5, 10, 15, 20]);
+// WUT TV's fee on a prize: 15% (1,500 basis points), its own, whatever
+// Challenge charges.
+const FEE_BPS = 1500;
 const ATTEMPTS_PER_HOUR = 10;
 const BANK_CHECKS_PER_HOUR = 10;
 // A payment left waiting is asked about after this long, and given up on after the next.
 const ASK_PENDING_AFTER_MS = 20 * 60 * 1000;
 const FAIL_PENDING_AFTER_MS = 6 * 60 * 60 * 1000;
 const OPEN_PAYOUT = ['awaiting_details', 'ready', 'held', 'sending', 'failed'];
+// A guest winner's time to collect, and then the host's time to ask for it back.
+const CLAIM_HOURS = 24;
+const HOST_ASK_HOURS = 48;
+// The claim code: 8 letters and digits, none that look alike, shown as XXXX-XXXX.
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CLAIMS_PER_HOUR = 10;
+// Prizes still waiting on someone: the game, a guest winner, or the host.
+const UNRESOLVED = ['settled', 'claiming', 'unclaimed'];
 
 class TvPrizeService {
 
@@ -88,7 +105,12 @@ class TvPrizeService {
         } catch (e) { return false; }
     }
 
-    _pricing() { return require('./challenge-pricing.service'); }
+    /** The prize, WUT TV's fee and the total. Whole naira; the fee rounds up. */
+    price(prizeAmount) {
+        const prize = Number(prizeAmount);
+        const fee = Math.ceil((prize * FEE_BPS) / 10000);
+        return { prize, setupCharge: 0, prizeFee: fee, prizeFeeBps: FEE_BPS, total: prize + fee };
+    }
     _gateways() { return require('./payment-gateway-manager'); }
 
     _activeIds(state) {
@@ -108,13 +130,30 @@ class TvPrizeService {
             seats: Number(row.seats),
             sponsorPlayerId: row.sponsor_player_id ? Number(row.sponsor_player_id) : null,
             winnerPlayerId: row.winner_player_id ? Number(row.winner_player_id) : null,
-            outcome: row.outcome_reason || null
+            outcome: row.outcome_reason || null,
+            claimExpiresAt: row.claim_expires_at ? new Date(row.claim_expires_at).toISOString() : null
         };
     }
 
-    /** The seat counts this room can pay for: at least everyone already in it, at most the room size the admin allows. */
-    seatChoices(active, roomMax) {
-        return SEAT_CHOICES.filter(n => n >= Math.max(2, active) && n <= Math.max(2, roomMax));
+    _newCode() {
+        const bytes = require('crypto').randomBytes(8);
+        let out = '';
+        for (let i = 0; i < 8; i++) out += CODE_CHARS[bytes[i] % CODE_CHARS.length];
+        return out;
+    }
+
+    /** As typed: spaces, dashes and case ignored. */
+    _normalCode(code) {
+        return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+
+    _showCode(code) { return code ? `${code.slice(0, 4)}-${code.slice(4)}` : null; }
+
+    _lagos(t) {
+        try {
+            return new Date(t).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric',
+                                                         month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+        } catch (e) { return new Date(t).toISOString(); }
     }
 
     async _restoreRoomSize(roomId) {
@@ -124,7 +163,7 @@ class TvPrizeService {
     }
 
     /** Tells the TV and every phone in the room what the prize now is. */
-    async _announce(roomId, view, { restoreSize = false } = {}) {
+    async _announce(roomId, view, { restoreSize = false, claimFor = null } = {}) {
         const max = restoreSize ? await this._restoreRoomSize(roomId) : null;
         await store.withRoom(roomId, async (state, tx) => {
             if (!state) return;
@@ -137,10 +176,11 @@ class TvPrizeService {
             tx.dirty = true;
             tx.tv('room.prize', { prize: state.prize, maxPlayers: state.maxPlayers });
             for (const pid of this._activeIds(state)) {
-                tx.player(pid, 'player.prize', {
-                    prize: state.prize, maxPlayers: state.maxPlayers,
-                    youWon: !!(state.prize && state.prize.winnerPlayerId === pid)
-                });
+                const ev = { prize: state.prize, maxPlayers: state.maxPlayers,
+                             youWon: !!(state.prize && state.prize.winnerPlayerId === pid) };
+                // The claim code goes to the winning phone alone.
+                if (claimFor && claimFor.pid === pid) ev.claimCode = this._showCode(claimFor.code);
+                tx.player(pid, 'player.prize', ev);
             }
         }).catch(e => logger.error(`TV room ${roomId}: prize not announced — ${e.message}`));
     }
@@ -159,33 +199,22 @@ class TvPrizeService {
     }
 
     /** What the host would pay, itemised. Changes nothing. */
-    async quote(roomId, pid, amount, seats) {
+    async quote(roomId, pid, amount) {
         const checked = await this._checkAmount(amount);
         const state = await store.load(roomId);
         if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
         if (state.hostPlayerId !== pid) return { ok: false, reason: 'not_host' };
-        const roomMax = (await tvSettings.values())['rooms.max_players'];
-        const choices = this.seatChoices(this._activeIds(state).length, roomMax);
-        if (!checked.ok) return { ...checked, seatChoices: choices };
-        const n = Number(seats);
-        if (!choices.includes(n)) return { ok: false, reason: 'bad_seats', seatChoices: choices };
-        const q = await this._pricing().quote({ seats: n, prizeAmount: checked.amount });
-        return {
-            ok: true, seatChoices: choices, min: checked.cfg.min, max: checked.cfg.max,
-            quote: { seats: n, prize: q.prizeAmount, setupCharge: q.setupCharge, prizeFee: q.prizeFee,
-                     prizeFeeBps: q.prizeFeeBps, total: q.total }
-        };
+        if (!checked.ok) return checked;
+        return { ok: true, min: checked.cfg.min, max: checked.cfg.max, quote: this.price(checked.amount) };
     }
 
-    /** The limits and seat choices for the host's form, before an amount is typed. */
+    /** The limits for the host's form, before an amount is typed. */
     async options(roomId, pid) {
         const cfg = await this._config();
         const state = await store.load(roomId);
         if (!state) return { ok: false, reason: 'no_room' };
-        const roomMax = (await tvSettings.values())['rooms.max_players'];
         return {
-            ok: true, on: cfg.on, min: cfg.min, max: cfg.max,
-            seatChoices: this.seatChoices(this._activeIds(state).length, roomMax),
+            ok: true, on: cfg.on, min: cfg.min, max: cfg.max, feeBps: FEE_BPS,
             prize: state.prize || null, youAreHost: state.hostPlayerId === pid
         };
     }
@@ -198,12 +227,10 @@ class TvPrizeService {
      * @param account  the signed-in web account on the host's phone (route-checked)
      * @returns { ok, authorizationUrl, reference, quote } — the phone goes to authorizationUrl to pay
      */
-    async add(roomId, pid, account, { amount, seats } = {}, platform = 'web') {
+    async add(roomId, pid, account, { amount } = {}, platform = 'web') {
         await tvAuth.ensureSchema();
         const checked = await this._checkAmount(amount);
         if (!checked.ok) return checked;
-        const n = Number(seats);
-        if (!SEAT_CHOICES.includes(n)) return { ok: false, reason: 'bad_seats' };
         const u = await pool.query(
             `SELECT id, username, email, phone_number, full_name, is_suspended, age FROM users WHERE id = $1`, [account.id]
         );
@@ -215,8 +242,7 @@ class TvPrizeService {
             return { ok: false, reason: 'too_many_attempts' };
         }
 
-        const q = await this._pricing().quote({ seats: n, prizeAmount: checked.amount });
-        const roomMax = (await tvSettings.values())['rooms.max_players'];
+        const q = this.price(checked.amount);
         const reference = `${PREFIX}${Number(roomId)}-${user.id}-${Date.now()}`;
 
         // Reserve the prize on the room first, in one step with the checks,
@@ -227,8 +253,8 @@ class TvPrizeService {
             const me = state.players[pid];
             if (!me || me.userId !== user.id) return { ok: false, reason: 'host_not_signed_in' };
             if (state.prize) return { ok: false, reason: 'prize_already_added' };
-            const active = this._activeIds(state).length;
-            if (!this.seatChoices(active, roomMax).includes(n)) return { ok: false, reason: 'bad_seats' };
+            // No seats are bought: the row records the room's size, as it is.
+            const n = Math.min(20, Math.max(2, Number(state.maxPlayers) || 20));
 
             let row;
             try {
@@ -236,19 +262,17 @@ class TvPrizeService {
                     `INSERT INTO tv_prizes (tv_room_id, sponsor_user_id, sponsor_player_id, seats, prize_amount,
                                             setup_charge, prize_fee, total_charged, payment_reference)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-                    [state.id, user.id, pid, n, q.prizeAmount, q.setupCharge, q.prizeFee, q.total, reference]
+                    [state.id, user.id, pid, n, q.prize, q.setupCharge, q.prizeFee, q.total, reference]
                 );
                 row = ins.rows[0];
             } catch (e) {
                 if (e.code === '23505') return { ok: false, reason: 'prize_already_added' };
                 throw e;
             }
-            await pool.query(`UPDATE tv_rooms SET max_players = $2 WHERE id = $1`, [state.id, n]);
-            state.maxPlayers = n;
             state.prize = this.view(row);
             tx.dirty = true;
-            tx.tv('room.prize', { prize: state.prize, maxPlayers: n });
-            for (const x of this._activeIds(state)) tx.player(x, 'player.prize', { prize: state.prize, maxPlayers: n, youWon: false });
+            tx.tv('room.prize', { prize: state.prize, maxPlayers: state.maxPlayers });
+            for (const x of this._activeIds(state)) tx.player(x, 'player.prize', { prize: state.prize, maxPlayers: state.maxPlayers, youWon: false });
             return { ok: true, row };
         });
         if (!reserved.ok) return reserved;
@@ -265,15 +289,15 @@ class TvPrizeService {
                 customerName: user.full_name || user.username,
                 metadata: {
                     user_id: user.id, tv_room_id: Number(roomId), tv_prize_id: reserved.row.id,
-                    seats: n, prize_amount: q.prizeAmount, setup_charge: q.setupCharge, prize_fee: q.prizeFee,
+                    prize_amount: q.prize, prize_fee: q.prizeFee,
                     total_charged: q.total, platform, description: `WUT TV prize, room ${roomId}`
                 }
             });
             await pool.query(`UPDATE tv_prizes SET gateway = $2 WHERE id = $1`, [reserved.row.id, gateway.getName()]);
-            logger.info(`📺💰 TV room ${roomId}: prize of ₦${q.prizeAmount} added by user ${user.id}, ${reference} via ${gateway.getName()}`);
+            logger.info(`📺💰 TV room ${roomId}: prize of ₦${q.prize} added by user ${user.id}, ${reference} via ${gateway.getName()}`);
             return {
                 ok: true, reference, authorizationUrl: init.authorization_url,
-                quote: { seats: n, prize: q.prizeAmount, setupCharge: q.setupCharge, prizeFee: q.prizeFee, total: q.total }
+                quote: q
             };
         } catch (e) {
             logger.error(`TV room ${roomId}: payment page not opened for ${reference} — ${e.message}`);
@@ -316,7 +340,7 @@ class TvPrizeService {
             logger.error(`TV prize payment for unknown reference: ${reference}`);
             return { ok: false, reason: 'unknown_reference' };
         }
-        if (['settled', 'awarded', 'refunded'].includes(row.status)) return { ok: true, already: true, prize: this.view(row) };
+        if (['settled', 'awarded', 'refunded', 'claiming', 'unclaimed', 'forfeited'].includes(row.status)) return { ok: true, already: true, prize: this.view(row) };
         if (!row.gateway) return { ok: false, reason: 'not_paid', pending: true };
 
         // Ask the gateway that took it, never the request that told us.
@@ -401,25 +425,170 @@ class TvPrizeService {
         if (rm.status === 'lobby' || rm.status === 'playing') return { ok: true, live: true };
         if (!rm.started_at) return this._refund(prize, 'not_played');
 
-        // Placed finishers who played as their account, best first. A game
+        // Placed finishers, guests and accounts alike, best first. A game
         // ended early has its places written when it ended (tv-party closeRoom).
-        const elig = await pool.query(
+        const placed = await pool.query(
             `SELECT id, user_id, final_rank FROM tv_players
-             WHERE tv_room_id = $1 AND user_id IS NOT NULL AND final_rank IS NOT NULL AND removed_at IS NULL
+             WHERE tv_room_id = $1 AND final_rank IS NOT NULL AND removed_at IS NULL
              ORDER BY final_rank, id`,
             [roomId]
         );
-        if (elig.rows.length < 2) {
+        if (placed.rows.length < 2) {
             // Ended before a single question was revealed: nobody has a place.
-            if (rm.status === 'closed') {
-                const placed = await pool.query(
-                    `SELECT 1 FROM tv_players WHERE tv_room_id = $1 AND final_rank IS NOT NULL LIMIT 1`, [roomId]
-                );
-                if (!placed.rows[0]) return this._refund(prize, 'ended_before_a_result');
-            }
-            return this._refund(prize, 'too_few_signed_in');
+            if (rm.status === 'closed' && placed.rows.length === 0) return this._refund(prize, 'ended_before_a_result');
+            return this._refund(prize, 'too_few_finished');
         }
-        return this._award(prize, elig.rows[0]);
+        const winner = placed.rows[0];
+        return winner.user_id ? this._award(prize, winner) : this._openClaim(prize, winner);
+    }
+
+    // ============================================
+    // A GUEST WINNER — 24 hours to collect
+    // ============================================
+
+    /** A guest finished first: the prize waits 24 hours for them to sign in and collect it. */
+    async _openClaim(prize, winner) {
+        const code = this._newCode();
+        const upd = await pool.query(
+            `UPDATE tv_prizes SET status = 'claiming', winner_player_id = $2, claim_code_hash = $3,
+                    claim_expires_at = NOW() + INTERVAL '${CLAIM_HOURS} hours',
+                    retained_amount = setup_charge + prize_fee, outcome_reason = 'awaiting_claim'
+             WHERE id = $1 AND status = 'settled' RETURNING *`,
+            [prize.id, winner.id, tvAuth.hash(code)]
+        );
+        const row = upd.rows[0];
+        if (!row) return { ok: true, already: true };
+        // Kept so the winning phone can be shown its code again; only the hash is in the database.
+        try { await redis.set(`tv_claim_code:${row.id}`, code, 'EX', (CLAIM_HOURS + 1) * 3600); }
+        catch (e) { logger.error(`TV prize ${row.id}: claim code not kept — ${e.message}`); }
+        logger.info(`📺💰 TV prize ${row.id}: won by guest player ${winner.id}; ${CLAIM_HOURS} hours to collect`);
+        await this._announce(row.tv_room_id, this.view(row), { claimFor: { pid: Number(winner.id), code } });
+        await this._tell(Number(row.sponsor_user_id),
+            `A guest won your ₦${Number(row.prize_amount).toLocaleString()} What's Up Trivia TV prize. They have ${CLAIM_HOURS} hours to sign in and collect it.`,
+            `If nobody collects it, we'll message you, and you'll then have ${HOST_ASK_HOURS} hours to ask for it back.`,
+            `A guest won your WUT TV prize`);
+        return { ok: true, claiming: true, playerId: Number(winner.id), claimExpiresAt: row.claim_expires_at };
+    }
+
+    /** For the winning phone: the prize, and its claim code while it can still be collected. */
+    async claimInfo(roomId, playerToken) {
+        const p = await this._playerFromToken(roomId, playerToken);
+        if (!p.ok) return p;
+        const r = await pool.query(`SELECT * FROM tv_prizes WHERE tv_room_id = $1 AND winner_player_id = $2 ORDER BY id DESC LIMIT 1`,
+                                   [roomId, p.player.id]);
+        const row = r.rows[0];
+        if (!row) return { ok: true, prize: null, youWon: false };
+        let code = null;
+        if (row.status === 'claiming') {
+            try { code = await redis.get(`tv_claim_code:${row.id}`); } catch (e) { code = null; }
+        }
+        return { ok: true, prize: this.view(row), youWon: true, claimCode: this._showCode(code) };
+    }
+
+    async _playerFromToken(roomId, playerToken) {
+        const parsed = tvAuth.parsePlayerToken(playerToken);
+        if (!parsed || parsed.roomId !== roomId) return { ok: false, reason: 'bad_player_token' };
+        await tvAuth.ensureSchema();
+        const pr = await pool.query(
+            `SELECT id, user_id, phone_token_hash, removed_at FROM tv_players WHERE id = $1 AND tv_room_id = $2`,
+            [parsed.playerId, roomId]
+        );
+        const p = pr.rows[0];
+        if (!p || !tvAuth.sameHash(p.phone_token_hash, tvAuth.hash(playerToken))) return { ok: false, reason: 'bad_player_token' };
+        if (p.removed_at) return { ok: false, reason: 'removed' };
+        return { ok: true, player: p };
+    }
+
+    /** The guest winner collects on the phone they played on, now signed in. */
+    async claim(roomId, playerToken, account) {
+        const p = await this._playerFromToken(roomId, playerToken);
+        if (!p.ok) return p;
+        const r = await pool.query(`SELECT * FROM tv_prizes WHERE tv_room_id = $1 AND winner_player_id = $2 ORDER BY id DESC LIMIT 1`,
+                                   [roomId, p.player.id]);
+        if (!r.rows[0]) return { ok: false, reason: 'not_the_winner' };
+        return this._claim(r.rows[0], account);
+    }
+
+    /** The guest winner collects with the code their phone showed, from any device, signed in. */
+    async claimByCode(code, account) {
+        await tvAuth.ensureSchema();
+        const c = this._normalCode(code);
+        if (c.length !== 8) return { ok: false, reason: 'bad_claim_code' };
+        if (await this._overLimit(`tv_rate:claim:${account.id}`, CLAIMS_PER_HOUR)) return { ok: false, reason: 'too_many_attempts' };
+        const r = await pool.query(`SELECT * FROM tv_prizes WHERE claim_code_hash = $1`, [tvAuth.hash(c)]);
+        if (!r.rows[0]) return { ok: false, reason: 'bad_claim_code' };
+        return this._claim(r.rows[0], account);
+    }
+
+    async _claim(prize, account) {
+        if (prize.status === 'awarded') return { ok: false, reason: 'already_claimed' };
+        if (prize.status !== 'claiming' || new Date(prize.claim_expires_at).getTime() <= Date.now()) {
+            return { ok: false, reason: 'claim_expired' };
+        }
+        const u = await pool.query(`SELECT id, username, is_suspended FROM users WHERE id = $1`, [account.id]);
+        const user = u.rows[0];
+        if (!user || user.is_suspended === true) return { ok: false, reason: 'account_unavailable' };
+        // One person, one share of a room: an account that played in it, or
+        // kept points from another phone in it, cannot also collect its prize.
+        const inRoom = await pool.query(
+            `SELECT 1 FROM tv_players WHERE tv_room_id = $1 AND user_id = $2 LIMIT 1`, [prize.tv_room_id, user.id]
+        );
+        const other = await pool.query(
+            `SELECT 1 FROM tv_points WHERE tv_room_id = $1 AND user_id = $2 AND tv_player_id <> $3 LIMIT 1`,
+            [prize.tv_room_id, user.id, prize.winner_player_id]
+        );
+        if (inRoom.rows[0] || other.rows[0]) return { ok: false, reason: 'account_in_room' };
+
+        // In one step, and only while the 24 hours last: two accounts racing get one prize.
+        const upd = await pool.query(
+            `UPDATE tv_prizes SET status = 'awarded', winner_user_id = $2, claimed_at = NOW(), claim_code_hash = NULL,
+                    outcome_reason = 'claimed', resolved_at = NOW()
+             WHERE id = $1 AND status = 'claiming' AND claim_expires_at > NOW() RETURNING *`,
+            [prize.id, user.id]
+        );
+        const row = upd.rows[0];
+        if (!row) {
+            // Someone else collected it a moment ago, or the 24 hours ran out.
+            const now = await pool.query(`SELECT * FROM tv_prizes WHERE id = $1`, [prize.id]);
+            return { ok: false, reason: now.rows[0] && now.rows[0].status === 'awarded' ? 'already_claimed' : 'claim_expired' };
+        }
+        try { await redis.del(`tv_claim_code:${row.id}`); } catch (e) { /* it expires anyway */ }
+        // The winner's points from that game go to the account too.
+        const moved = await pool.query(
+            `UPDATE tv_points SET user_id = $1, claimed_at = NOW() WHERE tv_player_id = $2 AND user_id IS NULL RETURNING points`,
+            [user.id, row.winner_player_id]
+        );
+        const kept = moved.rows.reduce((a, x) => a + Number(x.points), 0);
+        const amount = this._cap(row, Number(row.prize_amount));
+        const payout = await this._payout(row, 'prize', Number(user.id), amount);
+        logger.info(`📺💰 TV prize ${row.id}: ₦${amount} collected by user ${user.id} (guest player ${row.winner_player_id}), payout ${payout && payout.id}`);
+        await this._announce(row.tv_room_id, this.view(row));
+        await this._tell(Number(user.id),
+            `🏆 You collected ₦${amount.toLocaleString()} from a What's Up Trivia TV game!`,
+            `To get paid, add or check your bank details here: ${this._prizesUrl()}`,
+            `You won ₦${amount.toLocaleString()} on What's Up Trivia TV`);
+        return { ok: true, claimed: true, amount, kept, username: user.username, payoutId: payout && payout.id };
+    }
+
+    // ============================================
+    // NOT COLLECTED — the host has 48 hours to ask for it back
+    // ============================================
+
+    /** One tap from the host's prizes page. The fee is not returned. */
+    async askBack(userId, prizeId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(`SELECT * FROM tv_prizes WHERE id = $1`, [prizeId]);
+        const row = r.rows[0];
+        if (!row || Number(row.sponsor_user_id) !== Number(userId)) return { ok: false, reason: 'not_yours' };
+        if (row.status !== 'unclaimed' || row.host_asked_at) return { ok: false, reason: 'too_late' };
+        const asked = await pool.query(
+            `UPDATE tv_prizes SET host_asked_at = NOW()
+             WHERE id = $1 AND status = 'unclaimed' AND host_asked_at IS NULL AND host_window_ends_at > NOW() RETURNING *`,
+            [row.id]
+        );
+        if (!asked.rows[0]) return { ok: false, reason: 'too_late' };
+        logger.info(`📺💰 TV prize ${row.id}: host ${userId} asked for the unclaimed prize back`);
+        return this._refund(asked.rows[0], 'unclaimed_host_asked', { from: ['unclaimed'] });
     }
 
     async _savedDetails(userId) {
@@ -477,12 +646,13 @@ class TvPrizeService {
         return { ok: true, awarded: true, amount, winnerUserId: Number(winner.user_id), payoutId: payout && payout.id };
     }
 
-    async _refund(prize, reason, { full = false } = {}) {
+    async _refund(prize, reason, { full = false, from = ['settled'] } = {}) {
         const retained = full ? 0 : Number(prize.setup_charge) + Number(prize.prize_fee);
         const upd = await pool.query(
-            `UPDATE tv_prizes SET status = 'refunded', retained_amount = $2, outcome_reason = $3, resolved_at = NOW()
-             WHERE id = $1 AND status = 'settled' RETURNING *`,
-            [prize.id, retained, reason]
+            `UPDATE tv_prizes SET status = 'refunded', retained_amount = $2, outcome_reason = $3, forfeited_amount = NULL,
+                    claim_code_hash = NULL, resolved_at = NOW()
+             WHERE id = $1 AND status = ANY($4::text[]) RETURNING *`,
+            [prize.id, retained, reason, from]
         );
         const row = upd.rows[0];
         if (!row) return { ok: true, already: true };
@@ -494,6 +664,9 @@ class TvPrizeService {
             not_played: 'the game never started',
             ended_before_a_result: 'the game ended before any question was answered',
             too_few_signed_in: 'fewer than two signed-in players finished',
+            too_few_finished: 'fewer than two players finished',
+            unclaimed_host_asked: 'you asked for it back after nobody collected it',
+            returned_by_admin: 'our team returned it to you',
             room_closed_before_payment: 'the game had already closed when your payment cleared',
             paid_after_cancel: 'you had taken the prize off before your payment cleared'
         }[reason] || 'the game did not produce a winner';
@@ -527,6 +700,7 @@ class TvPrizeService {
         const r = await pool.query(
             `SELECT po.id, po.kind, po.amount, po.status, po.bank_name, po.account_name,
                     RIGHT(po.account_number, 4) AS last4, po.details_verified, po.created_at, po.paid_at,
+                    po.paid_reference, po.received_at, po.not_received_at,
                     pr.tv_room_id, pr.prize_amount, pr.outcome_reason
              FROM tv_payouts po JOIN tv_prizes pr ON pr.id = po.tv_prize_id
              WHERE po.user_id = $1
@@ -535,8 +709,16 @@ class TvPrizeService {
             [userId]
         );
         const saved = await this._savedDetails(userId);
+        // Prizes this host put up that nobody collected, still in time to ask for.
+        const asks = await pool.query(
+            `SELECT id, prize_amount, host_window_ends_at FROM tv_prizes
+             WHERE sponsor_user_id = $1 AND status = 'unclaimed' AND host_asked_at IS NULL AND host_window_ends_at > NOW()
+             ORDER BY id DESC`,
+            [userId]
+        );
         return {
             ok: true,
+            asks: asks.rows.map(x => ({ id: Number(x.id), amount: Number(x.prize_amount), until: x.host_window_ends_at })),
             payouts: r.rows.map(x => ({ ...x, amount: Number(x.amount), prize_amount: Number(x.prize_amount) })),
             saved: saved ? { bankName: saved.bank_name, accountName: saved.account_name, last4: String(saved.account_number).slice(-4) } : null
         };
@@ -623,7 +805,57 @@ class TvPrizeService {
              WHERE p.status = 'settled' AND r.status IN ('finished','closed') LIMIT 50`
         );
         for (const x of open.rows) await this.resolveRoom(x.tv_room_id).catch(e => logger.error(`TV prize sweep: ${e.message}`));
-        return { asked: pend.rows.length, resolved: open.rows.length };
+        const lapsed = await this._sweepClaims().catch(e => { logger.error(`TV prize sweep, claims: ${e.message}`); return {}; });
+        return { asked: pend.rows.length, resolved: open.rows.length, ...lapsed };
+    }
+
+    /** The 24 hours to collect run out, then the host's 48 hours to ask. */
+    async _sweepClaims() {
+        const due = await pool.query(
+            `SELECT id FROM tv_prizes WHERE status = 'claiming' AND claim_expires_at <= NOW() ORDER BY id LIMIT 50`
+        );
+        let unclaimed = 0, forfeited = 0;
+        for (const x of due.rows) {
+            const u = await pool.query(
+                `UPDATE tv_prizes SET status = 'unclaimed', claim_code_hash = NULL, outcome_reason = 'not_claimed',
+                        host_window_ends_at = NOW() + INTERVAL '${HOST_ASK_HOURS} hours'
+                 WHERE id = $1 AND status = 'claiming' AND claim_expires_at <= NOW() RETURNING *`,
+                [x.id]
+            );
+            const row = u.rows[0];
+            if (!row) continue;
+            unclaimed++;
+            try { await redis.del(`tv_claim_code:${row.id}`); } catch (e) { /* it expires anyway */ }
+            logger.info(`📺💰 TV prize ${row.id}: not collected; host ${row.sponsor_user_id} has ${HOST_ASK_HOURS} hours to ask for it back`);
+            await this._announce(row.tv_room_id, this.view(row));
+            await this._tell(Number(row.sponsor_user_id),
+                `Nobody collected the ₦${Number(row.prize_amount).toLocaleString()} prize from your What's Up Trivia TV game in time.`,
+                `You can ask for it back until ${this._lagos(row.host_window_ends_at)} (Lagos time). Tap "Ask for my prize back" here: ${this._prizesUrl()}\n` +
+                `The fee is not returned. If you don't ask by then, the prize is forfeited.`,
+                `Your WUT TV prize was not collected: ask for it back within ${HOST_ASK_HOURS} hours`);
+        }
+        const over = await pool.query(
+            `SELECT id FROM tv_prizes WHERE status = 'unclaimed' AND host_asked_at IS NULL AND host_window_ends_at <= NOW() ORDER BY id LIMIT 50`
+        );
+        for (const x of over.rows) {
+            const cur = await pool.query(`SELECT * FROM tv_prizes WHERE id = $1`, [x.id]);
+            if (!cur.rows[0]) continue;
+            const f = await pool.query(
+                `UPDATE tv_prizes SET status = 'forfeited', forfeited_amount = $2, outcome_reason = 'forfeited', resolved_at = NOW()
+                 WHERE id = $1 AND status = 'unclaimed' AND host_asked_at IS NULL AND host_window_ends_at <= NOW() RETURNING *`,
+                [x.id, this._cap(cur.rows[0], Number(cur.rows[0].prize_amount))]
+            );
+            const row = f.rows[0];
+            if (!row) continue;
+            forfeited++;
+            logger.info(`📺💰 TV prize ${row.id}: forfeited (₦${row.forfeited_amount}); the host did not ask for it back`);
+            await this._tell(Number(row.sponsor_user_id),
+                `Your ₦${Number(row.prize_amount).toLocaleString()} What's Up Trivia TV prize has been forfeited.`,
+                `Nobody collected it within ${CLAIM_HOURS} hours, and it was not asked back within the ${HOST_ASK_HOURS} hours after. ` +
+                `If you think this is a mistake, contact What's Up Trivia support.`,
+                `Your WUT TV prize has been forfeited`);
+        }
+        return { unclaimed, forfeited };
     }
 
     // ============================================
@@ -635,17 +867,19 @@ class TvPrizeService {
         const prizes = await pool.query(
             `SELECT p.id, p.tv_room_id, p.seats, p.prize_amount, p.setup_charge, p.prize_fee, p.total_charged,
                     p.paid_amount, p.status, p.outcome_reason, p.retained_amount, p.gateway, p.payment_reference,
-                    p.created_at, p.settled_at, p.resolved_at, s.username AS sponsor, w.username AS winner
+                    p.created_at, p.settled_at, p.resolved_at, p.claim_expires_at, p.claimed_at, p.host_window_ends_at,
+                    p.host_asked_at, p.forfeited_amount, s.username AS sponsor, w.username AS winner, wp.display_name AS winner_name
              FROM tv_prizes p
              JOIN users s ON s.id = p.sponsor_user_id
              LEFT JOIN users w ON w.id = p.winner_user_id
+             LEFT JOIN tv_players wp ON wp.id = p.winner_player_id
              ORDER BY p.created_at DESC
              LIMIT 100`
         );
         const payouts = await pool.query(
             `SELECT po.id, po.tv_prize_id, po.kind, po.amount, po.status, po.hold_reason, po.bank_name, po.bank_code,
                     po.account_number, po.account_name, po.details_verified, po.details_at, po.paid_at,
-                    po.paid_reference, po.paid_by, po.created_at, u.username, pr.tv_room_id
+                    po.paid_reference, po.paid_by, po.created_at, po.received_at, po.not_received_at, u.username, pr.tv_room_id
              FROM tv_payouts po
              JOIN users u ON u.id = po.user_id
              JOIN tv_prizes pr ON pr.id = po.tv_prize_id
@@ -659,6 +893,19 @@ class TvPrizeService {
             prizes: prizes.rows,
             payouts: payouts.rows
         };
+    }
+
+    /** An admin hands an unclaimed or forfeited prize back to the host, after the host got in touch. */
+    async returnToHost(prizeId, admin) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(`SELECT * FROM tv_prizes WHERE id = $1`, [prizeId]);
+        const row = r.rows[0];
+        if (!row) return { ok: false, error: 'No such prize' };
+        if (!['unclaimed', 'forfeited'].includes(row.status)) return { ok: false, error: 'Only an unclaimed or forfeited prize can be returned' };
+        logger.info(`📺💰 TV prize ${row.id}: returned to host ${row.sponsor_user_id} by ${admin || 'admin'}`);
+        const out = await this._refund(row, 'returned_by_admin', { from: ['unclaimed', 'forfeited'] });
+        if (out.already) return { ok: false, error: 'That prize has just changed; refresh and look again' };
+        return { ok: true, amount: out.amount, payoutId: out.payoutId };
     }
 
     async referenceOf(prizeId) {
@@ -685,7 +932,51 @@ class TvPrizeService {
             `status = 'paid', paid_at = NOW(), paid_reference = $3, paid_by = $4`, [ref, admin || 'admin']);
         if (!row) return { ok: false, error: `Cannot mark a ${cur.rows[0].status.replace('_', ' ')} payout as paid` };
         logger.info(`📺💰 TV payout ${payoutId} (₦${row.amount}) marked paid by ${admin}, ref ${ref}`);
+        // As Classic does: the winner is told what was sent, where, and the
+        // reference, and asked to confirm it arrived.
+        await this._tell(Number(row.user_id),
+            `✅ Payment sent: ₦${Number(row.amount).toLocaleString()} from What's Up Trivia TV has been sent to ` +
+            `${row.account_name || 'your account'}, ${row.bank_name || 'your bank'} ••${String(row.account_number || '').slice(-4)}.\n` +
+            `Transfer reference: ${ref}`,
+            `Please check your account, then confirm it arrived, or tell us it hasn't, here: ${this._prizesUrl()}`,
+            `Your ₦${Number(row.amount).toLocaleString()} WUT TV prize has been sent`);
         return { ok: true, payout: row };
+    }
+
+    /** The winner (or refunded host) says the money arrived. Only for their own payout, once it is marked paid. */
+    async confirmReceived(userId, payoutId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `UPDATE tv_payouts SET received_at = NOW(), not_received_at = NULL
+             WHERE id = $1 AND user_id = $2 AND status = 'paid' AND received_at IS NULL
+             RETURNING id, received_at`,
+            [payoutId, userId]
+        );
+        if (!r.rows[0]) return this._whyNot(userId, payoutId, 'already_confirmed');
+        logger.info(`📺💰 TV payout ${payoutId}: user ${userId} confirmed it arrived`);
+        return { ok: true, receivedAt: r.rows[0].received_at };
+    }
+
+    /** The winner says it has not arrived: flagged on the admin page. They can still confirm it later. */
+    async reportNotReceived(userId, payoutId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `UPDATE tv_payouts SET not_received_at = NOW()
+             WHERE id = $1 AND user_id = $2 AND status = 'paid' AND received_at IS NULL
+             RETURNING id, not_received_at`,
+            [payoutId, userId]
+        );
+        if (!r.rows[0]) return this._whyNot(userId, payoutId, 'already_confirmed');
+        logger.warn(`📺💰 TV payout ${payoutId}: user ${userId} says it has NOT arrived`);
+        return { ok: true, notReceivedAt: r.rows[0].not_received_at };
+    }
+
+    async _whyNot(userId, payoutId, fallback) {
+        const c = await pool.query(`SELECT id, user_id, status FROM tv_payouts WHERE id = $1`, [payoutId]);
+        const po = c.rows[0];
+        if (!po || Number(po.user_id) !== Number(userId)) return { ok: false, reason: 'not_yours' };
+        if (po.status !== 'paid') return { ok: false, reason: 'not_paid_yet' };
+        return { ok: false, reason: fallback };
     }
 
     async hold(payoutId, reason) {
@@ -707,7 +998,8 @@ class TvPrizeService {
      * For Financials and the Prizes tab. Revenue is the setup charges and fees
      * kept: counted once a payment has settled, and not at all when every
      * naira went back. A prize is not revenue: it is the host's money passing
-     * through, shown apart.
+     * through, shown apart. A forfeited prize is kept, but shown on its own
+     * line, never mixed into the fees.
      */
     async financials(startDate = null, endDate = null) {
         await tvAuth.ensureSchema();
@@ -723,9 +1015,11 @@ class TvPrizeService {
                 COUNT(*)::int AS paid_prizes,
                 COALESCE(SUM(p.prize_amount), 0)::int AS prize_collected,
                 COALESCE(SUM(p.prize_amount) FILTER (WHERE p.status = 'awarded'), 0)::int AS prize_awarded,
-                COALESCE(SUM(p.prize_amount) FILTER (WHERE p.status = 'settled'), 0)::int AS prize_unresolved
+                COALESCE(SUM(p.prize_amount) FILTER (WHERE p.status IN ('settled','claiming','unclaimed')), 0)::int AS prize_unresolved,
+                COALESCE(SUM(p.forfeited_amount) FILTER (WHERE p.status = 'forfeited'), 0)::int AS forfeited,
+                COUNT(*) FILTER (WHERE p.status = 'forfeited')::int AS forfeited_count
              FROM tv_prizes p
-             WHERE p.status IN ('settled','awarded','refunded')${when}`,
+             WHERE p.status IN ('settled','awarded','refunded','claiming','unclaimed','forfeited')${when}`,
             params
         );
         // Paid out in the period asked for; owed is what is owed now, whatever the period.
@@ -739,6 +1033,7 @@ class TvPrizeService {
                 COUNT(*) FILTER (WHERE status = 'paid'${paidWhen})::int AS paid_count,
                 COALESCE(SUM(amount) FILTER (WHERE status IN ('awaiting_details','ready','held','sending','failed')), 0)::int AS owed,
                 COUNT(*) FILTER (WHERE status IN ('awaiting_details','ready','held','sending','failed'))::int AS owed_count,
+                COUNT(*) FILTER (WHERE status = 'paid' AND received_at IS NULL AND not_received_at IS NOT NULL)::int AS not_received_count,
                 COALESCE(SUM(amount) FILTER (WHERE kind = 'refund' AND status = 'paid'${paidWhen}), 0)::int AS refunded
              FROM tv_payouts`,
             pp
@@ -752,12 +1047,16 @@ class TvPrizeService {
             paid_prizes: Number(a.paid_prizes) || 0,
             prize_collected: Number(a.prize_collected) || 0,
             prize_awarded: Number(a.prize_awarded) || 0,
-            // Still ours to hand over: prizes waiting for a result, and payouts not yet sent.
+            forfeited: Number(a.forfeited) || 0,
+            forfeited_count: Number(a.forfeited_count) || 0,
+            // Still ours to hand over: prizes waiting for a result, a guest winner
+            // or the host, and payouts not yet sent.
             held: (Number(a.prize_unresolved) || 0) + (Number(b.owed) || 0),
             paid_out: Number(b.paid_out) || 0,
             paid_count: Number(b.paid_count) || 0,
             owed: Number(b.owed) || 0,
             owed_count: Number(b.owed_count) || 0,
+            not_received_count: Number(b.not_received_count) || 0,
             refunded: Number(b.refunded) || 0
         };
     }
@@ -766,7 +1065,10 @@ class TvPrizeService {
 module.exports = new TvPrizeService();
 module.exports.PREFIX = PREFIX;
 module.exports.SPONSOR_MIN_AGE = SPONSOR_MIN_AGE;
-module.exports.SEAT_CHOICES = SEAT_CHOICES;
+module.exports.FEE_BPS = FEE_BPS;
 module.exports.OPEN_PAYOUT = OPEN_PAYOUT;
 module.exports.ASK_PENDING_AFTER_MS = ASK_PENDING_AFTER_MS;
 module.exports.FAIL_PENDING_AFTER_MS = FAIL_PENDING_AFTER_MS;
+module.exports.CLAIM_HOURS = CLAIM_HOURS;
+module.exports.HOST_ASK_HOURS = HOST_ASK_HOURS;
+module.exports.UNRESOLVED = UNRESOLVED;

@@ -50,6 +50,7 @@ const STATUS = {
     room_closed: 410, pair_expired: 410,
     prizes_off: 403, host_not_signed_in: 403, sponsor_too_young: 403, not_yours: 403, prize_out_of_range: 400,
     account_not_verified: 400, no_saved_details: 400, payment_unavailable: 503,
+    not_the_winner: 403, claim_expired: 410, already_claimed: 409, account_in_room: 409, too_late: 409,
     too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429,
     try_again: 503
 };
@@ -360,7 +361,7 @@ router.get('/solo/:id(\\d+)/review', requireDevice, async (req, res) => {
 // SIGNING IN ON THE TV, AND THE LEADERBOARD (phase 4)
 // ============================================
 // The TV shows a QR code; a phone signed in to its web account approves;
-// the TV is signed in until sign-out, 15 minutes idle, or the app closing.
+// the TV is signed in until sign-out (from app 0.11.0 it survives the app closing).
 
 const PAIR = ':code([A-Za-z0-9]{8})';
 
@@ -553,7 +554,7 @@ router.get('/rooms/:id(\\d+)/prize', requirePlayer, async (req, res) => {
 router.get('/rooms/:id(\\d+)/prize/quote', requirePlayer, async (req, res) => {
     try {
         return reply(res, await tvPrize.quote(Number(req.params.id), req.tvPlayerId,
-                                              parseInt(req.query.amount, 10), parseInt(req.query.seats, 10)));
+                                              parseInt(req.query.amount, 10)));
     } catch (error) { return fail(res, 'prize quote', error); }
 });
 
@@ -564,7 +565,7 @@ router.post('/rooms/:id(\\d+)/prize', requirePlayer, async (req, res) => {
         if (!acct.ok) return reply(res, acct);
         const body = req.body || {};
         return reply(res, await tvPrize.add(Number(req.params.id), req.tvPlayerId, acct.user,
-                                            { amount: parseInt(body.amount, 10), seats: parseInt(body.seats, 10) }, 'web'));
+                                            { amount: parseInt(body.amount, 10) }, 'web'));
     } catch (error) { return fail(res, 'prize add', error); }
 });
 
@@ -643,6 +644,68 @@ router.post('/rooms/:id(\\d+)/keep-points', async (req, res) => {
         if (!acct.ok) return reply(res, acct);
         return reply(res, await tvSession.keepPartyPoints(Number(req.params.id), token, acct.user));
     } catch (error) { return fail(res, 'keep points', error); }
+});
+
+// ============================================
+// A GUEST WINNER COLLECTS (026), AND A HOST ASKS FOR AN UNCOLLECTED PRIZE BACK
+// ============================================
+
+/** The winning phone: the prize, and its claim code while it can still be collected. */
+router.get('/rooms/:id(\\d+)/claim', async (req, res) => {
+    try {
+        const token = tvAuth.playerTokenFrom(req);
+        if (!token) return reply(res, { ok: false, reason: 'no_player_token' });
+        return reply(res, await tvPrize.claimInfo(Number(req.params.id), token));
+    } catch (error) { return fail(res, 'claim info', error); }
+});
+
+/**
+ * The guest winner collects on the phone they played on, now signed in. The
+ * player token proves which player; the web session, whose account.
+ */
+router.post('/rooms/:id(\\d+)/claim', async (req, res) => {
+    try {
+        const token = tvAuth.playerTokenFrom(req);
+        if (!token) return reply(res, { ok: false, reason: 'no_player_token' });
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.claim(Number(req.params.id), token, acct.user));
+    } catch (error) { return fail(res, 'claim', error); }
+});
+
+/** The guest winner collects with the code their phone showed, signed in on any device. */
+router.post('/prizes/claim', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.claimByCode((req.body || {}).code, acct.user));
+    } catch (error) { return fail(res, 'claim by code', error); }
+});
+
+/** The winner says the payment arrived, or that it has not (Oct 19). */
+router.post('/payouts/:id(\\d+)/received', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.confirmReceived(acct.user.id, Number(req.params.id)));
+    } catch (error) { return fail(res, 'payout received', error); }
+});
+
+router.post('/payouts/:id(\\d+)/not-received', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.reportNotReceived(acct.user.id, Number(req.params.id)));
+    } catch (error) { return fail(res, 'payout not received', error); }
+});
+
+/** One tap from the host: an uncollected prize back, within 48 hours. */
+router.post('/prizes/:id(\\d+)/ask-back', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await tvPrize.askBack(acct.user.id, Number(req.params.id)));
+    } catch (error) { return fail(res, 'ask back', error); }
 });
 
 module.exports = router;

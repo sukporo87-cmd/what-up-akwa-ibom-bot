@@ -38,7 +38,6 @@ const party = require('./tv-party.service');
 const tvSettings = require('./tv-settings.service');
 
 const RECENT_HOURS = 48;
-const IDLE_MINUTES = 15;
 
 class TvAdminService {
 
@@ -72,8 +71,8 @@ class TvAdminService {
              FROM tv_sessions s
              JOIN tv_devices d ON d.id = s.tv_device_id
              JOIN users u ON u.id = s.user_id
-             WHERE s.ended_at IS NULL AND s.last_active_at > NOW() - INTERVAL '${IDLE_MINUTES} minutes'
-             ORDER BY s.created_at DESC`
+             WHERE s.ended_at IS NULL
+             ORDER BY s.last_active_at DESC`
         );
         const live = rooms.rows.filter(r => r.status === 'lobby' || r.status === 'playing');
         const latestVersion = (await tvSettings.values())['app.latest_version'] || null;

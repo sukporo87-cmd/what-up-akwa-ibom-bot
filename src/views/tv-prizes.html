@@ -15,6 +15,9 @@
   back, says where to send the money. Served at /tv/prizes. The signed-in web
   account decides whose payouts are shown; the account name comes from the
   bank, never from what is typed. Every value goes on the page as text.
+  026: a guest winner can collect here with their claim code, within the 24
+  hours; a host whose prize nobody collected asks for it back here, within
+  the 48 hours after.
 -->
 <style>
 :root{
@@ -52,7 +55,7 @@ a{color:var(--brass)}
 <script>
 (function(){
 'use strict';
-var S = { account: null, payouts: [], saved: null, banks: null, busy: false, errors: {}, open: {} };
+var S = { account: null, payouts: [], asks: [], saved: null, banks: null, busy: false, errors: {}, open: {}, code: '', note: '' };
 
 function h(tag, attrs, kids){
   var el = document.createElement(tag);
@@ -82,6 +85,12 @@ var WHY = {
   too_late: 'This one can no longer be changed.',
   too_many_attempts: 'Too many tries for now. Wait a while and try again.',
   not_signed_in: 'Your sign-in has ended. Sign in again.',
+  bad_claim_code: 'That code isn\u2019t right. It is 8 letters and numbers, shown on the phone that won.',
+  claim_expired: 'The 24 hours to collect this prize have passed, so it can\u2019t be claimed now.',
+  already_claimed: 'This prize has already been collected.',
+  account_in_room: 'This account already played in that game, so it can\u2019t collect its prize too.',
+  already_confirmed: 'You have already confirmed this one.',
+  not_paid_yet: 'This hasn\u2019t been sent yet.',
   offline: 'No connection. Check your signal and try again.'
 };
 function why(r){ return WHY[r] || 'That did not work. Try again.'; }
@@ -101,7 +110,7 @@ function load(){
     S.account = j && j.authenticated && j.user ? j.user : null;
     if (!S.account) return render();
     return get('/tv/payouts').then(function(p){
-      if (p.success){ S.payouts = p.payouts || []; S.saved = p.saved || null; }
+      if (p.success){ S.payouts = p.payouts || []; S.asks = p.asks || []; S.saved = p.saved || null; }
       else if (p.reason === 'not_signed_in') S.account = null;
       render();
     });
@@ -115,11 +124,24 @@ function loadBanks(){
 
 function save(po, body){
   if (S.busy) return;
+  // A focused field stops the page redrawing (so typing is never lost); let go of it first.
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   S.busy = true; S.errors[po.id] = ''; render();
   post('/tv/payouts/' + po.id + '/details', body).then(function(j){
     S.busy = false;
     if (!j.success){ S.errors[po.id] = why(j.reason); return render(); }
     S.open[po.id] = false;
+    load();
+  });
+}
+
+function answer(po, which){
+  if (S.busy) return;
+  S.busy = true; S.errors[po.id] = ''; render();
+  post('/tv/payouts/' + po.id + '/' + which, {}).then(function(j){
+    S.busy = false;
+    if (!j.success){ S.errors[po.id] = why(j.reason); return render(); }
+    S.note = which === 'received' ? 'Thank you: confirmed.' : 'Thank you. Our team has been told and will look into it.';
     load();
   });
 }
@@ -145,6 +167,54 @@ function form(po){
   return kids;
 }
 
+function claimForm(){
+  var input = h('input', { id: 'code', maxlength: '9', autocapitalize: 'characters', autocomplete: 'off', placeholder: 'XXXX-XXXX',
+                           'aria-label': 'Claim code', value: S.code });
+  input.addEventListener('input', function(){ S.code = input.value; });
+  return h('div', { class: 'card' }, [
+    h('h2', { text: 'Won as a guest?' }),
+    h('p', { class: 'mute small', text: 'Enter the claim code your phone showed after the game. You have 24 hours from the end of the game.' }),
+    h('div', {}, [ h('label', { for: 'code', text: 'Claim code' }), input ]),
+    h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Checking\u2026' : 'Collect my prize', on: { click: function(){
+      if (S.busy) return;
+      input.blur();
+      S.busy = true; S.errors.code = ''; render();
+      post('/tv/prizes/claim', { code: input.value }).then(function(j){
+        S.busy = false;
+        if (!j.success){ S.errors.code = why(j.reason); return render(); }
+        S.code = ''; S.note = 'Collected: ' + naira(j.amount) + '. Add your bank details below and it is sent to you.';
+        load();
+      });
+    } } }),
+    h('p', { class: 'err', role: 'alert', text: S.errors.code || '' })
+  ]);
+}
+
+function askCard(a){
+  var key = 'ask' + a.id;
+  return h('div', { class: 'card' }, [
+    h('p', { class: 'mute small', text: 'A prize you put up' }),
+    h('div', { class: 'amount', text: naira(a.amount) }),
+    h('p', { class: 'small', text: 'Nobody collected this prize in time. You can ask for it back until ' + when(a.until) +
+                                   '. The fee is not returned. If you don\u2019t ask by then, the prize is forfeited.' }),
+    h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Asking\u2026' : 'Ask for my prize back', on: { click: function(){
+      if (S.busy) return;
+      S.busy = true; S.errors[key] = ''; render();
+      post('/tv/prizes/' + a.id + '/ask-back', {}).then(function(j){
+        S.busy = false;
+        if (!j.success){ S.errors[key] = j.reason === 'too_late' ? 'Too late: the time to ask for this prize has passed.' : why(j.reason); return render(); }
+        S.note = 'Done: ' + naira(j.amount) + ' is coming back to you. Add your bank details below if they are not there yet.';
+        load();
+      });
+    } } }),
+    h('p', { class: 'err', role: 'alert', text: S.errors[key] || '' })
+  ]);
+}
+function when(t){
+  try { return new Date(t).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Africa/Lagos' }); }
+  catch (e) { return ''; }
+}
+
 function card(po){
   var st = STATUS[po.status] || [po.status, 'wait'];
   var kids = [
@@ -155,6 +225,23 @@ function card(po){
   if (po.account_name && po.last4){
     kids.push(h('p', { class: 'small', text: (po.status === 'paid' ? 'Sent to ' : 'To be sent to ') + (po.bank_name || '') +
                                              ' ••' + po.last4 + ' (' + po.account_name + ')' + (po.paid_at ? ' on ' + day(po.paid_at) : '') + '.' }));
+  }
+  if (po.status === 'paid'){
+    if (po.paid_reference) kids.push(h('p', { class: 'mute small', text: 'Transfer reference: ' + po.paid_reference }));
+    if (po.received_at){
+      kids.push(h('p', {}, [ h('span', { class: 'tag ok', text: 'You confirmed it arrived · ' + day(po.received_at) }) ]));
+    } else {
+      if (po.not_received_at){
+        kids.push(h('p', { class: 'small', text: 'You told us it hasn\u2019t arrived. Our team can see this and will look into it.' }));
+      } else {
+        kids.push(h('p', { class: 'small', text: 'Please check your account and tell us if it arrived.' }));
+      }
+      kids.push(h('button', { class: 'go', disabled: S.busy, text: po.not_received_at ? 'It has arrived now' : 'Yes, it arrived',
+        on: { click: function(){ answer(po, 'received'); } } }));
+      if (!po.not_received_at){
+        kids.push(h('button', { disabled: S.busy, text: 'It hasn\u2019t arrived', on: { click: function(){ answer(po, 'not-received'); } } }));
+      }
+    }
   }
   var editable = ['awaiting_details', 'ready', 'failed'].indexOf(po.status) >= 0;
   if (editable){
@@ -171,13 +258,15 @@ function render(){
   if (active && active.tagName === 'INPUT' && app.contains(active) && !S.busy) return;
   var kids = [ h('h1', { text: 'Your WUT TV prizes' }) ];
   if (!S.account){
-    kids.push(h('p', { class: 'mute', text: 'Sign in to the account you played with to see your prizes.' }));
-    kids.push(h('p', {}, [ h('a', { href: '/', text: 'Sign in' }), ', then come back to this page.' ]));
-  } else if (!S.payouts.length){
-    kids.push(h('p', { class: 'mute', text: 'Nothing here yet, ' + S.account.username + '. Prizes you win in a WUT TV Party game show here.' }));
+    kids.push(h('p', { class: 'mute', text: 'Sign in to see your prizes, or to collect one you won as a guest.' }));
+    kids.push(h('p', {}, [ h('a', { href: '/', text: 'Sign in or make an account' }), ', then come back to this page.' ]));
   } else {
     kids.push(h('p', { class: 'mute', text: 'Signed in as ' + S.account.username + '.' }));
+    if (S.note) kids.push(h('p', { class: 'tag ok', role: 'status', text: S.note }));
+    S.asks.forEach(function(a){ kids.push(askCard(a)); });
     S.payouts.forEach(function(po){ kids.push(card(po)); });
+    if (!S.payouts.length && !S.asks.length) kids.push(h('p', { class: 'mute', text: 'Nothing here yet. Prizes you win in a WUT TV Party game show here.' }));
+    kids.push(claimForm());
   }
   app.replaceChildren.apply(app, kids);
 }

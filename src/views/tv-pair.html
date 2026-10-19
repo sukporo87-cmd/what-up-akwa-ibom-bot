@@ -16,8 +16,8 @@
   phone; nothing is typed on the TV, ever.
 
   What the TV gets: the account's username, and Solo points credited to it.
-  Nothing else. The TV signs out on sign-out, after 15 minutes idle, and when
-  the app closes.
+  Nothing else. From app 0.11.0 the TV stays signed in until someone chooses
+  Sign out on it, or someone else signs in there.
 
   No markup is ever built from data: every piece of text is set with
   textContent.
@@ -179,7 +179,7 @@ function render(){
       p.carryPoints ? h('p', { class: 'ok', text: p.carryPoints + ' points from the game just played on this TV will move to your account.' }) : null
     ]));
     out.push(h('p', { class: 'small', text: 'Only do this if you’re in front of the TV now. Your Solo points will count on the leaderboard.' }));
-    out.push(h('p', { class: 'mute small', text: 'The TV signs you out when you choose Sign out, after 15 minutes without use, or when the app closes.' }));
+    out.push(h('p', { class: 'mute small', text: 'You stay signed in on that TV until you choose Sign out on it, or someone else signs in there. Only sign in on a TV you trust.' }));
     out.push(h('button', { class: 'go', disabled: S.busy, onclick: approve, text: S.busy ? 'Signing in…' : 'Sign in on the TV' }));
     out.push(h('button', { class: 'quiet', disabled: S.busy, onclick: deny, text: 'Not me, cancel' }));
     if (S.error) out.push(h('p', { class: 'bad small', text: S.error }));

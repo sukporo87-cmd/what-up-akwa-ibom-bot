@@ -116,6 +116,8 @@ button:disabled{opacity:.45;cursor:default}
 .rv-h span{font-size:13px;color:var(--mute);text-align:right}
 .rv-h .won{color:var(--mint);font-weight:600}
 .rv-q{font-weight:600;font-size:16px;line-height:1.4}
+.rv-fact{margin:0;padding:10px 12px;border-radius:12px;background:rgba(232,182,76,.12);font-size:14.5px;line-height:1.5}
+.rv-fact b{color:var(--brass)}
 .rv-o{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .rv-o li{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;background:var(--raise);font-size:15px}
 .rv-o li i{font-style:normal;font-family:var(--display);font-weight:800;width:22px;flex:none}
@@ -152,7 +154,8 @@ var S = {
   room: null, me: null, game: null, spectating: false,
   screen: 'loading', error: '', nameTaken: null, ended: null, picking: false,
   reviewing: null, review: null, reviewError: '',
-  prizeOpts: null, prizeLoading: false, quote: null, prizeForm: { amount: '', seats: '' },
+  prizeOpts: null, prizeLoading: false, quote: null, prizeForm: { amount: '' },
+  claimCode: null, claimAsked: false, claimed: null, claimError: '',
   offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
 };
 
@@ -214,7 +217,6 @@ var WHY = {
   host_not_signed_in: 'Play as your account to add a prize.',
   prize_out_of_range: 'That prize is outside the limits.',
   bad_amount: 'Type the prize in whole naira.',
-  bad_seats: 'Pick enough seats for everyone already here.',
   prize_already_added: 'This game already has a prize.',
   prize_pending: 'The prize payment has not cleared yet.',
   prize_paid: 'The prize is paid. Ending the game is the way to get it back.',
@@ -318,6 +320,7 @@ function connect(){
   on('player.finished', function(d){ S.game = Object.assign({}, S.game, { phase: 'done', final: d }); });
   on('player.prize', function(d){
     S.room = Object.assign({}, S.room, { prize: d.prize, maxPlayers: d.maxPlayers || (S.room && S.room.maxPlayers) });
+    if (d.claimCode) S.claimCode = d.claimCode;
     if (S.prizeOpts) S.prizeOpts.prize = d.prize;
     if (d.prize) S.quote = null;
   });
@@ -497,7 +500,7 @@ function lobbyScreen(){
     if (!canStart) out.push(h('p', { class: 'mute small', text: pendingPrize ? WHY.prize_pending : !(r.categories && r.categories.length) ? WHY.no_categories : WHY.not_enough_players }));
     out.push(h('button', { class: 'quiet', text: 'End this game', on: { click: function(){
       var paid = r.prize && r.prize.status === 'settled';
-      if (confirm('End the game for everyone?' + (paid ? ' Your ' + naira(r.prize.amount) + ' prize comes back to you, but not the setup charge and fee.' : ''))) act('/close');
+      if (confirm('End the game for everyone?' + (paid ? ' Your ' + naira(r.prize.amount) + ' prize comes back to you, but not the fee.' : ''))) act('/close');
     } } }));
   } else {
     out.push(h('p', { class: 'mute', text: (r.playerCount || 0) + ' playing. Watch the TV — the game starts when the host is ready.' }));
@@ -661,7 +664,9 @@ function finishedScreen(){
   ]));
   if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
   out = out.concat(prizeResult());
-  if (S.me && !S.me.signedIn && f.points) out = out.concat(keepBlock(f.points));
+  // A guest who won the prize collects it, and their points, in one step above.
+  var collecting = !!(S.room && S.room.prize && S.room.prize.status === 'claiming' && S.me && S.room.prize.winnerPlayerId === S.me.id);
+  if (S.me && !S.me.signedIn && f.points && !collecting) out = out.concat(keepBlock(f.points));
   out.push(h('button', { class: 'quiet', disabled: S.reviewing === 'loading', on: { click: openReview },
                          text: S.reviewing === 'loading' ? 'Loading your answers\u2026' : 'Review my answers' }));
   if (S.reviewError) out.push(h('p', { class: 'err', text: S.reviewError }));
@@ -719,14 +724,20 @@ function loadPrizeOpts(){
   S.prizeLoading = true;
   getJson('/tv/rooms/' + S.roomId + '/prize').then(function(j){
     S.prizeLoading = false;
-    S.prizeOpts = j.success ? j : { on: false, seatChoices: [] };
-    if (j.success && !S.prizeForm.seats && j.seatChoices && j.seatChoices.length) S.prizeForm.seats = String(j.seatChoices[0]);
+    S.prizeOpts = j.success ? j : { on: false };
     render();
   });
 }
-var RULES = 'The prize goes to the best-placed player who is playing as their account; guests can\u2019t win it. ' +
-  'If fewer than two signed-in players finish, or the game never starts, the prize comes back to you; the setup charge and fee don\u2019t. ' +
-  'If the game is ended early, the prize goes to whoever is ahead.';
+var RULES = 'The prize goes to whoever finishes first. A guest who wins has 24 hours to sign in, or make an account and sign in, ' +
+  'to collect it; after that it can\u2019t be claimed. If nobody collects it, we\u2019ll message you, and you\u2019ll have 48 hours to ' +
+  'ask for it back; if you don\u2019t, it is forfeited. If fewer than two players finish, or the game never starts, the prize comes ' +
+  'back to you. The 15% fee isn\u2019t returned in any of these cases. If the game is ended early, the prize goes to whoever is ahead.';
+var GUEST_RULE = 'Playing as a guest? If you win, you have 24 hours to sign in, or make an account and sign in, on this phone ' +
+  'to collect the prize. After that it can\u2019t be claimed.';
+function nameOf(pid){
+  var p = ((S.room && S.room.players) || []).filter(function(x){ return x.id === pid; })[0];
+  return p ? p.name : 'The winner';
+}
 function signInBit(){
   if (S.account && S.account.username){
     return h('button', { class: 'quiet', disabled: S.busy, text: 'Play as ' + S.account.username, on: { click: function(){ act('/use-account'); } } });
@@ -740,9 +751,9 @@ function prizeBanner(r){
   if (p.status === 'pending') return [ h('p', { class: 'banner', text: 'The host is adding a ' + naira(p.amount) + ' prize.' }) ];
   if (p.status !== 'settled') return [];
   var kids = [ h('h2', { text: naira(p.amount) + ' prize' }),
-               h('p', { text: 'For the best-placed player who is signed in to their account.' }) ];
+               h('p', { text: 'For whoever finishes first.' }) ];
   if (S.me && !S.me.signedIn){
-    kids.push(h('p', { class: 'mute small', text: 'You\u2019re playing as a guest, so you can\u2019t win it.' }));
+    kids.push(h('p', { class: 'mute small', text: GUEST_RULE }));
     kids.push(signInBit());
   }
   return [ h('div', { class: 'panel prize' }, kids) ];
@@ -770,25 +781,19 @@ function prizeHost(r){
   }
   var amt = h('input', { id: 'pamt', inputmode: 'numeric', placeholder: naira(o.min) + ' to ' + naira(o.max), value: S.prizeForm.amount });
   amt.addEventListener('input', function(){ S.prizeForm.amount = amt.value.replace(/[^0-9]/g, ''); S.quote = null; });
-  var seats = h('select', { id: 'pseats' }, (o.seatChoices || []).map(function(n){
-    return h('option', { value: String(n), selected: String(n) === S.prizeForm.seats ? 'selected' : null, text: 'Up to ' + n + ' players' });
-  }));
-  seats.addEventListener('change', function(){ S.prizeForm.seats = seats.value; S.quote = null; render(); });
   var kids = [ h('h2', { text: 'Add a prize' }),
-    h('div', {}, [ h('label', { for: 'pamt', text: 'Prize (\u20a6)' }), amt ]),
-    h('div', {}, [ h('label', { for: 'pseats', text: 'Seats' }), seats ]) ];
+    h('div', {}, [ h('label', { for: 'pamt', text: 'Prize (\u20a6)' }), amt ]) ];
   if (!S.quote){
     kids.push(h('button', { class: 'quiet', disabled: S.busy, text: 'See the price', on: { click: function(){
       S.prizeForm.amount = amt.value.replace(/[^0-9]/g, '');
-      getJson('/tv/rooms/' + S.roomId + '/prize/quote?amount=' + encodeURIComponent(S.prizeForm.amount) + '&seats=' + encodeURIComponent(S.prizeForm.seats))
+      getJson('/tv/rooms/' + S.roomId + '/prize/quote?amount=' + encodeURIComponent(S.prizeForm.amount))
         .then(function(j){ if (j.success){ S.quote = j.quote; S.error = ''; } else S.error = why(j.reason) + (j.min ? ' ' + naira(j.min) + ' to ' + naira(j.max) + '.' : ''); render(); });
     } } }));
   } else {
     var q = S.quote;
     kids.push(h('div', {}, [
       h('div', { class: 'money' }, [ h('span', { text: 'Prize' }), h('span', { text: naira(q.prize) }) ]),
-      h('div', { class: 'money' }, [ h('span', { text: 'Setup, up to ' + q.seats + ' players' }), h('span', { text: naira(q.setupCharge) }) ]),
-      h('div', { class: 'money' }, [ h('span', { text: 'Fee' }), h('span', { text: naira(q.prizeFee) }) ]),
+      h('div', { class: 'money' }, [ h('span', { text: 'Fee (15%)' }), h('span', { text: naira(q.prizeFee) }) ]),
       h('div', { class: 'money total' }, [ h('span', { text: 'You pay' }), h('span', { text: naira(q.total) }) ])
     ]));
     kids.push(h('p', { class: 'mute small', text: RULES }));
@@ -799,29 +804,91 @@ function prizeHost(r){
 function payPrize(){
   if (S.busy || !S.quote) return;
   S.busy = true; S.error = ''; render();
-  api('/tv/rooms/' + S.roomId + '/prize', { amount: S.quote.prize, seats: S.quote.seats }).then(function(j){
+  api('/tv/rooms/' + S.roomId + '/prize', { amount: S.quote.prize }).then(function(j){
     S.busy = false;
     if (j.success && j.authorizationUrl){ save(); location.href = j.authorizationUrl; return; }
     S.error = why(j.reason); S.quote = null; render();
   });
 }
+// ---------- a guest winner collects (026) ----------
+// 24 hours, on this phone: sign in (or make an account) in another tab, come
+// back, and tap Collect. The code is for collecting from another device.
+var CLAIM_WHY = {
+  claim_expired: 'The 24 hours to collect this prize have passed, so it can\u2019t be claimed now.',
+  already_claimed: 'This prize has already been collected.',
+  account_in_room: 'That account already played in this game, so it can\u2019t collect this prize too. Sign in with another account.',
+  not_the_winner: 'This phone did not win the prize.',
+  not_signed_in: 'You\u2019re not signed in on this phone. Sign in, then come back here.'
+};
+function until(t){
+  try { return new Date(t).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }); }
+  catch (e) { return ''; }
+}
+function claimPanel(p){
+  if (!S.claimCode && !S.claimAsked && S.roomId && S.token){
+    S.claimAsked = true;
+    getJson('/tv/rooms/' + S.roomId + '/claim').then(function(j){ if (j.success && j.claimCode){ S.claimCode = j.claimCode; render(); } });
+  }
+  var kids = [ h('div', { class: 'won', text: 'You won ' + naira(p.amount) + '!' }),
+    h('p', { class: 'small', text: 'You played as a guest. Sign in, or make an account and sign in, by ' + until(p.claimExpiresAt) +
+                                   ' to collect it. After that it can\u2019t be claimed.' }) ];
+  if (S.claimCode){
+    kids.push(h('div', { class: 'money total' }, [ h('span', { text: 'Your claim code' }), h('span', { text: S.claimCode }) ]));
+    kids.push(h('p', { class: 'mute small', text: 'Screenshot this or write it down. If this page closes, sign in at /tv/prizes on any phone or computer and enter the code there.' }));
+  }
+  if (S.account && S.account.username){
+    kids.push(h('button', { class: 'go', disabled: S.busy, on: { click: collect },
+                            text: S.busy ? 'Collecting\u2026' : 'Collect as ' + S.account.username }));
+  } else {
+    kids.push(h('a', { class: 'go', href: '/', target: '_blank', rel: 'noopener', text: 'Sign in or make an account' }));
+    kids.push(h('p', { class: 'mute small', text: 'Then come back to this page and tap Collect.' }));
+  }
+  if (S.claimError) kids.push(h('p', { class: 'banner', text: S.claimError }));
+  return [ h('div', { class: 'panel prize' }, kids) ];
+}
+function collect(){
+  if (S.busy) return;
+  S.busy = true; S.claimError = ''; render();
+  api('/tv/rooms/' + S.roomId + '/claim', {}).then(function(j){
+    S.busy = false;
+    if (j.success){
+      S.claimed = j;
+      if (j.kept) S.kept = { kept: j.kept, username: j.username };
+      if (S.room && S.room.prize) S.room.prize = Object.assign({}, S.room.prize, { status: 'awarded' });
+    } else {
+      if (j.reason === 'not_signed_in') S.account = null;
+      S.claimError = CLAIM_WHY[j.reason] || why(j.reason);
+    }
+    render();
+  });
+}
+
 function prizeResult(){
   var p = S.room && S.room.prize;
   if (!p) return [];
   var me = S.me && S.me.id;
   if (p.status === 'settled') return [ h('p', { class: 'banner', text: 'Working out the ' + naira(p.amount) + ' prize\u2026' }) ];
+  if (p.status === 'claiming'){
+    if (p.winnerPlayerId === me) return claimPanel(p);
+    return [ h('p', { class: 'banner', text: nameOf(p.winnerPlayerId) + ' won the ' + naira(p.amount) +
+                                             ' prize as a guest, and has 24 hours to sign in and collect it.' }) ];
+  }
   if (p.status === 'awarded'){
     if (p.winnerPlayerId === me){
-      return [ h('div', { class: 'panel prize' }, [ h('div', { class: 'won', text: 'You won ' + naira(p.amount) + '!' }),
+      return [ h('div', { class: 'panel prize' }, [ h('div', { class: 'won', text: (S.claimed ? 'Collected: ' : 'You won ') + naira(p.amount) + '!' }),
         h('p', { class: 'small', text: 'Add your bank details and it is sent to you.' }),
         h('a', { class: 'go', href: '/tv/prizes', text: 'Get paid' }) ]) ];
     }
-    return [ h('p', { class: 'banner', text: 'The ' + naira(p.amount) + ' prize went to the best-placed signed-in player.' }) ];
+    return [ h('p', { class: 'banner', text: 'The ' + naira(p.amount) + ' prize went to ' + nameOf(p.winnerPlayerId) + '.' }) ];
+  }
+  if (p.status === 'unclaimed' || p.status === 'forfeited'){
+    return [ h('p', { class: 'banner', text: 'Nobody collected the ' + naira(p.amount) + ' prize in time.' }) ];
   }
   if (p.status === 'refunded'){
     if (p.sponsorPlayerId === me){
       return [ h('div', { class: 'panel prize' }, [ h('h2', { text: 'Your ' + naira(p.amount) + ' prize is coming back to you' }),
         h('p', { class: 'small', text: p.outcome === 'too_few_signed_in' ? 'Fewer than two signed-in players finished.' :
+                                       p.outcome === 'too_few_finished' ? 'Fewer than two players finished.' :
                                        p.outcome === 'ended_before_a_result' ? 'The game ended before any question was answered.' : 'The game did not produce a winner.' }),
         h('a', { class: 'go', href: '/tv/prizes', text: 'Add your bank details' }) ]) ];
     }
@@ -881,6 +948,8 @@ function reviewScreen(){
       h('div', { class: 'rv-h' }, head),
       h('p', { class: 'rv-q', text: x.text || '(This question is no longer in the bank.)' }),
       h('ul', { class: 'rv-o' }, opts),
+      // The fun fact, as web play shows it (Oct 19).
+      x.funFact ? h('p', { class: 'rv-fact' }, [ h('b', { text: 'Fun fact: ' }), x.funFact ]) : null,
       h('p', { class: 'small mute', text: foot })
     ]));
   });

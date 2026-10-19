@@ -68,11 +68,13 @@ class TvAuthService {
         // 018 first (the tables), then 019 (Solo), which adds to tv_points,
         // then 020 (signing in on a TV), then 021 (Race style), then 022 (the
         // admin page's settings), then 023 (which TV is which, Solo answers),
-        // then 024 (venue TVs), then 025 (prizes and payouts).
+        // then 024 (venue TVs), then 025 (prizes and payouts), then 026 (a
+        // guest winner's claim), which alters tv_prizes and so comes after it.
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
-                           ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS,
+                           ...TvAuthService.CLAIM_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -461,6 +463,26 @@ TvAuthService.IDENTITY_SCHEMA_STATEMENTS = Object.freeze([
 TvAuthService.VENUE_SCHEMA_STATEMENTS = Object.freeze([
     `ALTER TABLE tv_devices
     ADD COLUMN IF NOT EXISTS venue BOOLEAN NOT NULL DEFAULT false`
+]);
+
+TvAuthService.CLAIM_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_prizes
+    ADD COLUMN IF NOT EXISTS claim_code_hash TEXT,
+    ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS host_window_ends_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS host_asked_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS forfeited_amount INTEGER CHECK (forfeited_amount IS NULL OR forfeited_amount >= 0)`,
+    `ALTER TABLE tv_prizes DROP CONSTRAINT IF EXISTS tv_prizes_status_check,
+    ADD CONSTRAINT tv_prizes_status_check CHECK (status IN (
+        'pending','settled','awarded','refunded','cancelled','failed','claiming','unclaimed','forfeited'
+    ))`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_prizes_claims
+    ON tv_prizes (status, claim_expires_at)
+    WHERE status IN ('claiming','unclaimed')`,
+    `ALTER TABLE tv_payouts
+    ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS not_received_at TIMESTAMPTZ`
 ]);
 
 TvAuthService.PRIZE_SCHEMA_STATEMENTS = Object.freeze([

@@ -13,6 +13,9 @@
   screen comes on, and the newest app version, which tells older TVs to update.
   Phase 5: the Prizes tab (Super Admin and Finance Officer only): prizes on
   Party games, the queue of what WUT TV owes, and switching prizes on or off.
+  026: prizes a guest won and has 24 hours to collect, prizes nobody collected
+  (the host's 48 hours to ask for them back), forfeited prizes, and Return to
+  host for a host who got in touch.
 
   Settings apply to NEW games only, within 15 seconds. A game takes its
   values when it starts and keeps them to the end.
@@ -206,7 +209,7 @@
     </div>
     <div class="card">
       <h2>Signed in on a TV now</h2>
-      <div class="hint">A sign-in ends by itself after 15 minutes without use, or when the app closes. <b>Sign out</b> ends it now.</div>
+      <div class="hint">From app 0.11.0 a sign-in stays until someone chooses Sign out on the TV, or someone else signs in there. <b>Sign out</b> ends it from here: use it if someone asks, or a TV in a public place has been left signed in.</div>
       <div class="scroll" id="sessions"><div class="loading">Loading…</div></div>
     </div>
     <div class="card">
@@ -252,12 +255,12 @@
     <div class="stats" id="prizeStats"></div>
     <div class="card">
       <h2>Prizes on or off</h2>
-      <div class="hint">When on, a Party host playing as their account can put up a prize from their phone and pay for it before the game, at the Challenge price list's setup charge for the seats, plus its fee. Only signed-in players can win. <b>Get regulatory advice before switching prizes on for TVs in public places.</b></div>
+      <div class="hint">When on, a Party host playing as their account can put up a prize from their phone and pay for it before the game: the prize plus WUT TV's 15% fee. There is no setup charge, and Challenge's prices and settings do not apply. Whoever finishes first wins; a guest winner has 24 hours to sign in and collect it. A prize nobody collects is offered back to the host for 48 hours, then forfeited. <b>Get regulatory advice before switching prizes on for TVs in public places.</b></div>
       <div id="prizeConfig"><div class="loading">Loading…</div></div>
     </div>
     <div class="card">
       <h2>What WUT TV owes</h2>
-      <div class="hint">Winners, and hosts whose prize came back. A payout is <b>ready</b> once its bank details have been checked with the bank. Send the money from the bank, then <b>Mark paid</b> with the transfer's reference. <b>Hold</b> stops one from being paid until you release it. This queue is separate from Classic and Challenge payouts, so it can be made automatic later.</div>
+      <div class="hint">Winners, and hosts whose prize came back. A payout is <b>ready</b> once its bank details have been checked with the bank. Send the money from the bank, then <b>Mark paid</b> with the transfer's reference. <b>Hold</b> stops one from being paid until you release it. This queue is separate from Classic and Challenge payouts, so it can be made automatic later. When you <b>Mark paid</b>, the winner gets a message with the amount, bank and reference, and is asked to confirm it arrived; the row then shows <b>Payment confirmed</b>, or <b>Not confirmed</b> until they do (many never bother, and that is fine). If the winner says it hasn't come, a short note says so.</div>
       <div class="scroll" id="payoutQueue"><div class="loading">Loading…</div></div>
     </div>
     <div class="card">
@@ -639,8 +642,12 @@ function renderPlayNow() {
 const PAYOUT = { awaiting_details: ['Waiting for bank details', 'lobby'], ready: ['Ready to pay', 'live'], held: ['Held', 'warn'],
                  sending: ['Being sent', 'live'], paid: ['Paid', 'done'], failed: ['Failed', 'race'], cancelled: ['Cancelled', 'done'] };
 const PRIZE = { pending: ['Waiting for payment', 'lobby'], settled: ['Paid, game to play', 'live'], awarded: ['Won', 'done'],
-                refunded: ['Refunded', 'warn'], cancelled: ['Taken off', 'done'], failed: ['Not paid', 'done'] };
-const OUTCOME = { won: 'won', not_played: 'game never started', ended_before_a_result: 'ended before any question was answered', too_few_signed_in: 'fewer than two signed-in finishers',
+                refunded: ['Refunded', 'warn'], cancelled: ['Taken off', 'done'], failed: ['Not paid', 'done'],
+                claiming: ['Guest to collect', 'lobby'], unclaimed: ['Not collected', 'warn'], forfeited: ['Forfeited', 'race'] };
+const OUTCOME = { won: 'won', not_played: 'game never started', ended_before_a_result: 'ended before any question was answered', too_few_signed_in: 'fewer than two signed-in finishers', too_few_finished: 'fewer than two finishers',
+                  awaiting_claim: 'guest winner, 24 hours to collect', not_claimed: 'not collected; host can ask for it back',
+                  forfeited: 'not collected, not asked back', unclaimed_host_asked: 'not collected; host asked for it back',
+                  returned_by_admin: 'returned to the host by an admin',
                   room_closed_before_payment: 'room closed before payment, all refunded', paid_after_cancel: 'paid after taken off, all refunded',
                   cancelled_by_host: 'taken off by the host', payment_not_completed: 'payment never completed', payment_not_started: 'payment page did not open' };
 const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
@@ -655,8 +662,10 @@ async function loadPrizes() {
   }
   const m = j.summary;
   document.getElementById('prizeStats').innerHTML = [
-    [naira(m.revenue), 'Kept: setup charges and fees'], [naira(m.prize_collected), 'Prizes paid in by hosts'],
-    [naira(m.owed), m.owed_count + ' payout(s) owed now'], [naira(m.paid_out), m.paid_count + ' paid out']
+    [naira(m.revenue), 'Kept: fees (and setup charges before Oct 19)'], [naira(m.prize_collected), 'Prizes paid in by hosts'],
+    [naira(m.owed), m.owed_count + ' payout(s) owed now'], [naira(m.paid_out), m.paid_count + ' paid out'],
+    [naira(m.forfeited), (m.forfeited_count || 0) + ' forfeited prize(s), kept'],
+    [String(m.not_received_count || 0), 'paid, winner says not received yet']
   ].map(([b, t]) => '<div class="stat"><b>' + esc(b) + '</b><span>' + esc(t) + '</span></div>').join('');
 
   const c = j.config;
@@ -695,14 +704,20 @@ async function loadPrizes() {
         '<td>' + (x.kind === 'refund' ? 'Refund' : 'Prize') + ' <span class="dim">room #' + esc(x.tv_room_id) + '</span></td>' +
         '<td class="num"><b>' + esc(naira(x.amount)) + '</b></td><td>' + bank + '</td>' +
         '<td><span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + (x.hold_reason ? '<div class="dim">' + esc(x.hold_reason) + '</div>' : '') +
-          (x.paid_reference ? '<div class="dim">ref ' + esc(x.paid_reference) + ' by ' + esc(x.paid_by || '') + '</div>' : '') + '</td>' +
+          (x.paid_reference ? '<div class="dim">ref ' + esc(x.paid_reference) + ' by ' + esc(x.paid_by || '') + '</div>' : '') +
+          // Oct 19: "Payment confirmed" or a quiet "Not confirmed" (many winners
+          // never confirm, and that is fine); a gentle note only when the
+          // winner has said it has not arrived.
+          (x.status === 'paid' ? (x.received_at ? '<div><span class="pill live">Payment confirmed</span> <span class="dim">' + esc(when(x.received_at)) + '</span></div>'
+            : '<div><span class="pill done">Not confirmed</span>' + (x.not_received_at ? ' <span class="dim">· winner says not received yet (' + esc(when(x.not_received_at)) + ')</span>' : '') + '</div>')
+            : '') + '</td>' +
         '<td class="dim">' + esc(when(x.paid_at || x.created_at)) + '</td><td>' + acts.join(' ') + '</td></tr>';
     }).join('') + '</tbody></table>';
   q.querySelectorAll('[data-paid]').forEach(b => b.addEventListener('click', async () => {
     const ref = prompt('Transfer reference for payout #' + b.dataset.paid + ' (from your bank):', '');
     if (ref === null) return;
     const r = await api('/payouts/' + encodeURIComponent(b.dataset.paid) + '/paid', { method: 'POST', body: JSON.stringify({ reference: ref }) });
-    toast(r && r.success ? 'Marked paid' : (r && r.error) || 'Could not mark it paid', !!(r && r.success));
+    toast(r && r.success ? 'Marked paid, and the winner has been told' : (r && r.error) || 'Could not mark it paid', !!(r && r.success));
     loadPrizes();
   }));
   q.querySelectorAll('[data-hold]').forEach(b => b.addEventListener('click', async () => {
@@ -724,18 +739,28 @@ async function loadPrizes() {
     j.prizes.map(x => {
       const st = PRIZE[x.status] || [x.status, 'done'];
       return '<tr><td class="mono">#' + esc(x.tv_room_id) + '</td><td>' + esc(x.sponsor) + '</td>' +
-        '<td class="num"><b>' + esc(naira(x.prize_amount)) + '</b><div class="dim">' + esc(x.seats) + ' seats</div></td>' +
-        '<td class="num">' + esc(naira(x.total_charged)) + '<div class="dim">' + esc(naira(x.setup_charge)) + ' + ' + esc(naira(x.prize_fee)) + ' fee</div></td>' +
+        '<td class="num"><b>' + esc(naira(x.prize_amount)) + '</b></td>' +
+        '<td class="num">' + esc(naira(x.total_charged)) + '<div class="dim">' + (Number(x.setup_charge) ? esc(naira(x.setup_charge)) + ' setup + ' : '') + esc(naira(x.prize_fee)) + ' fee</div></td>' +
         '<td class="num">' + (x.retained_amount == null ? (['settled'].includes(x.status) ? esc(naira(x.setup_charge + x.prize_fee)) : '—') : esc(naira(x.retained_amount))) + '</td>' +
         '<td><span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + (x.outcome_reason && OUTCOME[x.outcome_reason] && x.status !== 'awarded' ? '<div class="dim">' + esc(OUTCOME[x.outcome_reason]) + '</div>' : '') + '</td>' +
-        '<td>' + (x.winner ? '<b>' + esc(x.winner) + '</b>' : '<span class="dim">—</span>') + '</td>' +
+        '<td>' + (x.winner ? '<b>' + esc(x.winner) + '</b>' + (x.claimed_at ? '<div class="dim">collected as a guest</div>' : '')
+                 : x.winner_name ? esc(x.winner_name) + ' <span class="dim">(guest)</span>' : '<span class="dim">—</span>') +
+          (x.status === 'claiming' ? '<div class="dim">until ' + esc(when(x.claim_expires_at)) + '</div>' : '') +
+          (x.status === 'unclaimed' ? '<div class="dim">host can ask until ' + esc(when(x.host_window_ends_at)) + '</div>' : '') + '</td>' +
         '<td class="dim">' + esc(when(x.created_at)) + '<div class="mono">' + esc(x.payment_reference) + '</div></td>' +
-        '<td>' + (x.status === 'pending' ? '<button class="btn" data-check="' + esc(x.id) + '">Check payment</button>' : '') + '</td></tr>';
+        '<td>' + (x.status === 'pending' ? '<button class="btn" data-check="' + esc(x.id) + '">Check payment</button>' : '') +
+          (['unclaimed', 'forfeited'].includes(x.status) ? '<button class="btn" data-return="' + esc(x.id) + '">Return to host</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table>';
   l.querySelectorAll('[data-check]').forEach(b => b.addEventListener('click', async () => {
     const r = await api('/prizes/' + encodeURIComponent(b.dataset.check) + '/check', { method: 'POST', body: '{}' });
     const said = { settled: 'Paid: the prize is on', already: 'Already settled', refunded: 'Paid, and refunded in full', not_paid: 'Not paid yet', short_payment: 'Paid short: check it in the gateway' };
     toast(r && r.success ? (said[r.result] || r.result) : (r && r.error) || 'Could not check', !!(r && r.success));
+    loadPrizes();
+  }));
+  l.querySelectorAll('[data-return]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Return this prize to the host? The fee is kept. Do this only after the host has got in touch.')) return;
+    const r = await api('/prizes/' + encodeURIComponent(b.dataset.return) + '/return', { method: 'POST', body: '{}' });
+    toast(r && r.success ? 'Returned: ' + naira(r.amount) + ' to the host' : (r && r.error) || 'Could not return it', !!(r && r.success));
     loadPrizes();
   }));
 }

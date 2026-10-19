@@ -550,7 +550,7 @@ class TvSoloService {
         const bank = new Map();
         if (ids.length) {
             const q = await pool.query(
-                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty
+                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty, fun_fact
                  FROM questions WHERE id = ANY($1::int[])`,
                 [ids]
             );
@@ -568,7 +568,9 @@ class TvSoloService {
                 text: q.question_text || null,
                 options: { A: q.option_a || '', B: q.option_b || '', C: q.option_c || '', D: q.option_d || '' },
                 correct: LETTERS.includes(c) ? c : null,
-                category: q.category || null
+                category: q.category || null,
+                // The fun fact, as web play shows it after a question (Oct 19).
+                funFact: q.fun_fact || null
             };
         };
         const steps = answers.map(a => ({

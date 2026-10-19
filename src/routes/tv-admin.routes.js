@@ -23,6 +23,7 @@
 //   GET  /admin/tv/api/prizes                 prizes, payouts, totals, settings
 //   PUT  /admin/tv/api/prizes/config          { on, min, max }
 //   POST /admin/tv/api/prizes/:id/check       ask the gateway about a payment again
+//   POST /admin/tv/api/prizes/:id/return      an unclaimed or forfeited prize back to its host
 //   POST /admin/tv/api/payouts/:id/paid       { reference }  recorded as paid
 //   POST /admin/tv/api/payouts/:id/hold       { reason }
 //   POST /admin/tv/api/payouts/:id/release
@@ -262,6 +263,15 @@ router.post('/api/prizes/:id(\\d+)/check', requireAdmin, requireFinance, async (
         await log(req, 'tv_prize_checked', { prizeId: id, result: out.ok ? (out.already ? 'already' : 'settled') : out.reason });
         return send(res, { ok: true, result: out.ok ? (out.already ? 'already' : (out.refunded ? 'refunded' : 'settled')) : out.reason });
     } catch (e) { return fail(res, 'prize check', e); }
+});
+
+router.post('/api/prizes/:id(\\d+)/return', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvPrize.returnToHost(id, who(req));
+        if (out.ok) await log(req, 'tv_prize_returned', { prizeId: id, amount: out.amount });
+        return send(res, out.ok ? { ok: true, prizeId: id, amount: out.amount } : out);
+    } catch (e) { return fail(res, 'prize return', e); }
 });
 
 router.post('/api/payouts/:id(\\d+)/paid', requireAdmin, requireFinance, async (req, res) => {

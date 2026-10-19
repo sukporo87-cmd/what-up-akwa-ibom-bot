@@ -769,6 +769,7 @@
             </div>
             <div class="button-row">
                 <button class="btn btn-primary" onclick="tvAuditSearch(1)">🔍 Search WUT TV</button>
+                <button class="btn btn-secondary" onclick="tvAuditCsv()" title="Every result of this search, as a spreadsheet">⬇️ Download CSV</button>
             </div>
             <div class="table-container" style="margin-top: 16px;">
                 <table>
@@ -1402,10 +1403,27 @@ function wutBadge(o){
   const badge = (txt, kind) => '<span class="status-badge status-' + kind + '">' + esc(txt) + '</span>';
   const SOURCE = { practice: 'Practice', classic: 'Classic', tournament: 'Tournament', categories: 'Party categories' };
   const ENDS = { wrong: 'wrong answer', timeout: 'ran out of time', complete: 'all 15 answered', quit: 'quit', replaced: 'new round started',
-                 expired: 'left unfinished', no_questions: 'ran out of questions', signout: 'signed out', idle: '15 minutes idle',
+                 expired: 'left unfinished', no_questions: 'ran out of questions', signout: 'signed out', idle: 'idle (an app before 0.11.0)',
                  app_closed: 'app closed', blocked: 'TV blocked', account: 'account changed', admin: 'ended by an admin',
                  tv: 'closed on the TV', host: 'ended by the host', state_lost: 'lost on a restart', empty: 'everyone left' };
   let page = 1;
+
+  // View, Print and Export for each game, as the Classic audit has (Oct 19).
+  function rowActs(kind, id) {
+    const n = Number(id);
+    return '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button class="action-btn view" onclick="tvAudit' + (kind === 'party' ? 'Party' : 'Solo') + '(' + n + ')" title="View">👁️ View</button>' +
+      '<button class="action-btn print" onclick="tvAuditPrint(\'' + kind + '\',' + n + ')" title="Print report">🖨️</button>' +
+      '<button class="action-btn export" onclick="tvAuditExport(\'' + kind + '\',' + n + ')" title="Export JSON">📥</button></div>';
+  }
+
+  function download(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 
   async function get(path) {
     const token = localStorage.getItem('adminSessionToken');
@@ -1434,14 +1452,14 @@ function wutBadge(o){
         '<td>' + (r.style === 'race' ? 'Race' : 'Standard') + (r.categories && r.categories.length ? '<br><small style="opacity:.6">' + esc(r.categories.map(pretty).join(', ')) + '</small>' : '') + '</td>' +
         '<td>' + esc(r.players) + '<br><small style="opacity:.6">' + esc(r.who || '') + '</small></td>' +
         '<td>' + (r.status === 'finished' ? badge(r.result_counted === false ? 'no result' : 'finished', 'completed') : r.status === 'playing' ? badge('playing', 'active') : badge(ENDS[r.close_reason] || r.close_reason || r.status, 'cancelled')) + '</td>' +
-        '<td>' + esc(when(r.started_at)) + '</td><td><button class="btn btn-secondary" style="padding:6px 12px" onclick="tvAuditParty(' + Number(r.id) + ')">View</button></td></tr>').join('')
+        '<td>' + esc(when(r.started_at)) + '</td><td>' + rowActs('party', r.id) + '</td></tr>').join('')
         : '<tr><td colspan="7" style="opacity:.6">No Party games found.</td></tr>';
     } else if (kind === 'solo') {
       head.innerHTML = '<tr><th>Round</th><th>TV</th><th>Player</th><th>Questions</th><th>Reached</th><th>Points</th><th>Ended</th><th>Started</th><th></th></tr>';
       rows.innerHTML = j.rows.length ? j.rows.map(r => '<tr><td>#' + esc(r.id) + '</td><td>' + esc(r.tv) + '</td><td>' + esc(r.username || 'guest') + '</td>' +
         '<td>' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Solo Mode')) + '</td><td>' + esc(r.reached) + ' / 15</td><td>' + esc(r.points) + '</td>' +
         '<td>' + (r.status === 'playing' ? badge('playing', 'active') : esc(ENDS[r.end_reason] || r.end_reason || '')) + '</td>' +
-        '<td>' + esc(when(r.started_at)) + '</td><td><button class="btn btn-secondary" style="padding:6px 12px" onclick="tvAuditSolo(' + Number(r.id) + ')">View</button></td></tr>').join('')
+        '<td>' + esc(when(r.started_at)) + '</td><td>' + rowActs('solo', r.id) + '</td></tr>').join('')
         : '<tr><td colspan="9" style="opacity:.6">No Solo rounds found.</td></tr>';
     } else {
       head.innerHTML = '<tr><th>Sign-in</th><th>Account</th><th>TV</th><th>Signed in</th><th>Last used</th><th>Ended</th><th>How it ended</th></tr>';
@@ -1469,9 +1487,9 @@ function wutBadge(o){
       (q.category ? ' · ' + esc(pretty(q.category)) : '') + (q.difficulty ? ' · level ' + esc(q.difficulty) : '') + ' · question #' + esc(q.questionId) + '</div></div>';
   }
 
-  window.tvAuditParty = async function (id) {
+  async function partyReport(id) {
     const j = await get('/party/' + id);
-    if (!j || !j.success) { alert((j && j.error) || 'Could not load the game'); return; }
+    if (!j || !j.success) { alert((j && j.error) || 'Could not load the game'); return null; }
     const g = j.room, race = g.style === 'race';
     const name = new Map(j.players.map(p => [p.id, p.display_name + (p.username ? ' (' + p.username + ')' : '')]));
     let html = '<p style="opacity:.75;margin-bottom:14px">' + esc(g.tv) + (g.approx_location ? ' (' + esc(g.approx_location) + ')' : '') + ' · ' + (race ? 'Race' : 'Standard') +
@@ -1488,12 +1506,13 @@ function wutBadge(o){
           '<td>' + (a.chosen == null ? badge('no answer', 'cancelled') : a.is_correct ? badge('right', 'completed') : badge('wrong', 'cancelled')) + '</td><td>' + esc(secs(a.answer_ms)) + '</td>' +
           (race ? '<td>' + (a.won ? '🏁 yes' : '') + '</td><td>' + esc(a.lag_ms == null ? '—' : a.lag_ms + ' ms') + '</td>' : '') + '</tr>').join('') + '</tbody></table>'
         : '<div style="opacity:.6;font-size:13px">Nobody answered.</div>') + '</div>').join('');
-    show('📺 Party game #' + g.id, html);
-  };
+    return { title: '📺 Party game #' + g.id, html, data: j, file: 'wut-tv-party-' + g.id };
+  }
+  window.tvAuditParty = async function (id) { const r = await partyReport(id); if (r) show(r.title, r.html); };
 
-  window.tvAuditSolo = async function (id) {
+  async function soloReport(id) {
     const j = await get('/solo/' + id);
-    if (!j || !j.success) { alert((j && j.error) || 'Could not load the round'); return; }
+    if (!j || !j.success) { alert((j && j.error) || 'Could not load the round'); return null; }
     const r = j.round;
     let html = '<p style="opacity:.75;margin-bottom:14px">' + esc(r.tv) + (r.approx_location ? ' (' + esc(r.approx_location) + ')' : '') + ' · ' + esc(r.username || 'guest') +
       ' · ' + esc(r.category ? pretty(r.category) : (SOURCE[r.source] || 'Solo Mode')) + ' · reached ' + esc(r.reached) + ' of 15 · ' + esc(r.points) + ' points' +
@@ -1506,7 +1525,69 @@ function wutBadge(o){
         : st.result === 'correct' ? badge('right', 'completed') : badge('wrong', 'cancelled')) +
         (st.chosen ? ' answered ' + esc(st.chosen) : '') + ' · ' + esc(secs(st.ms)) + (st.fifty ? ' · with 50:50' : '') + (st.points ? ' · +' + esc(st.points) + ' points' : '') + '</div>' : '') +
       '</div>').join('');
-    show('📺 Solo round #' + r.id, html);
+    return { title: '📺 Solo round #' + r.id, html, data: j, file: 'wut-tv-solo-' + r.id };
+  }
+  window.tvAuditSolo = async function (id) { const r = await soloReport(id); if (r) show(r.title, r.html); };
+
+  const report = (kind, id) => kind === 'party' ? partyReport(id) : soloReport(id);
+
+  // A print-ready page of the same report, on white, opened in a new tab.
+  window.tvAuditPrint = async function (kind, id) {
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups for this page to print.'); return; }
+    const r = await report(kind, id);
+    if (!r) { w.close(); return; }
+    const printed = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+    w.document.open();
+    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(r.title.replace('📺 ', 'WUT TV ')) + '</title><style>' +
+      'body{font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;background:#fff;margin:28px}' +
+      'h1{font-size:20px;margin:0 0 4px}.meta{color:#555;margin:0 0 16px}table{border-collapse:collapse;width:100%;margin:6px 0}' +
+      'th,td{border:1px solid #ccc;padding:5px 7px;text-align:left;font-size:12px}th{background:#f2f2f2}' +
+      '.status-badge{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;border:1px solid #999}' +
+      '.status-completed{border-color:#2e7d32;color:#2e7d32}.status-cancelled{border-color:#c62828;color:#c62828}.status-active{border-color:#1565c0;color:#1565c0}' +
+      '[style*="opacity"]{opacity:1!important;color:#444}@media print{body{margin:12mm}}' +
+      '</style></head><body><h1>' + esc(r.title.replace('📺 ', 'What\'s Up Trivia TV — ')) + '</h1>' +
+      '<p class="meta">Audit report · printed ' + esc(printed) + ' (Lagos time)</p>' + r.html +
+      '<script>window.onload=function(){window.print();}<\/script></body></html>');
+    w.document.close();
+  };
+
+  // The whole record as JSON, as the Classic export does.
+  window.tvAuditExport = async function (kind, id) {
+    const r = await report(kind, id);
+    if (!r) return;
+    download(r.file + '.json', JSON.stringify({ exported_at: new Date().toISOString(), kind, ...r.data }, null, 2), 'application/json');
+  };
+
+  // Every result of the current search (all pages, up to 5,000 rows), as CSV.
+  window.tvAuditCsv = async function () {
+    const kind = document.getElementById('tvAuditKind').value;
+    const base = new URLSearchParams({ kind });
+    const q = document.getElementById('tvAuditQ').value.trim();
+    const from = document.getElementById('tvAuditFrom').value, to = document.getElementById('tvAuditTo').value;
+    if (q) base.set('q', q);
+    if (from) base.set('from', from);
+    if (to) base.set('to', to);
+    const all = [];
+    for (let p = 1; p <= 200; p++) {
+      base.set('page', String(p));
+      const j = await get('/search?' + base.toString());
+      if (!j || !j.success) { alert((j && j.error) || 'Could not download'); return; }
+      all.push(...j.rows);
+      if (!j.more || all.length >= 5000) break;
+    }
+    const cols = kind === 'party'
+      ? [['Game', r => r.id], ['TV', r => r.tv], ['Style', r => r.style], ['Categories', r => (r.categories || []).join('; ')], ['Players', r => r.players],
+         ['Who', r => r.who], ['Status', r => r.status], ['Result counted', r => r.result_counted], ['Closed because', r => r.close_reason], ['Started', r => r.started_at]]
+      : kind === 'solo'
+      ? [['Round', r => r.id], ['TV', r => r.tv], ['Player', r => r.username || 'guest'], ['Category', r => r.category], ['Source', r => r.source],
+         ['Reached', r => r.reached], ['Points', r => r.points], ['Status', r => r.status], ['Ended because', r => r.end_reason], ['Started', r => r.started_at]]
+      : [['Sign-in', r => r.id], ['Account', r => r.username], ['TV', r => r.tv], ['Signed in', r => r.created_at], ['Last used', r => r.last_active_at],
+         ['Ended', r => r.ended_at], ['How it ended', r => r.end_reason]];
+    // Quoted, and a leading = + - @ neutralised, so a spreadsheet never runs a cell as a formula.
+    const cell = v => { let t = v == null ? '' : String(v); if (/^[=+\-@]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+    const csv = [cols.map(c => cell(c[0])).join(',')].concat(all.map(r => cols.map(c => cell(c[1](r))).join(','))).join('\r\n');
+    download('wut-tv-' + kind + '-' + new Date().toISOString().slice(0, 10) + '.csv', '\ufeff' + csv, 'text/csv;charset=utf-8');
   };
 
   document.getElementById('tvAuditModal').addEventListener('click', function (e) { if (e.target === this) this.classList.remove('active'); });

@@ -1,7 +1,7 @@
 // ============================================
 // FILE: src/services/tv-session.service.js
-// WUT TV, phase 4 — signing in on a TV, the 15-minute rule, guest points
-// moving to an account, and the leaderboard.
+// WUT TV, phase 4 — signing in on a TV, guest points moving to an account,
+// and the leaderboard.
 //
 // SIGNING IN IS A QR CODE. Nobody types on a remote. The TV asks for a
 // pairing and shows a QR code; the phone opens it, the player (signed in to
@@ -14,18 +14,16 @@
 // account's username. Nothing else. It is not a web login and opens no money,
 // profile or private data.
 //
-// IT ENDS WITH THE SESSION — a hard rule, not a setting:
+// IT STAYS UNTIL SIGNED OUT (decided Oct 19; app 0.11.0 keeps the token on
+// the TV). Phase 4 ended a sign-in after 15 minutes idle and when the app
+// closed; at home that meant signing in again and again. It now ends when:
 //   * sign-out                 the TV says so
-//   * 15 minutes idle          checked here on every use, from the database's
-//                              own clock; the TV also signs out by itself
-//   * the app closing          the TV app keeps the token in memory only, and
-//                              says so on its way out; if that message is
-//                              lost, the token died with the app anyway and
-//                              the idle rule ends the row
 //   * someone else signing in  one live session per TV, a unique index
-//   (and a row whose app closed without a word is closed as idle by a light
-//   sweep, so the records say what happened)
+//   * an admin signs it out    from the WUT TV admin page
 //   * the account suspended    ended on its next use
+// 'idle' and 'app_closed' are still accepted as reasons from older apps,
+// which end their own sign-ins that way. last_active_at is still kept up to
+// date, for the admin page and the Audit Trail.
 //
 // GUEST POINTS MOVE ACROSS WITHIN 24 HOURS. A Solo guest's rounds are carried
 // by the pairing itself (the TV lists the rounds it played as a guest since
@@ -45,7 +43,8 @@ const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 
 // ---- the rules ----
-const IDLE_MINUTES = 15;
+// No idle limit since Oct 19 (null). Kept as a name so the summary can say so.
+const IDLE_MINUTES = null;
 const TOUCH_SECONDS = 30;
 const CARRY_HOURS = 24;
 const KEEP_HOURS = 24;
@@ -77,7 +76,22 @@ function playBase() {
     return (process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng').replace(/\/+$/, '');
 }
 
+// Apps older than this held the sign-in in memory only and ended it on their
+// own after 15 minutes idle, or when they closed. If that last message was
+// lost the token died with the app, so such a row can never be used again:
+// the sweep below closes it as idle, so the admin page does not show it as
+// signed in. Sign-ins on 0.11.0 and later are never closed this way.
+const KEEPS_SIGNIN_FROM = '0.11.0';
+const OLD_APP_IDLE_MINUTES = 15;
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
+
+function olderThan(v, ref) {
+    const p = x => String(x || '').split('.').map(n => parseInt(n, 10));
+    const a = p(v), b = p(ref);
+    if (a.length !== 3 || a.some(n => !Number.isFinite(n))) return true; // unknown: treat as an old app
+    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
+    return false;
+}
 
 class TvSessionService {
 
@@ -85,19 +99,18 @@ class TvSessionService {
         this._lastSweep = 0;
     }
 
-    /**
-     * A session whose app closed without saying so (the sign-out message was
-     * lost as the TV went to sleep) can no longer be used: its token died with
-     * the app. Its row is closed here as idle, at most every ten minutes, when
-     * anyone uses sign-in — so no timer or boot step is needed in server.js.
-     */
+    /** Closes, at most every ten minutes, the dead sign-ins of apps older than 0.11.0. */
     _maybeSweep() {
         if (Date.now() - this._lastSweep < SWEEP_EVERY_MS) return;
         this._lastSweep = Date.now();
-        pool.query(
-            `UPDATE tv_sessions SET ended_at = NOW(), end_reason = 'idle'
-             WHERE ended_at IS NULL AND last_active_at < NOW() - INTERVAL '${IDLE_MINUTES} minutes'`
-        ).catch(e => logger.error('TV session sweep failed:', e.message));
+        (async () => {
+            const r = await pool.query(
+                `SELECT s.id, d.app_version FROM tv_sessions s JOIN tv_devices d ON d.id = s.tv_device_id
+                 WHERE s.ended_at IS NULL AND s.last_active_at < NOW() - INTERVAL '${OLD_APP_IDLE_MINUTES} minutes'
+                 LIMIT 200`
+            );
+            for (const x of r.rows) if (olderThan(x.app_version, KEEPS_SIGNIN_FROM)) await this._end(x.id, 'idle');
+        })().catch(e => logger.error('TV session sweep failed:', e.message));
     }
 
     // ============================================
@@ -332,8 +345,7 @@ class TvSessionService {
 
     /**
      * The person signed in on this TV, or why not. Every use counts as
-     * activity; a session idle for 15 minutes by the database's clock is
-     * ended here and refused.
+     * activity. There is no idle limit: a sign-in lasts until it is ended.
      */
     async authenticate(device, token) {
         if (!token) return { ok: false, reason: 'no_session' };
@@ -341,7 +353,6 @@ class TvSessionService {
         this._maybeSweep();
         const r = await pool.query(
             `SELECT s.id, s.user_id, s.tv_device_id, s.ended_at, s.end_reason,
-                    (s.last_active_at < NOW() - INTERVAL '${IDLE_MINUTES} minutes') AS idle,
                     (s.last_active_at < NOW() - INTERVAL '${TOUCH_SECONDS} seconds') AS stale,
                     u.username, u.is_suspended
              FROM tv_sessions s JOIN users u ON u.id = s.user_id
@@ -356,10 +367,6 @@ class TvSessionService {
             await this._end(s.id, 'account');
             return { ok: false, reason: 'session_ended', ended: 'account' };
         }
-        if (s.idle) {
-            await this._end(s.id, 'idle');
-            return { ok: false, reason: 'session_ended', ended: 'idle' };
-        }
         if (s.stale) {
             await pool.query(`UPDATE tv_sessions SET last_active_at = NOW() WHERE id = $1 AND ended_at IS NULL`, [s.id]);
         }
@@ -373,7 +380,7 @@ class TvSessionService {
         );
     }
 
-    /** Sign-out, the TV's own idle timer, or the app closing. Always succeeds. */
+    /** Sign-out (or, from an app older than 0.11.0, its idle timer or closing). Always succeeds. */
     async signOut(device, token, reason) {
         const why = END_REASONS_FROM_TV.includes(reason) ? reason : 'signout';
         if (!token) return { ok: true, ended: false };
@@ -516,6 +523,8 @@ class TvSessionService {
 
 module.exports = new TvSessionService();
 module.exports.IDLE_MINUTES = IDLE_MINUTES;
+module.exports.KEEPS_SIGNIN_FROM = KEEPS_SIGNIN_FROM;
+module.exports.olderThan = olderThan;
 module.exports.PAIR_TTL_SECONDS = PAIR_TTL_SECONDS;
 module.exports.PAIR_ALPHABET = PAIR_ALPHABET;
 module.exports.END_REASONS_FROM_TV = END_REASONS_FROM_TV;
