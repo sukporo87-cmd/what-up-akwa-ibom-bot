@@ -27,9 +27,9 @@
 // can only ever resolve to the one player it was issued to.
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
-// 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql and
-// 023-tv-identity.sql and are byte-identical to them; a test checks they have
-// not drifted.
+// 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
+// 023-tv-identity.sql and 024-tv-venue.sql and are byte-identical to them; a
+// test checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -67,10 +67,12 @@ class TvAuthService {
         if (this._schemaReady) return;
         // 018 first (the tables), then 019 (Solo), which adds to tv_points,
         // then 020 (signing in on a TV), then 021 (Race style), then 022 (the
-        // admin page's settings), then 023 (which TV is which, Solo answers).
+        // admin page's settings), then 023 (which TV is which, Solo answers),
+        // then 024 (venue TVs).
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
-                           ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
+                           ...TvAuthService.VENUE_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -454,6 +456,11 @@ TvAuthService.IDENTITY_SCHEMA_STATEMENTS = Object.freeze([
     `ALTER TABLE tv_solo_rounds
     ADD COLUMN IF NOT EXISTS source TEXT CHECK (source IS NULL OR source IN ('practice','classic','tournament','categories')),
     ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '[]'::jsonb`
+]);
+
+TvAuthService.VENUE_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS venue BOOLEAN NOT NULL DEFAULT false`
 ]);
 
 module.exports = new TvAuthService();

@@ -5,6 +5,11 @@
 // READS: live and recent Party rooms, the registered TVs, who is signed in on
 // a TV right now, the settings, and every Party category the bank holds.
 //
+// ROOMS NOBODY JOINED are left out of the recent list once they have ended:
+// a venue TV opens one on its attract screen each hour it stands idle
+// (batch 3), and they carry nothing worth reading. A live room is always
+// shown, empty or not.
+//
 // ACTIONS, each one logged to the admin activity log by the route:
 //   * close a live room         through tv-party.closeRoom, reason 'admin',
 //                               so every phone and the TV are told
@@ -14,6 +19,8 @@
 //   * sign someone out of a TV  reason 'admin'
 //   * change a setting          tv-settings.service, within its limits
 //   * name a TV and keep notes  shown wherever the page names that TV
+//   * mark a venue TV           its attract screen shows a Party code (batch 3)
+//   * the newest app version    older TVs say an update is out (batch 3)
 //
 // A TV IS CALLED by the name an admin gave it, else its own name (the one
 // its owner set in the TV's settings, when that says which TV it is), else
@@ -43,13 +50,15 @@ class TvAdminService {
                     d.id AS device_id, COALESCE(d.admin_name, d.details->>'ownName', d.tv_name, d.label) AS tv_label,
                     (SELECT COUNT(*) FROM tv_players p WHERE p.tv_room_id = r.id AND p.removed_at IS NULL)::int AS players
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id
-             WHERE r.status IN ('lobby','playing') OR r.created_at > NOW() - INTERVAL '${RECENT_HOURS} hours'
+             WHERE r.status IN ('lobby','playing')
+                OR (r.created_at > NOW() - INTERVAL '${RECENT_HOURS} hours'
+                    AND EXISTS (SELECT 1 FROM tv_players p WHERE p.tv_room_id = r.id))
              ORDER BY (r.status IN ('lobby','playing')) DESC, r.created_at DESC
              LIMIT 100`
         );
         const devices = await pool.query(
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
-                    d.tv_name, d.admin_name, d.approx_location,
+                    d.tv_name, d.admin_name, d.approx_location, d.venue,
                     d.details->>'manufacturer' AS maker, d.details->>'model' AS model, d.details->>'deviceName' AS own_name,
                     d.details->>'ownName' AS own_label,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.created_at > NOW() - INTERVAL '7 days')::int AS rooms_7d,
@@ -67,8 +76,10 @@ class TvAdminService {
              ORDER BY s.created_at DESC`
         );
         const live = rooms.rows.filter(r => r.status === 'lobby' || r.status === 'playing');
+        const latestVersion = (await tvSettings.values())['app.latest_version'] || null;
         return {
             ok: true,
+            latestVersion,
             counts: {
                 liveRooms: live.length,
                 playersInLiveRooms: live.reduce((a, r) => a + Number(r.players || 0), 0),
@@ -111,7 +122,7 @@ class TvAdminService {
         await tvAuth.ensureSchema();
         const r = await pool.query(
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
-                    d.tv_name, d.admin_name, d.admin_notes, d.details, d.details_at, d.approx_location,
+                    d.tv_name, d.admin_name, d.admin_notes, d.details, d.details_at, d.approx_location, d.venue,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id)::int AS rooms_total,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.status = 'finished')::int AS games_finished,
                     (SELECT COUNT(*) FROM tv_players p JOIN tv_rooms r ON r.id = p.tv_room_id
@@ -168,6 +179,26 @@ class TvAdminService {
         );
         if (!r.rows[0]) return { ok: false, error: 'No such TV' };
         return { ok: true, adminName: name, adminNotes: notes };
+    }
+
+    /**
+     * A venue TV (batch 3): its attract screen shows a live Party code and
+     * keeps the screen on. The TV picks this up the next time it comes back
+     * to its home screen.
+     */
+    async setVenue(deviceId, on) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `UPDATE tv_devices SET venue = $2 WHERE id = $1 RETURNING id`,
+            [deviceId, on === true]
+        );
+        if (!r.rows[0]) return { ok: false, error: 'No such TV' };
+        return { ok: true, venue: on === true };
+    }
+
+    /** The newest TV app version; a TV with an older one says so on its home screen. */
+    async setLatestVersion(version, admin) {
+        return tvSettings.setLatestVersion(version, admin);
     }
 
     async closeRoom(roomId) {

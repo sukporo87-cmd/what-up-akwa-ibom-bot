@@ -24,6 +24,12 @@
 //     Practice bank (the default), the Classic or Tournament bank, or a mix
 //     of Party categories. Classic and Tournament questions are also used in
 //     games played for cash, so the admin page warns before choosing them.
+//
+// AND ONE IS A VERSION NUMBER (batch 3):
+//   * app.latest_version — the newest TV app. A TV with an older one says so
+//     on its home screen. Empty (the default) means no TV is told anything.
+//     Set by hand when a new build has passed on a TV: the server cannot know
+//     which build that is, and a test build must never send every TV a notice.
 // ============================================
 
 const pool = require('../config/database');
@@ -73,8 +79,25 @@ const NUMBERS = Object.freeze({
     },
     'solo.rounds_per_tv_per_hour': {
         group: 'Room limits', label: 'Solo rounds a TV can start per hour', min: 10, max: 200, step: 1, def: 60, unit: ''
+    },
+    'attract.idle_seconds': {
+        group: 'TV home screen', label: 'Attract screen after', min: 0, max: 600, step: 15, def: 90, unit: 's',
+        help: 'How long the home screen sits untouched before the TV shows the leaderboard and how to play. ' +
+              '0 switches it off. A venue TV also shows a Party code anyone can scan. Read when the TV comes back to its home screen.'
     }
 });
+
+// A version the admin page accepts: three numbers, as the app writes its own.
+const VERSION_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+/** True when version `a` is newer than `b`. Anything that is not a version is never newer, and never older. */
+function newer(a, b) {
+    if (!VERSION_RE.test(String(a || '')) || !VERSION_RE.test(String(b || ''))) return false;
+    const x = String(a).split('.').map(Number);
+    const y = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return false;
+}
 
 const BANKS = Object.freeze({
     practice: 'Practice questions',
@@ -87,7 +110,8 @@ const CASH_BANKS = ['classic', 'tournament'];
 
 const LISTS = Object.freeze({
     'party.categories_off': { def: [] },
-    'solo.play_now_source': { def: { bank: 'practice', categories: [] } }
+    'solo.play_now_source': { def: { bank: 'practice', categories: [] } },
+    'app.latest_version': { def: '' }
 });
 
 class TvSettingsService {
@@ -128,7 +152,13 @@ class TvSettingsService {
         for (const key of Object.keys(NUMBERS)) out[key] = this._number(key, stored.get(key));
         out['party.categories_off'] = this._categoriesOff(stored.get('party.categories_off'));
         out['solo.play_now_source'] = this._source(stored.get('solo.play_now_source'));
+        out['app.latest_version'] = this._version(stored.get('app.latest_version'));
         return out;
+    }
+
+    _version(row) {
+        const v = row && typeof row.value === 'string' ? row.value : '';
+        return VERSION_RE.test(v) ? v : '';
     }
 
     _categoriesOff(row) {
@@ -201,6 +231,15 @@ class TvSettingsService {
         return { ok: true, bank, categories: cats };
     }
 
+    /** The newest TV app version, e.g. "0.9.0". Empty clears it, so no TV is told of an update. */
+    async setLatestVersion(raw, admin) {
+        const v = String(raw == null ? '' : raw).trim().replace(/^v/i, '');
+        if (v && !VERSION_RE.test(v)) return { ok: false, error: 'Write it as three numbers, like 0.9.0' };
+        if (!v) return this.reset('app.latest_version', admin).then(() => ({ ok: true, version: '' }));
+        await this._write('app.latest_version', v, admin);
+        return { ok: true, version: v };
+    }
+
     /** Everything the admin page shows: each setting, its limits, its value and who last changed it. */
     async describe() {
         const stored = await this._stored();
@@ -213,6 +252,7 @@ class TvSettingsService {
             };
         });
         const src = stored.get('solo.play_now_source');
+        const app = stored.get('app.latest_version');
         return {
             numbers,
             categoriesOff: values['party.categories_off'],
@@ -220,6 +260,10 @@ class TvSettingsService {
                 ...values['solo.play_now_source'],
                 banks: Object.entries(BANKS).map(([id, label]) => ({ id, label, cash: CASH_BANKS.includes(id) })),
                 updatedAt: src ? src.updated_at : null, updatedBy: src ? src.updated_by : null
+            },
+            app: {
+                latestVersion: values['app.latest_version'],
+                updatedAt: app ? app.updated_at : null, updatedBy: app ? app.updated_by : null
             },
             refreshSeconds: REFRESH_MS / 1000
         };
@@ -234,3 +278,5 @@ module.exports.NUMBERS = NUMBERS;
 module.exports.BANKS = BANKS;
 module.exports.CASH_BANKS = CASH_BANKS;
 module.exports.REFRESH_MS = REFRESH_MS;
+module.exports.VERSION_RE = VERSION_RE;
+module.exports.newer = newer;

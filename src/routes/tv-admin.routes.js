@@ -16,6 +16,8 @@
 //   PUT  /admin/tv/api/play-now           { bank, categories }
 //   GET  /admin/tv/api/devices/:id        one TV in full, for the details pop-up
 //   PUT  /admin/tv/api/devices/:id        { adminName, adminNotes }
+//   PUT  /admin/tv/api/devices/:id/venue  { venue }        (batch 3)
+//   PUT  /admin/tv/api/app-version        { version }      (batch 3)
 //   GET  /admin/tv/api/audit/search       Audit Trail: { kind, q, from, to, page }
 //   GET  /admin/tv/api/audit/party/:id    Audit Trail: one Party game in full
 //   GET  /admin/tv/api/audit/solo/:id     Audit Trail: one Solo round in full
@@ -124,6 +126,23 @@ router.put('/api/devices/:id(\\d+)', requireAdmin, async (req, res) => {
         if (out.ok) await log(req, 'tv_device_named', { deviceId: id, adminName: out.adminName, notes: !!out.adminNotes });
         return send(res, out);
     } catch (e) { return fail(res, 'name device', e); }
+});
+
+router.put('/api/devices/:id(\\d+)/venue', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvAdmin.setVenue(id, (req.body || {}).venue === true);
+        if (out.ok) await log(req, out.venue ? 'tv_device_venue_on' : 'tv_device_venue_off', { deviceId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'venue', e); }
+});
+
+router.put('/api/app-version', requireAdmin, async (req, res) => {
+    try {
+        const out = await tvAdmin.setLatestVersion((req.body || {}).version, who(req));
+        if (out.ok) await log(req, 'tv_app_version_set', { version: out.version || null });
+        return send(res, out);
+    } catch (e) { return fail(res, 'app version', e); }
 });
 
 router.post('/api/rooms/:id(\\d+)/close', requireAdmin, async (req, res) => {

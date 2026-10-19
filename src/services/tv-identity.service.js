@@ -32,6 +32,7 @@ const crypto = require('crypto');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
+const tvSettings = require('./tv-settings.service');
 
 // ---- the names the server gives TVs ----
 const NAME_WORDS = Object.freeze([
@@ -240,6 +241,27 @@ class TvIdentityService {
             own = r.rows[0] ? r.rows[0].own : null;
         }
         return { ok: true, tvName: own || serverName, serverName };
+    }
+
+    /**
+     * What the TV's home screen needs to know, asked each time the TV comes
+     * back to it (batch 3): when to show the attract screen, whether this is
+     * a venue TV, and whether a newer app is out. The version compared is
+     * the one the TV reported when the app started.
+     */
+    async home(deviceId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(`SELECT venue, app_version FROM tv_devices WHERE id = $1`, [deviceId]);
+        const row = r.rows[0];
+        if (!row) return { ok: false, reason: 'unknown_device' };
+        const set = await tvSettings.values();
+        const latest = set['app.latest_version'] || null;
+        return {
+            ok: true,
+            attract: { idleSeconds: set['attract.idle_seconds'], venue: row.venue === true },
+            latestVersion: latest,
+            update: latest && tvSettings.newer(latest, row.app_version) ? latest : null
+        };
     }
 
     /** What the admin page calls a TV: the admin's name, else its own, else the server's, else its number. */

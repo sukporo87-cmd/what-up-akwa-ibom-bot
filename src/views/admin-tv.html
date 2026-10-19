@@ -9,6 +9,8 @@
   one), who is signed in on a TV (sign them out), and the TV settings: the
   Party and Solo clocks, the Race values, the room limits, which Party
   categories the TV offers, and where Solo Mode's questions come from.
+  Batch 3: venue TVs (a switch in each TV's details), when the attract
+  screen comes on, and the newest app version, which tells older TVs to update.
 
   Settings apply to NEW games only, within 15 seconds. A game takes its
   values when it starts and keeps them to the end.
@@ -73,6 +75,16 @@
   .pill.race { background: var(--red-soft); color: var(--red); }
   .pill.warn { background: var(--amber-soft); color: var(--amber); }
   .pill.name { background: var(--yellow-soft); color: #6b5800; }
+  .pill.venue { background: var(--purple-soft); color: var(--purple-ink); }
+  .pill.update { background: var(--amber-soft); color: var(--amber); }
+  .venuebox { display: flex; gap: 14px; align-items: flex-start; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; margin: 4px 0 14px; }
+  .venuebox .txt { font-size: 13px; line-height: 1.55; color: var(--text-dim); }
+  .venuebox .txt b { color: var(--text); }
+  .verrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .verrow input { width: 120px; background: #fff; color: var(--text); border: 1px solid var(--border);
+    border-radius: 9px; padding: 7px 10px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+  .verrow input:focus { outline: none; border-color: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
   .players-row td { background: var(--surface2); }
   .players-row table td { padding: 6px 8px; font-size: 12.5px; }
   .tvname { font-weight: 700; color: var(--text); cursor: pointer; border-bottom: 1px dashed #c9bff0; }
@@ -186,7 +198,7 @@
   <section data-panel="activity">
     <div class="card">
       <h2>Party rooms</h2>
-      <div class="hint">Live rooms first, then the last 48 hours. <b>Close</b> ends a live game for everyone: each phone and the TV are told. Refreshes every 15 seconds.</div>
+      <div class="hint">Live rooms first, then the last 48 hours (rooms nobody joined are left out once they end). <b>Close</b> ends a live game for everyone: each phone and the TV are told. Refreshes every 15 seconds.</div>
       <div class="scroll" id="rooms"><div class="loading">Loading…</div></div>
     </div>
     <div class="card">
@@ -204,9 +216,14 @@
   <!-- ===== Settings ===== -->
   <section data-panel="settings" hidden>
     <div class="card">
-      <h2>Clocks, Race and room limits</h2>
+      <h2>Clocks, Race, room limits and the home screen</h2>
       <div class="hint">These apply to <b>new games only</b>, within 15 seconds. A game takes its values when it starts and keeps them to the end, so nobody has the clock moved under them. Each value has a floor and a ceiling; <b>Reset</b> goes back to the built-in default.</div>
       <div id="numbers"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Newest TV app</h2>
+      <div class="hint">When a new build has passed on a TV, write its version here. Every TV with an older app then shows <b>“A new version is available”</b> on its home screen, until it is updated. Leave it empty and no TV is told anything. The TVs table marks the ones that are behind.</div>
+      <div id="appver"><div class="loading">Loading…</div></div>
     </div>
   </section>
 
@@ -290,6 +307,7 @@ async function loadOverview() {
   document.getElementById('sPlayers').textContent = j.counts.playersInLiveRooms;
   document.getElementById('sTvs').textContent = j.counts.tvsSeenToday;
   document.getElementById('sSigned').textContent = j.counts.signedIn;
+  latestVersion = j.latestVersion || null;
   renderRooms(j.rooms); renderSessions(j.sessions); renderDevices(j.devices);
 }
 
@@ -369,16 +387,28 @@ function maker(d) {
   return m.join(' ');
 }
 
+// The newest app version an admin has set (Settings), and whether a TV is behind it.
+let latestVersion = null;
+function newer(a, b) {
+  const re = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+  if (!re.test(String(a || '')) || !re.test(String(b || ''))) return false;
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+}
+function behind(v) { return !!latestVersion && newer(latestVersion, v); }
+
 function renderDevices(rows) {
   const el = document.getElementById('devices');
   if (!rows.length) { el.innerHTML = '<div class="empty">No TV has registered yet.</div>'; return; }
   el.innerHTML = '<table><thead><tr><th>TV</th><th>Model</th><th>Approximate place</th><th>App</th><th>Last seen</th><th class="num">Rooms 7d</th><th class="num">Solo 7d</th><th>Allowed</th></tr></thead><tbody>' +
     rows.map(d => '<tr><td><span class="tvname" data-tv="' + esc(d.id) + '">' + esc(tvName(d)) + '</span> <span class="dim">#' + esc(d.id) + '</span>' +
       (d.admin_name && screenName(d) ? '<div class="dim">shows on screen as ' + esc(screenName(d)) + '</div>' : '') +
+      (d.venue ? ' <span class="pill venue">Venue</span>' : '') +
       (d.blocked ? '<div><span class="pill warn">Blocked</span> <span class="dim">' + esc(d.blocked_reason || '') + '</span></div>' : '') + '</td>' +
       '<td>' + (maker(d) ? esc(maker(d)) : '<span class="dim">not reported yet</span>') + '</td>' +
       '<td>' + (d.approx_location ? esc(d.approx_location) : '<span class="dim">—</span>') + '</td>' +
-      '<td class="mono dim">' + esc(d.app_version || '—') + '</td><td>' + esc(ago(d.last_seen)) + '</td>' +
+      '<td class="mono dim">' + esc(d.app_version || '—') + (behind(d.app_version) ? ' <span class="pill update">update</span>' : '') + '</td><td>' + esc(ago(d.last_seen)) + '</td>' +
       '<td class="num">' + esc(d.rooms_7d) + '</td><td class="num">' + esc(d.solo_7d) + '</td>' +
       '<td><label class="sw" title="' + (d.blocked ? 'Blocked: switch on to allow' : 'Allowed: switch off to block') + '"><input type="checkbox" data-dev="' + esc(d.id) + '" data-name="' + esc(tvName(d)) + '" ' + (d.blocked ? '' : 'checked') + '><span class="track"></span></label></td></tr>').join('') +
     '</tbody></table>';
@@ -422,10 +452,15 @@ async function openTv(id) {
       '<div class="facts">' +
         fact('Maker', x.manufacturer) + fact('Brand', x.brand && x.brand !== x.manufacturer ? x.brand : null) + fact('Model', x.model) +
         fact('Its own name', x.deviceName) + fact('Backup name', d.tv_name) + fact('Android', x.androidVersion ? x.androidVersion + (x.sdk ? ' (API ' + x.sdk + ')' : '') : null) +
-        fact('Screen', x.screen) + fact('Platform', PLATFORM[d.platform] || d.platform) + fact('App', d.app_version) +
+        fact('Screen', x.screen) + fact('Platform', PLATFORM[d.platform] || d.platform) + fact('App', d.app_version ? d.app_version + (behind(d.app_version) ? ' (update to ' + latestVersion + ')' : '') : null) +
         fact('Approximate place', d.approx_location) + fact('First seen', when(d.first_seen)) + fact('Last seen', ago(d.last_seen)) +
         fact('Details reported', d.details_at ? when(d.details_at) : 'not yet: needs app 0.7.0') +
       '</div>' +
+      '<div class="section-title">Venue TV</div>' +
+      '<div class="venuebox"><label class="sw"><input type="checkbox" id="tvVenue" ' + (d.venue ? 'checked' : '') + '><span class="track"></span></label>' +
+        '<div class="txt"><b>For a TV in a bar, lounge or shop, left on for anyone to walk up to.</b> When nobody is using it, its attract screen shows a live Party code that anyone can scan to start a game, and the screen stays on. ' +
+        'Off (the default), the attract screen shows the leaderboard and how to play, with no code, and the TV sleeps as its owner set it. ' +
+        'The TV picks up a change the next time it is back on its home screen.</div></div>' +
       '<div class="section-title">Your name and notes for this TV</div>' +
       '<div class="field"><label for="tvAdminName">Name (shown on this page; the TV keeps showing ' + esc(screenName(d) || 'its own name') + ')</label>' +
         '<input id="tvAdminName" maxlength="60" placeholder="e.g. Wuse 2, Chicken Republic lounge" value="' + esc(d.admin_name || '') + '"></div>' +
@@ -451,6 +486,12 @@ async function openTv(id) {
     toast(r && r.success ? 'Saved' : (r && r.error) || 'Could not save', !!(r && r.success));
     if (r && r.success) { close(); loadOverview(); }
   });
+  o.querySelector('#tvVenue').addEventListener('change', async e => {
+    const on = e.target.checked;
+    const r = await api('/devices/' + encodeURIComponent(d.id) + '/venue', { method: 'PUT', body: JSON.stringify({ venue: on }) });
+    if (r && r.success) { toast(on ? tvName(d) + ' is now a venue TV' : tvName(d) + ' is no longer a venue TV'); loadOverview(); }
+    else { toast((r && r.error) || 'Could not change it', false); e.target.checked = !on; }
+  });
   o.querySelector('#tvBlock').addEventListener('click', async () => {
     if (await setBlock(d.id, tvName(d), !d.blocked)) close();
   });
@@ -471,7 +512,24 @@ async function loadSettings() {
   const j = await api('/settings');
   if (!j || !j.success) { toast((j && j.error) || 'Could not load the settings', false); return; }
   settings = j;
-  renderNumbers(); renderCats(); renderPlayNow();
+  renderNumbers(); renderCats(); renderPlayNow(); renderAppVersion();
+}
+
+function renderAppVersion() {
+  const el = document.getElementById('appver');
+  const a = settings.app || { latestVersion: '' };
+  el.innerHTML = '<div class="verrow"><input id="verIn" maxlength="11" placeholder="e.g. 0.9.0" value="' + esc(a.latestVersion || '') + '">' +
+    '<button class="btn primary" id="verSave">Save</button><button class="btn" id="verClear"' + (a.latestVersion ? '' : ' disabled') + '>Clear</button></div>' +
+    '<div class="dim" style="margin-top:8px">' + (a.latestVersion
+      ? 'TVs older than <b>' + esc(a.latestVersion) + '</b> show the notice. Set by ' + esc(a.updatedBy || 'admin') + ', ' + esc(when(a.updatedAt)) + '.'
+      : 'Not set: no TV shows an update notice.') + '</div>';
+  const save = async v => {
+    const j = await api('/app-version', { method: 'PUT', body: JSON.stringify({ version: v }) });
+    toast(j && j.success ? (j.version ? 'Saved. Older TVs show the notice on their home screen.' : 'Cleared. No TV shows the notice.') : (j && j.error) || 'Could not save', !!(j && j.success));
+    loadSettings(); loadOverview();
+  };
+  document.getElementById('verSave').addEventListener('click', () => save(document.getElementById('verIn').value));
+  document.getElementById('verClear').addEventListener('click', () => save(''));
 }
 
 function renderNumbers() {

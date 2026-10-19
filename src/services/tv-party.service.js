@@ -560,6 +560,87 @@ class TvPartyService {
     }
 
     // ============================================
+    // REVIEW (batch 3) — a player's own answers, on their phone, after the game
+    // ============================================
+    // Each question that was asked, the answer this player gave, the right
+    // answer, how many got it, and the points it earned them. Read from the
+    // database, not the room state, so it still works once the TV has closed
+    // the room and Redis has let it go.
+    //
+    // ONLY ONCE THE GAME IS OVER, AND ONLY YOUR OWN. A room in the lobby or
+    // still playing is refused, so this can never show a right answer early.
+    // The player token decides whose answers; there is no player id to ask
+    // for, and nobody else's choices are sent (only how many were right).
+
+    async review(roomId, playerToken) {
+        const parsed = tvAuth.parsePlayerToken(playerToken);
+        if (!parsed) return { ok: false, reason: 'no_player_token' };
+        if (parsed.roomId !== Number(roomId)) return { ok: false, reason: 'wrong_room' };
+        await tvAuth.ensureSchema();
+
+        const pr = await pool.query(
+            `SELECT p.id, p.phone_token_hash, p.removed_at, r.status, r.style
+             FROM tv_players p JOIN tv_rooms r ON r.id = p.tv_room_id
+             WHERE p.id = $1 AND p.tv_room_id = $2`,
+            [parsed.playerId, parsed.roomId]
+        );
+        const p = pr.rows[0];
+        if (!p || !tvAuth.sameHash(p.phone_token_hash, tvAuth.hash(playerToken))) return { ok: false, reason: 'bad_player_token' };
+        if (p.removed_at) return { ok: false, reason: 'removed' };
+        if (p.status === 'lobby' || p.status === 'playing') return { ok: false, reason: 'not_finished' };
+
+        const slots = await pool.query(
+            `SELECT position, question_id FROM tv_room_questions WHERE tv_room_id = $1 ORDER BY position`,
+            [parsed.roomId]
+        );
+        const answers = await pool.query(
+            `SELECT tv_player_id, position, chosen, is_correct, answer_ms, won, lag_ms
+             FROM tv_answers WHERE tv_room_id = $1 ORDER BY position, answer_ms`,
+            [parsed.roomId]
+        );
+        // A question counts as asked once anyone has an answer row for it:
+        // every player gets one per question, a timeout included.
+        const asked = new Set(answers.rows.map(a => Number(a.position)));
+        const shown = slots.rows.filter(x => asked.has(Number(x.position)));
+        const bank = new Map();
+        if (shown.length) {
+            const q = await pool.query(
+                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty
+                 FROM questions WHERE id = ANY($1::int[])`,
+                [shown.map(x => Number(x.question_id))]
+            );
+            for (const row of q.rows) bank.set(Number(row.id), row);
+        }
+        const pts = await pool.query(
+            `SELECT question_number, points FROM tv_points WHERE tv_player_id = $1`, [p.id]
+        );
+        const pointsAt = new Map(pts.rows.map(x => [Number(x.question_number), Number(x.points)]));
+
+        const steps = shown.map(x => {
+            const pos = Number(x.position);
+            const q = bank.get(Number(x.question_id)) || {};
+            const c = String(q.correct_answer || '').trim().toUpperCase();
+            const here = answers.rows.filter(a => Number(a.position) === pos);
+            const mine = here.find(a => a.tv_player_id === p.id) || null;
+            return {
+                position: pos,
+                text: q.question_text || null,
+                options: { A: q.option_a || '', B: q.option_b || '', C: q.option_c || '', D: q.option_d || '' },
+                correct: LETTERS.includes(c) ? c : null,
+                category: q.category || null,
+                chosen: mine && LETTERS.includes(mine.chosen) ? mine.chosen : null,
+                right: !!(mine && mine.is_correct === true),
+                ms: mine ? Number(mine.answer_ms) || 0 : null,
+                won: mine ? mine.won === true : false,
+                gotIt: here.filter(a => a.is_correct === true).length,
+                of: here.length,
+                points: pointsAt.get(pos) || 0
+            };
+        });
+        return { ok: true, review: { roomId: parsed.roomId, style: p.style || 'standard', steps } };
+    }
+
+    // ============================================
     // JOIN
     // ============================================
 

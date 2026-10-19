@@ -41,7 +41,7 @@ const STATUS = {
     not_signed_in: 401, no_session: 401, session_unknown: 401, session_ended: 401,
     device_blocked: 403, removed: 403, not_your_round: 403, not_host: 403, not_your_room: 403, wrong_room: 403,
     account_unavailable: 403, profile_incomplete: 403, scoped_session: 403, not_your_pairing: 403,
-    no_room: 404, no_round: 404, no_such_player: 404, not_in_room: 404,
+    no_room: 404, no_round: 404, no_such_player: 404, not_in_room: 404, not_finished: 409,
     room_closed: 410, pair_expired: 410,
     too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429,
     try_again: 503
@@ -207,6 +207,14 @@ router.post('/devices/me', requireDevice, async (req, res) => {
     } catch (error) { return fail(res, 'device report', error); }
 });
 
+// The home screen asks each time the TV comes back to it (batch 3): when to
+// show the attract screen, whether this is a venue TV, and whether a newer
+// app is out.
+router.get('/home', requireDevice, async (req, res) => {
+    try { return reply(res, await tvIdentity.home(req.tvDevice.id)); }
+    catch (error) { return fail(res, 'home', error); }
+});
+
 router.get('/categories', requireDevice, async (req, res) => {
     try {
         return res.json({ success: true, categories: await party.getCategories() });
@@ -333,6 +341,12 @@ router.post('/solo/:id(\\d+)/skip', requireDevice, readSession, async (req, res)
 router.post('/solo/:id(\\d+)/quit', requireDevice, readSession, async (req, res) => {
     try { return reply(res, await solo.quit(req.tvDevice, Number(req.params.id))); }
     catch (error) { return fail(res, 'solo quit', error); }
+});
+
+/** The round, answer by answer, once it is over (batch 3). */
+router.get('/solo/:id(\\d+)/review', requireDevice, async (req, res) => {
+    try { return reply(res, await solo.review(req.tvDevice, Number(req.params.id))); }
+    catch (error) { return fail(res, 'solo review', error); }
 });
 
 // ============================================
@@ -516,6 +530,19 @@ router.post('/rooms/:id(\\d+)/players/:playerId(\\d+)/remove', requirePlayer, as
         return reply(res, await party.removePlayer(Number(req.params.id), req.tvPlayerId,
                                                    Number(req.params.playerId)));
     } catch (error) { return fail(res, 'remove', error); }
+});
+
+/**
+ * A player's own answers, after the game (batch 3). Like keep-points, the
+ * player token is checked against the database, not the room state, so it
+ * works after the room has closed.
+ */
+router.get('/rooms/:id(\\d+)/review', async (req, res) => {
+    try {
+        const token = tvAuth.playerTokenFrom(req);
+        if (!token) return reply(res, { ok: false, reason: 'no_player_token' });
+        return reply(res, await party.review(Number(req.params.id), token));
+    } catch (error) { return fail(res, 'review', error); }
 });
 
 /**

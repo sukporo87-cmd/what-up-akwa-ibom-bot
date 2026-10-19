@@ -109,6 +109,23 @@ button:disabled{opacity:.45;cursor:default}
   animation:pop .9s ease-out both}
 .countdown .n.go{color:var(--mint);font-size:clamp(84px,30vw,150px)}
 @keyframes pop{0%{transform:scale(.4);opacity:0}25%{transform:scale(1.08);opacity:1}100%{transform:scale(1);opacity:1}}
+/* after the game: your answers, one card a question (batch 3) */
+.rv{background:var(--slate);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.rv-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.rv-h b{font-family:var(--display);font-size:18px}
+.rv-h span{font-size:13px;color:var(--mute);text-align:right}
+.rv-h .won{color:var(--mint);font-weight:600}
+.rv-q{font-weight:600;font-size:16px;line-height:1.4}
+.rv-o{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rv-o li{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;background:var(--raise);font-size:15px}
+.rv-o li i{font-style:normal;font-family:var(--display);font-weight:800;width:22px;flex:none}
+.rv-o li span{flex:1}
+.rv-o li em{font-style:normal;font-size:12px;font-weight:600;white-space:nowrap}
+.rv-o li.ok{background:rgba(53,211,154,.16);outline:2px solid var(--mint);outline-offset:-2px}
+.rv-o li.ok em{color:var(--mint)}
+.rv-o li.bad{background:rgba(255,107,91,.14);outline:2px solid var(--ember);outline-offset:-2px}
+.rv-o li.bad em{color:var(--ember)}
+.rv-tally{font-family:var(--display);font-weight:800;font-size:22px}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -126,6 +143,7 @@ var S = {
   roomId: null, token: null, account: null,
   room: null, me: null, game: null, spectating: false,
   screen: 'loading', error: '', nameTaken: null, ended: null, picking: false,
+  reviewing: null, review: null, reviewError: '',
   offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
 };
 
@@ -613,6 +631,9 @@ function finishedScreen(){
   ]));
   if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
   if (S.me && !S.me.signedIn && f.points) out = out.concat(keepBlock(f.points));
+  out.push(h('button', { class: 'quiet', disabled: S.reviewing === 'loading', on: { click: openReview },
+                         text: S.reviewing === 'loading' ? 'Loading your answers\u2026' : 'Review my answers' }));
+  if (S.reviewError) out.push(h('p', { class: 'err', text: S.reviewError }));
   out.push(h('div', { class: 'spacer' }));
   out.push(h('p', { class: 'mute', text: 'To play again, scan the new code when the TV opens the next game.' }));
   forget();
@@ -651,6 +672,65 @@ function keepPoints(){
   });
 }
 
+// ---------- your answers, after the game (batch 3) ----------
+// Asked for only once the game is over; the server refuses before that, so
+// this can never show a right answer early. Only this phone's own choices
+// come back, with how many players got each question.
+function openReview(){
+  if (S.reviewing === 'loading') return;
+  if (S.review){ S.reviewing = 'open'; window.scrollTo(0, 0); return render(); }
+  S.reviewing = 'loading'; S.reviewError = ''; render();
+  var headers = {};
+  if (S.token) headers.Authorization = 'Bearer ' + S.token;
+  fetch('/tv/rooms/' + S.roomId + '/review', { headers: headers, credentials: 'same-origin' })
+    .then(function(r){ return r.json().catch(function(){ return { success: false, reason: 'server_error' }; }); })
+    .catch(function(){ return { success: false, reason: 'offline' }; })
+    .then(function(j){
+      if (j.success && j.review){ S.review = j.review; S.reviewing = 'open'; window.scrollTo(0, 0); }
+      else { S.reviewing = null; S.reviewError = why(j.reason); }
+      render();
+    });
+}
+function closeReview(){ S.reviewing = null; window.scrollTo(0, 0); render(); }
+
+function reviewScreen(){
+  var rv = S.review || { steps: [] };
+  var race = rv.style === 'race';
+  var right = rv.steps.filter(function(x){ return x.right; }).length;
+  var out = [
+    h('div', { class: 'row', style: 'align-items:center' }, [
+      h('h1', { text: 'Your answers' }),
+      h('button', { class: 'quiet', style: 'flex:none;width:auto', on: { click: closeReview }, text: 'Back' })
+    ]),
+    h('p', { class: 'rv-tally', text: right + ' of ' + rv.steps.length + ' right' })
+  ];
+  if (!rv.steps.length) out.push(h('p', { class: 'mute', text: 'No questions were asked in this game.' }));
+  rv.steps.forEach(function(x){
+    var note = x.points ? '+' + x.points + ' points' : '';
+    var head = [ h('b', { text: 'Question ' + x.position }) ];
+    var tag = race ? (x.won ? 'You took it' : (x.right ? 'Right, but not first' : '')) : '';
+    head.push(h('span', { class: x.won ? 'won' : '', text: [x.category ? pretty(x.category) : '', tag, note].filter(Boolean).join(' \u00b7 ') }));
+    var opts = ['A','B','C','D'].map(function(l){
+      var mine = x.chosen === l, ok = x.correct === l;
+      var mark = ok && mine ? 'your answer, right' : ok ? 'right answer' : mine ? 'your answer' : '';
+      return h('li', { class: ok ? 'ok' : (mine ? 'bad' : '') }, [
+        h('i', { text: l }), h('span', { text: (x.options && x.options[l]) || '' }), mark ? h('em', { text: mark }) : null
+      ]);
+    });
+    var foot = (x.chosen ? (x.ms != null ? 'You answered in ' + (x.ms / 1000).toFixed(1) + ' s. ' : '') : 'You did not answer. ') +
+               x.gotIt + ' of ' + x.of + (x.of === 1 ? ' player' : ' players') + ' got it right.';
+    out.push(h('div', { class: 'rv' }, [
+      h('div', { class: 'rv-h' }, head),
+      h('p', { class: 'rv-q', text: x.text || '(This question is no longer in the bank.)' }),
+      h('ul', { class: 'rv-o' }, opts),
+      h('p', { class: 'small mute', text: foot })
+    ]));
+  });
+  out.push(h('button', { class: 'go', on: { click: closeReview }, text: 'Back to my result' }));
+  return out;
+}
+function pretty(c){ return String(c || '').replace(/_/g, ' ').replace(/\b\w/g, function(m){ return m.toUpperCase(); }); }
+
 function endedScreen(){
   var copy = {
     removed: ['You were removed', 'The host removed you from this game.'],
@@ -674,6 +754,7 @@ function render(){
   else {
     var g = S.game, st = S.room && S.room.status;
     if (S.spectating) kids = [ meBlock(), h('h1', { text: 'Game in progress' }), h('p', { class: 'mute', text: 'You joined after it started. Watch the TV; you can play the next one.' }) ];
+    else if (g && g.phase === 'done' && S.reviewing === 'open') kids = reviewScreen();
     else if (g && g.phase === 'done') kids = finishedScreen();
     else if (g && g.phase === 'question') kids = questionScreen();
     else if (g && g.phase === 'reveal' && g.lastResult) kids = resultScreen();

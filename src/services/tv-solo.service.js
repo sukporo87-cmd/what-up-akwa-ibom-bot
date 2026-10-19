@@ -512,6 +512,88 @@ class TvSoloService {
     }
 
     // ============================================
+    // REVIEW (batch 3) — the round, answer by answer, once it is over
+    // ============================================
+    // Shown on the TV after the summary: each question, the answer given, the
+    // right one, how long it took, and what it scored. For every question
+    // source, Classic and Tournament included (an admin's choice, for
+    // in-house testing). Read from the round's own record, so it works after
+    // a deploy and for a round the TV picks up again.
+    //
+    // NOTHING IS SHOWN BEFORE THE ROUND IS OVER: a round still being played
+    // is refused, so the review can never be a way to see a right answer
+    // early. Only the TV that played the round can read it.
+
+    async review(device, roundId) {
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `SELECT id, tv_device_id, status, end_reason, reached, correct, points, category, source, question_ids, answers
+             FROM tv_solo_rounds WHERE id = $1`,
+            [roundId]
+        );
+        const round = r.rows[0];
+        if (!round) return { ok: false, reason: 'no_round' };
+        if (round.tv_device_id !== device.id) return { ok: false, reason: 'not_your_round' };
+        if (round.status !== 'finished') return { ok: false, reason: 'not_finished' };
+
+        const answers = Array.isArray(round.answers) ? round.answers : [];
+        const given = new Set(answers.map(a => Number(a.q)));
+        // The question on screen when the round was stopped (or replaced, or
+        // left to expire) has no answer. It is shown, as not answered.
+        const served = (round.question_ids || []).map(Number);
+        const last = served.length ? served[served.length - 1] : null;
+        // (A round from before answers were recorded has served questions and
+        // no answers; its last question is not taken for an unanswered one.)
+        const pending = last != null && !given.has(last) && (answers.length > 0 || served.length === 1) ? last : null;
+
+        const ids = [...new Set([...given, ...(pending != null ? [pending] : [])])].filter(Number.isInteger);
+        const bank = new Map();
+        if (ids.length) {
+            const q = await pool.query(
+                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty
+                 FROM questions WHERE id = ANY($1::int[])`,
+                [ids]
+            );
+            for (const row of q.rows) bank.set(Number(row.id), row);
+        }
+        const pts = await pool.query(
+            `SELECT question_number, points FROM tv_points WHERE tv_solo_round_id = $1`, [roundId]
+        );
+        const pointsAt = new Map(pts.rows.map(p => [Number(p.question_number), Number(p.points)]));
+
+        const show = (id) => {
+            const q = bank.get(Number(id)) || {};
+            const c = String(q.correct_answer || '').trim().toUpperCase();
+            return {
+                text: q.question_text || null,
+                options: { A: q.option_a || '', B: q.option_b || '', C: q.option_c || '', D: q.option_d || '' },
+                correct: LETTERS.includes(c) ? c : null,
+                category: q.category || null
+            };
+        };
+        const steps = answers.map(a => ({
+            position: Number(a.n), ...show(a.q),
+            chosen: LETTERS.includes(a.chosen) ? a.chosen : null,
+            result: a.result, ms: Number(a.ms) || 0, fifty: !!a.fifty,
+            points: a.result === 'correct' ? (pointsAt.get(Number(a.n)) || 0) : 0
+        }));
+        if (pending != null) {
+            steps.push({ position: Number(round.reached) || steps.length + 1, ...show(pending),
+                         chosen: null, result: 'unanswered', ms: 0, fifty: false, points: 0 });
+        }
+        return {
+            ok: true,
+            review: {
+                roundId: round.id, endReason: round.end_reason, correct: Number(round.correct) || 0,
+                points: Number(round.points) || 0, category: round.category || null, source: round.source || 'practice',
+                // Rounds played before answers were recorded (backend before
+                // 18 October 2026) have nothing to show.
+                recorded: steps.length > 0, steps
+            }
+        };
+    }
+
+    // ============================================
     // HOUSEKEEPING
     // ============================================
     // A TV that is switched off mid-round leaves it 'playing'. They are closed
