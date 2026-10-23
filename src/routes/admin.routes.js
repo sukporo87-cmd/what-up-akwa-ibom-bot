@@ -4556,24 +4556,28 @@ router.post('/api/victory-cards/:id/regenerate', authenticateAdmin, async (req, 
 
         // -------- TOURNAMENT --------
         } else if (tx.transaction_type === 'tournament_prize') {
-            const tRes = await pool.query(`
-                SELECT t.tournament_name, tp.rank, tp.best_score
-                FROM tournaments t
-                LEFT JOIN tournament_participants tp
-                       ON tp.tournament_id = t.id AND tp.user_id = $2
-                WHERE t.id = $1
-            `, [tx.tournament_id, tx.user_id]);
-            const t = tRes.rows[0] || {};
+            // Same data the player's own claim-time card is drawn from: the
+            // winning game (best_*), and the place the settlement paid.
+            //
+            // This used to put best_score in the questions slot. best_score
+            // is the naira ladder value of the best game, so a Q15 run
+            // printed "50000/15 correct" on the card.
+            const tournamentCard = await victoryCardsService
+                .getTournamentPrizeWinData(tx.transaction_id);
+            if (!tournamentCard) {
+                return res.status(404).json({ error: 'Could not read that tournament prize.' });
+            }
             imagePath = await imageService.generateTournamentCard({
                 username: tx.username,
                 city: tx.city,
-                questionsAnswered: Number(t.best_score) || 0,
-                timeTaken: winning.timeTaken || '0',
-                rank: t.rank,
-                tournamentName: t.tournament_name || 'Tournament',
+                questionsAnswered: tournamentCard.questionsAnswered,
+                timeTaken: tournamentCard.timeTaken,
+                rank: tournamentCard.rank,
+                tournamentName: tournamentCard.tournamentName,
                 // The amount actually paid for this placing, from the
                 // transaction itself, rather than recomputed.
-                prizeAmount: Number(tx.amount) || 0
+                prizeAmount: Number(tx.amount) || 0,
+                final: true
             });
 
         // -------- CLASSIC --------

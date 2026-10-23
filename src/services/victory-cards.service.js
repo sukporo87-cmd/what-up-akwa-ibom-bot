@@ -115,7 +115,7 @@ class VictoryCardsService {
     async getPendingVictoryCard(userId) {
         try {
             const result = await pool.query(`
-                SELECT t.id, t.amount, t.created_at, t.win_data,
+                SELECT t.id, t.amount, t.created_at, t.win_data, t.transaction_type,
                        vc.questions_answered, vc.card_data
                 FROM transactions t
                 LEFT JOIN victory_cards vc ON t.id = vc.transaction_id
@@ -131,9 +131,26 @@ class VictoryCardsService {
                 -- behind. The result was a claim button that led to "Card is
                 -- taking a while" and no way through.
                 --
-                -- Tournament prizes were never gated here either. Challenge
-                -- prizes now match them.
-                AND t.transaction_type = 'prize'
+                -- Challenge prizes stay ungated for that reason.
+                --
+                -- TOURNAMENT PRIZES ARE GATED, but only while still
+                -- claimable. A tournament winner plays many games, and the
+                -- one card they never got was the card for the game that
+                -- actually won: every post-game card is the game just
+                -- played. Gating the claim means the winner is asked for
+                -- the right card at the one moment it matters. The extra
+                -- conditions keep every tournament prize already claimed
+                -- (details given, approved, paid, cancelled) out of the
+                -- gate, so no past winner is stopped for a card on money
+                -- that is already settled.
+                AND (
+                      t.transaction_type = 'prize'
+                   OR (t.transaction_type = 'tournament_prize'
+                       AND COALESCE(t.payout_status, 'pending') = 'pending'
+                       AND t.confirmed_at IS NULL
+                       AND NOT EXISTS (SELECT 1 FROM payout_details pd
+                                       WHERE pd.transaction_id = t.id))
+                )
                 AND t.amount > 0
                 AND (t.victory_card_shared = false OR t.victory_card_shared IS NULL)
                 ORDER BY t.created_at DESC
@@ -186,6 +203,15 @@ class VictoryCardsService {
     
     async getWinDataForShare(userId) {
         try {
+            // The card asked for must be the card for the win the gate is
+            // holding. If that is a tournament prize, it is drawn from the
+            // tournament's own record of the player's best game — the game
+            // that earned the placing — never from whichever game was last.
+            const gated = await this.getPendingVictoryCard(userId);
+            if (gated && gated.transaction_type === 'tournament_prize') {
+                return await this.getTournamentPrizeWinData(gated.id);
+            }
+
             // Get the pending (unshared) transaction
             const result = await pool.query(`
                 SELECT t.id, t.amount, t.win_data, t.created_at,
@@ -238,6 +264,55 @@ class VictoryCardsService {
             10000: 10, 7500: 9, 5000: 8, 3000: 7, 2000: 6, 1000: 5
         };
         return prizeTiers[amt] || Math.min(Math.floor(amt / 3000) + 5, 15);
+    }
+
+    // ============================================
+    // TOURNAMENT PRIZE → CARD DATA (the winning game)
+    // ============================================
+    // tournament_participants.best_* are written together, from one game,
+    // only when that game beats the player's previous best (see
+    // tournament.service updateParticipantScore). They are therefore the
+    // winning session itself, and they are exactly what the settlement
+    // ranked on. The placing is read from the prize row's own description,
+    // which the settlement wrote ("... - Rank #2"), so the card states the
+    // place that was paid; the live rank column is the fallback.
+    async getTournamentPrizeWinData(transactionId) {
+        try {
+            const r = await pool.query(`
+                SELECT t.id, t.amount, t.description, t.tournament_id,
+                       tr.tournament_name,
+                       tp.rank, tp.best_questions_answered, tp.best_time_taken
+                FROM transactions t
+                LEFT JOIN tournaments tr ON tr.id = t.tournament_id
+                LEFT JOIN tournament_participants tp
+                       ON tp.tournament_id = t.tournament_id AND tp.user_id = t.user_id
+                WHERE t.id = $1 AND t.transaction_type = 'tournament_prize'
+            `, [transactionId]);
+            const row = r.rows[0];
+            if (!row) return null;
+
+            const m = /Rank #(\d+)/.exec(row.description || '');
+            const rank = m ? parseInt(m[1], 10) : (parseInt(row.rank, 10) || null);
+            const secs = Number(row.best_time_taken);
+
+            return {
+                isTournament: true,
+                isTournamentPrize: true,
+                transactionId: row.id,
+                tournamentId: row.tournament_id,
+                tournamentName: row.tournament_name || 'Tournament',
+                rank,
+                rankPrize: Number(row.amount) || 0,
+                amount: Number(row.amount) || 0,
+                questionsAnswered: parseInt(row.best_questions_answered, 10) || 0,
+                // 999 is the column's "never finished" default, not a time.
+                timeTaken: (secs > 0 && secs < 999) ? secs.toFixed(1) : '0',
+                totalQuestions: 15
+            };
+        } catch (error) {
+            logger.error('Error building tournament prize card data:', error);
+            return null;
+        }
     }
     
     // ============================================

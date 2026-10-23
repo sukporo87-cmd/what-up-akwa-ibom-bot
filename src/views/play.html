@@ -4413,10 +4413,13 @@ async function showCard(c){
   clearTimeout(cardWait);
   closeOver();                 /* the "making your card" notice has done its job */
   cardData=c; cardBlob=null;
-  $('cardAmt').textContent = c.isTournament ? 'Nice run' : naira(c.amount||0);
-  $('cardSub').textContent = c.isTournament
-    ? 'Share your card and challenge someone to beat it.'
-    : 'Share your card, then claim your prize.';
+  /* A tournament prize card is a win to claim, like a Classic one. Only a
+     card from a run still in progress is "Nice run". */
+  const prizeCard = !c.isTournament || c.isTournamentPrize;
+  $('cardAmt').textContent = prizeCard ? naira(c.amount||0) : 'Nice run';
+  $('cardSub').textContent = prizeCard
+    ? 'Share your card, then claim your prize.'
+    : 'Share your card and challenge someone to beat it.';
   $('cardClaim').style.display = c.canClaimAfter ? 'block' : 'none';
   $('mCard').textContent='';
   $('cardBox').innerHTML='<span class="load">Creating your card…</span>';

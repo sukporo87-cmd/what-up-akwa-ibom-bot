@@ -2166,9 +2166,12 @@ Type the code, or type SKIP to continue:`
         input.includes('VICTORY') ||
         input.includes('CARD')
     )) {
-      await this.handleWinShare(user, JSON.parse(winSharePending));
+      // Cleared BEFORE the card is made, not after: handleWinShare re-opens
+      // the post-game window so that 3 means Claim Prize, and clearing it
+      // afterwards silently closed that window again.
       await redis.del(`win_share_pending:${user.id}`);
       await redis.del(`post_game:${user.id}`);
+      await this.handleWinShare(user, JSON.parse(winSharePending));
       return;
     }
     
@@ -2325,15 +2328,16 @@ Type the code, or type SKIP to continue:`
                  input.includes('SHARE') || input.includes('VICTORY') || input.includes('CARD')) {
         // 4 and YES are the same action — the post-game message offers both.
         if (winSharePending) {
-          await this.handleWinShare(user, JSON.parse(winSharePending));
+          // Cleared first — see the note on the same step above.
           await redis.del(`win_share_pending:${user.id}`);
           await redis.del(`post_game:${user.id}`);
+          await this.handleWinShare(user, JSON.parse(winSharePending));
         } else {
           // Fallback: check if user has unshared win
           const winData = await victoryCardsService.getWinDataForShare(user.id);
           if (winData) {
-            await this.handleWinShare(user, winData);
             await redis.del(`post_game:${user.id}`);
+            await this.handleWinShare(user, winData);
           } else {
             await messagingService.sendMessage(
               user.phone_number,
@@ -2828,9 +2832,15 @@ Type the code, or type SKIP to continue:`
           logger.info(`Regenerated win_share_pending for user ${user.id} during claim attempt`);
         }
         
+        // The amount of the win the card is for. The gate and the claim can
+        // point at different rows now that tournament prizes are gated too
+        // (a player can hold a Classic win and a tournament prize at once),
+        // and the message must name the one the card will show.
+        const gatedAmount = parseFloat(
+          (canClaim.transaction && canClaim.transaction.amount) || transaction.amount);
         await messagingService.sendMessage(
           user.phone_number,
-          victoryCardsService.getVictoryCardRequiredMessage(parseFloat(transaction.amount))
+          victoryCardsService.getVictoryCardRequiredMessage(gatedAmount)
         );
         return;
       }
@@ -3767,10 +3777,17 @@ Reply with your choice:`
     try {
       // Check if this is a tournament share
       const isTournament = winData.isTournament || false;
-      
+      // A settled, paid tournament placing — the card the claim gate asks
+      // for. Drawn from the winning game, and sharing it unlocks the claim.
+      // Every other tournament card is a post-game card for a run still in
+      // progress, and behaves exactly as before.
+      const isTournamentPrize = isTournament && winData.isTournamentPrize === true && !!winData.transactionId;
+
       await messagingService.sendMessage(
         user.phone_number,
-        isTournament 
+        isTournamentPrize
+          ? '🎨 Creating your victory card for your winning game... Please wait a moment! ✨'
+          : isTournament
           ? '🎨 Creating your tournament card... Please wait a moment! ✨'
           : '🎨 Creating your victory card... Please wait a moment! ✨'
       );
@@ -3789,11 +3806,21 @@ Reply with your choice:`
           // The real tournament's name, not a placeholder, and what the rank
           // is worth. Both come from the row, so a card cannot invent either.
           tournamentName: winData.tournamentName || 'Tournament',
-          prizeAmount: Number(winData.rankPrize) || 0
+          prizeAmount: Number(winData.rankPrize) || 0,
+          final: isTournamentPrize
         });
-        
-        caption = `🏆 @${user.username} reached Q${winData.questionsAnswered} in ${winData.timeTaken}s in ${winData.tournamentName || 'the tournament'}! ` +
-                  `Think you can beat that? Join: https://whatsuptrivia.com.ng`;
+
+        if (isTournamentPrize) {
+          // First person, matching the card: the player posts this as themselves.
+          const place = parseInt(winData.rank, 10) || 0;
+          const placed = place > 0 ? `I placed ${imageService._ordinal(place)} and just won` : 'I just won';
+          caption = `🏆 ${placed} ₦${Number(winData.rankPrize || 0).toLocaleString('en-NG')} ` +
+                    `in ${winData.tournamentName || 'a tournament'} on What's Up Trivia! ` +
+                    `Join me, play for fun, knowledge & wins: https://whatsuptrivia.com.ng`;
+        } else {
+          caption = `🏆 @${user.username} reached Q${winData.questionsAnswered} in ${winData.timeTaken}s in ${winData.tournamentName || 'the tournament'}! ` +
+                    `Think you can beat that? Join: https://whatsuptrivia.com.ng`;
+        }
       } else {
         // Generate classic victory card
         imagePath = await imageService.generateWinImage({
@@ -3829,13 +3856,24 @@ Reply with your choice:`
           url: '/web/game/victory-card',
           caption,
           isTournament,
+          isTournamentPrize,
           amount: winData.amount || 0,
           questionsAnswered: winData.questionsAnswered,
           totalQuestions: winData.totalQuestions,
-          canClaimAfter: !isTournament
+          canClaimAfter: !isTournament || isTournamentPrize
         });
       } else {
         await messagingService.sendImage(user.phone_number, imagePath, caption);
+      }
+
+      // A tournament prize card unlocks that one prize only. markAllCardsAsShared
+      // is deliberately not used for it: it covers Classic and challenge rows.
+      if (isTournamentPrize) {
+        try {
+          await victoryCardsService.markCardAsShared(winData.transactionId);
+        } catch (vcError) {
+          logger.error('Error marking tournament prize card as shared:', vcError);
+        }
       }
 
       // Mark ALL victory cards as shared in database (user may have multiple pending)
@@ -3864,7 +3902,26 @@ Reply with your choice:`
       }
 
       // Send different follow-up message based on game type
-      if (isTournament) {
+      if (isTournamentPrize) {
+        await messagingService.sendMessage(
+          user.phone_number,
+          `✅ Victory card sent! 🎉
+
+Save it and share it on your Status to celebrate your win!
+
+You can now claim your ₦${Number(winData.rankPrize || 0).toLocaleString('en-NG')} prize! 💰
+
+1️⃣ Play Again
+2️⃣ View Leaderboard
+3️⃣ Claim Prize`
+        );
+        // So 3 maps to Claim Prize, exactly as after a Classic card.
+        await redis.setex(`post_game:${user.id}`, 300, JSON.stringify({
+          timestamp: Date.now(), gameType: 'tournament',
+          isTournament: true, tournamentId: winData.tournamentId,
+          finalScore: Number(winData.rankPrize) || 0
+        }));
+      } else if (isTournament) {
         await messagingService.sendMessage(
           user.phone_number,
           `✅ Tournament card sent! 🎉

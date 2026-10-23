@@ -78,14 +78,24 @@ class ImageService {
   // TOURNAMENT CARD
   // ============================================
   async generateTournamentCard(cardData) {
-    const { username, city, questionsAnswered, timeTaken, rank, tournamentName, prizeAmount } = cardData;
+    const { username, city, questionsAnswered, timeTaken, rank, tournamentName, prizeAmount, final } = cardData;
     const { canvas, ctx, palette, W, H } = await CT.startCard('cosmic');
     await this._tiva(ctx, W, H, 0.30);
 
     const money = Number(prizeAmount) || 0;
     const place = parseInt(rank, 10);
+    // `final` means the tournament has settled and this placing was paid.
+    // Only then may the card say "Podium Finish" and "just won": a card from
+    // a game played mid-tournament shows a standing that can still change,
+    // and a player must not be able to post "I just won ₦15,000" for a prize
+    // they may yet lose.
+    const settled = final === true && place > 0 && money > 0;
+    const ord = place ? this._ordinal(place) : '';
+    const naira = '₦' + money.toLocaleString('en-NG');
     const trophyH = await CT.place(ctx, 'card-trophy.png', W * 0.56, 14, money ? 200 : 214);
-    CT.drawPill(ctx, place ? `RANK #${place}` : 'TOURNAMENT', W * 0.56, 16 + trophyH + 4, 660, 82);
+    CT.drawPill(ctx,
+      settled ? `PODIUM FINISH - ${ord.toUpperCase()}` : (place ? `RANK #${place}` : 'TOURNAMENT'),
+      W * 0.56, 16 + trophyH + 4, 660, 82);
 
     // The tournament's own name. It used to be whatever the caller happened to
     // pass, which was 'Tournament' more often than not.
@@ -107,11 +117,14 @@ class ImageService {
       : `${questionsAnswered}/15 correct`;
     CT.fitText(ctx, scoreLine, W * 0.56, money ? 698 : 654, 760, 27, '600', palette.faint);
 
+    // First person: the player is the one posting this card.
     this._panel(ctx, W, money ? 738 : 706, [
-      place
-        ? `@${username} placed ${this._ordinal(place)} in ${tournamentName}`
-        : `@${username} played ${tournamentName}`,
-      'Think you can top the table?',
+      settled
+        ? `I placed ${ord} and just won ${naira} in ${tournamentName}`
+        : place
+          ? `I'm ${ord} so far in ${tournamentName}`
+          : `I played ${tournamentName}`,
+      'Join me, play for fun, knowledge & wins',
       'Play now: whatsuptrivia.com.ng'
     ]);
     CT.drawJoinBar(ctx, W / 2, H - 104, 890, 74, JOIN_LABEL);
