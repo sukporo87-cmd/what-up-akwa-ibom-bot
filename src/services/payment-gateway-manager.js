@@ -7,6 +7,7 @@ const PaystackGateway = require('./gateways/paystack.gateway');
 const KorapayGateway = require('./gateways/korapay.gateway');
 const MonnifyGateway = require('./gateways/monnify.gateway');
 const FlutterwaveGateway = require('./gateways/flutterwave.gateway');
+const BachsGateway = require('./gateways/bachs.gateway');
 const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 
@@ -18,6 +19,8 @@ class PaymentGatewayManager {
             korapay: new KorapayGateway(),
             monnify: new MonnifyGateway(),
             flutterwave: new FlutterwaveGateway(),
+            // Off until switched on in the admin dashboard, like the others.
+            bachs: new BachsGateway(),
         };
     }
 

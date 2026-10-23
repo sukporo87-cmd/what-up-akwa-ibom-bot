@@ -65,7 +65,18 @@ app.use(helmet({
 }));
 app.use(cors());
 app.use(morgan('combined'));
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({
+  limit: '15mb',
+  // Bachs signs the exact bytes it sent. Parsing and re-stringifying changes
+  // them (spacing, key order, unicode escapes) and the signature never
+  // matches. The raw bytes are kept for that one route only — no other
+  // route's behaviour changes.
+  verify: (req, res, buf) => {
+    if (req.originalUrl && req.originalUrl.split('?')[0] === '/payment/bachs-webhook') {
+      req.rawBody = Buffer.from(buf);
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // play.<domain> should serve the game at the bare root, not require /play.html.

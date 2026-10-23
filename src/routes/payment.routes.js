@@ -448,6 +448,61 @@ router.post('/flutterwave-webhook', async (req, res) => {
 });
 
 // ============================================
+// BACHS WEBHOOK
+// ============================================
+// Signed over the raw bytes (server.js keeps them as req.rawBody for this
+// route). Only collection.succeeded settles anything, and even then the
+// payment is re-checked with Bachs before it is acted on: verify() insists
+// on the full amount in the right currency, which the challenge-sponsorship
+// path would otherwise never check. Every other event is acknowledged and
+// ignored. Bachs retries on 5xx/timeouts, and every settle path below is
+// safe to repeat.
+
+router.post('/bachs-webhook', async (req, res) => {
+    try {
+        const gateway = gatewayManager.getGateway('bachs');
+
+        if (!req.rawBody) {
+            logger.error('Bachs webhook arrived without its raw body — check the express.json verify hook in server.js');
+            return res.status(400).send('Invalid signature');
+        }
+        if (!gateway.verifyWebhookSignature(req.rawBody, req.headers)) {
+            logger.warn('Invalid Bachs signature');
+            return res.status(400).send('Invalid signature');
+        }
+
+        const event = gateway.parseWebhook(req.body);
+
+        if (event.event === 'collection.succeeded') {
+            let reference = event.reference;
+            if (!reference && event.checkoutId) {
+                reference = await gateway.referenceForCheckout(event.checkoutId);
+            }
+            if (!reference) {
+                // A deposit we did not create a checkout for (e.g. a direct
+                // transfer to a virtual account). Nothing of ours to settle.
+                logger.warn(`Bachs ${event.eventId}: collection.succeeded with no reference — ignored`);
+                return res.status(200).send('Webhook received');
+            }
+
+            const check = await gateway.verify(reference);
+            if (check.success) {
+                await processWebhookEvent(reference, (event.raw && event.raw.data && event.raw.data.metadata) || {}, 'bachs');
+            } else {
+                logger.error(`Bachs ${event.eventId}: ${reference} reported paid but did not verify (${check.status}${check.error ? ', ' + check.error : ''}) — left for an admin`);
+            }
+        } else if (event.event === 'collection.underpaid' || event.event === 'collection.failed') {
+            logger.warn(`Bachs ${event.eventId}: ${event.event} for ${event.reference || event.checkoutId || 'unknown'}`);
+        }
+
+        res.status(200).send('Webhook received');
+    } catch (error) {
+        logger.error('Bachs webhook error:', error);
+        res.status(500).send('Webhook error');
+    }
+});
+
+// ============================================
 // TOURNAMENT PAYMENT WEBHOOK HANDLER
 // ============================================
 
@@ -569,7 +624,10 @@ function getPlatformName(phoneNumber) {
 function paymentReferenceOf(query) {
     const direct = query.reference || query.paymentReference || query.tx_ref ||
                    query.txRef || query.trxref;
-    if (direct) return String(direct);
+    // Bachs adds "?checkout_id=…" to the return URL, which already carries
+    // ?reference=…, and a second "?" lands inside the reference's value. None
+    // of our references ever contains "?", so anything from one on is cut.
+    if (direct) return String(direct).split('?')[0];
 
     if (query.response) {
         try {
@@ -581,12 +639,27 @@ function paymentReferenceOf(query) {
     return null;
 }
 
+// The reference, or — when a gateway returns only its own id (Bachs sends
+// ?checkout_id=…) — the reference that id belongs to.
+async function resolveCallbackReference(query) {
+    const ref = paymentReferenceOf(query);
+    if (ref) return ref;
+    if (query.checkout_id) {
+        try {
+            return await gatewayManager.getGateway('bachs').referenceForCheckout(String(query.checkout_id));
+        } catch (e) {
+            logger.error(`Could not resolve Bachs checkout ${query.checkout_id}: ${e.message}`);
+        }
+    }
+    return null;
+}
+
 // ============================================
 // REGULAR GAME PAYMENT CALLBACK
 // ============================================
 
 router.get('/callback', async (req, res) => {
-    const reference = paymentReferenceOf(req.query);
+    const reference = await resolveCallbackReference(req.query);
     
     if (!reference) {
         return res.status(400).send('No reference provided');
@@ -836,7 +909,7 @@ router.get('/callback', async (req, res) => {
 // ============================================
 
 router.get('/tournament-callback', async (req, res) => {
-    const reference = paymentReferenceOf(req.query);
+    const reference = await resolveCallbackReference(req.query);
     
     if (!reference) {
         return res.status(400).send('No reference provided');
