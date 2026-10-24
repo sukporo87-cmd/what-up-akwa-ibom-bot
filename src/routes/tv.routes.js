@@ -40,6 +40,7 @@ const tvSession = require('../services/tv-session.service');
 const tvIdentity = require('../services/tv-identity.service');
 const webAuthService = require('../services/web-auth.service');
 const tvPrize = require('../services/tv-prize.service');
+const tvFlags = require('../services/tv-flags.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
@@ -227,6 +228,20 @@ router.get('/categories', requireDevice, async (req, res) => {
     try {
         return res.json({ success: true, categories: await party.getCategories() });
     } catch (error) { return fail(res, 'categories', error); }
+});
+
+// The picture for a flag question (Oct 24), for the TV screens. No token: a
+// flag is public, and a web page's <img>-style fetch cannot send one. Only a
+// code some flag question uses is served (tv-flags.service). The code is
+// pattern-constrained and the path ends in .png, so it shadows nothing.
+router.get('/flags/:code([A-Za-z0-9-]{2,12}).png', async (req, res) => {
+    try {
+        const out = await tvFlags.get(req.params.code);
+        if (!out.ok) return res.status(out.status).end();
+        res.set('Content-Type', out.type);
+        res.set('Cache-Control', 'public, max-age=2592000');
+        return res.send(out.body);
+    } catch (error) { return fail(res, 'flag', error); }
 });
 
 router.post('/rooms', requireDevice, async (req, res) => {

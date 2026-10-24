@@ -74,6 +74,7 @@ const store = require('./tv-room-store.service');
 const tvSettings = require('./tv-settings.service');
 const tvNames = require('../utils/tv-names');
 const QuestionService = require('./question.service');
+const tvFlags = require('./tv-flags.service');
 
 const questionService = new QuestionService();
 
@@ -1176,7 +1177,7 @@ class TvPartyService {
             if (position > QUESTIONS_PER_ROUND) return { finish: true };
 
             const q = await pool.query(
-                `SELECT s.question_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
+                `SELECT s.question_id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.image_type, q.image_data
                  FROM tv_room_questions s
                  JOIN questions q ON q.id = s.question_id
                  WHERE s.tv_room_id = $1 AND s.position = $2`,
@@ -1196,7 +1197,10 @@ class TvPartyService {
             // the reveal and is never part of the room state.
             g.question = {
                 text: row.question_text,
-                options: { A: row.option_a, B: row.option_b, C: row.option_c, D: row.option_d }
+                options: { A: row.option_a, B: row.option_b, C: row.option_c, D: row.option_d },
+                // A flag question's picture (Oct 24), for the TV only: the
+                // phones are sent the clock and the letters, as before.
+                image: tvFlags.imageFor(row)
             };
             const race = g.style === 'race';
             g.askedAt = now;
@@ -1214,6 +1218,7 @@ class TvPartyService {
             const playing = g.enrolled.filter(pid => this._active(state.players[pid]));
             tx.tv('game.question', {
                 position, total: QUESTIONS_PER_ROUND, text: g.question.text, options: g.question.options,
+                image: g.question.image || null,
                 expiresAt: g.expiresAt, opensAt: g.opensAt, style: g.style || 'standard',
                 answered: 0, of: playing.length, away: this._awayIds(state)
             });

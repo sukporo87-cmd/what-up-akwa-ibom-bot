@@ -17,6 +17,7 @@
 
 const pool = require('../config/database');
 const tvAuth = require('./tv-auth.service');
+const tvFlags = require('./tv-flags.service');
 
 const PAGE = 50;
 const DEFAULT_DAYS = 7;
@@ -107,7 +108,8 @@ class TvAuditService {
     async _questions(ids) {
         if (!ids.length) return new Map();
         const r = await pool.query(
-            `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty
+            `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty,
+                    image_type, image_data
              FROM questions WHERE id = ANY($1::int[])`,
             [ids]
         );
@@ -150,6 +152,7 @@ class TvAuditService {
                 position: s.position, questionId: Number(s.question_id), text: q.question_text || null,
                 options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
                 correct: q.correct_answer || null, category: q.category || null, difficulty: q.difficulty || null,
+                image: tvFlags.imageFor(q),
                 answers: answers.rows.filter(a => a.position === s.position)
             };
         });
@@ -182,7 +185,8 @@ class TvAuditService {
             const q = bank.get(Number(id)) || {};
             return { questionId: Number(id), text: q.question_text || null,
                      options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
-                     correct: q.correct_answer || null, category: q.category || null, difficulty: q.difficulty || null };
+                     correct: q.correct_answer || null, category: q.category || null, difficulty: q.difficulty || null,
+                     image: tvFlags.imageFor(q) };
         };
         const steps = answers.length
             ? answers.map(a => ({ ...show(a.q), position: a.n, chosen: a.chosen, ms: a.ms, result: a.result,

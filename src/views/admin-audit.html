@@ -1480,8 +1480,17 @@ function wutBadge(o){
     document.getElementById('tvAuditModal').classList.add('active');
   }
 
+  // A flag question's picture (Oct 24), as the TV showed it, and its code.
+  function flag(q) {
+    const im = q.image;
+    if (!im || im.kind !== 'flag') return '';
+    return '<div style="margin:6px 0 4px;display:flex;align-items:center;gap:10px">' +
+      (im.url ? '<img src="' + esc(im.url) + '" alt="Flag" style="height:40px;border:1px solid #ccc;border-radius:3px">' : '') +
+      '<span style="font-size:12.5px;opacity:.75">Flag: ' + esc(im.code || 'not available') + (im.url ? '' : ' (no picture)') + '</span></div>';
+  }
+
   function question(q) {
-    return '<div style="margin-bottom:6px"><b>' + esc(q.text || '(question ' + q.questionId + ' no longer in the bank)') + '</b>' +
+    return '<div style="margin-bottom:6px"><b>' + esc(q.text || '(question ' + q.questionId + ' no longer in the bank)') + '</b>' + flag(q) +
       '<div style="opacity:.7;font-size:12.5px;margin-top:3px">' + ['A', 'B', 'C', 'D'].map(l =>
         '<span style="margin-right:12px;' + (l === q.correct ? 'color:#4CAF50;font-weight:700' : '') + '">' + l + ': ' + esc(q.options && q.options[l]) + '</span>').join('') +
       (q.category ? ' · ' + esc(pretty(q.category)) : '') + (q.difficulty ? ' · level ' + esc(q.difficulty) : '') + ' · question #' + esc(q.questionId) + '</div></div>';

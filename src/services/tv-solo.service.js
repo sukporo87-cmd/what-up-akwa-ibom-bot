@@ -55,6 +55,7 @@ const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
+const tvFlags = require('./tv-flags.service');
 const QuestionService = require('./question.service');
 const tvSettings = require('./tv-settings.service');
 
@@ -285,7 +286,9 @@ class TvSoloService {
         // the TV answers, and is never part of the stored round.
         state.question = {
             text: q.question_text,
-            options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d }
+            options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
+            // A flag question's picture (Oct 24); null for any other question.
+            image: tvFlags.imageFor(q)
         };
         state.askedAt = now;
         state.expiresAt = now + this._clockFor(state, position);
@@ -309,7 +312,7 @@ class TvSoloService {
     async _bankQuestion(bankName, position, exclude) {
         const [lo, hi] = bandFor(position);
         const r = await pool.query(
-            `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
+            `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.image_type, q.image_data
              FROM questions q
              JOIN question_banks qb ON qb.id = q.question_bank_id
              WHERE qb.bank_name = $1
@@ -328,7 +331,7 @@ class TvSoloService {
     async _categoryQuestion(categories, position, exclude) {
         const bankId = await questionService.getChallengeBankId();
         const r = await pool.query(
-            `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
+            `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.image_type, q.image_data
              FROM questions q
              WHERE q.question_bank_id = $1
                AND LOWER(q.category) = ANY($2::text[])
@@ -550,7 +553,8 @@ class TvSoloService {
         const bank = new Map();
         if (ids.length) {
             const q = await pool.query(
-                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty, fun_fact
+                `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_answer, category, difficulty, fun_fact,
+                        image_type, image_data
                  FROM questions WHERE id = ANY($1::int[])`,
                 [ids]
             );
@@ -570,7 +574,9 @@ class TvSoloService {
                 correct: LETTERS.includes(c) ? c : null,
                 category: q.category || null,
                 // The fun fact, as web play shows it after a question (Oct 19).
-                funFact: q.fun_fact || null
+                funFact: q.fun_fact || null,
+                // A flag question's picture (Oct 24).
+                image: tvFlags.imageFor(q)
             };
         };
         const steps = answers.map(a => ({
