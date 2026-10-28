@@ -768,6 +768,32 @@ class GameService {
         return QUESTION_TIMEOUT_SECONDS;
     }
 
+    // ============================================
+    // THE CLOCK A QUESTION WAS ASKED ON
+    // ============================================
+    // Kept beside the question's start time (same key shape, longer life than
+    // any clock), so the answer can be judged against the clock the player was
+    // actually shown. A failure to record it only means the answer falls back
+    // to working the clock out again, which is how it always used to work.
+    async _rememberQuestionClock(sessionKey, questionNumber, timeoutMs) {
+        try {
+            if (!sessionKey || !questionNumber || !Number.isFinite(Number(timeoutMs))) return;
+            await redis.setex(`question_clock:${sessionKey}:q${questionNumber}`, 300, String(Math.round(Number(timeoutMs))));
+        } catch (error) {
+            logger.error('Could not record the question clock:', error.message);
+        }
+    }
+
+    async _promisedClockMs(sessionKey, questionNumber) {
+        try {
+            const raw = await redis.get(`question_clock:${sessionKey}:q${questionNumber}`);
+            const ms = raw == null ? NaN : parseInt(raw, 10);
+            return Number.isFinite(ms) && ms > 0 ? ms : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     /** Decrement turbo mode questions remaining */
     async decrementTurboQuestions(sessionKey, userId, sessionId) {
         const trackingKey = `turbo_track:${sessionKey}`;
@@ -2784,6 +2810,10 @@ class GameService {
             
             await auditService.logQuestionAsked(session.id, user.id, questionNumber, question, prizeAmount, timeoutConfig.isTurboMode, timeoutConfig);
             await antiFraudService.setQuestionStartTime(session.session_key, questionNumber);
+            // The clock this question was asked on, kept beside its start time.
+            // The answer is judged against THIS, never a clock worked out again
+            // when the answer arrives — see _promisedClockMs.
+            await this._rememberQuestionClock(session.session_key, questionNumber, currentTimeoutMs);
             
             let message = `❓ QUESTION ${questionNumber} - ₦${prizeAmount.toLocaleString()}`;
             if (isSafe) message += ' (SAFE) 🔒';
@@ -2905,21 +2935,56 @@ class GameService {
             if (!lockAcquired) { logger.warn(`Duplicate answer prevented`); return; }
             
             try {
-                // Timeout enforcement
+                // ============================================
+                // TIMEOUT ENFORCEMENT
+                //
+                // The answer is timed ONCE, the moment it is picked up, and that
+                // one figure is both what is judged and what the audit records.
+                // It used to be measured twice: once for the check, then again
+                // after several database calls, so an answer judged at 6.8s was
+                // written to the audit as 7.2s and looked as if it had beaten
+                // the clock.
+                //
+                // And it is judged against the clock the player was GIVEN when
+                // the question was asked, not a clock worked out again now. Doing
+                // it again now went wrong in two ways:
+                //   * turbo spends its question count as each turbo question is
+                //     SENT, so by the time the last turbo question was answered,
+                //     turbo was already off and the answer was judged on the
+                //     ordinary clock — 5 seconds promised, 7 or 12 allowed;
+                //   * 50:50 gives "time left + 5 seconds", but the answer was
+                //     judged on the ordinary clock — too generous with little
+                //     time left, too harsh with a lot.
+                // ============================================
+                const answeredAt = Date.now();
                 const startTime = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
+                const timeout = await redis.get(timeoutKey);
+                let responseTimeMs = null;
+
                 if (startTime) {
-                    const elapsed = Date.now() - startTime;
-                    const timeoutConfig = await this.getSessionTimeout(session.session_key, questionNumber, user.id);
-                    if (elapsed > timeoutConfig.timeoutMs) {
-                        logger.info(`⏰ Answer REJECTED (timeout): ${elapsed}ms > ${timeoutConfig.timeoutMs}ms`);
+                    responseTimeMs = answeredAt - startTime;
+                    let allowedMs = await this._promisedClockMs(session.session_key, questionNumber);
+                    if (!allowedMs) {
+                        // Asked before this change was deployed: no clock was
+                        // recorded, so work it out as before. Only ever true for
+                        // questions in flight at the moment of a deploy.
+                        allowedMs = (await this.getSessionTimeout(session.session_key, questionNumber, user.id)).timeoutMs;
+                    }
+                    if (responseTimeMs > allowedMs) {
+                        logger.info(`⏰ Answer REJECTED (timeout): ${responseTimeMs}ms > ${allowedMs}ms`);
                         await redis.del(timeoutKey);
                         this.clearQuestionTimeout(timeoutKey);
                         await this.handleTimeout(session, user);
                         return;
                     }
+                } else if (!timeout || answeredAt > Number(timeout)) {
+                    // No start time to measure from. The timer record holds the
+                    // deadline itself; it used to be checked only for EXISTING,
+                    // and it outlives the deadline by a few seconds.
+                    await this.handleTimeout(session, user);
+                    return;
                 }
-                
-                const timeout = await redis.get(timeoutKey);
+
                 if (!timeout) {
                     await this.handleTimeout(session, user);
                     return;
@@ -2928,12 +2993,9 @@ class GameService {
                 await redis.del(timeoutKey);
                 this.clearQuestionTimeout(timeoutKey);
             
-                // Calculate response time
-                let responseTimeMs = null;
+                // Record the response time: the same figure that was judged.
                 try {
-                    const st = await antiFraudService.getQuestionStartTime(session.session_key, questionNumber);
-                    if (st) {
-                        responseTimeMs = Date.now() - st;
+                    if (responseTimeMs != null) {
                         await antiFraudService.trackResponseTime(session.id, questionNumber, responseTimeMs, user.id);
                     }
                 } catch (afError) { logger.error('Error tracking response time:', afError); }
@@ -3249,17 +3311,36 @@ class GameService {
                 const questionNumber = currentSession.current_question;
                 const timeoutKey = `timeout:${currentSession.session_key}:q${questionNumber}`;
                 
-                const existingTimeout = await redis.get(timeoutKey);
-                let remainingTime = 15;
-                if (existingTimeout) {
-                    const timeoutExpiry = parseInt(existingTimeout);
-                    remainingTime = Math.max(0, Math.ceil((timeoutExpiry - Date.now()) / 1000));
+                // TIME LEFT, FROM THE CLOCK THE ANSWER WILL BE JUDGED ON.
+                // It used to come from the timer record, which starts after the
+                // question is delivered, and fell back to a hard-coded 15
+                // seconds if that record was missing — so a 7-second question
+                // could become a 20-second one. Now: the question's own start
+                // time and clock; failing that the timer record; failing both,
+                // the question's full clock. 50:50 can never give more than the
+                // clock plus five seconds.
+                const nowMs = Date.now();
+                let remainingMs = null;
+                const qStart = await antiFraudService.getQuestionStartTime(currentSession.session_key, questionNumber);
+                const qClock = await this._promisedClockMs(currentSession.session_key, questionNumber);
+                if (qStart && qClock) {
+                    remainingMs = qStart + qClock - nowMs;
+                } else {
+                    const existingTimeout = await redis.get(timeoutKey);
+                    if (existingTimeout) remainingMs = parseInt(existingTimeout, 10) - nowMs;
                 }
+                if (remainingMs == null || !Number.isFinite(remainingMs)) {
+                    remainingMs = (await this.getSessionTimeout(currentSession.session_key, questionNumber, user.id)).timeoutMs;
+                }
+                const remainingTime = Math.max(0, Math.ceil(remainingMs / 1000));
                 const newTime = remainingTime + 5;
                 
                 this.clearQuestionTimeout(timeoutKey);
                 await redis.del(timeoutKey);
-                await antiFraudService.updateQuestionStartTime(currentSession.session_key, questionNumber, Date.now());
+                await antiFraudService.updateQuestionStartTime(currentSession.session_key, questionNumber, nowMs);
+                // From here the answer is judged on the new clock, which is
+                // exactly what the player has just been told.
+                await this._rememberQuestionClock(currentSession.session_key, questionNumber, newTime * 1000);
                 
                 await pool.query('UPDATE game_sessions SET lifeline_5050_used = true WHERE id = $1', [currentSession.id]);
                 
