@@ -35,7 +35,7 @@ class CloudinaryService {
 
     /**
      * Upload a photo verification image buffer to Cloudinary.
-     * Returns { url, analysis } or null on upload failure.
+     * Returns { url, analysis, phash } or null on upload failure.
      * Analysis includes: hasFace, faces, brightness, width, height, format, isLikelyTooDark
      */
     async uploadVerificationPhoto(buffer, userId, sessionId) {
@@ -53,6 +53,7 @@ class CloudinaryService {
                         faces: true,              // Returns face bounding boxes
                         colors: true,             // Returns dominant colors with frequencies
                         image_metadata: true,     // Returns EXIF when present (rare for WhatsApp)
+                        phash: true,              // Perceptual fingerprint: spots a photo sent before, even resized or recompressed
                         transformation: [
                             { quality: 'auto:good', fetch_format: 'auto' }
                         ]
@@ -71,7 +72,7 @@ class CloudinaryService {
             const analysis = this._analyzeUploadResult(result);
             logger.info(`📊 Photo analysis: faces=${analysis.faces} brightness=${analysis.brightness.toFixed(2)} dark=${analysis.isLikelyTooDark}`);
 
-            return { url: result.secure_url, analysis };
+            return { url: result.secure_url, analysis, phash: result.phash || null };
 
         } catch (error) {
             logger.error('Error uploading to Cloudinary:', error.message);

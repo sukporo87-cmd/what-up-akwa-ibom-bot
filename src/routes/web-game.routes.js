@@ -949,6 +949,27 @@ router.post('/photo/expired', requireWebAuth, async (req, res) => {
     }
 });
 
+// The selfie check found no camera to use: none on the device, access
+// refused, or the browser can't open one. There is no file picker to fall
+// back on, so this counts as a failed check, the same as a wrong photo.
+// Only acts while a photo check is actually waiting for this player.
+router.post('/photo/no-camera', requireWebAuth, express.json({ limit: '2kb' }), async (req, res) => {
+    try {
+        const session = await gameService.getActiveSession(req.webUser.id);
+        if (!session) return res.json({ success: true, resolved: false, reason: 'no_session' });
+
+        const body = req.body || {};
+        const resolved = await gameService.failPhotoVerificationNoCamera(session, req.webUser, {
+            reason: typeof body.reason === 'string' ? body.reason : 'unknown',
+            error: typeof body.error === 'string' ? body.error : undefined
+        });
+        res.json({ success: true, resolved });
+    } catch (error) {
+        logger.error('Web photo no-camera error:', error);
+        res.status(500).json({ success: false, error: 'Could not resolve that' });
+    }
+});
+
 // ============================================
 // VICTORY CARD
 // The engine generates the card as a temp file and unlinks it straight after

@@ -510,6 +510,10 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 .shot img{width:100%;max-width:210px;border-radius:12px;display:block;margin:0 auto 14px}
 .shot .ico{font-size:36px;display:block;margin-bottom:10px}
 .shot p{margin:0;font-size:13.5px;color:var(--mute);line-height:1.55}
+/* Live camera preview. Mirrored on screen only, the way a selfie camera
+   looks; the photo that is sent is the true image. */
+.shot video{width:100%;max-width:260px;border-radius:12px;display:block;margin:0 auto 12px;
+            background:#000;transform:scaleX(-1)}
 .countdown{font-family:var(--display);font-size:15px;color:var(--brass);text-align:center;
            margin-bottom:14px}
 .countdown.hot{color:var(--ember)}
@@ -1196,11 +1200,10 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 
     <div class="shot" id="photoBox">
       <span class="ico">📷</span>
-      <p>Your camera opens when you tap below. The photo is used once, to verify this game.</p>
+      <p>Tap below and allow camera access. The photo is taken live and used once, to verify this game.</p>
     </div>
 
-    <input type="file" id="photoInput" accept="image/*" capture="user" style="display:none">
-    <button class="cta" id="photoBtn" onclick="$('photoInput').click()">Open camera</button>
+    <button class="cta" id="photoBtn" onclick="photoAction()">Open camera</button>
     <div class="msg" id="mPhoto" style="margin-top:10px"></div>
   </section>
 
@@ -3070,6 +3073,8 @@ function view(v){
   $(v).classList.add('on');
   /* Leaving the share screen releases its hold on incoming prompts. */
   if(v!=='vChalShare') shareOpen=false;
+  /* Leaving the selfie screen, for any reason, turns the camera off. */
+  if(v!=='vPhoto') stopPhotoCamera();
   /* The sign-in artwork is ~100 KB and only ever appears here. A returning
      player is signed in and goes straight to the lobby, so it is fetched the
      first time this screen is actually shown and never otherwise. */
@@ -4614,17 +4619,124 @@ function capLapsed(){
 
 /* ---------- photo verification ----------
    Anti-fraud can demand a selfie mid-game. Chat platforms just send an image;
-   web had no path at all, so a flagged player was simply stuck. The window is
-   25 seconds, hence the countdown. */
-let photoTick=null, photoMode=false;
+   on web the photo is taken LIVE, in the page, from the camera. There is no
+   file picker: a picture chosen from the gallery or the desktop can't be sent.
+   No camera, or camera access refused, means the check can't be done, and
+   that counts as a fail, the same as a wrong photo. The window is 20 seconds,
+   hence the countdown. */
+let photoTick=null, photoMode=false, photoStream=null, photoBusy=false;
+
+function stopPhotoCamera(){
+  if(photoStream){
+    try{ photoStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  }
+  photoStream=null;
+  const v=document.getElementById('photoVideo');
+  if(v){ try{ v.srcObject=null; }catch(e){} }
+}
+
+/* One button, two jobs: open the camera, then take the photo. */
+function photoAction(){
+  if(photoBusy) return;
+  if(photoStream) capturePhoto(); else openPhotoCamera();
+}
+
+async function openPhotoCamera(){
+  const md=navigator.mediaDevices;
+  if(!md||typeof md.getUserMedia!=='function'){ return photoNoCamera('unsupported'); }
+  photoBusy=true;
+  $('photoBtn').disabled=true; $('photoBtn').textContent='Opening camera…';
+  $('mPhoto').style.color='var(--mute)'; $('mPhoto').textContent='Allow camera access if your browser asks.';
+  try{
+    const stream=await md.getUserMedia({audio:false,video:{facingMode:{ideal:'user'},width:{ideal:1280},height:{ideal:960}}});
+    if(!$('vPhoto').classList.contains('on')){ stream.getTracks().forEach(t=>t.stop()); photoBusy=false; return; }
+    photoStream=stream;
+    $('photoBox').innerHTML='<video id="photoVideo" autoplay playsinline muted></video>'
+      +'<p>Face the camera in good light, then tap Take photo.</p>';
+    const v=$('photoVideo'); v.srcObject=stream;
+    try{ await v.play(); }catch(e){}
+    $('mPhoto').textContent='';
+    $('photoBtn').disabled=false; $('photoBtn').textContent='Take photo';
+  }catch(err){
+    const name=(err&&err.name)||'Error';
+    stopPhotoCamera();
+    /* The one case worth another try: the camera exists but another app or
+       tab is holding it. If the clock runs out meanwhile, that's a timeout. */
+    if(name==='NotReadableError'||name==='TrackStartError'||name==='AbortError'){
+      $('mPhoto').style.color='var(--ember)';
+      $('mPhoto').textContent='Your camera is busy. Close any other app or tab using it, then tap Try again.';
+      $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+      photoBusy=false; return;
+    }
+    /* Everything else means no usable camera: refused, none on the device,
+       or a browser that can't open one. All count as a failed check. */
+    photoBusy=false;
+    const refused=(name==='NotAllowedError'||name==='PermissionDeniedError'||name==='SecurityError');
+    return photoNoCamera(refused?'denied':'no_device', name);
+  }
+  photoBusy=false;
+}
+
+function capturePhoto(){
+  const v=document.getElementById('photoVideo');
+  if(!v||!v.videoWidth){
+    $('mPhoto').style.color='var(--mute)'; $('mPhoto').textContent='Camera is still starting — tap again in a moment.';
+    return;
+  }
+  photoBusy=true;
+  $('photoBtn').disabled=true;
+  const scale=Math.min(1,1280/Math.max(v.videoWidth,v.videoHeight));
+  const c=document.createElement('canvas');
+  c.width=Math.round(v.videoWidth*scale); c.height=Math.round(v.videoHeight*scale);
+  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+  stopPhotoCamera();
+  c.toBlob(blob=>{
+    photoBusy=false;
+    if(!blob){
+      $('mPhoto').style.color='var(--ember)'; $('mPhoto').textContent='Could not take the photo';
+      $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+      return;
+    }
+    sendPhoto(blob);
+  },'image/jpeg',0.9);
+}
+
+/* No camera to use. Tell the server, which ends the game as a failed check. */
+async function photoNoCamera(reason, error){
+  clearInterval(photoTick);
+  stopPhotoCamera();
+  $('photoBtn').disabled=true; $('photoBtn').textContent='No camera';
+  $('photoClock').textContent='';
+  $('mPhoto').style.color='var(--ember)';
+  $('mPhoto').textContent = reason==='denied'
+    ? 'Camera access was refused, so this check can’t be completed. Wrapping up this game…'
+    : 'No camera could be opened on this device, so this check can’t be completed. Wrapping up this game…';
+  try{
+    await fetch('/web/game/photo/no-camera',{method:'POST',headers:H(),
+      body:JSON.stringify({reason:reason,error:error||undefined})});
+  }catch(e){}
+  setTimeout(()=>{
+    if($('vPhoto').classList.contains('on')&&!$('over').classList.contains('on')){
+      photoMode=false; view('vLobby'); refresh();
+    }
+  },6000);
+}
+
 function showPhoto(p){
+  /* The same check can be announced again while it is on screen (a stream
+     reconnect resends the game state). Only a fresh screen is reset; one
+     already showing keeps its live camera, upload or message. */
+  const already = photoMode && $('vPhoto').classList.contains('on');
   clearInterval(tick); clearInterval(photoTick);
   photoMode=true;
   if(p&&p.prompt) $('photoPrompt').textContent=p.prompt.replace(/[*_📸]/g,'').trim();
-  $('mPhoto').textContent='';
-  $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera';
-  $('photoBox').innerHTML='<span class="ico">📷</span><p>Your camera opens when you tap below. '
-    +'The photo is used once, to verify this game.</p>';
+  if(!already){
+    stopPhotoCamera(); photoBusy=false;
+    $('mPhoto').textContent='';
+    $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera';
+    $('photoBox').innerHTML='<span class="ico">📷</span><p>Tap below and allow camera access. '
+      +'The photo is taken live and used once, to verify this game. No camera means the check fails.</p>';
+  }
 
   const reqs=$('photoReqs'); reqs.innerHTML='';
   ((p&&p.requirements)||[]).forEach(r=>{
@@ -4657,6 +4769,7 @@ function showPhoto(p){
    otherwise leave the player parked here forever. Tell the server, and stop
    pretending the camera button still does something. */
 async function photoExpired(){
+  stopPhotoCamera();
   $('photoBtn').disabled=true;
   $('photoBtn').textContent='Window closed';
   $('mPhoto').style.color='var(--mute)';
@@ -4710,12 +4823,12 @@ async function sendPhoto(file){
     } else {
       $('mPhoto').style.color='var(--ember)';
       $('mPhoto').textContent=d.error||'That did not go through';
-      $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+      $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera again';
     }
   }catch(e){
     $('mPhoto').style.color='var(--ember)';
     $('mPhoto').textContent='Could not reach the server';
-    $('photoBtn').disabled=false; $('photoBtn').textContent='Try again';
+    $('photoBtn').disabled=false; $('photoBtn').textContent='Open camera again';
   }
 }
 
@@ -5627,7 +5740,6 @@ function dismissPush(){
   [$('bSound'),$('bSound2')].forEach(b=>b&&b.classList.toggle('off',!sound));
 
   $('askInput').addEventListener('keydown',e=>{ if(e.key==='Enter') askSend(); });
-  $('photoInput').addEventListener('change',e=>{ sendPhoto(e.target.files&&e.target.files[0]); });
   $('capInput').addEventListener('keydown',e=>{ if(e.key==='Enter') capSend(); });
 
   // Returning from a gateway in this same tab (popup was blocked, or the

@@ -13,6 +13,7 @@
 // 9. Turbo always flags sessions suspicious
 // ============================================================
 
+const crypto = require('crypto');
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const MessagingService = require('./messaging.service');
@@ -107,12 +108,43 @@ const SUSPICIOUS_SESSION_CONFIG = {
 };
 
 // ============================================
+// SPEED AGAINST DIFFICULTY
+// Honest players slow down as questions get harder: there is more to read and
+// more to think about. A player who keeps answering the HARD questions right in
+// under three seconds is very likely being fed the answers (a second device,
+// a helper, a script). Measured on the server, from the moment the question
+// went out to the moment the answer arrived, so nothing on the player's side
+// can hide it. Practice is not counted; challenges never come through here.
+// Reaching the limit flags the player (selfie at Q13-15 from then on, this
+// game included) and writes ASSISTANCE_PATTERN to the session audit. It does
+// not end the game or touch any payout.
+// ============================================
+const SPEED_VS_DIFFICULTY_CONFIG = {
+    HARD_FROM_DIFFICULTY: 8,    // difficulty 8 and up (Q8 onwards) counts as hard
+    FAST_UNDER_MS: 3000,        // a correct hard answer faster than this is "too fast"
+    FLAG_AT: 3,                 // this many in one game flags the player
+};
+
+// ============================================
 // PHOTO VERIFICATION CONFIG
 // ============================================
 const PHOTO_VERIFICATION_CONFIG = {
     TRIGGER_QUESTIONS: [13, 14, 15],    // Check at Q13-15
     TIMEOUT_MS: 20000,                  // 20-second window
     TIMEOUT_SECONDS: 20,
+    // Reused photos. Two fingerprints are kept for every photo sent:
+    //   * an exact one (SHA-256 of the file), which catches the very same file;
+    //   * Cloudinary's perceptual one (64 bits), which still matches after the
+    //     picture is resized, recompressed or recoloured.
+    // REUSE_MAX_BITS is how many of the 64 bits may differ for two photos to
+    // count as the same picture. Recompression and recolouring move 0-2 bits;
+    // two genuinely different photos are usually 25+ apart. It is kept tight on
+    // purpose: a player at the same desk, same webcam, same lighting can take
+    // two honest selfies that sit close together, and a false match ends a
+    // real game.
+    REUSE_MAX_BITS: 3,
+    REUSE_SCAN_OWN: 300,        // this player's most recent photos compared
+    REUSE_SCAN_ALL: 2000,       // everyone's most recent photos compared
 };
 
 const messagingService = new MessagingService();
@@ -1065,7 +1097,9 @@ class GameService {
             // Download and upload the photo to Cloudinary
             let imageUrl = null;
             let analysis = null;
-            
+            let photoBuffer = null;     // the file itself, for the exact fingerprint
+            let photoPhash = null;      // Cloudinary's perceptual fingerprint
+
             // WhatsApp: download via media ID
             const waMediaId = message?.image?.id;
             // Telegram: photo already downloaded as buffer
@@ -1078,12 +1112,14 @@ class GameService {
                     const whatsappService = new WhatsAppService();
                     const media = await whatsappService.downloadMedia(waMediaId);
                     if (media) {
+                        photoBuffer = media.buffer;
                         const uploadResult = await cloudinaryService.uploadVerificationPhoto(
                             media.buffer, user.id, session.id
                         );
                         if (uploadResult) {
                             imageUrl = uploadResult.url;
                             analysis = uploadResult.analysis;
+                            photoPhash = uploadResult.phash || null;
                         }
                     }
                 } catch (dlErr) {
@@ -1091,28 +1127,75 @@ class GameService {
                 }
             } else if (tgPhoto && tgPhoto.buffer) {
                 try {
+                    photoBuffer = tgPhoto.buffer;
                     const uploadResult = await cloudinaryService.uploadVerificationPhoto(
                         tgPhoto.buffer, user.id, session.id
                     );
                     if (uploadResult) {
                         imageUrl = uploadResult.url;
                         analysis = uploadResult.analysis;
+                        photoPhash = uploadResult.phash || null;
                     }
                 } catch (dlErr) {
                     logger.error('Error uploading Telegram verification photo:', dlErr.message);
                 }
             } else if (rawPhoto && rawPhoto.length) {
                 try {
+                    photoBuffer = rawPhoto;
                     const uploadResult = await cloudinaryService.uploadVerificationPhoto(
                         rawPhoto, user.id, session.id
                     );
                     if (uploadResult) {
                         imageUrl = uploadResult.url;
                         analysis = uploadResult.analysis;
+                        photoPhash = uploadResult.phash || null;
                     }
                 } catch (dlErr) {
                     logger.error('Error uploading web verification photo:', dlErr.message);
                 }
+            }
+
+            // ============================================
+            // REUSED PHOTO CHECK
+            // The selfie has to be taken for THIS check. A picture already sent
+            // before, by this player or by any other account, is refused,
+            // whether it comes back as the very same file or resized,
+            // recompressed or recoloured. Every photo is remembered, pass or
+            // fail, so none can be sent twice.
+            // ============================================
+            const photoSha256 = photoBuffer && photoBuffer.length
+                ? crypto.createHash('sha256').update(photoBuffer).digest('hex')
+                : null;
+            const reuse = await this._findReusedPhoto(user.id, photoSha256, photoPhash);
+            await this._recordPhotoFingerprint(user.id, session.id, photoSha256, photoPhash, imageUrl);
+
+            if (reuse) {
+                logger.warn(`📸♻️ Reused photo from user ${user.id} (session ${session.id}): ${reuse.description}`);
+
+                await pool.query(`
+                    UPDATE photo_verifications
+                    SET responded_at = NOW(), response_type = 'image', passed = false,
+                        response_time_ms = $1, image_url = $2, failure_reason = $3
+                    WHERE session_id = $4 AND user_id = $5 AND passed IS NULL
+                `, [responseTimeMs, imageUrl, reuse.description, session.id, user.id]);
+
+                await auditService.logEvent(session.id, user.id, 'PHOTO_REUSED', {
+                    match: reuse.match,
+                    bits_different: reuse.bits,
+                    matched_session_id: reuse.sessionId,
+                    same_account: reuse.sameAccount,
+                    matched_user_id: reuse.sameAccount ? undefined : reuse.userId,
+                    image_url: imageUrl
+                });
+                await restrictionsService.flagUserSuspicious(user.id, 'photo_reused', {
+                    session_id: session.id,
+                    matched_session_id: reuse.sessionId,
+                    matched_user_id: reuse.userId,
+                    match: reuse.match
+                });
+
+                await this.handlePhotoVerificationFailure(session, user, 'photo_reused');
+                return true;
             }
 
             // ============================================
@@ -1203,11 +1286,30 @@ class GameService {
 
         await auditService.logPhotoVerificationResult(session.id, user.id, false, reason, null);
 
-        await pool.query(`
-            UPDATE photo_verifications 
-            SET responded_at = NOW(), response_type = $1, passed = false, failure_reason = $2
-            WHERE session_id = $3 AND user_id = $4 AND passed IS NULL
-        `, [reason, reason === 'timeout' ? 'Did not send photo within 20 seconds' : reason, session.id, user.id]);
+        const FAILURE_TEXT = {
+            timeout: 'Did not send photo within 20 seconds',
+            photo_reused: 'Photo was sent before, not a new selfie',
+            no_camera: 'No camera available, or camera access was refused'
+        };
+        const failureText = FAILURE_TEXT[reason] || reason;
+        try {
+            await pool.query(`
+                UPDATE photo_verifications
+                SET responded_at = NOW(), response_type = $1, passed = false, failure_reason = $2
+                WHERE session_id = $3 AND user_id = $4 AND passed IS NULL
+            `, [reason, failureText, session.id, user.id]);
+        } catch (logErr) {
+            // If the table only accepts certain response types, record it under
+            // one it already takes. The game must still end either way.
+            logger.warn(`photo_verifications would not take response_type '${reason}': ${logErr.message}`);
+            try {
+                await pool.query(`
+                    UPDATE photo_verifications
+                    SET responded_at = NOW(), response_type = 'timeout', passed = false, failure_reason = $1
+                    WHERE session_id = $2 AND user_id = $3 AND passed IS NULL
+                `, [failureText, session.id, user.id]);
+            } catch (e2) { logger.error('Could not record photo verification failure:', e2.message); }
+        }
 
         // A failed or missed photo check pays NOTHING, at any question — the
         // same rule as a failed CAPTCHA. It used to pay the safe checkpoint,
@@ -1217,10 +1319,145 @@ class GameService {
 
         const message = reason === 'timeout'
             ? `⏱️ *VERIFICATION TIMEOUT*\n\nYou didn't send a photo in time.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
+            : reason === 'photo_reused'
+            ? `❌ *VERIFICATION FAILED*\n\nThat photo has been sent before. Each check needs a new selfie, taken right then.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
+            : reason === 'no_camera'
+            ? `❌ *VERIFICATION FAILED*\n\nThis check needs a camera, and none could be opened on your device.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
             : `❌ *VERIFICATION FAILED*\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`;
 
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false, 'photo_verification_failed');
+    }
+
+    /**
+     * The web player's device has no camera, or camera access was refused.
+     * The selfie check can't be done without one, so it counts as a fail, the
+     * same as a wrong photo. Acts only while a photo check is actually waiting.
+     */
+    async failPhotoVerificationNoCamera(session, user, detail = {}) {
+        try {
+            const photoKey = `photo_verify:${session.session_key}`;
+            if (!(await redis.get(photoKey))) return false;
+            await redis.del(photoKey);
+            this.clearQuestionTimeout(`photo_timeout:${session.session_key}`);
+
+            await auditService.logEvent(session.id, user.id, 'PHOTO_NO_CAMERA', {
+                reason: String(detail.reason || 'unknown').slice(0, 60),
+                error: detail.error ? String(detail.error).slice(0, 120) : undefined
+            });
+            await this.handlePhotoVerificationFailure(session, user, 'no_camera');
+            return true;
+        } catch (error) {
+            logger.error('Error failing photo verification for no camera:', error.message);
+            return false;
+        }
+    }
+
+    // ============================================
+    // PHOTO FINGERPRINTS (reused-photo check)
+    // Kept in a table of their own; created on first use.
+    // ============================================
+
+    async _ensurePhotoFingerprints() {
+        if (this._photoFingerprintsReady) return;
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS photo_fingerprints (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL,
+                session_id  INTEGER,
+                sha256      TEXT,
+                phash       TEXT,
+                image_url   TEXT,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_photo_fp_sha256 ON photo_fingerprints (sha256)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_photo_fp_user ON photo_fingerprints (user_id, created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_photo_fp_recent ON photo_fingerprints (created_at DESC)`);
+        this._photoFingerprintsReady = true;
+    }
+
+    /** Bits that differ between two 16-hex-digit perceptual fingerprints, or null if not comparable. */
+    _phashDistance(a, b) {
+        if (!/^[0-9a-f]{16}$/i.test(a || '') || !/^[0-9a-f]{16}$/i.test(b || '')) return null;
+        let x = BigInt('0x' + a) ^ BigInt('0x' + b);
+        let bits = 0;
+        while (x) { bits += Number(x & 1n); x >>= 1n; }
+        return bits;
+    }
+
+    /**
+     * A blank or near-blank frame (all black, all white) gives a fingerprint of
+     * nearly all 0s or all 1s, and any two of those look "the same". They are
+     * not compared perceptually; the exact check still applies.
+     */
+    _usablePhash(h) {
+        const ones = this._phashDistance(h, '0000000000000000');
+        return ones != null && ones >= 6 && ones <= 58;
+    }
+
+    /**
+     * Has this photo been sent before? Returns a description of the earlier
+     * one, or null. Fails OPEN: if the check itself breaks, the photo goes on
+     * to the ordinary rules rather than ending an honest game.
+     */
+    async _findReusedPhoto(userId, sha256, phash) {
+        if (!sha256 && !phash) return null;
+        try {
+            await this._ensurePhotoFingerprints();
+            const describe = (row, match, bits) => {
+                const sameAccount = Number(row.user_id) === Number(userId);
+                const when = row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : 'earlier';
+                return {
+                    match, bits, sameAccount,
+                    userId: row.user_id, sessionId: row.session_id,
+                    description: `Photo sent before (${match === 'identical' ? 'identical file' : `${bits}/64 bits different`}) ` +
+                        `- ${sameAccount ? 'this account' : `another account, user ${row.user_id}`}, session ${row.session_id || '?'}, ${when}`
+                };
+            };
+
+            if (sha256) {
+                const exact = await pool.query(
+                    `SELECT user_id, session_id, created_at FROM photo_fingerprints
+                     WHERE sha256 = $1 ORDER BY created_at DESC LIMIT 1`, [sha256]);
+                if (exact.rows[0]) return describe(exact.rows[0], 'identical', 0);
+            }
+
+            if (phash && this._usablePhash(phash)) {
+                const recent = await pool.query(`
+                    (SELECT user_id, session_id, created_at, phash FROM photo_fingerprints
+                      WHERE user_id = $1 AND phash IS NOT NULL ORDER BY created_at DESC LIMIT $2)
+                    UNION
+                    (SELECT user_id, session_id, created_at, phash FROM photo_fingerprints
+                      WHERE phash IS NOT NULL ORDER BY created_at DESC LIMIT $3)
+                `, [userId, PHOTO_VERIFICATION_CONFIG.REUSE_SCAN_OWN, PHOTO_VERIFICATION_CONFIG.REUSE_SCAN_ALL]);
+                let best = null;
+                for (const row of recent.rows) {
+                    if (!this._usablePhash(row.phash)) continue;
+                    const bits = this._phashDistance(phash, row.phash);
+                    if (bits != null && bits <= PHOTO_VERIFICATION_CONFIG.REUSE_MAX_BITS && (!best || bits < best.bits)) {
+                        best = { row, bits };
+                    }
+                }
+                if (best) return describe(best.row, best.bits === 0 ? 'same picture' : 'near-identical', best.bits);
+            }
+            return null;
+        } catch (error) {
+            logger.error('Reused-photo check unavailable, continuing without it:', error.message);
+            return null;
+        }
+    }
+
+    async _recordPhotoFingerprint(userId, sessionId, sha256, phash, imageUrl) {
+        if (!sha256 && !phash) return;
+        try {
+            await this._ensurePhotoFingerprints();
+            await pool.query(
+                `INSERT INTO photo_fingerprints (user_id, session_id, sha256, phash, image_url)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [userId, sessionId || null, sha256, phash, imageUrl || null]);
+        } catch (error) {
+            logger.error('Could not record photo fingerprint:', error.message);
+        }
     }
 
     // ============================================
@@ -2916,6 +3153,53 @@ class GameService {
     }
 
     // ============================================
+    // SPEED AGAINST DIFFICULTY (see SPEED_VS_DIFFICULTY_CONFIG)
+    // Never throws: a failure here must not affect the answer being scored.
+    // ============================================
+    async _trackSpeedAgainstDifficulty(session, user, questionNumber, question, isCorrect, responseTimeMs) {
+        try {
+            if (session.game_type === 'practice' || session.game_mode === 'practice') return;
+            if (session.game_mode === 'challenge') return;
+            if (responseTimeMs == null || !Number.isFinite(Number(responseTimeMs))) return;
+
+            const cfg = SPEED_VS_DIFFICULTY_CONFIG;
+            const difficulty = Number(question && question.difficulty) || Number(questionNumber) || 0;
+            const key = `speed_vs_difficulty:${session.session_key}`;
+            const raw = await redis.get(key);
+            const track = raw ? JSON.parse(raw) : { hard: [], fastHardCorrect: 0, flagged: false };
+
+            if (difficulty >= cfg.HARD_FROM_DIFFICULTY) {
+                const fast = isCorrect && responseTimeMs < cfg.FAST_UNDER_MS;
+                track.hard.push({ q: questionNumber, d: difficulty, ms: Math.round(responseTimeMs), correct: !!isCorrect, fast });
+                if (fast) track.fastHardCorrect += 1;
+            }
+
+            const reached = !track.flagged && track.fastHardCorrect >= cfg.FLAG_AT;
+            if (reached) track.flagged = true;
+            await redis.setex(key, 4 * 3600, JSON.stringify(track));
+            if (!reached) return;
+
+            const fastOnes = track.hard.filter(h => h.fast);
+            const details = {
+                session_id: session.id,
+                question_number: questionNumber,
+                fast_hard_correct: track.fastHardCorrect,
+                under_ms: cfg.FAST_UNDER_MS,
+                from_difficulty: cfg.HARD_FROM_DIFFICULTY,
+                answers: fastOnes.map(h => ({ q: h.q, difficulty: h.d, seconds: +(h.ms / 1000).toFixed(2) }))
+            };
+            logger.warn(`🚩 Speed against difficulty: user ${user.id}, session ${session.id} — ` +
+                `${track.fastHardCorrect} hard questions right in under ${cfg.FAST_UNDER_MS / 1000}s`);
+
+            await auditService.logEvent(session.id, user.id, 'ASSISTANCE_PATTERN', details);
+            await auditService.logAntiCheatEvent(user.id, session.id, 'speed_vs_difficulty', 'high', details);
+            await restrictionsService.flagUserSuspicious(user.id, 'speed_vs_difficulty', details);
+        } catch (error) {
+            logger.error('Speed-against-difficulty check failed (answer unaffected):', error.message);
+        }
+    }
+
+    // ============================================
     // PROCESS ANSWER (with turbo trigger check)
     // ============================================
 
@@ -3015,6 +3299,8 @@ class GameService {
                 const prizeAmount = PRIZE_LADDER[questionNumber];
             
                 await auditService.logAnswer(session.id, user.id, questionNumber, answer, question.correct_answer, isCorrect, isCorrect ? prizeAmount : session.current_score, responseTimeMs, { webInput: true });
+
+                await this._trackSpeedAgainstDifficulty(session, user, questionNumber, question, isCorrect, responseTimeMs);
 
                 // Track answer pattern for fraud analysis
                 try {
