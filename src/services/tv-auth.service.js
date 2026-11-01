@@ -28,8 +28,9 @@
 //
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
 // 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
-// 023-tv-identity.sql, 024-tv-venue.sql and 025-tv-prizes.sql and are
-// byte-identical to them; a test checks they have not drifted.
+// 023-tv-identity.sql, 024-tv-venue.sql, 025-tv-prizes.sql,
+// 026-tv-prize-claims.sql and 027-tv-campaigns.sql and are byte-identical to
+// them; a test checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -69,12 +70,13 @@ class TvAuthService {
         // then 020 (signing in on a TV), then 021 (Race style), then 022 (the
         // admin page's settings), then 023 (which TV is which, Solo answers),
         // then 024 (venue TVs), then 025 (prizes and payouts), then 026 (a
-        // guest winner's claim), which alters tv_prizes and so comes after it.
+        // guest winner's claim), which alters tv_prizes and so comes after it,
+        // then 027 (branded-party campaigns), which refers to tv_devices.
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
                            ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS,
-                           ...TvAuthService.CLAIM_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.CLAIM_SCHEMA_STATEMENTS, ...TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -544,6 +546,94 @@ TvAuthService.PRIZE_SCHEMA_STATEMENTS = Object.freeze([
     `CREATE INDEX IF NOT EXISTS idx_tv_payouts_open
     ON tv_payouts (status, created_at)
     WHERE status IN ('awaiting_details','ready','held','sending','failed')`
+]);
+
+
+// Phase 7, step 1 (027): branded parties. The campaigns, the TVs chosen for
+// them, their artwork, and the money brands have paid in for prizes. Creates
+// only new TV tables.
+TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS = Object.freeze([
+    `CREATE TABLE IF NOT EXISTS tv_campaigns (
+    id                  SERIAL PRIMARY KEY,
+    name                TEXT NOT NULL CHECK (char_length(name) BETWEEN 3 AND 60),
+    brand_name          TEXT NOT NULL CHECK (char_length(brand_name) BETWEEN 2 AND 40),
+    tagline             TEXT CHECK (tagline IS NULL OR char_length(tagline) <= 80),
+    offer_text          TEXT CHECK (offer_text IS NULL OR char_length(offer_text) <= 120),
+    offer_url           TEXT CHECK (offer_url IS NULL OR (offer_url ~ '^https://' AND char_length(offer_url) <= 300)),
+    colour_main         TEXT NOT NULL DEFAULT '#5B12FC' CHECK (colour_main ~ '^#[0-9A-F]{6}$'),
+    colour_accent       TEXT NOT NULL DEFAULT '#FADF05' CHECK (colour_accent ~ '^#[0-9A-F]{6}$'),
+    status              TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','paused','ended')),
+    starts_at           TIMESTAMPTZ,
+    ends_at             TIMESTAMPTZ,
+    pinned              BOOLEAN NOT NULL DEFAULT false,
+    regions             TEXT[] NOT NULL DEFAULT '{}',
+    category            TEXT CHECK (category IS NULL OR char_length(category) BETWEEN 1 AND 60),
+    category_public     BOOLEAN NOT NULL DEFAULT false,
+    prize_basis         TEXT NOT NULL DEFAULT 'none' CHECK (prize_basis IN ('none','per_game','per_tv_day','leaderboard')),
+    prize_type          TEXT NOT NULL DEFAULT 'cash' CHECK (prize_type IN ('cash','item')),
+    prize_amount        INTEGER CHECK (prize_amount IS NULL OR prize_amount BETWEEN 100 AND 1000000),
+    prize_item          TEXT CHECK (prize_item IS NULL OR char_length(prize_item) <= 120),
+    prize_ranks         JSONB,
+    leaderboard_period  TEXT CHECK (leaderboard_period IS NULL OR leaderboard_period IN ('campaign','week','day')),
+    min_players         SMALLINT NOT NULL DEFAULT 3 CHECK (min_players BETWEEN 2 AND 20),
+    cap_per_player      SMALLINT CHECK (cap_per_player IS NULL OR cap_per_player BETWEEN 1 AND 1000),
+    prize_games_per_tv_day SMALLINT CHECK (prize_games_per_tv_day IS NULL OR prize_games_per_tv_day BETWEEN 1 AND 200),
+    min_age_to_win      SMALLINT NOT NULL DEFAULT 18 CHECK (min_age_to_win BETWEEN 13 AND 18),
+    for_children        BOOLEAN NOT NULL DEFAULT false,
+    terms_text          TEXT CHECK (terms_text IS NULL OR char_length(terms_text) <= 6000),
+    terms_version       INTEGER NOT NULL DEFAULT 1 CHECK (terms_version >= 1),
+    shared_fields       TEXT[] NOT NULL DEFAULT '{}' CHECK (shared_fields <@ ARRAY['username','city']::TEXT[]),
+    winner_fields       TEXT[] NOT NULL DEFAULT '{}' CHECK (winner_fields <@ ARRAY['full_name','username','city','email','phone']::TEXT[]),
+    approval_reference  TEXT CHECK (approval_reference IS NULL OR char_length(approval_reference) <= 80),
+    notes               TEXT CHECK (notes IS NULL OR char_length(notes) <= 1000),
+    created_by          TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by          TEXT,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_by        TEXT,
+    published_at        TIMESTAMPTZ,
+    ended_at            TIMESTAMPTZ,
+    CONSTRAINT tv_campaigns_dates CHECK (starts_at IS NULL OR ends_at IS NULL OR ends_at > starts_at),
+    CONSTRAINT tv_campaigns_children CHECK (min_age_to_win = 18 OR for_children)
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaigns_status
+    ON tv_campaigns (status, starts_at, ends_at)`,
+    `CREATE TABLE IF NOT EXISTS tv_campaign_tvs (
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id) ON DELETE CASCADE,
+    tv_device_id        INTEGER NOT NULL REFERENCES tv_devices(id),
+    added_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (campaign_id, tv_device_id)
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaign_tvs_device
+    ON tv_campaign_tvs (tv_device_id)`,
+    `CREATE TABLE IF NOT EXISTS tv_campaign_art (
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id) ON DELETE CASCADE,
+    slot                TEXT NOT NULL CHECK (slot IN ('logo','tile','lobby','card','slide')),
+    url                 TEXT NOT NULL CHECK (url ~ '^https://res\\.cloudinary\\.com/' AND char_length(url) <= 500),
+    public_id           TEXT NOT NULL CHECK (char_length(public_id) <= 300),
+    width               INTEGER NOT NULL CHECK (width > 0),
+    height              INTEGER NOT NULL CHECK (height > 0),
+    bytes               INTEGER CHECK (bytes IS NULL OR bytes > 0),
+    format              TEXT NOT NULL CHECK (format IN ('png','jpg')),
+    uploaded_by         TEXT,
+    uploaded_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_by         TEXT,
+    approved_at         TIMESTAMPTZ,
+    PRIMARY KEY (campaign_id, slot)
+)`,
+    `CREATE TABLE IF NOT EXISTS tv_campaign_funds (
+    id                  SERIAL PRIMARY KEY,
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    amount              INTEGER NOT NULL CHECK (amount <> 0 AND amount BETWEEN -100000000 AND 100000000),
+    reference           TEXT NOT NULL CHECK (char_length(reference) BETWEEN 2 AND 80),
+    received_on         DATE NOT NULL,
+    note                TEXT CHECK (note IS NULL OR char_length(note) <= 300),
+    recorded_by         TEXT NOT NULL,
+    recorded_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT tv_campaign_funds_correction_note CHECK (amount > 0 OR note IS NOT NULL)
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaign_funds_campaign
+    ON tv_campaign_funds (campaign_id)`
 ]);
 
 module.exports = new TvAuthService();

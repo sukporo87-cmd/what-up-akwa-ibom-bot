@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📣 Branded parties | WUT TV</title>
+<!--
+  WUT TV, phase 7, step 1: branded parties. Served at /admin/tv/campaigns,
+  linked from the WUT TV page.
+
+  A brand pays What's Up Trivia upfront to run a sponsored Party on chosen
+  TVs, or on every TV in chosen states, for a set period. This page sets the
+  campaign up: the brand, when and where it runs, its question category, its
+  prize rules and limits, the terms players agree to and the details they
+  share, the artwork (uploaded straight to Cloudinary and approved here), and
+  the money the brand has paid in (Super Admin and Finance Officer only).
+  Publishing is refused, with what is missing, until everything is ready.
+  Nothing set here is shown on a TV until step 2.
+
+  Times are typed and shown in Lagos time. Every value from the server is
+  escaped with esc() before it is placed in the page.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* White, in sponsor teal and coral: its own colours, not the WUT TV page's purple. */
+  :root {
+    --bg: #fbfdfd; --surface: #ffffff; --surface2: #f1f9f8; --border: #d6ecea; --line: #e7f3f2;
+    --text: #0f2a2a; --dim: #5d7676; --teal: #0e7c7b; --teal-ink: #095857; --teal-soft: #dff2f1;
+    --coral: #ff6b4a; --coral-soft: #ffe9e3; --green: #11865c; --green-soft: #def5ea;
+    --red: #d93a4a; --red-soft: #fde7ea; --amber: #a86a00; --amber-soft: #fff1d4; --blue: #2457d6; --blue-soft: #e6eeff;
+  }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  a { color: var(--teal); }
+  .topbar { background: #fff; border-bottom: 1px solid var(--border); box-shadow: 0 2px 0 var(--coral);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 24px; color: var(--teal); }
+  .topbar h1 span { color: var(--coral); }
+  .topbar .back { font-size: 13px; font-weight: 600; text-decoration: none; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 22px 100px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 18px;
+    box-shadow: 0 2px 10px rgba(14, 124, 123, .05); }
+  .card h2 { font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 19px; color: var(--teal-ink); margin-bottom: 4px; }
+  .hint { font-size: 13px; color: var(--dim); margin-bottom: 14px; line-height: 1.55; }
+  .hint b { color: var(--text); }
+
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px; }
+  @media (max-width: 760px) { .grid2, .grid3 { grid-template-columns: 1fr; } .topbar { padding: 14px 16px; } .container { padding: 18px 14px 90px; } }
+  .field label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+  .field .sub { font-size: 12px; color: var(--dim); margin-top: 4px; line-height: 1.45; }
+  .field input[type=text], .field input[type=number], .field input[type=url], .field input[type=date], .field input[type=datetime-local],
+  .field select, .field textarea {
+    width: 100%; background: #fff; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+    font: inherit; font-size: 14px; }
+  .field textarea { min-height: 150px; resize: vertical; line-height: 1.5; }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }
+  .field input:disabled, .field select:disabled, .field textarea:disabled { background: #f6f8f8; color: var(--dim); }
+  .colour { display: flex; gap: 8px; align-items: center; }
+  .colour input[type=color] { width: 44px; height: 38px; border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 2px; cursor: pointer; }
+
+  .btn { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 10px; padding: 8px 14px;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--teal); color: var(--teal); }
+  .btn.primary { background: var(--teal); color: #fff; border-color: var(--teal); }
+  .btn.primary:hover { background: var(--teal-ink); color: #fff; }
+  .btn.coral { background: var(--coral); color: #fff; border-color: var(--coral); }
+  .btn.coral:hover { filter: brightness(.95); color: #fff; }
+  .btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .saved { font-size: 12.5px; color: var(--green); font-weight: 600; }
+  .err { font-size: 13px; color: var(--red); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim);
+    padding: 8px 10px; border-bottom: 2px solid var(--line); font-weight: 600; white-space: nowrap; }
+  td { padding: 10px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .dim { color: var(--dim); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; letter-spacing: .02em; white-space: nowrap; }
+  .pill.draft { background: #eef1f1; color: var(--dim); }
+  .pill.scheduled { background: var(--blue-soft); color: var(--blue); }
+  .pill.live { background: var(--green-soft); color: var(--green); }
+  .pill.paused { background: var(--amber-soft); color: var(--amber); }
+  .pill.finished, .pill.ended { background: #eef1f1; color: var(--dim); }
+  .pill.venue { background: var(--teal-soft); color: var(--teal-ink); }
+  .pill.warn { background: var(--amber-soft); color: var(--amber); }
+  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.coral { background: var(--coral-soft); color: #b2381c; }
+  .clickrow { cursor: pointer; }
+  .clickrow:hover td { background: var(--surface2); }
+
+  .opts label { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; padding: 5px 0; cursor: pointer; }
+  .opts input { accent-color: var(--teal); margin-top: 2px; }
+  .states { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 14px; }
+  @media (max-width: 760px) { .states { grid-template-columns: repeat(2, 1fr); } }
+  .tvlist { max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px; }
+  .reach { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+
+  .checklist li { list-style: none; padding: 6px 0; font-size: 13.5px; display: flex; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
+  .checklist li:last-child { border-bottom: 0; }
+  .tick { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none; }
+  .tick.y { background: var(--green-soft); color: var(--green); }
+  .tick.n { background: var(--red-soft); color: var(--red); }
+  .tick.w { background: var(--amber-soft); color: var(--amber); }
+
+  .art { display: grid; grid-template-columns: 220px 1fr; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .art:last-child { border-bottom: 0; }
+  @media (max-width: 760px) { .art { grid-template-columns: 1fr; } }
+  .art .pic { width: 220px; aspect-ratio: 16/9; border-radius: 10px; border: 1px dashed var(--border); display: flex; align-items: center;
+    justify-content: center; overflow: hidden; background: repeating-conic-gradient(#f2f6f6 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+  .art .pic img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .art .pic .none { font-size: 12px; color: var(--dim); }
+
+  .money { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 760px) { .money { grid-template-columns: repeat(2, 1fr); } }
+  .money div { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+  .money b { display: block; font-family: 'Fredoka', sans-serif; font-size: 22px; }
+  .money span { font-size: 12px; color: var(--dim); }
+
+  .bar { position: sticky; top: 46px; z-index: 30; background: rgba(251, 253, 253, .96); backdrop-filter: blur(4px);
+    border-bottom: 1px solid var(--border); margin: -24px -22px 18px; padding: 12px 22px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .bar h2 { font-family: 'Fredoka', sans-serif; font-size: 20px; color: var(--teal-ink); margin-right: auto; }
+  @media (max-width: 760px) { .bar { margin: -18px -14px 18px; padding: 10px 14px; } }
+  .empty { padding: 18px; text-align: center; color: var(--dim); font-size: 13.5px; }
+  .banner { border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
+  .banner.warn { background: var(--amber-soft); border: 1px solid #f0d189; color: #6b4600; }
+  .banner.info { background: var(--teal-soft); border: 1px solid #b9e2df; color: var(--teal-ink); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>📣 Branded <span>parties</span></h1>
+  <a class="back" href="/admin/tv">← WUT TV</a>
+</div>
+<div class="container" id="app"><div class="empty">Loading…</div></div>
+
+<script>
+'use strict';
+let sessionToken = null;
+try { sessionToken = localStorage.getItem('adminSessionToken'); } catch (e) {}
+if (!sessionToken) window.location.href = '/admin';
+
+async function api(path, options = {}) {
+  const r = await fetch('/admin/tv/api' + path, {
+    ...options,
+    headers: { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json', ...(options.headers || {}) }
+  });
+  if (r.status === 401) { try { localStorage.removeItem('adminSessionToken'); } catch (e) {} window.location.href = '/admin'; return null; }
+  return r.json().catch(() => ({ success: false, error: 'The server sent something unexpected' }));
+}
+
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
+const pretty = s => String(s || '').replace(/(^|[\s-])\S/g, m => m.toUpperCase());
+function lagos(t, withTime = true) {
+  if (!t) return '—';
+  const o = { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', year: 'numeric' };
+  if (withTime) { o.hour = 'numeric'; o.minute = '2-digit'; }
+  try { return new Date(t).toLocaleString('en-GB', o); } catch (e) { return '—'; }
+}
+// A moment -> what a datetime-local box shows, in Lagos time (UTC+1 all year).
+function lagosInput(t) { return t ? new Date(new Date(t).getTime() + 3600e3).toISOString().slice(0, 16) : ''; }
+const STATE_LABEL = { draft: 'Draft', scheduled: 'Scheduled', live: 'Live', paused: 'Paused', finished: 'Finished', ended: 'Ended' };
+const BASIS = { none: 'No prize', per_game: 'A prize per game', per_tv_day: 'A prize per TV per day', leaderboard: 'A leaderboard' };
+const PERIOD = { campaign: 'the whole campaign', week: 'each week', day: 'each day' };
+const FIELD_LABEL = { username: 'Username', city: 'City', full_name: 'Full name', email: 'Email address', phone: 'Phone number' };
+const pill = s => '<span class="pill ' + esc(s) + '">' + esc(STATE_LABEL[s] || s) + '</span>';
+
+let OPTIONS = null;   // TVs, states, categories, artwork sizes, whether this admin can record money
+let C = null;         // the campaign being edited
+
+window.addEventListener('hashchange', route);
+route();
+
+async function route() {
+  if (!OPTIONS) {
+    const o = await api('/campaigns/options');
+    if (!o) return;
+    if (!o.success) { document.getElementById('app').innerHTML = '<div class="card"><div class="err">' + esc(o.error) + '</div></div>'; return; }
+    OPTIONS = o;
+  }
+  const id = Number((location.hash.match(/^#(\d+)$/) || [])[1]);
+  if (id) return openCampaign(id);
+  return showList();
+}
+
+// ============================================================
+// THE LIST
+// ============================================================
+async function showList() {
+  C = null;
+  const app = document.getElementById('app');
+  const j = await api('/campaigns');
+  if (!j) return;
+  if (!j.success) { app.innerHTML = '<div class="card"><div class="err">' + esc(j.error) + '</div></div>'; return; }
+  const rows = j.campaigns;
+  app.innerHTML =
+    '<div class="card"><h2>New campaign</h2>' +
+    '<div class="hint">A branded party runs alongside everyone\'s Party: the brand is the host and never plays, a player in the room becomes co-host, and prizes come from what the brand has paid in. Start with the names; everything else is set on the next screen and can wait until you have it. <b>Nothing reaches a TV yet</b> (that comes with the next update).</div>' +
+    '<div class="grid3"><div class="field"><label for="nName">Campaign name</label><input type="text" id="nName" maxlength="60" placeholder="e.g. Back to School Quiz"></div>' +
+    '<div class="field"><label for="nBrand">Brand</label><input type="text" id="nBrand" maxlength="40" placeholder="e.g. Indomie"></div>' +
+    '<div class="field"><label>&nbsp;</label><button class="btn primary" id="nGo">Create draft</button> <span class="err" id="nErr"></span></div></div></div>' +
+    '<div class="card"><h2>Campaigns</h2><div class="hint">Pinned campaigns are shown first, on this page and on the TVs.</div>' +
+    (rows.length ? '<div class="scroll"><table><thead><tr><th>Campaign</th><th>State</th><th>Runs</th><th>Where</th><th>Prize</th><th class="num">Paid in</th></tr></thead><tbody>' +
+      rows.map(c => '<tr class="clickrow" data-id="' + esc(c.id) + '"><td>' + (c.pinned ? '📌 ' : '') + '<b>' + esc(c.name) + '</b><div class="dim">' + esc(c.brandName) + '</div></td>' +
+        '<td>' + pill(c.state) + '</td><td>' + esc(lagos(c.startsAt, false)) + ' – ' + esc(lagos(c.endsAt, false)) + '</td>' +
+        '<td>' + esc(c.tvCount) + ' TV' + (c.tvCount === 1 ? '' : 's') + (c.regions.length ? '<div class="dim">' + esc(c.regions.join(', ')) + '</div>' : '') + '</td>' +
+        '<td>' + esc(BASIS[c.prizeBasis] || '') + (c.prizeBasis !== 'none' ? '<div class="dim">' + (c.prizeType === 'cash' ? 'cash' : 'an item') + '</div>' : '') + '</td>' +
+        '<td class="num">' + esc(naira(c.funded)) + '</td></tr>').join('') +
+      '</tbody></table></div>' : '<div class="empty">No campaigns yet.</div>') + '</div>';
+  app.querySelectorAll('.clickrow').forEach(tr => tr.addEventListener('click', () => { location.hash = '#' + tr.dataset.id; }));
+  document.getElementById('nGo').addEventListener('click', async () => {
+    const b = document.getElementById('nGo');
+    b.disabled = true;
+    const r = await api('/campaigns', { method: 'POST', body: JSON.stringify({ name: document.getElementById('nName').value, brandName: document.getElementById('nBrand').value }) });
+    b.disabled = false;
+    if (!r) return;
+    if (!r.success) { document.getElementById('nErr').textContent = r.error; return; }
+    location.hash = '#' + r.id;
+  });
+}
+
+// ============================================================
+// ONE CAMPAIGN
+// ============================================================
+async function openCampaign(id) {
+  const j = await api('/campaigns/' + id);
+  if (!j) return;
+  if (!j.success) { document.getElementById('app').innerHTML = '<div class="card"><div class="err">' + esc(j.error) + '</div><p style="margin-top:10px"><a href="#">← All campaigns</a></p></div>'; return; }
+  C = j.campaign;
+  render();
+}
+
+async function reload() { const j = await api('/campaigns/' + C.id); if (j && j.success) { C = j.campaign; render(); } }
+
+function render() {
+  const app = document.getElementById('app');
+  const ended = C.status === 'ended';
+  const dis = ended ? ' disabled' : '';
+  app.innerHTML = actionBar() +
+    (ended ? '<div class="banner info">This campaign has ended. It can no longer be changed, except its notes.</div>' : '') +
+    (C.status !== 'draft' && !ended ? '<div class="banner warn">This campaign is published. Changes apply to new games. A change to the terms, or to the details players share, makes a new version of the terms (now version ' + esc(C.termsVersion) + '), which players will be asked to accept again.</div>' : '') +
+    checklistCard() + brandCard(dis) + whenWhereCard(dis) + questionsCard(dis) + prizesCard(dis) + termsCard(dis) + artCard(ended) + moneyCard() + notesCard();
+  wire();
+}
+
+function actionBar() {
+  const b = [];
+  if (C.status === 'draft') b.push('<button class="btn coral" data-act="publish"' + (C.publishable ? '' : ' disabled title="Not ready yet: see the checklist"') + '>Publish</button>');
+  if (C.status === 'published') b.push('<button class="btn" data-act="pause">Pause</button>');
+  if (C.status === 'paused') b.push('<button class="btn primary" data-act="resume">Resume</button>');
+  if (C.status === 'published' || C.status === 'paused') b.push('<button class="btn danger" data-act="end">End now</button>');
+  if (C.status !== 'ended') b.push('<button class="btn" data-act="pin">' + (C.pinned ? 'Unpin' : '📌 Pin') + '</button>');
+  if (C.status === 'draft') b.push('<button class="btn danger" data-act="delete">Delete draft</button>');
+  return '<div class="bar"><a href="#" class="btn">← All</a><h2>' + (C.pinned ? '📌 ' : '') + esc(C.name) + ' ' + pill(C.state) + '</h2>' + b.join('') +
+    '<span class="err" id="actErr"></span></div>';
+}
+
+function checklistCard() {
+  if (C.status !== 'draft') return '';
+  return '<div class="card"><h2>Ready to publish?</h2><div class="hint">Publishing is possible once every line is ticked. An amber line is a reminder, not a block.</div><ul class="checklist">' +
+    C.checklist.map(x => '<li><span class="tick ' + (x.ok ? 'y">✓' : x.warning ? 'w">!' : 'n">✕') + '</span><span>' + esc(x.text) + '</span></li>').join('') + '</ul></div>';
+}
+
+function brandCard(dis) {
+  return '<div class="card" data-section="brand"><h2>The brand</h2><div class="hint">How the campaign is named and coloured on the TV. The offer line and link are shown at the end of each game, if given.</div>' +
+    '<div class="grid2">' +
+    field('Campaign name', '<input type="text" data-k="name" maxlength="60" value="' + esc(C.name) + '"' + dis + '>') +
+    field('Brand', '<input type="text" data-k="brandName" maxlength="40" value="' + esc(C.brandName) + '"' + dis + '>') +
+    field('Tagline', '<input type="text" data-k="tagline" maxlength="80" value="' + esc(C.tagline || '') + '"' + dis + '>', 'Up to 80 characters. Shown under the brand in the lobby.') +
+    field('Offer line', '<input type="text" data-k="offerText" maxlength="120" value="' + esc(C.offerText || '') + '"' + dis + '>', 'Up to 120 characters, e.g. "20% off at any store this week".') +
+    field('Offer link', '<input type="url" data-k="offerUrl" maxlength="300" placeholder="https://" value="' + esc(C.offerUrl || '') + '"' + dis + '>', 'Shown as a QR code at the finish. Must start with https://') +
+    '<div class="grid2">' + colourField('Main colour', 'colourMain', C.colourMain, dis) + colourField('Accent colour', 'colourAccent', C.colourAccent, dis) + '</div>' +
+    '</div>' + saveRow('brand', dis) + '</div>';
+}
+
+function whenWhereCard(dis) {
+  const chosen = new Set(C.tvs.map(t => t.id));
+  const regions = new Set(C.regions);
+  const r = C.reach;
+  return '<div class="card" data-section="when"><h2>When and where</h2><div class="hint">Typed and shown in <b>Lagos time</b>. A campaign runs on the TVs you choose by name, and on every TV in the states you tick. A TV\'s state comes from its internet connection, so it is close to city level, not exact.</div>' +
+    '<div class="grid2">' +
+    field('Starts', '<input type="datetime-local" data-k="startsAt" value="' + esc(lagosInput(C.startsAt)) + '"' + dis + '>') +
+    field('Ends', '<input type="datetime-local" data-k="endsAt" value="' + esc(lagosInput(C.endsAt)) + '"' + dis + '>') +
+    '</div>' +
+    '<div class="field" style="margin-top:14px"><label>States</label><div class="states opts">' +
+    OPTIONS.states.map(s => '<label><input type="checkbox" data-state="' + esc(s.state) + '"' + (regions.has(s.state) ? ' checked' : '') + dis + '> ' + esc(s.state) +
+      ' <span class="dim">(' + esc(s.tvs) + ')</span></label>').join('') +
+    '</div><div class="sub">The number beside each state is the TVs there seen in the last ' + esc(OPTIONS.activeDays) + ' days.</div></div>' +
+    '<div class="field" style="margin-top:14px"><label for="tvFilter">TVs chosen by name <span class="dim">(' + esc(chosen.size) + ' chosen)</span></label>' +
+    '<input type="text" id="tvFilter" placeholder="Search by name or place"' + dis + '>' +
+    '<div class="tvlist opts" id="tvList" style="margin-top:8px">' +
+    OPTIONS.tvs.map(t => '<label data-tvrow="' + esc((t.name + ' ' + (t.place || '') + ' ' + (t.tvName || '')).toLowerCase()) + '"><input type="checkbox" data-tv="' + esc(t.id) + '"' +
+      (chosen.has(t.id) ? ' checked' : '') + dis + '> <span><b>' + esc(t.name) + '</b> ' + (t.venue ? '<span class="pill venue">venue</span> ' : '') +
+      (t.blocked ? '<span class="pill warn">blocked</span> ' : '') +
+      '<span class="dim">' + esc(t.place || 'place unknown') + ' · last seen ' + esc(lagos(t.lastSeen, false)) + '</span></span></label>').join('') +
+    (OPTIONS.tvs.length ? '' : '<div class="empty">No TVs registered yet.</div>') + '</div></div>' +
+    '<div class="reach"><b>Reach today:</b> ' + esc(r.chosen) + ' TV(s) chosen by name, and ' + esc(r.inRegions) + ' TV(s) seen in the last ' + esc(r.activeDays) +
+    ' days in the ticked states: <b>' + esc(r.activeTotal) + ' active TV(s)</b> in all. Saved changes update this.</div>' +
+    saveRow('when', dis) + '</div>';
+}
+
+function questionsCard(dis) {
+  const cats = OPTIONS.categories;
+  return '<div class="card" data-section="questions"><h2>Questions</h2><div class="hint">The questions come from one category of the Challenge question bank, set here; the co-host cannot change it. Add the brand\'s own questions on the <a href="/admin/questions">Questions</a> page under a new category name, then choose it here. A category needs at least 10 questions at every difficulty from 1 to 15 to fill a game.</div>' +
+    '<div class="grid2">' +
+    field('Category', '<select data-k="category"' + dis + '><option value="">Choose…</option>' +
+      cats.map(c => '<option value="' + esc(c.category) + '"' + (c.category === C.category ? ' selected' : '') + '>' + esc(pretty(c.category)) +
+        (c.ready ? '' : ' (not enough questions yet)') + (c.campaign && c.category !== C.category ? ' (kept for ' + esc(c.campaign) + ')' : '') + '</option>').join('') + '</select>') +
+    '<div class="field"><label>&nbsp;</label><div class="opts"><label><input type="checkbox" data-k="categoryPublic"' + (C.categoryPublic ? ' checked' : '') + dis + '> Also offer this category in everyone\'s games</label></div>' +
+    '<div class="sub">Off (the usual): the category is kept for this campaign and taken out of everyone\'s Party, the Categories tile and Solo.</div></div>' +
+    '</div>' +
+    '<div id="catWarn"></div>' +
+    saveRow('questions', dis) + '</div>';
+}
+
+function prizesCard(dis) {
+  const ranks = C.prizeRanks.length ? C.prizeRanks : [];
+  return '<div class="card" data-section="prizes"><h2>Prizes and limits</h2><div class="hint">As agreed with the brand. Only signed-in players can play, win and be paid. The co-host is just a player and can win. A cash prize is paid from what the brand has paid in, through the WUT TV payout queue.</div>' +
+    '<div class="grid2">' +
+    '<div class="field"><label>How the prize is won</label><div class="opts">' +
+      Object.entries(BASIS).map(([k, v]) => '<label><input type="radio" name="basis" data-k="prizeBasis" value="' + k + '"' + (C.prizeBasis === k ? ' checked' : '') + dis + '> ' + esc(v) + '</label>').join('') + '</div>' +
+      '<div class="sub">Per TV per day: the day\'s best player on each TV. A leaderboard: the best players across every TV in the campaign.</div></div>' +
+    '<div class="field"><label>What is won</label><div class="opts">' +
+      '<label><input type="radio" name="ptype" data-k="prizeType" value="cash"' + (C.prizeType === 'cash' ? ' checked' : '') + dis + '> Cash</label>' +
+      '<label><input type="radio" name="ptype" data-k="prizeType" value="item"' + (C.prizeType === 'item' ? ' checked' : '') + dis + '> An item (vouchers, products)</label></div></div>' +
+    '</div>' +
+    '<div class="grid2" id="singlePrize" style="margin-top:6px">' +
+    field('Cash prize (₦)', '<input type="number" min="100" max="1000000" step="1" data-k="prizeAmount" value="' + esc(C.prizeAmount == null ? '' : C.prizeAmount) + '"' + dis + '>', 'Per game, or per TV per day. Whole naira.') +
+    field('The item', '<input type="text" maxlength="120" data-k="prizeItem" value="' + esc(C.prizeItem || '') + '"' + dis + '>', 'e.g. "A carton of noodles"') +
+    '</div>' +
+    '<div id="boardPrize" style="margin-top:6px"><div class="grid2">' +
+    field('Each leaderboard runs for', '<select data-k="leaderboardPeriod"' + dis + '><option value="">Choose…</option>' +
+      Object.entries(PERIOD).map(([k, v]) => '<option value="' + k + '"' + (C.leaderboardPeriod === k ? ' selected' : '') + '>' + esc(pretty(v)) + '</option>').join('') + '</select>') +
+    '</div><div class="field" style="margin-top:10px"><label>Prizes by place</label><div id="ranks">' +
+      (ranks.length ? ranks : [{}]).map((r, i) => rankRow(i, r, dis)).join('') + '</div>' +
+      (dis ? '' : '<button class="btn" id="addRank" style="margin-top:6px">+ Add a place</button>') +
+      '<div class="sub">Up to 10 places. For cash, enter an amount; for an item, describe it.</div></div></div>' +
+    '<div class="grid3" style="margin-top:14px">' +
+    field('Signed-in players needed for a prize', '<input type="number" min="2" max="20" data-k="minPlayers" value="' + esc(C.minPlayers) + '"' + dis + '>', 'Fewer, and the game is played without a prize.') +
+    field('Most prizes one player can win', '<input type="number" min="1" max="1000" data-k="capPerPlayer" value="' + esc(C.capPerPlayer == null ? '' : C.capPerPlayer) + '"' + dis + '>', 'Over the whole campaign. Blank for no limit.') +
+    field('Prize games per TV per day', '<input type="number" min="1" max="200" data-k="prizeGamesPerTvDay" value="' + esc(C.prizeGamesPerTvDay == null ? '' : C.prizeGamesPerTvDay) + '"' + dis + '>', 'Blank for no limit.') +
+    field('Age to win', '<input type="number" min="13" max="18" data-k="minAgeToWin" value="' + esc(C.minAgeToWin) + '"' + dis + '>', '18, unless the campaign is for children.') +
+    '<div class="field"><label>&nbsp;</label><div class="opts"><label><input type="checkbox" data-k="forChildren"' + (C.forChildren ? ' checked' : '') + dis + '> This campaign is sponsored for children, and its terms say so</label></div></div>' +
+    '</div>' + saveRow('prizes', dis) + '</div>';
+}
+
+function rankRow(i, r, dis) {
+  return '<div class="row" data-rank style="margin-bottom:6px"><span class="dim" style="width:56px">Place ' + (i + 1) + '</span>' +
+    '<input type="number" min="100" max="1000000" placeholder="₦ amount" data-rk="amount" value="' + esc(r.amount == null ? '' : r.amount) + '" style="width:140px;border:1px solid var(--border);border-radius:10px;padding:8px 10px;font:inherit"' + dis + '>' +
+    '<span class="dim">or</span><input type="text" maxlength="120" placeholder="an item" data-rk="item" value="' + esc(r.item || '') + '" style="flex:1;min-width:160px;border:1px solid var(--border);border-radius:10px;padding:8px 10px;font:inherit"' + dis + '>' +
+    (dis ? '' : '<button class="btn danger" data-delrank>Remove</button>') + '</div>';
+}
+
+function termsCard(dis) {
+  const sf = new Set(C.sharedFields), wf = new Set(C.winnerFields);
+  return '<div class="card" data-section="terms"><h2>Terms, and what the brand may see</h2><div class="hint">Every player agrees to these on their phone before their first game in this campaign. The brand only ever sees totals, plus what is ticked below. <b>Email addresses and phone numbers are never shared for every player</b>; winners may share more, as stated in the terms.</div>' +
+    field('Terms (version ' + esc(C.termsVersion) + ')', '<textarea data-k="termsText" maxlength="6000"' + dis + '>' + esc(C.termsText || '') + '</textarea>',
+      'Plain text, up to 6,000 characters. Say who runs the promotion, the prizes, who can win (age), how winners are paid, what is shared with the brand, and the dates.') +
+    '<div class="grid2" style="margin-top:14px">' +
+    '<div class="field"><label>Every player shares</label><div class="opts">' + OPTIONS.sharedFields.map(f =>
+      '<label><input type="checkbox" data-shared="' + esc(f) + '"' + (sf.has(f) ? ' checked' : '') + dis + '> ' + esc(FIELD_LABEL[f] || f) + '</label>').join('') + '</div></div>' +
+    '<div class="field"><label>A winner also shares</label><div class="opts">' + OPTIONS.winnerFields.map(f =>
+      '<label><input type="checkbox" data-winner="' + esc(f) + '"' + (wf.has(f) ? ' checked' : '') + dis + '> ' + esc(FIELD_LABEL[f] || f) + '</label>').join('') + '</div>' +
+      '<div class="sub">For delivering a prize, or announcing a winner. Only what the terms say.</div></div>' +
+    '</div><div class="grid2" style="margin-top:6px">' +
+    field('Promotion approval reference', '<input type="text" maxlength="80" data-k="approvalReference" value="' + esc(C.approvalReference || '') + '"' + dis + '>', 'From FCCPC, if the promotion needs approval. Ask the lawyer whether the brand or we apply.') +
+    '</div>' + saveRow('terms', dis) + '</div>';
+}
+
+function artCard(ended) {
+  return '<div class="card"><h2>Artwork</h2><div class="hint">Each picture is uploaded straight to our picture hosting, then <b>approved here before it can be shown</b>. Replacing a picture needs approving again. 16:9 pictures are shown full screen on the TV, so keep words and logos away from the edges.</div>' +
+    OPTIONS.art.map(spec => {
+      const a = C.art[spec.slot];
+      return '<div class="art"><div class="pic">' + (a ? '<img src="' + esc(a.url) + '" alt="">' : '<span class="none">No picture</span>') + '</div>' +
+        '<div><b>' + esc(spec.label) + '</b> ' + (spec.required ? '' : '<span class="dim">(optional)</span> ') +
+        (a ? (a.approvedAt ? '<span class="pill ok">Approved</span>' : '<span class="pill warn">Waiting for approval</span>') : '') +
+        '<div class="dim" style="margin:4px 0 8px">' + esc(spec.help) + '</div>' +
+        (a ? '<div class="dim">' + esc(a.width) + ' × ' + esc(a.height) + ' · ' + esc(String(a.format).toUpperCase()) + (a.bytes ? ' · ' + esc((a.bytes / 1048576).toFixed(1)) + ' MB' : '') +
+          ' · uploaded by ' + esc(a.uploadedBy || '—') + ' ' + esc(lagos(a.uploadedAt)) +
+          (a.approvedAt ? ' · approved by ' + esc(a.approvedBy || '—') + ' ' + esc(lagos(a.approvedAt)) : '') + '</div>' : '') +
+        (ended ? '' : '<div class="row" style="margin-top:8px"><label class="btn"><input type="file" accept="' + (spec.formats.includes('jpg') ? 'image/png,image/jpeg' : 'image/png') +
+          '" data-upload="' + esc(spec.slot) + '" hidden>' + (a ? 'Replace' : 'Upload') + '</label>' +
+          (a && !a.approvedAt ? '<button class="btn primary" data-approve="' + esc(spec.slot) + '">Approve</button>' : '') +
+          (a && (!spec.required || C.status === 'draft') ? '<button class="btn danger" data-removeart="' + esc(spec.slot) + '">Remove</button>' : '') +
+          '<span class="err" data-arterr="' + esc(spec.slot) + '"></span></div>') +
+        '</div></div>';
+    }).join('') + '</div>';
+}
+
+function moneyCard() {
+  const can = OPTIONS.canRecordMoney;
+  return '<div class="card"><h2>Money paid in by the brand</h2><div class="hint">The brand pays before the campaign goes live; prizes are paid from this and nothing more. Record each payment as it arrives in our account. Our own fee is agreed and settled outside the app and is not recorded here. A mistake is put right with a correction (a negative amount, with a note); nothing is ever deleted.</div>' +
+    '<div class="money"><div><b>' + esc(naira(C.funded)) + '</b><span>Paid in</span></div><div><b>' + esc(naira(C.paidOut)) + '</b><span>Paid out in prizes</span></div>' +
+    '<div><b>' + esc(naira(C.reserved)) + '</b><span>Held for games in play</span></div><div><b>' + esc(naira(C.left)) + '</b><span>Left</span></div></div>' +
+    (C.funds.length ? '<div class="scroll"><table><thead><tr><th>Arrived</th><th class="num">Amount</th><th>Reference</th><th>Note</th><th>Recorded by</th></tr></thead><tbody>' +
+      C.funds.map(f => '<tr><td>' + esc(lagos(f.receivedOn, false)) + '</td><td class="num">' + esc(naira(f.amount)) + '</td><td class="mono">' + esc(f.reference) + '</td><td>' + esc(f.note || '') +
+        '</td><td>' + esc(f.recordedBy) + '<div class="dim">' + esc(lagos(f.recordedAt)) + '</div></td></tr>').join('') + '</tbody></table></div>' : '<div class="empty">Nothing recorded yet.</div>') +
+    (can ? '<div class="grid3" style="margin-top:14px">' +
+      field('Amount (₦)', '<input type="number" step="1" id="fAmount" placeholder="e.g. 500000">', 'Negative for a correction.') +
+      field('Reference', '<input type="text" maxlength="80" id="fRef" placeholder="as on the bank statement">') +
+      field('Arrived on', '<input type="date" id="fDay">') +
+      '</div><div class="field" style="margin-top:10px"><label for="fNote">Note</label><input type="text" maxlength="300" id="fNote" placeholder="needed for a correction"></div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn primary" id="fGo">Record payment</button><span class="err" id="fErr"></span></div>'
+      : '<div class="dim" style="margin-top:12px">Only a Super Admin or Finance Officer can record money.</div>') + '</div>';
+}
+
+function notesCard() {
+  return '<div class="card" data-section="notes"><h2>Notes</h2><div class="hint">For the team only; never shown to the brand or players. Contact at the brand, what was agreed, invoices.</div>' +
+    field('', '<textarea data-k="notes" maxlength="1000" style="min-height:90px">' + esc(C.notes || '') + '</textarea>') + saveRow('notes', '') +
+    '<div class="dim" style="margin-top:10px">Created by ' + esc(C.createdBy || '—') + ' ' + esc(lagos(C.createdAt)) + ' · last changed by ' + esc(C.updatedBy || '—') + ' ' + esc(lagos(C.updatedAt)) +
+    (C.publishedAt ? ' · published by ' + esc(C.publishedBy || '—') + ' ' + esc(lagos(C.publishedAt)) : '') + (C.endedAt ? ' · ended ' + esc(lagos(C.endedAt)) : '') + '</div></div>';
+}
+
+function field(label, control, sub) {
+  return '<div class="field">' + (label ? '<label>' + esc(label) + '</label>' : '') + control + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div>';
+}
+function colourField(label, key, value, dis) {
+  return '<div class="field"><label>' + esc(label) + '</label><div class="colour"><input type="color" data-pick="' + key + '" value="' + esc(value) + '"' + dis + '>' +
+    '<input type="text" data-k="' + key + '" maxlength="7" value="' + esc(value) + '"' + dis + '></div></div>';
+}
+function saveRow(section, dis) {
+  if (dis) return '';
+  return '<div class="row" style="margin-top:14px"><button class="btn primary" data-save="' + section + '">Save</button><span class="saved" data-ok="' + section + '"></span><span class="err" data-bad="' + section + '"></span></div>';
+}
+
+// What each section sends. Only its own fields.
+function collect(section) {
+  const card = document.querySelector('[data-section="' + section + '"]');
+  const out = {};
+  card.querySelectorAll('[data-k]').forEach(el => {
+    const k = el.dataset.k;
+    if (el.type === 'radio') { if (el.checked) out[k] = el.value; }
+    else if (el.type === 'checkbox') out[k] = el.checked;
+    else out[k] = el.value;
+  });
+  if (section === 'when') out.regions = [...card.querySelectorAll('[data-state]:checked')].map(x => x.dataset.state);
+  if (section === 'terms') {
+    out.sharedFields = [...card.querySelectorAll('[data-shared]:checked')].map(x => x.dataset.shared);
+    out.winnerFields = [...card.querySelectorAll('[data-winner]:checked')].map(x => x.dataset.winner);
+  }
+  if (section === 'prizes') {
+    out.prizeAmount = out.prizeAmount === '' ? null : Number(out.prizeAmount);
+    for (const k of ['minPlayers', 'capPerPlayer', 'prizeGamesPerTvDay', 'minAgeToWin']) out[k] = out[k] === '' ? null : Number(out[k]);
+    if (out.leaderboardPeriod === '') out.leaderboardPeriod = null;
+    out.prizeRanks = out.prizeBasis === 'leaderboard'
+      ? [...card.querySelectorAll('[data-rank]')].map(r => {
+          const amount = r.querySelector('[data-rk="amount"]').value.trim();
+          const item = r.querySelector('[data-rk="item"]').value.trim();
+          return amount !== '' ? { amount: Number(amount) } : { item };
+        }).filter(r => r.amount !== undefined || r.item)
+      : [];
+  }
+  return out;
+}
+
+// Warn BEFORE saving: keeping a category everyone plays today takes it out of their games.
+function showCategoryWarning() {
+  const box = document.getElementById('catWarn');
+  if (!box) return;
+  const sel = document.querySelector('[data-k="category"]');
+  const pub = document.querySelector('[data-k="categoryPublic"]');
+  const cur = OPTIONS.categories.find(c => c.category === sel.value);
+  const offeredNow = cur && (cur.offered || (cur.category === C.category && C.categoryPublic));
+  box.innerHTML = cur && offeredNow && !pub.checked && !(cur.category === C.category && !C.categoryPublic)
+    ? '<div class="banner warn" style="margin-top:12px">' + esc(pretty(cur.category)) + ' is offered on every TV today. Saving with the box above unticked takes it out of everyone\'s games while this campaign exists. Tick the box to keep it for everyone, or add the brand\'s own questions under a new category name.</div>'
+    : (cur && !cur.ready ? '<div class="banner warn" style="margin-top:12px">' + esc(pretty(cur.category)) + ' cannot fill a game yet. The campaign can be saved, but not published, until it can.</div>' : '');
+}
+
+function showPrizeParts() {
+  const card = document.querySelector('[data-section="prizes"]');
+  if (!card) return;
+  const basis = (card.querySelector('[data-k="prizeBasis"]:checked') || {}).value;
+  const type = (card.querySelector('[data-k="prizeType"]:checked') || {}).value;
+  document.getElementById('singlePrize').hidden = !(basis === 'per_game' || basis === 'per_tv_day');
+  document.getElementById('boardPrize').hidden = basis !== 'leaderboard';
+  const single = document.getElementById('singlePrize');
+  single.children[0].hidden = type !== 'cash';
+  single.children[1].hidden = type !== 'item';
+}
+
+function wire() {
+  // actions
+  document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
+    const act = b.dataset.act;
+    const err = document.getElementById('actErr');
+    err.textContent = '';
+    if (act === 'end' && !confirm('End this campaign now? It cannot be restarted.')) return;
+    if (act === 'delete' && !confirm('Delete this draft? Its pictures are deleted too.')) return;
+    if (act === 'publish' && !confirm('Publish this campaign? It goes live on its TVs at its start time (from the next update, which shows campaigns on the TVs).')) return;
+    b.disabled = true;
+    let r;
+    if (act === 'pin') r = await api('/campaigns/' + C.id + '/pin', { method: 'PUT', body: JSON.stringify({ pinned: !C.pinned }) });
+    else if (act === 'delete') r = await api('/campaigns/' + C.id, { method: 'DELETE' });
+    else r = await api('/campaigns/' + C.id + '/' + act, { method: 'POST' });
+    b.disabled = false;
+    if (!r) return;
+    if (!r.success) { err.textContent = r.error; return; }
+    if (act === 'delete') { location.hash = ''; return; }
+    reload();
+  }));
+
+  // section saves
+  document.querySelectorAll('[data-save]').forEach(b => b.addEventListener('click', async () => {
+    const section = b.dataset.save;
+    const ok = document.querySelector('[data-ok="' + section + '"]');
+    const bad = document.querySelector('[data-bad="' + section + '"]');
+    ok.textContent = ''; bad.textContent = '';
+    b.disabled = true;
+    const body = collect(section);
+    let r = await api('/campaigns/' + C.id, { method: 'PUT', body: JSON.stringify(body) });
+    if (r && r.success && section === 'when') {
+      const ids = [...document.querySelectorAll('[data-tv]:checked')].map(x => Number(x.dataset.tv));
+      r = await api('/campaigns/' + C.id + '/tvs', { method: 'PUT', body: JSON.stringify({ tvIds: ids }) });
+    }
+    b.disabled = false;
+    if (!r) return;
+    if (!r.success) { bad.textContent = r.error; return; }
+    if (section === 'questions') OPTIONS = null;    // which categories are kept may have changed
+    if (!OPTIONS) { const o = await api('/campaigns/options'); if (o && o.success) OPTIONS = o; }
+    await reload();
+    const again = document.querySelector('[data-ok="' + section + '"]');
+    if (again) again.textContent = 'Saved' + (r.termsVersionRaised ? ': the terms are now a new version' : '');
+  }));
+
+  // colour pickers mirror the hex boxes
+  document.querySelectorAll('[data-pick]').forEach(p => {
+    const box = document.querySelector('[data-k="' + p.dataset.pick + '"]');
+    p.addEventListener('input', () => { box.value = p.value.toUpperCase(); });
+    box.addEventListener('input', () => { if (/^#[0-9a-f]{6}$/i.test(box.value)) p.value = box.value; });
+  });
+
+  // TV search
+  const filter = document.getElementById('tvFilter');
+  if (filter) filter.addEventListener('input', () => {
+    const q = filter.value.trim().toLowerCase();
+    document.querySelectorAll('[data-tvrow]').forEach(l => { l.hidden = q && !l.dataset.tvrow.includes(q); });
+  });
+
+  // questions
+  document.querySelectorAll('[data-k="category"], [data-k="categoryPublic"]').forEach(x => x.addEventListener('change', showCategoryWarning));
+  showCategoryWarning();
+
+  // prizes
+  document.querySelectorAll('[data-k="prizeBasis"], [data-k="prizeType"]').forEach(x => x.addEventListener('change', showPrizeParts));
+  showPrizeParts();
+  const add = document.getElementById('addRank');
+  if (add) add.addEventListener('click', () => {
+    const box = document.getElementById('ranks');
+    if (box.querySelectorAll('[data-rank]').length >= 10) return;
+    box.insertAdjacentHTML('beforeend', rankRow(box.querySelectorAll('[data-rank]').length, {}, ''));
+    wireRanks();
+  });
+  wireRanks();
+
+  // artwork
+  document.querySelectorAll('[data-upload]').forEach(inp => inp.addEventListener('change', () => upload(inp.dataset.upload, inp.files[0])));
+  document.querySelectorAll('[data-approve]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    const r = await api('/campaigns/' + C.id + '/art/' + b.dataset.approve + '/approve', { method: 'POST' });
+    b.disabled = false;
+    if (r && !r.success) { document.querySelector('[data-arterr="' + b.dataset.approve + '"]').textContent = r.error; return; }
+    reload();
+  }));
+  document.querySelectorAll('[data-removeart]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Remove this picture?')) return;
+    b.disabled = true;
+    const r = await api('/campaigns/' + C.id + '/art/' + b.dataset.removeart, { method: 'DELETE' });
+    b.disabled = false;
+    if (r && !r.success) { document.querySelector('[data-arterr="' + b.dataset.removeart + '"]').textContent = r.error; return; }
+    reload();
+  }));
+
+  // money
+  const go = document.getElementById('fGo');
+  if (go) go.addEventListener('click', async () => {
+    const err = document.getElementById('fErr');
+    err.textContent = '';
+    const amount = Number(document.getElementById('fAmount').value);
+    if (!confirm('Record ' + naira(amount) + ' as paid in by ' + C.brandName + '? This cannot be deleted, only corrected.')) return;
+    go.disabled = true;
+    const r = await api('/campaigns/' + C.id + '/funds', { method: 'POST', body: JSON.stringify({
+      amount, reference: document.getElementById('fRef').value, receivedOn: document.getElementById('fDay').value, note: document.getElementById('fNote').value }) });
+    go.disabled = false;
+    if (!r) return;
+    if (!r.success) { err.textContent = r.error; return; }
+    reload();
+  });
+}
+
+function wireRanks() {
+  document.querySelectorAll('[data-delrank]').forEach(b => {
+    b.onclick = () => {
+      const box = document.getElementById('ranks');
+      b.closest('[data-rank]').remove();
+      box.querySelectorAll('[data-rank]').forEach((r, i) => { r.querySelector('.dim').textContent = 'Place ' + (i + 1); });
+    };
+  });
+}
+
+// Upload straight to Cloudinary with a short-lived signature, then tell the
+// server what was uploaded. The server checks it is in this campaign's
+// folder and the right shape and size.
+async function upload(slot, file) {
+  const err = document.querySelector('[data-arterr="' + slot + '"]');
+  err.textContent = '';
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) { err.textContent = 'Pictures must be under 8 MB'; return; }
+  err.textContent = 'Uploading…';
+  const sig = await api('/campaigns/' + C.id + '/art/sign', { method: 'POST' });
+  if (!sig) return;
+  if (!sig.success) { err.textContent = sig.error; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('api_key', sig.apiKey);
+  fd.append('timestamp', sig.timestamp);
+  fd.append('signature', sig.signature);
+  fd.append('folder', sig.folder);
+  let up;
+  try {
+    const res = await fetch('https://api.cloudinary.com/v1_1/' + encodeURIComponent(sig.cloudName) + '/image/upload', { method: 'POST', body: fd });
+    up = await res.json();
+  } catch (e) { err.textContent = 'The upload did not go through. Check the connection and try again.'; return; }
+  if (!up || !up.secure_url) { err.textContent = (up && up.error && up.error.message) || 'The upload did not go through'; return; }
+  const r = await api('/campaigns/' + C.id + '/art/' + slot, { method: 'PUT', body: JSON.stringify({
+    url: up.secure_url, publicId: up.public_id, width: up.width, height: up.height, bytes: up.bytes, format: up.format }) });
+  if (!r) return;
+  if (!r.success) { err.textContent = r.error; return; }
+  reload();
+}
+</script>
+<script src="/admin-nav.js"></script>
+</body>
+</html>

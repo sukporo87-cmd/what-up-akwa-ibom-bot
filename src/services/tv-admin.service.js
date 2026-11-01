@@ -258,7 +258,9 @@ class TvAdminService {
             categories: categories.map(c => ({
                 category: c.category, ready: !!c.ready, on: c.on,
                 total: Number(c.total || 0), thinnest: Number(c.thinnestLevel || 0),
-                levels: Number(c.levelsPresent || 0)
+                levels: Number(c.levelsPresent || 0),
+                // Phase 7: kept for a branded-party campaign, so not offered in everyone's games.
+                campaign: c.campaign || null
             }))
         };
     }

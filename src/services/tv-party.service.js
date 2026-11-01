@@ -75,6 +75,7 @@ const tvSettings = require('./tv-settings.service');
 const tvNames = require('../utils/tv-names');
 const QuestionService = require('./question.service');
 const tvFlags = require('./tv-flags.service');
+const tvCampaigns = require('./tv-campaign.service');
 
 const questionService = new QuestionService();
 
@@ -190,19 +191,31 @@ class TvPartyService {
         return this._readinessRows;
     }
 
-    /** The categories the TV offers: ones the bank can fill, less any an admin switched off. */
+    /**
+     * The categories the TV offers: ones the bank can fill, less any an admin
+     * switched off, and less any kept for a branded-party campaign (phase 7:
+     * a brand's own questions are not offered in everyone's games unless its
+     * campaign says so). Used by Party, the Categories tile and Solo.
+     */
     async getCategories() {
         const readiness = await this._readiness();
         const off = new Set((await tvSettings.values())['party.categories_off']);
-        return readiness.filter(r => r.ready && !off.has(r.category)).map(r => r.category).sort();
+        const kept = await tvCampaigns.reservedCategories();
+        return readiness.filter(r => r.ready && !off.has(r.category) && !kept.has(String(r.category).toLowerCase()))
+            .map(r => r.category).sort();
     }
 
-    /** Every category the bank holds, ready or not, for the admin page. Never cached stale after a change. */
+    /**
+     * Every category the bank holds, ready or not, for the admin page. Never
+     * cached stale after a change. `campaign` names the campaign a category
+     * is kept for, if any.
+     */
     async categoryReport() {
         this._readinessRows = null;
         const readiness = await this._readiness();
         const off = new Set((await tvSettings.values())['party.categories_off']);
-        return readiness.map(r => ({ ...r, on: !off.has(r.category) }))
+        const kept = await tvCampaigns.reservedCategories();
+        return readiness.map(r => ({ ...r, on: !off.has(r.category), campaign: kept.get(String(r.category).toLowerCase()) || null }))
             .sort((a, b) => String(a.category).localeCompare(String(b.category)));
     }
 

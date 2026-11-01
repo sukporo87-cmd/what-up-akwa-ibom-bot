@@ -32,6 +32,23 @@
 //   GET  /admin/tv/api/audit/party/:id    Audit Trail: one Party game in full
 //   GET  /admin/tv/api/audit/solo/:id     Audit Trail: one Solo round in full
 //
+// BRANDED PARTIES (phase 7, step 1). Any admin, except the money:
+//   GET  /admin/tv/campaigns                       the page
+//   GET  /admin/tv/api/campaigns                   every campaign
+//   GET  /admin/tv/api/campaigns/options           TVs, states, categories, artwork sizes
+//   POST /admin/tv/api/campaigns                   { name, brandName }  a new draft
+//   GET  /admin/tv/api/campaigns/:id               one campaign, with what it still needs
+//   PUT  /admin/tv/api/campaigns/:id               any of its fields
+//   DELETE /admin/tv/api/campaigns/:id             a draft with no money recorded
+//   PUT  /admin/tv/api/campaigns/:id/tvs           { tvIds }
+//   POST /admin/tv/api/campaigns/:id/art/sign      a signature to upload a picture to Cloudinary
+//   PUT  /admin/tv/api/campaigns/:id/art/:slot     the uploaded picture { url, publicId, width, height, bytes, format }
+//   POST /admin/tv/api/campaigns/:id/art/:slot/approve
+//   DELETE /admin/tv/api/campaigns/:id/art/:slot
+//   POST /admin/tv/api/campaigns/:id/funds         { amount, reference, receivedOn, note }  Super Admin / Finance Officer
+//   POST /admin/tv/api/campaigns/:id/publish | pause | resume | end
+//   PUT  /admin/tv/api/campaigns/:id/pin           { pinned }
+//
 // Every API route needs an admin session, checked exactly as the main admin
 // router checks it (admin-auth.service validateSession), and every change is
 // written to the admin activity log, so the Audit Trail can answer who
@@ -299,6 +316,164 @@ router.post('/api/payouts/:id(\\d+)/release', requireAdmin, requireFinance, asyn
         if (out.ok) await log(req, 'tv_payout_released', { payoutId: id });
         return send(res, out.ok ? { ok: true, payoutId: id } : out);
     } catch (e) { return fail(res, 'payout release', e); }
+});
+
+// ============================================
+// BRANDED PARTIES (phase 7, step 1): campaigns, set up here and shown on
+// TVs from step 2. Any admin can set one up; the money paid in by a brand
+// is recorded by a Super Admin or Finance Officer only, as on Financials.
+// ============================================
+const tvCampaigns = require('../services/tv-campaign.service');
+const CAMPAIGN_ART = /^(logo|tile|lobby|card|slide)$/;
+
+router.get('/campaigns', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile('admin-tv-campaigns.html', { root: './src/views' });
+});
+
+router.get('/api/campaigns', requireAdmin, async (req, res) => {
+    try { return send(res, await tvCampaigns.list()); } catch (e) { return fail(res, 'campaigns', e); }
+});
+
+router.get('/api/campaigns/options', requireAdmin, async (req, res) => {
+    try {
+        const out = await tvCampaigns.options();
+        const role = String((req.adminSession && req.adminSession.role_name) || '').toLowerCase();
+        return send(res, { ...out, canRecordMoney: FINANCE_ROLES.includes(role) });
+    } catch (e) { return fail(res, 'campaign options', e); }
+});
+
+router.post('/api/campaigns', requireAdmin, async (req, res) => {
+    try {
+        const out = await tvCampaigns.create(req.body || {}, who(req));
+        if (out.ok) await log(req, 'tv_campaign_created', { campaignId: out.id, name: String((req.body || {}).name || '').slice(0, 60) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign create', e); }
+});
+
+router.get('/api/campaigns/:id(\\d+)', requireAdmin, async (req, res) => {
+    try { return send(res, await tvCampaigns.get(Number(req.params.id))); } catch (e) { return fail(res, 'campaign', e); }
+});
+
+router.put('/api/campaigns/:id(\\d+)', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.update(id, req.body || {}, who(req));
+        if (out.ok && out.changed && out.changed.length) {
+            await log(req, 'tv_campaign_changed', { campaignId: id, changed: out.changed, newTermsVersion: !!out.termsVersionRaised });
+        }
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign update', e); }
+});
+
+router.delete('/api/campaigns/:id(\\d+)', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.remove(id);
+        if (out.ok) await log(req, 'tv_campaign_deleted', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign delete', e); }
+});
+
+router.put('/api/campaigns/:id(\\d+)/tvs', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.setTvs(id, (req.body || {}).tvIds, who(req));
+        if (out.ok) await log(req, 'tv_campaign_tvs', { campaignId: id, count: out.count });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign TVs', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/art/sign', requireAdmin, async (req, res) => {
+    try { return send(res, await tvCampaigns.signArtUpload(Number(req.params.id))); } catch (e) { return fail(res, 'campaign art sign', e); }
+});
+
+router.put('/api/campaigns/:id(\\d+)/art/:slot', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const slot = String(req.params.slot);
+        if (!CAMPAIGN_ART.test(slot)) return res.status(404).json({ success: false, error: 'Unknown picture' });
+        const out = await tvCampaigns.saveArt(id, slot, req.body || {}, who(req));
+        if (out.ok) await log(req, 'tv_campaign_art_uploaded', { campaignId: id, slot });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign art', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/art/:slot/approve', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const slot = String(req.params.slot);
+        if (!CAMPAIGN_ART.test(slot)) return res.status(404).json({ success: false, error: 'Unknown picture' });
+        const out = await tvCampaigns.approveArt(id, slot, who(req));
+        if (out.ok) await log(req, 'tv_campaign_art_approved', { campaignId: id, slot });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign art approve', e); }
+});
+
+router.delete('/api/campaigns/:id(\\d+)/art/:slot', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const slot = String(req.params.slot);
+        if (!CAMPAIGN_ART.test(slot)) return res.status(404).json({ success: false, error: 'Unknown picture' });
+        const out = await tvCampaigns.removeArt(id, slot);
+        if (out.ok) await log(req, 'tv_campaign_art_removed', { campaignId: id, slot });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign art remove', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/funds', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const b = req.body || {};
+        const out = await tvCampaigns.addFunds(id, b, who(req));
+        if (out.ok) await log(req, 'tv_campaign_funds', { campaignId: id, fundId: out.id, amount: Number(b.amount), reference: String(b.reference || '').slice(0, 80) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign funds', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/publish', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.publish(id, who(req));
+        if (out.ok) await log(req, 'tv_campaign_published', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign publish', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/pause', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.pause(id, who(req));
+        if (out.ok) await log(req, 'tv_campaign_paused', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign pause', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/resume', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.resume(id, who(req));
+        if (out.ok) await log(req, 'tv_campaign_resumed', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign resume', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/end', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.end(id, who(req));
+        if (out.ok) await log(req, 'tv_campaign_ended', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign end', e); }
+});
+
+router.put('/api/campaigns/:id(\\d+)/pin', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await tvCampaigns.pin(id, (req.body || {}).pinned === true, who(req));
+        if (out.ok) await log(req, out.pinned ? 'tv_campaign_pinned' : 'tv_campaign_unpinned', { campaignId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign pin', e); }
 });
 
 module.exports = router;

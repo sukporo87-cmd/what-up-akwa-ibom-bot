@@ -261,4 +261,46 @@ CloudinaryService.prototype.deleteLobbyMedia = async function (publicId, resourc
     }
 };
 
+// ============================================
+// WUT TV CAMPAIGN ARTWORK (phase 7)
+// ============================================
+// A brand's pictures for a branded party: its logo, its home-screen tile, the
+// lobby background, the cards shown between questions and the leaderboard
+// slide. Uploaded the same way as the lobby board's media, straight from the
+// admin page to Cloudinary with a short-lived signature, each campaign in its
+// own folder under this one. Nothing here touches the lobby board's folder or
+// the photo-verification images.
+const TV_CAMPAIGN_FOLDER = 'wut/tv-campaigns';
+
+CloudinaryService.prototype.tvCampaignFolder = function (campaignId) {
+    return `${TV_CAMPAIGN_FOLDER}/${Number(campaignId)}`;
+};
+
+/** Sign a direct browser upload into one campaign's folder, and nowhere else. */
+CloudinaryService.prototype.signTvCampaignUpload = function (campaignId) {
+    if (!CONFIGURED || !Number.isInteger(Number(campaignId)) || Number(campaignId) <= 0) return null;
+    const folder = this.tvCampaignFolder(campaignId);
+    const timestamp = Math.round(Date.now() / 1000);
+    const params = { folder, timestamp };
+    const signature = cloudinary.utils.api_sign_request(params, cloudinary.config().api_secret);
+    return { cloudName: CLOUD_NAME, apiKey: API_KEY, folder, timestamp, signature };
+};
+
+/** Delete one campaign picture. Refuses anything outside the campaigns' folder. */
+CloudinaryService.prototype.deleteTvCampaignArt = async function (publicId) {
+    if (!CONFIGURED || !publicId) return false;
+    if (!String(publicId).startsWith(TV_CAMPAIGN_FOLDER + '/')) {
+        logger.warn(`Refused to delete a non-campaign Cloudinary asset: ${publicId}`);
+        return false;
+    }
+    try {
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
+        logger.info(`WUT TV campaign artwork deleted: ${publicId}`);
+        return true;
+    } catch (error) {
+        logger.error(`Could not delete WUT TV campaign artwork ${publicId}: ${error.message}`);
+        return false;
+    }
+};
+
 module.exports = new CloudinaryService();

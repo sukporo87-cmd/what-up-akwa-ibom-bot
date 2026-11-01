@@ -16,6 +16,8 @@
   026: prizes a guest won and has 24 hours to collect, prizes nobody collected
   (the host's 48 hours to ask for them back), forfeited prizes, and Return to
   host for a host who got in touch.
+  Phase 7: a link to the branded parties page (/admin/tv/campaigns), and a
+  category kept for a campaign says so on the Party categories tab.
 
   Settings apply to NEW games only, within 15 seconds. A game takes its
   values when it starts and keeps them to the end.
@@ -198,6 +200,7 @@
     <button class="tab" data-tab="categories">Party categories</button>
     <button class="tab" data-tab="playnow">Solo Mode questions</button>
     <button class="tab" data-tab="prizes">Prizes</button>
+    <a class="tab" href="/admin/tv/campaigns" style="text-decoration:none">Branded parties →</a>
   </div>
 
   <!-- ===== Rooms and TVs ===== -->
@@ -313,8 +316,8 @@ function toast(msg, ok = true) {
 function pretty(c) { return String(c || '').replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()); }
 
 // ---------- tabs ----------
-document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+document.querySelectorAll('button.tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('button.tab').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== b.dataset.tab; });
   if (b.dataset.tab === 'prizes') loadPrizes();
   else if (b.dataset.tab !== 'activity') loadSettings();
@@ -598,7 +601,8 @@ function renderCats() {
         (c.levels < 15 ? esc(15 - c.levels) + ' difficulty level(s) empty' : 'thinnest level has ' + esc(c.thinnest) + ', needs 10') + '</span>') + '</td>' +
       '<td class="num">' + (c.ready ? esc(c.thinnest) : '—') + '</td>' +
       '<td><label class="sw"><input type="checkbox" data-cat="' + esc(c.category) + '" ' + (c.on ? 'checked' : '') + '><span class="track"></span></label>' +
-        (c.on && !c.ready ? ' <span class="dim">on, but not offered until it can fill a game</span>' : '') + '</td></tr>').join('') +
+        (c.campaign ? ' <span class="pill venue">kept for ' + esc(c.campaign) + '</span> <span class="dim">not offered in everyone\'s games</span>'
+          : (c.on && !c.ready ? ' <span class="dim">on, but not offered until it can fill a game</span>' : '')) + '</td></tr>').join('') +
     '</tbody></table>';
   el.querySelectorAll('[data-cat]').forEach(cb => cb.addEventListener('change', async () => {
     const j = await api('/categories', { method: 'PUT', body: JSON.stringify({ category: cb.dataset.cat, on: cb.checked }) });
