@@ -536,6 +536,54 @@
     .rv-acts .save-btn { background: #0d9488; color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font-size: 12.5px;
                          cursor: pointer; font-family: inherit; font-weight: 600; }
     .rv-done { color: #047857; font-size: 12.5px; font-weight: 600; }
+    .rv-who { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--text-dark); cursor: pointer;
+              text-align: left; word-break: break-word; }
+    .rv-who:hover .rv-who-link, .rv-who:focus .rv-who-link { text-decoration: underline; }
+    .rv-who-link { display: block; font-weight: 500; color: #0d9488; font-size: 12px; margin-top: 2px; }
+
+    /* ---- donuts: share of players by place ---- */
+    .geo-donuts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 4px 0 22px; }
+    .geo-donut { border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px 12px; background: #fff; }
+    .geo-donut h4 { font-size: 13.5px; color: var(--text-dark); margin: 0 0 2px; }
+    .geo-donut .sub { font-size: 11.5px; color: var(--text-light); margin-bottom: 8px; }
+    .geo-donut .ring { position: relative; height: 170px; }
+    .geo-donut .mid { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                      pointer-events: none; text-align: center; }
+    .geo-donut .mid b { font-size: 22px; color: var(--text-dark); line-height: 1.1; }
+    .geo-donut .mid span { font-size: 11px; color: var(--text-gray); }
+    .geo-legend { list-style: none; padding: 0; margin: 10px 0 0; font-size: 12.5px; }
+    .geo-legend li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 3px 0; }
+    .geo-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .geo-legend .nm { color: var(--text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .geo-legend .ct { color: var(--text-gray); font-variant-numeric: tabular-nums; }
+    .geo-legend .pc { color: var(--text-dark); font-weight: 600; font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
+    .geo-donut .none { height: 170px; display: flex; align-items: center; justify-content: center; color: var(--text-light); font-size: 13px; }
+
+    /* ---- who typed this: sits under the full-profile pop-up (z 1000) ---- */
+    .geo-who { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 990; display: none;
+               align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
+    .geo-who.open { display: flex; }
+    .geo-who .panel { background: #fff; border-radius: 16px; width: 100%; max-width: 760px; box-shadow: 0 24px 60px rgba(0,0,0,.25);
+                      border-top: 4px solid #0d9488; }
+    .geo-who .ph { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 22px 12px; }
+    .geo-who .ph h3 { font-size: 17px; margin: 0; color: var(--text-dark); }
+    .geo-who .ph p { font-size: 12.5px; color: var(--text-gray); margin: 4px 0 0; }
+    .geo-who .x { background: #fff; border: 1px solid var(--border); width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
+                  font-size: 18px; line-height: 1; color: var(--text-gray); flex-shrink: 0; }
+    .geo-who .list { padding: 0 22px; max-height: 58vh; overflow-y: auto; }
+    .who-card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+    .who-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    .who-name { font-weight: 700; color: var(--text-dark); font-size: 15px; }
+    .who-name small { font-weight: 500; color: var(--text-gray); font-size: 12.5px; margin-left: 6px; }
+    .who-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .who-chips span { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; padding: 3px 10px; font-size: 12px; color: #334155; }
+    .who-chips span.hint { background: #f0fdfa; border-color: #99f6e4; color: #115e59; font-weight: 600; }
+    .who-meta { font-size: 12px; color: var(--text-light); margin-top: 8px; }
+    .geo-who .decide { border-top: 1px solid var(--border); margin-top: 6px; padding: 14px 22px 18px; background: #fafffe;
+                       border-radius: 0 0 16px 16px; }
+    .geo-who .decide b { display: block; font-size: 13px; margin-bottom: 8px; color: var(--text-dark); }
+    @media (max-width: 1100px) { .geo-donuts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 560px) { .geo-donuts { grid-template-columns: minmax(0, 1fr); } .geo-who { padding: 0; } .geo-who .panel { border-radius: 0; min-height: 100%; } }
 
     /* ---- Web app installs (its own indigo accent) ---- */
     .inst-card { border-top: 4px solid #4f46e5; }
@@ -3628,7 +3676,7 @@ function renderGeo(d) {
         <td class="n">${geoNum(c.games)}</td>
         <td class="cities">${c.topCities.map(x => `${geoEsc(x.city)} (${geoNum(x.players)})`).join(', ') || '—'}</td></tr>`).join('');
 
-  document.getElementById('geoContent').innerHTML = tiles + `
+  document.getElementById('geoContent').innerHTML = tiles + geoDonutsHtml(d) + `
     <div class="geo-grid">
       <div class="geo-chart"><canvas id="geoStatesChart"></canvas></div>
       <div class="geo-table-wrap">
@@ -3648,6 +3696,7 @@ function renderGeo(d) {
       </div>
     </div>`;
 
+  renderGeoDonuts();
   if (insightCharts.geoStates) { insightCharts.geoStates.destroy(); }
   const ctx = document.getElementById('geoStatesChart');
   if (ctx && states.length) {
@@ -3669,6 +3718,156 @@ function renderGeo(d) {
   }
 }
 
+/* ---- Donuts: what share of players is where. Five biggest + "Other", in
+   a fixed colour order (checked for colour-blind separation), each with a
+   legend giving the count and percentage, so nothing depends on colour. */
+const GEO_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#6250d6'];
+const GEO_OTHER = '#b4b2ab';
+let geoDonutSets = [];
+
+function geoTopFive(items, total, otherLabel) {
+  const top = items.slice(0, 5).filter(x => x.value > 0);
+  const shown = top.reduce((a, x) => a + x.value, 0);
+  const rest = Math.max(0, total - shown);
+  const slices = top.map((x, i) => ({ ...x, color: GEO_COLORS[i] }));
+  if (rest > 0) slices.push({ label: otherLabel, value: rest, color: GEO_OTHER });
+  return slices;
+}
+
+function geoDonutsHtml(d) {
+  const t = d.totals || {};
+  const pending = (t.needs_review || 0);
+  const unknown = (t.marked_unknown || 0) + (t.not_given || 0);
+  const states = d.states || [], countries = d.countries || [], cities = d.cities || [];
+  const nigeriaTotal = states.reduce((a, s) => a + s.players, 0);
+  const abroadTotal = countries.reduce((a, c) => a + c.players, 0);
+  geoDonutSets = [
+    { id: 'geoDonutAll', title: 'Home or abroad', sub: 'All players', total: t.players || 0, centre: 'players',
+      slices: [
+        { label: 'In a Nigerian state', value: t.nigeria_placed || 0, color: GEO_COLORS[0] },
+        { label: 'Outside Nigeria', value: t.abroad || 0, color: GEO_COLORS[1] },
+        { label: 'Nigeria, state unknown', value: t.nigeria_no_state || 0, color: GEO_COLORS[2] },
+        { label: 'Waiting for your decision', value: pending, color: GEO_COLORS[3] },
+        { label: 'Unknown / not given', value: unknown, color: GEO_OTHER }
+      ].filter(x => x.value > 0) },
+    { id: 'geoDonutStates', title: 'By state', sub: 'Players placed in Nigeria', total: nigeriaTotal, centre: 'in Nigeria',
+      slices: geoTopFive(states.map(s => ({ label: s.label, value: s.players })), nigeriaTotal, `Other ${Math.max(0, states.length - 5)} states`) },
+    { id: 'geoDonutCities', title: 'By city', sub: 'Players whose town is known', total: d.citiesTotal || 0, centre: 'with a town',
+      slices: geoTopFive(cities.map(c => ({ label: `${c.city}, ${c.where}`, value: c.players })), d.citiesTotal || 0, 'Other cities') },
+    { id: 'geoDonutCountries', title: 'Abroad, by country', sub: 'Players outside Nigeria', total: abroadTotal, centre: 'abroad',
+      slices: geoTopFive(countries.map(c => ({ label: c.country, value: c.players })), abroadTotal, 'Other countries') }
+  ];
+  return `<div class="geo-donuts">${geoDonutSets.map(set => {
+    const total = set.slices.reduce((a, x) => a + x.value, 0);
+    if (!total) return `<div class="geo-donut"><h4>${geoEsc(set.title)}</h4><div class="sub">${geoEsc(set.sub)}</div><div class="none">No players here yet</div></div>`;
+    return `<div class="geo-donut">
+      <h4>${geoEsc(set.title)}</h4><div class="sub">${geoEsc(set.sub)}</div>
+      <div class="ring"><canvas id="${set.id}" aria-label="${geoEsc(set.title)}" role="img"></canvas>
+        <div class="mid"><b>${geoNum(total)}</b><span>${geoEsc(set.centre)}</span></div></div>
+      <ul class="geo-legend">${set.slices.map(x => `<li><i style="background:${x.color}"></i><span class="nm" title="${geoEsc(x.label)}">${geoEsc(x.label)}</span>
+        <span class="ct">${geoNum(x.value)}</span><span class="pc">${(x.value / total * 100).toFixed(x.value / total < 0.1 ? 1 : 0)}%</span></li>`).join('')}</ul>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderGeoDonuts() {
+  for (const set of geoDonutSets) {
+    if (insightCharts[set.id]) { insightCharts[set.id].destroy(); delete insightCharts[set.id]; }
+    const ctx = document.getElementById(set.id);
+    const total = set.slices.reduce((a, x) => a + x.value, 0);
+    if (!ctx || !total) continue;
+    insightCharts[set.id] = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels: set.slices.map(x => x.label),
+              datasets: [{ data: set.slices.map(x => x.value), backgroundColor: set.slices.map(x => x.color),
+                           borderColor: '#ffffff', borderWidth: 2, hoverOffset: 6, borderRadius: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        layout: { padding: 6 },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (c) => ` ${c.label}: ${c.raw.toLocaleString()} (${(c.raw / total * 100).toFixed(1)}%)` } }
+        }
+      }
+    });
+  }
+}
+
+/* ---- Who typed this: the players behind one review entry ---- */
+let geoReviewItems = [];
+function geoWhoPanel() {
+  let el = document.getElementById('geoWho');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'geoWho'; el.className = 'geo-who';
+    el.addEventListener('click', (e) => { if (e.target === el) closeGeoWho(); });
+    document.body.appendChild(el);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && el.classList.contains('open') && !document.querySelector('.modal[style*="flex"], .modal.active, .modal.show')) closeGeoWho();
+    });
+  }
+  return el;
+}
+function closeGeoWho() { const el = document.getElementById('geoWho'); if (el) el.classList.remove('open'); }
+
+async function geoWho(i) {
+  const it = geoReviewItems[i];
+  if (!it) return;
+  const el = geoWhoPanel();
+  el.innerHTML = `<div class="panel" role="dialog" aria-modal="true"><div class="ph"><div><h3>Who typed “${geoEsc(it.example)}”</h3>
+    <p>Loading…</p></div><button class="x" onclick="closeGeoWho()" aria-label="Close">×</button></div></div>`;
+  el.classList.add('open');
+  let players = [];
+  try { players = (await geoApi('/locations/players?key=' + encodeURIComponent(it.key))).players || []; }
+  catch (e) { el.querySelector('.ph p').textContent = 'Could not load the players: ' + e.message; return; }
+
+  const plat = { whatsapp: '📱 WhatsApp', telegram: '💬 Telegram', web: '🌐 Web' };
+  const day = (v) => v ? new Date(v).toLocaleDateString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  const cards = players.map(u => {
+    const chips = [];
+    if (u.phoneCountry) chips.push(`<span class="hint">📞 ${geoEsc(u.phoneCountry)} number</span>`);
+    if (u.referrer) chips.push(`<span class="${u.referrer.where ? 'hint' : ''}">🤝 Referred by @${geoEsc(u.referrer.username)}${u.referrer.where ? ' (' + geoEsc(u.referrer.where) + ')' : ''}</span>`);
+    if (u.email) chips.push(`<span>✉️ ${geoEsc(u.email)}</span>`);
+    if (u.age) chips.push(`<span>🎂 ${geoEsc(u.age)}</span>`);
+    if (u.foundUsVia) chips.push(`<span>📣 Found us via ${geoEsc(u.foundUsVia)}</span>`);
+    chips.push(`<span>${plat[u.platform] || ''} · ${geoEsc(u.playerId)}</span>`);
+    return `<div class="who-card">
+      <div class="who-top">
+        <div class="who-name">${geoEsc(u.fullName || 'No name')}<small>@${geoEsc(u.username || '—')}</small></div>
+        <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${Number(u.id)})">👤 Full profile</button>
+      </div>
+      <div class="who-chips">${chips.join('')}</div>
+      <div class="who-meta">Typed “${geoEsc(u.typed)}” · joined ${day(u.joined)} · last played ${day(u.lastActive)} · ${geoNum(u.games)} games · ₦${geoNum(u.winnings)} won</div>
+    </div>`;
+  }).join('');
+
+  const stateOpts = '<option value="">Nigerian state…</option>' + geoStates.map(s => `<option value="${geoEsc(s.value)}">${geoEsc(s.label)}</option>`).join('');
+  el.innerHTML = `<div class="panel" role="dialog" aria-modal="true" aria-labelledby="geoWhoTitle">
+    <div class="ph"><div><h3 id="geoWhoTitle">Who typed “${geoEsc(it.example)}”</h3>
+      <p>${geoNum(players.length)} player${players.length === 1 ? '' : 's'}${players.length === 50 ? ' (the 50 most recently active)' : ''}. Hints in green; <b>Full profile</b> shows devices and IP addresses too.</p></div>
+      <button class="x" onclick="closeGeoWho()" aria-label="Close">×</button></div>
+    <div class="list">${cards || '<p style="color:var(--text-light);padding:10px 0">No players found.</p>'}</div>
+    <div class="decide"><b>Place everyone who typed “${geoEsc(it.example)}”</b>
+      <div class="rv-acts">
+        ${(it.suggestions || []).map(sg => `<button class="sug" onclick='geoWhoDecide(${i}, ${JSON.stringify({ country: sg.country, state: sg.state, city: sg.city }).replace(/'/g, "&#39;")})'>${geoEsc(sg.label)}</button>`).join('')}
+        <select id="whoState">${stateOpts}</select>
+        <input id="whoCity" placeholder="Town (optional)">
+        <input id="whoCountry" placeholder="…or country abroad">
+        <button class="save-btn" onclick="geoWhoDecideForm(${i})">Save</button>
+        <button class="ghost-btn" onclick='geoWhoDecide(${i}, {"unknown": true})'>Unknown</button>
+      </div></div>
+  </div>`;
+}
+
+function geoWhoDecideForm(i) {
+  const state = document.getElementById('whoState').value;
+  const city = document.getElementById('whoCity').value.trim();
+  const country = document.getElementById('whoCountry').value.trim();
+  if (!state && !country) { showAlert('Choose a state, or enter a country', 'error'); return; }
+  geoWhoDecide(i, country ? { country, city } : { country: 'Nigeria', state, city });
+}
+async function geoWhoDecide(i, choice) { await geoDecide(i, choice); closeGeoWho(); }
+
 async function rerunGeo() {
   if (!confirm('Place every player again with the latest rules? Your own decisions are kept.')) return;
   try { const d = await geoApi('/locations/rerun', { method: 'POST' }); showAlert(`Re-checked ${geoNum(d.placed)} players`, 'success'); }
@@ -3689,16 +3888,17 @@ async function loadGeoReview() {
   try {
     const d = await geoApi('/locations/review');
     geoStates = d.states || [];
+    geoReviewItems = d.items || [];
     if (!d.items.length) {
       el.innerHTML = '<h3>Nothing to review</h3><p class="hint">Every city players have typed has been placed. 🎉</p>' + geoDecisionsLink();
       return;
     }
     const stateOpts = '<option value="">Nigerian state…</option>' + geoStates.map(s => `<option value="${geoEsc(s.value)}">${geoEsc(s.label)}</option>`).join('');
     el.innerHTML = `<h3>Cities that need your decision</h3>
-      <p class="hint">Each decision applies to every player who typed exactly that, now and in future. Pick a suggestion, or choose a state (with an optional town), or enter a country for players abroad.</p>
+      <p class="hint">Each decision applies to every player who typed exactly that, now and in future. Click an entry to see who typed it (name, phone country, who referred them). Pick a suggestion, or choose a state (with an optional town), or enter a country for players abroad.</p>
       ${d.items.map((it, i) => `
         <div class="rv-row" data-key="${geoEsc(it.key)}">
-          <div class="rv-text">“${geoEsc(it.example)}”<small>${it.status === 'ambiguous' ? 'Could be more than one place' : 'Not recognised'}</small></div>
+          <div class="rv-text"><button class="rv-who" onclick="geoWho(${i})" title="See the player${it.players === 1 ? '' : 's'} who typed this">“${geoEsc(it.example)}”<span class="rv-who-link">👤 See who typed this</span></button><small>${it.status === 'ambiguous' ? 'Could be more than one place' : 'Not recognised'}</small></div>
           <div class="rv-count">${geoNum(it.players)} player${it.players === 1 ? '' : 's'}</div>
           <div class="rv-acts">
             ${it.suggestions.map((sg, j) => `<button class="sug" onclick='geoDecide(${i}, ${JSON.stringify({ country: sg.country, state: sg.state, city: sg.city }).replace(/'/g, "&#39;")})'>${geoEsc(sg.label)}</button>`).join('')}

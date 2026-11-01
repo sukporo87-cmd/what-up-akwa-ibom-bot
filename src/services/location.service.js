@@ -178,6 +178,9 @@ async function undoDecision(rawKey) {
     await syncMissing();
 }
 
+// Beside a town name, FCT needs no "(Abuja)": "Gwarinpa, FCT", not "Gwarinpa, FCT (Abuja)".
+const withTownLabel = (state) => (state === 'FCT' ? 'FCT' : places.stateLabel(state));
+
 const topN = (rows, groupKey, n = 3) => {
     const out = {};
     for (const r of rows) {
@@ -233,6 +236,13 @@ async function summary() {
         WHERE country IS NOT NULL AND country <> 'Nigeria' AND (city IS NOT NULL OR state IS NOT NULL)
         GROUP BY country, city, state ORDER BY country, players DESC`);
 
+    // Every city, at home and abroad, most players first: the city donut.
+    const allCities = await pool.query(`
+        SELECT city, state, country, COUNT(*)::int AS players FROM user_locations
+        WHERE city IS NOT NULL
+        GROUP BY city, state, country ORDER BY players DESC, city LIMIT 60`);
+    const citiesTotal = await pool.query(`SELECT COUNT(*)::int AS n FROM user_locations WHERE city IS NOT NULL`);
+
     const cityTop = topN(ngCities.rows, 'state');
     const abroadTop = topN(abroadCities.rows, 'country');
     return {
@@ -242,6 +252,11 @@ async function summary() {
             winnings: Number(s.winnings), active30d: s.active_30d, joined30d: s.joined_30d,
             topCities: (cityTop[s.state] || []).map(c => ({ city: c.city, players: c.players }))
         })),
+        cities: allCities.rows.map(c => ({
+            city: c.city, players: c.players,
+            where: c.country === 'Nigeria' ? withTownLabel(c.state) : c.country
+        })),
+        citiesTotal: citiesTotal.rows[0].n,
         countries: countries.rows.map(c => ({
             country: c.country, players: c.players, games: c.games, active30d: c.active_30d,
             topCities: (abroadTop[c.country] || []).map(x => ({ city: [x.city, x.state].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', '), players: x.players }))
@@ -276,6 +291,65 @@ async function reviewList(limit = 150) {
     });
 }
 
+// Country from the start of a WhatsApp number (Telegram and web players have
+// no number). Longest code first, so 234 is Nigeria, not "2".
+const DIAL = { '234': 'Nigeria', '233': 'Ghana', '229': 'Benin', '228': 'Togo', '237': 'Cameroon', '227': 'Niger',
+    '235': 'Chad', '221': 'Senegal', '225': "Côte d'Ivoire", '231': 'Liberia', '232': 'Sierra Leone', '220': 'Gambia',
+    '254': 'Kenya', '256': 'Uganda', '255': 'Tanzania', '250': 'Rwanda', '251': 'Ethiopia', '27': 'South Africa',
+    '260': 'Zambia', '263': 'Zimbabwe', '20': 'Egypt', '212': 'Morocco', '44': 'United Kingdom', '353': 'Ireland',
+    '1': 'United States / Canada', '971': 'United Arab Emirates', '974': 'Qatar', '966': 'Saudi Arabia', '965': 'Kuwait',
+    '968': 'Oman', '973': 'Bahrain', '90': 'Turkey', '49': 'Germany', '33': 'France', '31': 'Netherlands', '32': 'Belgium',
+    '39': 'Italy', '34': 'Spain', '351': 'Portugal', '41': 'Switzerland', '43': 'Austria', '46': 'Sweden', '47': 'Norway',
+    '45': 'Denmark', '358': 'Finland', '48': 'Poland', '7': 'Russia', '380': 'Ukraine', '357': 'Cyprus', '30': 'Greece',
+    '86': 'China', '81': 'Japan', '82': 'South Korea', '91': 'India', '92': 'Pakistan', '60': 'Malaysia', '65': 'Singapore',
+    '61': 'Australia', '64': 'New Zealand', '55': 'Brazil' };
+function phoneCountry(phone) {
+    const d = String(phone || '');
+    if (!/^\d{8,15}$/.test(d)) return null;
+    for (const len of [3, 2, 1]) if (DIAL[d.slice(0, len)]) return DIAL[d.slice(0, len)];
+    return null;
+}
+
+/**
+ * The players behind one review entry, with what can hint at where they are:
+ * full name, phone country code, email, who referred them (and where that
+ * player is), how they found us. Up to 50, most recently active first.
+ */
+async function playersForKey(rawKey) {
+    await ensureSchema();
+    const key = places.squash(rawKey);
+    if (!key) return [];
+    const r = await pool.query(`
+        SELECT u.id, u.username, u.full_name, u.phone_number, u.email, u.age, u.city,
+               u.created_at, u.last_active, u.total_games_played, u.total_winnings, u.acquisition_source,
+               r.username AS referrer_username,
+               rl.city AS referrer_city, rl.state AS referrer_state, rl.country AS referrer_country
+        FROM user_locations l
+        JOIN users u ON u.id = l.user_id
+        LEFT JOIN users r ON r.id = u.referred_by
+        LEFT JOIN user_locations rl ON rl.user_id = r.id
+        WHERE l.raw_key = $1
+        ORDER BY u.last_active DESC NULLS LAST, u.id DESC
+        LIMIT 50`, [key]);
+    return r.rows.map(u => {
+        const id = String(u.phone_number || '');
+        const platform = id.startsWith('tg_') ? 'telegram' : id.startsWith('web_') ? 'web' : 'whatsapp';
+        const refWhere = u.referrer_username
+            ? [u.referrer_city, u.referrer_country === 'Nigeria' ? (u.referrer_city ? withTownLabel(u.referrer_state) : places.stateLabel(u.referrer_state)) : (u.referrer_state || null), u.referrer_country !== 'Nigeria' ? u.referrer_country : null]
+                .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', ') || null
+            : null;
+        return {
+            id: u.id, username: u.username, fullName: u.full_name, platform,
+            playerId: id, phoneCountry: platform === 'whatsapp' ? phoneCountry(id) : null,
+            email: u.email || null, age: u.age || null, typed: u.city,
+            joined: u.created_at, lastActive: u.last_active,
+            games: Number(u.total_games_played || 0), winnings: Number(u.total_winnings || 0),
+            foundUsVia: u.acquisition_source || null,
+            referrer: u.referrer_username ? { username: u.referrer_username, where: refWhere } : null
+        };
+    });
+}
+
 /** Admin decisions so far, so any can be checked or taken back. */
 async function decisions() {
     await ensureSchema();
@@ -288,5 +362,5 @@ async function decisions() {
 
 module.exports = {
     ensureSchema, resolveText, resolveUser, syncMissing, rerunAll, decide, undoDecision,
-    summary, reviewList, decisions, NIGERIAN_STATES: places.NIGERIAN_STATES, stateLabel: places.stateLabel
+    summary, reviewList, decisions, playersForKey, phoneCountry, NIGERIAN_STATES: places.NIGERIAN_STATES, stateLabel: places.stateLabel
 };

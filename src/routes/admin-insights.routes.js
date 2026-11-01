@@ -54,6 +54,11 @@ router.get('/locations/review', wrap('location review', async () => ({
     states: locations.NIGERIAN_STATES.map(s => ({ value: s, label: locations.stateLabel(s) }))
 })));
 
+// Who typed one review entry, to help decide where they are.
+router.get('/locations/players', wrap('location players', async (req) => ({
+    players: await locations.playersForKey(String(req.query.key || '').slice(0, 200))
+})));
+
 router.get('/locations/decisions', wrap('location decisions', async () => ({ items: await locations.decisions() })));
 
 router.post('/locations/decide', wrap('location decide', async (req) => {
