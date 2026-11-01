@@ -249,10 +249,14 @@ app.use('/webhook', webhookRoutes);
 app.use('/payment', paymentRoutes);
 // WUT TV's admin page, before the main admin router so admin.routes.js is untouched.
 app.use('/admin/tv', require('./routes/tv-admin.routes'));
+// Advanced Analytics extras (where players are, web app installs). Own file,
+// admin login on every route, mounted before the main admin router.
+app.use('/admin/api/insights', require('./routes/admin-insights.routes'));
 app.use('/admin', adminRoutes);
 app.use('/web/auth', webAuthRoutes);
 app.use('/newsletter', newsletterRoutes);
 app.use('/web/game', webGameRoutes);
+app.use('/web/app', require('./routes/web-app.routes'));     // install counting
 app.use('/challenge', require('./routes/challenge.routes'));
 app.use('/web/payment', webPaymentRoutes);
 // What's Up Trivia TV. Its own routes, its own tables, its own room state;

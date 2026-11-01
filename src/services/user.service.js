@@ -103,6 +103,10 @@ class UserService {
       // Username + city only; no name, no phone.
       activityService.record('user_join', user.id, { city });
 
+      // Place the player by state/country for analytics. Fire-and-forget;
+      // the city they typed is kept exactly as typed.
+      require('./location.service').resolveUser(user.id, city).catch(() => {});
+
       return user;
     } catch (error) {
       await client.query('ROLLBACK');

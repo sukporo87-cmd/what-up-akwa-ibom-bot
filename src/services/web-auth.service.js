@@ -433,6 +433,10 @@ class WebAuthService {
             // Social proof event (site ticker) — fire-and-forget, never awaited
             activityService.record('user_join', user.id, { city });
 
+            // Place the player by state/country for analytics. Fire-and-forget;
+            // the city they typed is kept exactly as typed.
+            require('./location.service').resolveUser(user.id, city).catch(() => {});
+
             return user;
 
         } catch (error) {
@@ -644,6 +648,9 @@ class WebAuthService {
             WHERE id = $6
             RETURNING *
         `, [username.trim(), city.trim(), parsedAge, referrerId, acquisitionSource, userId]);
+
+        // City just given (or changed): place the player again. Fire-and-forget.
+        require('./location.service').resolveUser(userId, city.trim()).catch(() => {});
 
         // Record the referral link if one was just applied
         if (referrerId && !current.rows[0].referred_by) {

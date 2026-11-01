@@ -486,6 +486,74 @@
     .alert-info { background: #dbeafe; color: #1e40af; border: 1px solid #3b82f6; }
 
     .chart-container { position: relative; height: 300px; margin: 20px 0; }
+
+    /* ---- Peak times: range picker and plain-English summary ---- */
+    .peak-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .peak-head h3 { margin: 0; }
+    .peak-head select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: #fff; }
+    .peak-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .peak-chip { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; }
+    .peak-chip b { color: #7c2d12; }
+
+    /* ---- Where players are (its own teal accent) ---- */
+    .geo-card { border-top: 4px solid #0d9488; }
+    .geo-tiles, .inst-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 6px 0 18px; }
+    .geo-tile, .inst-tile { border-radius: 12px; padding: 14px 16px; }
+    .geo-tile { background: #f0fdfa; border: 1px solid #ccfbf1; }
+    .geo-tile .v, .inst-tile .v { font-size: 24px; font-weight: 700; line-height: 1.1; }
+    .geo-tile .v { color: #0f766e; }
+    .geo-tile .l, .inst-tile .l { font-size: 12.5px; color: var(--text-gray); margin-top: 4px; }
+    .geo-tile.warn { background: #fffbeb; border-color: #fde68a; }
+    .geo-tile.warn .v { color: #b45309; }
+    .geo-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 20px; align-items: start; }
+    .geo-chart { position: relative; height: 760px; }
+    .geo-table-wrap { max-height: 760px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+    .geo-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; }
+    .geo-table th { position: sticky; top: 0; background: #f8fafc; text-align: left; padding: 9px 10px; font-size: 11.5px;
+                    text-transform: uppercase; letter-spacing: .04em; color: var(--text-gray); border-bottom: 1px solid var(--border); }
+    .geo-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    .geo-table td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .geo-table .cities { color: var(--text-gray); font-size: 12px; }
+    .geo-section { margin-top: 22px; }
+    .geo-section h3 { font-size: 16px; margin-bottom: 10px; color: var(--text-dark); }
+    .geo-review { margin-top: 22px; border: 1px solid #fde68a; background: #fffdf5; border-radius: 12px; padding: 16px; }
+    .geo-review h3 { font-size: 16px; margin-bottom: 4px; }
+    .geo-review p.hint { font-size: 13px; color: var(--text-gray); margin-bottom: 12px; }
+    .rv-row { display: grid; grid-template-columns: minmax(140px, 1.3fr) 70px minmax(0, 3fr); gap: 12px; align-items: center;
+              padding: 10px 0; border-top: 1px solid #fef3c7; }
+    .rv-row:first-of-type { border-top: 0; }
+    .rv-text { font-weight: 600; color: var(--text-dark); word-break: break-word; }
+    .rv-text small { display: block; font-weight: 400; color: var(--text-light); font-size: 11.5px; }
+    .rv-count { font-size: 12.5px; color: var(--text-gray); text-align: right; }
+    .rv-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .rv-acts .sug { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 8px; padding: 6px 10px;
+                    font-size: 12.5px; cursor: pointer; font-family: inherit; }
+    .rv-acts .sug:hover { background: #d1fae5; }
+    .rv-acts select, .rv-acts input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px;
+                                      font-family: inherit; max-width: 170px; }
+    .rv-acts .ghost-btn { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+                          font-size: 12.5px; cursor: pointer; font-family: inherit; color: var(--text-gray); }
+    .rv-acts .save-btn { background: #0d9488; color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font-size: 12.5px;
+                         cursor: pointer; font-family: inherit; font-weight: 600; }
+    .rv-done { color: #047857; font-size: 12.5px; font-weight: 600; }
+
+    /* ---- Web app installs (its own indigo accent) ---- */
+    .inst-card { border-top: 4px solid #4f46e5; }
+    .inst-tile { background: #eef2ff; border: 1px solid #e0e7ff; }
+    .inst-tile .v { color: #4338ca; }
+    .inst-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .inst-funnel { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+    .inst-funnel li { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #f1f5f9; }
+    .inst-funnel li b { font-variant-numeric: tabular-nums; }
+    .inst-plat { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+    .inst-plat span { background: #f5f3ff; border: 1px solid #ddd6fe; color: #5b21b6; border-radius: 999px; padding: 4px 11px; font-size: 12.5px; }
+    .inst-note { font-size: 12.5px; color: var(--text-gray); margin-top: 14px; line-height: 1.55; }
+    @media (max-width: 900px) {
+      .geo-grid, .inst-grid { grid-template-columns: minmax(0, 1fr); }
+      .geo-chart { height: 640px; }
+      .rv-row { grid-template-columns: 1fr; }
+      .rv-count { text-align: left; }
+    }
     .chart-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
@@ -811,6 +879,32 @@
             <p>Loading analytics...</p>
           </div>
         </div>
+      </div>
+
+      <!-- Where players are -->
+      <div class="card geo-card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h2>🗺️ Where Players Are</h2>
+          <div class="filter-group" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" id="geoReviewBtn" style="background:#f59e0b;color:#fff" onclick="toggleGeoReview()">Needs review</button>
+            <button class="btn btn-sm" style="background:#e2e8f0;color:#334155" onclick="rerunGeo()" title="Place every player again with the latest rules. Your decisions are kept.">Re-check all</button>
+            <button class="btn btn-primary btn-sm" onclick="loadGeo()">🔄 Refresh</button>
+          </div>
+        </div>
+        <p style="color: var(--text-gray); font-size: 13px; margin-bottom: 8px;">
+          From the city each player typed at sign-up, sorted into Nigerian states, or city and country abroad. What players typed is never changed.
+        </p>
+        <div id="geoContent"><div class="loading"><div class="spinner"></div><p>Placing players…</p></div></div>
+        <div class="geo-review" id="geoReview" hidden></div>
+      </div>
+
+      <!-- Web app installs -->
+      <div class="card inst-card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h2>📲 Web App Installs</h2>
+          <button class="btn btn-primary btn-sm" onclick="loadInstalls()">🔄 Refresh</button>
+        </div>
+        <div id="instContent"><div class="loading"><div class="spinner"></div><p>Loading installs…</p></div></div>
       </div>
 
       <!-- Acquisition Sources -->
@@ -1938,12 +2032,12 @@
       
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
         <div class="form-group">
-          <label>Start Date *</label>
+          <label>Starts (Lagos time) *</label>
           <input type="datetime-local" id="startDate" required>
         </div>
         
         <div class="form-group">
-          <label>End Date *</label>
+          <label>Ends (Lagos time) *</label>
           <input type="datetime-local" id="endDate" required>
         </div>
       </div>
@@ -2191,6 +2285,8 @@ function showDashboard() {
   loadEnhancedStats();
   loadAnalytics();
   loadAcquisitionSources();
+  loadGeo();
+  loadInstalls();
   updateAdminDisplay();
 }
 
@@ -2413,7 +2509,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`${tab}Tab`).classList.add('active');
   
-  if (tab === 'analytics' && !charts.dailyGames) { loadAnalytics(); loadAcquisitionSources(); }
+  if (tab === 'analytics' && !charts.dailyGames) { loadAnalytics(); loadAcquisitionSources(); loadGeo(); loadInstalls(); }
   if (tab === 'payouts') loadPayouts();
   if (tab === 'users' && allUsers.length === 0) loadUsers();
   if (tab === 'questions' && !document.getElementById('questionsTableContainer').innerHTML.includes('table')) loadQuestions();
@@ -2463,7 +2559,7 @@ async function loadAnalytics() {
   try {
     const [analyticsResponse, peakTimesResponse, categoriesResponse, lgaResponse, funnelResponse] = await Promise.all([
       fetch('/admin/api/analytics', { headers: getAuthHeaders() }),
-      fetch('/admin/api/analytics/peak-times', { headers: getAuthHeaders() }),
+      fetch('/admin/api/analytics/peak-times?days=30', { headers: getAuthHeaders() }),
       fetch('/admin/api/analytics/categories', { headers: getAuthHeaders() }),
       fetch('/admin/api/analytics/lga-performance', { headers: getAuthHeaders() }),
       fetch('/admin/api/analytics/conversion-funnel', { headers: getAuthHeaders() })
@@ -2478,7 +2574,7 @@ async function loadAnalytics() {
     Object.values(charts).forEach(chart => { if (chart && typeof chart.destroy === 'function') chart.destroy(); });
     charts = {};
     
-    let html = `<div class="chart-grid"><div class="card"><h3>📈 Daily Games</h3><div class="chart-container"><canvas id="dailyGamesChart"></canvas></div></div><div class="card"><h3>💰 Prize Distribution</h3><div class="chart-container"><canvas id="prizeDistChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>⏰ Peak Times</h3><div class="chart-container"><canvas id="peakTimesChart"></canvas></div></div><div class="card"><h3>📚 Categories</h3><div class="chart-container"><canvas id="categoryPerfChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>👥 User Registration</h3><div class="chart-container"><canvas id="regTrendChart"></canvas></div></div><div class="card"><h3>📊 Question Performance</h3><div class="chart-container"><canvas id="questionPerfChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>🎯 Conversion Funnel</h3><div class="chart-container"><canvas id="funnelChart"></canvas></div></div><div class="card"><h3>💳 Payout Status</h3><div class="chart-container"><canvas id="payoutStatusChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>🗺️ LGA Performance</h3><div class="chart-container"><canvas id="lgaChart"></canvas></div></div><div class="card"><h3>🏆 Top Performers</h3><table class="top-performers-table"><thead><tr><th>Rank</th><th>Player</th><th>LGA</th><th>Games</th><th>Winnings</th></tr></thead><tbody id="topPerformersBody"></tbody></table></div></div>`;
+    let html = `<div class="chart-grid"><div class="card"><h3>📈 Daily Games</h3><div class="chart-container"><canvas id="dailyGamesChart"></canvas></div></div><div class="card"><h3>💰 Prize Distribution</h3><div class="chart-container"><canvas id="prizeDistChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><div class="peak-head"><h3>⏰ Peak Times <span style="font-size:12px;font-weight:400;color:var(--text-light)">(Lagos time)</span></h3><select id="peakRange" onchange="loadPeakTimes()"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="all">All time</option></select></div><div class="peak-summary" id="peakSummary"></div><div class="chart-container" id="peakBox"><canvas id="peakTimesChart"></canvas></div></div><div class="card"><h3>📚 Categories</h3><div class="chart-container"><canvas id="categoryPerfChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>👥 User Registration</h3><div class="chart-container"><canvas id="regTrendChart"></canvas></div></div><div class="card"><h3>📊 Question Performance</h3><div class="chart-container"><canvas id="questionPerfChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>🎯 Conversion Funnel</h3><div class="chart-container"><canvas id="funnelChart"></canvas></div></div><div class="card"><h3>💳 Payout Status</h3><div class="chart-container"><canvas id="payoutStatusChart"></canvas></div></div></div><div class="chart-grid"><div class="card"><h3>🗺️ LGA Performance</h3><div class="chart-container"><canvas id="lgaChart"></canvas></div></div><div class="card"><h3>🏆 Top Performers</h3><table class="top-performers-table"><thead><tr><th>Rank</th><th>Player</th><th>LGA</th><th>Games</th><th>Winnings</th></tr></thead><tbody id="topPerformersBody"></tbody></table></div></div>`;
     
     container.innerHTML = html;
     
@@ -2524,22 +2620,60 @@ function renderPrizeDistChart(data) {
   });
 }
 
+/* Peak times for the range picked; re-renders only this chart. */
+async function loadPeakTimes() {
+  const range = (document.getElementById('peakRange') || {}).value || '30';
+  const box = document.getElementById('peakBox');
+  if (box) box.innerHTML = '<canvas id="peakTimesChart"></canvas>';
+  try {
+    const r = await fetch('/admin/api/analytics/peak-times?days=' + encodeURIComponent(range), { headers: getAuthHeaders() });
+    renderPeakTimesChart(await r.json());
+  } catch (e) {
+    if (box) box.innerHTML = '<div class="empty-state"><p>Could not load peak times</p></div>';
+  }
+}
+
+const hourLabel = (h) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+function renderPeakSummary(cells, days) {
+  const el = document.getElementById('peakSummary');
+  if (!el) return;
+  const total = cells.reduce((a, c) => a + c.v, 0);
+  if (!total) { el.innerHTML = ''; return; }
+  const byDay = Array(7).fill(0), byHour = Array(24).fill(0);
+  cells.forEach(c => { byDay[c.y] += c.v; byHour[c.x] += c.v; });
+  const top = cells.reduce((a, c) => (c.v > a.v ? c : a), cells[0]);
+  const bestDay = byDay.indexOf(Math.max(...byDay));
+  const bestHour = byHour.indexOf(Math.max(...byHour));
+  const quietHour = byHour.indexOf(Math.min(...byHour));
+  el.innerHTML = [
+    `<span class="peak-chip">Busiest slot: <b>${days[top.y]} ${hourLabel(top.x)}–${hourLabel((top.x + 1) % 24)}</b> (${top.v.toLocaleString()} games)</span>`,
+    `<span class="peak-chip">Busiest day: <b>${days[bestDay]}</b></span>`,
+    `<span class="peak-chip">Busiest hour: <b>${hourLabel(bestHour)}–${hourLabel((bestHour + 1) % 24)}</b></span>`,
+    `<span class="peak-chip">Quietest hour: <b>${hourLabel(quietHour)}–${hourLabel((quietHour + 1) % 24)}</b></span>`,
+    `<span class="peak-chip"><b>${total.toLocaleString()}</b> games in this range</span>`
+  ].join('');
+}
+
 function renderPeakTimesChart(data) {
   const ctx = document.getElementById('peakTimesChart');
-  if (!ctx || !data || data.length === 0) {
-    if (ctx) ctx.parentElement.innerHTML = '<div class="empty-state"><p>No peak time data</p></div>';
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  if (!ctx || !Array.isArray(data) || data.length === 0) {
+    if (ctx) ctx.parentElement.innerHTML = '<div class="empty-state"><p>No completed games in this range</p></div>';
+    renderPeakSummary([], days);
     return;
   }
-  
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const matrixData = [];
+
+  // Every one of the 168 hour-and-day squares, so quiet hours show as empty
+  // squares instead of gaps.
+  const counts = {};
   data.forEach(item => {
     if (item.hour_of_day !== null && item.day_of_week !== null) {
-      matrixData.push({ x: parseInt(item.hour_of_day), y: parseInt(item.day_of_week), v: parseInt(item.total_games) || 0 });
+      counts[`${parseInt(item.day_of_week)}-${parseInt(item.hour_of_day)}`] = parseInt(item.total_games) || 0;
     }
   });
-  
-  if (matrixData.length === 0) return;
+  const matrixData = [];
+  for (let y = 0; y < 7; y++) for (let x = 0; x < 24; x++) matrixData.push({ x, y, v: counts[`${y}-${x}`] || 0 });
+  renderPeakSummary(matrixData, days);
   const maxGames = Math.max(...matrixData.map(d => d.v));
   if (charts.peakTimes) charts.peakTimes.destroy();
   
@@ -2618,11 +2752,15 @@ function renderPeakTimesChart(data) {
 function renderCategoryPerformanceChart(data) {
   const ctx = document.getElementById('categoryPerfChart');
   if (!ctx || data.length === 0) return;
-  data.sort((a, b) => parseInt(b.total_questions) - parseInt(a.total_questions));
+  // The server sends question_count and success_rate; this used to read
+  // total_questions and success_rate_percentage, so every bar was zero.
+  const qCount = (c) => parseInt(c.question_count ?? c.total_questions, 10) || 0;
+  const sRate = (c) => parseFloat(c.success_rate ?? c.success_rate_percentage) || 0;
+  data.sort((a, b) => qCount(b) - qCount(a));
   const topCategories = data.slice(0, 10);
   const labels = topCategories.map(cat => cat.category || 'General');
-  const questionCounts = topCategories.map(cat => parseInt(cat.total_questions));
-  const successRates = topCategories.map(cat => parseFloat(cat.success_rate_percentage));
+  const questionCounts = topCategories.map(qCount);
+  const successRates = topCategories.map(sRate);
   charts.categoryPerf = new Chart(ctx, {
     type: 'bar',
     data: {
@@ -3437,6 +3575,243 @@ async function viewPromoRedemptions(id, code) {
   } catch (e) { showAlert('Error: ' + e.message, 'error'); }
 }
 
+/* ==================================================================
+   WHERE PLAYERS ARE
+   ================================================================== */
+const geoEsc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const geoNum = (v) => Number(v || 0).toLocaleString();
+let geoStates = [];
+/* Kept apart from `charts`: loadAnalytics() destroys everything in that
+   object when it finishes, which would wipe these if it finished later. */
+const insightCharts = {};
+
+async function geoApi(path, opts = {}) {
+  const r = await fetch('/admin/api/insights' + path, { headers: getAuthHeaders(), ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.success === false) throw new Error(d.error || 'Request failed');
+  return d;
+}
+
+async function loadGeo() {
+  const box = document.getElementById('geoContent');
+  if (!box) return;
+  try {
+    const d = await geoApi('/locations/summary');
+    renderGeo(d);
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state"><p>Could not load locations: ${geoEsc(e.message)}</p></div>`;
+  }
+}
+
+function renderGeo(d) {
+  const t = d.totals || {};
+  const btn = document.getElementById('geoReviewBtn');
+  if (btn) btn.textContent = `Needs review (${geoNum(t.needs_review)})`;
+  const placedPct = t.players ? Math.round(((t.nigeria_placed + t.abroad) / t.players) * 100) : 0;
+  const tiles = `
+    <div class="geo-tiles">
+      <div class="geo-tile"><div class="v">${geoNum(t.nigeria_placed)}</div><div class="l">In a Nigerian state</div></div>
+      <div class="geo-tile"><div class="v">${geoNum(t.abroad)}</div><div class="l">Outside Nigeria (${geoNum((d.countries || []).length)} countries)</div></div>
+      <div class="geo-tile"><div class="v">${geoNum((d.states || []).length)}<span style="font-size:14px;color:var(--text-light)"> / 37</span></div><div class="l">States with players</div></div>
+      <div class="geo-tile"><div class="v">${placedPct}%</div><div class="l">Of ${geoNum(t.players)} players placed</div></div>
+      <div class="geo-tile warn"><div class="v">${geoNum(t.needs_review)}</div><div class="l">Need your decision</div></div>
+      <div class="geo-tile"><div class="v">${geoNum((t.nigeria_no_state || 0) + (t.marked_unknown || 0) + (t.not_given || 0))}</div><div class="l">Nigeria, no state · unknown · none given</div></div>
+    </div>`;
+
+  const states = d.states || [];
+  const stateRows = states.map(s => `
+    <tr><td><b>${geoEsc(s.label)}</b></td><td class="n">${geoNum(s.players)}</td><td class="n">${geoNum(s.active30d)}</td>
+        <td class="n">${geoNum(s.games)}</td>
+        <td class="cities">${s.topCities.map(c => `${geoEsc(c.city)} (${geoNum(c.players)})`).join(', ') || '—'}</td></tr>`).join('');
+  const countryRows = (d.countries || []).map(c => `
+    <tr><td><b>${geoEsc(c.country)}</b></td><td class="n">${geoNum(c.players)}</td><td class="n">${geoNum(c.active30d)}</td>
+        <td class="n">${geoNum(c.games)}</td>
+        <td class="cities">${c.topCities.map(x => `${geoEsc(x.city)} (${geoNum(x.players)})`).join(', ') || '—'}</td></tr>`).join('');
+
+  document.getElementById('geoContent').innerHTML = tiles + `
+    <div class="geo-grid">
+      <div class="geo-chart"><canvas id="geoStatesChart"></canvas></div>
+      <div class="geo-table-wrap">
+        <table class="geo-table">
+          <thead><tr><th>State</th><th style="text-align:right">Players</th><th style="text-align:right" title="Played in the last 30 days">Active 30d</th><th style="text-align:right">Games</th><th>Top cities</th></tr></thead>
+          <tbody>${stateRows || '<tr><td colspan="5" style="text-align:center;color:var(--text-light);padding:24px">No players placed yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="geo-section">
+      <h3>🌍 Outside Nigeria</h3>
+      <div class="geo-table-wrap" style="max-height:420px">
+        <table class="geo-table">
+          <thead><tr><th>Country</th><th style="text-align:right">Players</th><th style="text-align:right">Active 30d</th><th style="text-align:right">Games</th><th>Cities</th></tr></thead>
+          <tbody>${countryRows || '<tr><td colspan="5" style="text-align:center;color:var(--text-light);padding:20px">No players placed outside Nigeria yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  if (insightCharts.geoStates) { insightCharts.geoStates.destroy(); }
+  const ctx = document.getElementById('geoStatesChart');
+  if (ctx && states.length) {
+    insightCharts.geoStates = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: states.map(s => s.label),
+        datasets: [
+          { label: 'Players', data: states.map(s => s.players), backgroundColor: '#14b8a6', borderRadius: 4 },
+          { label: 'Active in last 30 days', data: states.map(s => s.active30d), backgroundColor: '#f59e0b', borderRadius: 4 }
+        ]
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top' } },
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 } }, y: { ticks: { autoSkip: false, font: { size: 11 } } } }
+      }
+    });
+  }
+}
+
+async function rerunGeo() {
+  if (!confirm('Place every player again with the latest rules? Your own decisions are kept.')) return;
+  try { const d = await geoApi('/locations/rerun', { method: 'POST' }); showAlert(`Re-checked ${geoNum(d.placed)} players`, 'success'); }
+  catch (e) { showAlert(geoEsc(e.message), 'error'); }
+  loadGeo();
+  if (!document.getElementById('geoReview').hidden) loadGeoReview();
+}
+
+function toggleGeoReview() {
+  const el = document.getElementById('geoReview');
+  el.hidden = !el.hidden;
+  if (!el.hidden) loadGeoReview();
+}
+
+async function loadGeoReview() {
+  const el = document.getElementById('geoReview');
+  el.innerHTML = '<p class="hint">Loading…</p>';
+  try {
+    const d = await geoApi('/locations/review');
+    geoStates = d.states || [];
+    if (!d.items.length) {
+      el.innerHTML = '<h3>Nothing to review</h3><p class="hint">Every city players have typed has been placed. 🎉</p>' + geoDecisionsLink();
+      return;
+    }
+    const stateOpts = '<option value="">Nigerian state…</option>' + geoStates.map(s => `<option value="${geoEsc(s.value)}">${geoEsc(s.label)}</option>`).join('');
+    el.innerHTML = `<h3>Cities that need your decision</h3>
+      <p class="hint">Each decision applies to every player who typed exactly that, now and in future. Pick a suggestion, or choose a state (with an optional town), or enter a country for players abroad.</p>
+      ${d.items.map((it, i) => `
+        <div class="rv-row" data-key="${geoEsc(it.key)}">
+          <div class="rv-text">“${geoEsc(it.example)}”<small>${it.status === 'ambiguous' ? 'Could be more than one place' : 'Not recognised'}</small></div>
+          <div class="rv-count">${geoNum(it.players)} player${it.players === 1 ? '' : 's'}</div>
+          <div class="rv-acts">
+            ${it.suggestions.map((sg, j) => `<button class="sug" onclick='geoDecide(${i}, ${JSON.stringify({ country: sg.country, state: sg.state, city: sg.city }).replace(/'/g, "&#39;")})'>${geoEsc(sg.label)}</button>`).join('')}
+            <select id="rvState${i}">${stateOpts}</select>
+            <input id="rvCity${i}" placeholder="Town (optional)">
+            <input id="rvCountry${i}" placeholder="…or country abroad">
+            <button class="save-btn" onclick="geoDecideForm(${i})">Save</button>
+            <button class="ghost-btn" onclick='geoDecide(${i}, {"unknown": true})' title="Not a real place">Unknown</button>
+          </div>
+        </div>`).join('')}
+      ${geoDecisionsLink()}`;
+  } catch (e) {
+    el.innerHTML = `<p class="hint">Could not load the review list: ${geoEsc(e.message)}</p>`;
+  }
+}
+
+function geoDecisionsLink() {
+  return `<p class="hint" style="margin:14px 0 0"><a href="#" onclick="loadGeoDecisions();return false;">See decisions already made (and undo any)</a></p><div id="geoDecisions"></div>`;
+}
+
+function geoDecideForm(i) {
+  const state = document.getElementById('rvState' + i).value;
+  const city = document.getElementById('rvCity' + i).value.trim();
+  const country = document.getElementById('rvCountry' + i).value.trim();
+  if (!state && !country) { showAlert('Choose a state, or enter a country', 'error'); return; }
+  geoDecide(i, country ? { country, city } : { country: 'Nigeria', state, city });
+}
+
+async function geoDecide(i, choice) {
+  const row = document.querySelectorAll('#geoReview .rv-row')[i];
+  if (!row) return;
+  try {
+    const d = await geoApi('/locations/decide', { method: 'POST', body: JSON.stringify({ key: row.dataset.key, ...choice }) });
+    const label = choice.unknown ? 'Marked unknown' : [choice.city, choice.state ? (geoStates.find(s => s.value === choice.state) || {}).label || choice.state : null, choice.country !== 'Nigeria' ? choice.country : null].filter(Boolean).join(', ');
+    row.querySelector('.rv-acts').innerHTML = `<span class="rv-done">✓ ${geoEsc(label)} — ${geoNum(d.players)} player${d.players === 1 ? '' : 's'} placed</span>`;
+    loadGeo();
+  } catch (e) { showAlert(geoEsc(e.message), 'error'); }
+}
+
+async function loadGeoDecisions() {
+  const el = document.getElementById('geoDecisions');
+  if (!el) return;
+  try {
+    const d = await geoApi('/locations/decisions');
+    if (!d.items.length) { el.innerHTML = '<p class="hint">No decisions yet.</p>'; return; }
+    el.innerHTML = `<table class="geo-table" style="margin-top:8px"><thead><tr><th>Typed</th><th>Placed as</th><th style="text-align:right">Players</th><th>By</th><th></th></tr></thead><tbody>
+      ${d.items.map(a => `<tr><td>“${geoEsc(a.raw_example || a.raw_key)}”</td>
+        <td>${a.is_unknown ? '<i>Unknown</i>' : geoEsc([a.city, a.state, a.country].filter(Boolean).join(', '))}</td>
+        <td class="n">${geoNum(a.players)}</td><td>${geoEsc(a.decided_by || '')}</td>
+        <td><button class="ghost-btn" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:4px 10px;cursor:pointer" onclick="geoUndo('${geoEsc(a.raw_key)}')">Undo</button></td></tr>`).join('')}
+      </tbody></table>`;
+  } catch (e) { el.innerHTML = `<p class="hint">${geoEsc(e.message)}</p>`; }
+}
+
+async function geoUndo(key) {
+  if (!confirm('Undo this decision? Those players go back to automatic placement.')) return;
+  try { await geoApi('/locations/undo', { method: 'POST', body: JSON.stringify({ key }) }); showAlert('Decision undone', 'success'); }
+  catch (e) { showAlert(geoEsc(e.message), 'error'); }
+  loadGeo(); loadGeoReview();
+}
+
+/* ==================================================================
+   WEB APP INSTALLS
+   ================================================================== */
+async function loadInstalls() {
+  const box = document.getElementById('instContent');
+  if (!box) return;
+  try {
+    const d = await geoApi('/installs');
+    const f = d.funnel30d || {};
+    const platName = { android: 'Android', ios: 'iPhone / iPad', desktop: 'Computer', other: 'Other' };
+    const since = d.countingSince ? new Date(d.countingSince + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+    box.innerHTML = `
+      <div class="inst-tiles">
+        <div class="inst-tile"><div class="v">${geoNum(d.installed_devices)}</div><div class="l">Devices with the app installed</div></div>
+        <div class="inst-tile"><div class="v">${geoNum(d.new_7d)}</div><div class="l">New installs, last 7 days</div></div>
+        <div class="inst-tile"><div class="v">${geoNum(d.opened_7d)}</div><div class="l">Opened from the icon, last 7 days</div></div>
+        <div class="inst-tile"><div class="v">${geoNum(d.opened_30d)}</div><div class="l">Opened from the icon, last 30 days</div></div>
+        <div class="inst-tile"><div class="v">${geoNum(d.installed_players)}</div><div class="l">Signed-in players who installed</div></div>
+      </div>
+      <div class="inst-grid">
+        <div>
+          <h3 style="font-size:15px;margin-bottom:6px">Install button, last 30 days</h3>
+          <ul class="inst-funnel">
+            <li><span>Install card shown (Android / computer)</span><b>${geoNum(f.shown)}</b></li>
+            <li><span>Install tapped</span><b>${geoNum(f.clicked)}</b></li>
+            <li><span>Install accepted</span><b>${geoNum(f.accepted)}</b></li>
+            <li><span>Install cancelled</span><b>${geoNum(f.dismissed)}</b></li>
+            <li><span>iPhone "Add to Home Screen" card shown</span><b>${geoNum(f.ios_hint)}</b></li>
+          </ul>
+          <div class="inst-plat">${(d.byPlatform || []).map(p => `<span>${geoEsc(platName[p.platform] || p.platform)}: <b>${geoNum(p.devices)}</b></span>`).join('') || ''}</div>
+        </div>
+        <div><div class="chart-container" style="height:240px;margin:0"><canvas id="instDailyChart"></canvas></div></div>
+      </div>
+      <p class="inst-note">${since ? `Counting since ${since}. ` : 'Counting starts once this update is live. '}A device counts once it installs, or is opened from its home-screen icon. That second signal is the only one iPhones give, and it also picks up people who installed before counting began, the first time they open the app. Uninstalls can't be seen by any website.</p>`;
+    if (insightCharts.instDaily) insightCharts.instDaily.destroy();
+    const ctx = document.getElementById('instDailyChart');
+    if (ctx) {
+      insightCharts.instDaily = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: (d.daily || []).map(x => new Date(x.day + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })),
+          datasets: [{ label: 'New installs', data: (d.daily || []).map(x => x.installs), backgroundColor: '#6366f1', borderRadius: 4 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: 'New installs per day (30 days)' } },
+                   scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state"><p>Could not load installs: ${geoEsc(e.message)}</p></div>`;
+  }
+}
+
 async function loadAcquisitionSources() {
   const container = document.getElementById('acquisitionSourcesContainer');
   const range = document.getElementById('acqRangeFilter')?.value || 'all';
@@ -3600,8 +3975,8 @@ async function loadTournaments() {
     }
     let html = '<table><thead><tr><th>Tournament</th><th>Type</th><th>Payment</th><th>Prize Pool</th><th>Dates</th><th>Participants</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
     data.tournaments.forEach(t => {
-      const startDate = new Date(t.start_date).toLocaleDateString();
-      const endDate = new Date(t.end_date).toLocaleDateString();
+      const startDate = tourLagosText(t.start_date);
+      const endDate = tourLagosText(t.end_date);
       const paymentType = t.payment_type === 'free' ? 'FREE' : `₦${parseInt(t.entry_fee).toLocaleString()}`;
       const tokenInfo = t.uses_tokens ? ` (${t.tokens_per_entry} tokens)` : '';
       html += `<tr><td><strong>${t.tournament_name}</strong>${t.sponsor_name ? `<br><small>${t.sponsor_name}</small>` : ''}</td><td>${t.tournament_type}</td><td>${paymentType}${tokenInfo}</td><td>₦${parseInt(t.prize_pool).toLocaleString()}</td><td><small>${startDate}<br>to<br>${endDate}</small></td><td>${t.participant_count || 0}${t.max_participants ? `/${t.max_participants}` : ''}<br><small>${t.paid_entries || 0} paid</small></td><td><span class="status-badge status-${t.status}">${t.status}</span></td><td><div style="display: flex; gap: 5px; flex-wrap: wrap;"><button class="btn btn-sm btn-primary" onclick="viewTournamentDetails(${t.id})">👁️ View</button><button class="btn btn-sm btn-secondary" onclick="editTournament(${t.id})">✏️ Edit</button>${t.status === 'active' ? `<button class="btn btn-sm btn-danger" onclick="endTournament(${t.id})">🏁 End</button>` : ''}</div></td></tr>`;
@@ -3614,6 +3989,12 @@ async function loadTournaments() {
   }
 }
 
+/* Tournament times are typed and shown in LAGOS time. The server stores
+   them in UTC; these turn a stored moment into what the boxes and lists
+   show. (Nigeria is UTC+1 all year.) */
+const tourLagosInput = (d) => { const t = new Date(new Date(d).getTime() + 3600e3); return isNaN(t) ? '' : t.toISOString().slice(0, 16); };
+const tourLagosText = (d) => new Date(d).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+
 function showCreateTournamentModal() {
   document.getElementById('tournamentModalTitle').textContent = 'Create Tournament';
   document.getElementById('tournamentForm').reset();
@@ -3621,8 +4002,8 @@ function showCreateTournamentModal() {
   const now = new Date();
   const startDate = new Date(now.getTime() + 24*60*60*1000);
   const endDate = new Date(now.getTime() + 7*24*60*60*1000);
-  document.getElementById('startDate').value = startDate.toISOString().slice(0, 16);
-  document.getElementById('endDate').value = endDate.toISOString().slice(0, 16);
+  document.getElementById('startDate').value = tourLagosInput(startDate);
+  document.getElementById('endDate').value = tourLagosInput(endDate);
   togglePaymentFields();
   toggleTokenFields();
   document.getElementById('tournamentModal').classList.add('show');
@@ -3713,8 +4094,8 @@ async function editTournament(tournamentId) {
     document.getElementById('entryFee').value = tournament.entry_fee || 0;
     document.getElementById('prizePool').value = tournament.prize_pool;
     document.getElementById('maxParticipants').value = tournament.max_participants || '';
-    document.getElementById('startDate').value = new Date(tournament.start_date).toISOString().slice(0, 16);
-    document.getElementById('endDate').value = new Date(tournament.end_date).toISOString().slice(0, 16);
+    document.getElementById('startDate').value = tourLagosInput(tournament.start_date);
+    document.getElementById('endDate').value = tourLagosInput(tournament.end_date);
     document.getElementById('questionCategory').value = tournament.question_category || '';
     document.getElementById('customInstructions').value = tournament.custom_instructions || '';
     document.getElementById('customBranding').value = tournament.custom_branding || '';
@@ -3742,7 +4123,7 @@ async function viewTournamentDetails(tournamentId) {
     const tournament = await tournamentRes.json();
     const participantsData = await participantsRes.json();
     document.getElementById('tournamentDetailsTitle').textContent = tournament.tournament_name;
-    let html = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;"><div><h4>Tournament Information</h4><div class="detail-row"><span class="detail-label">Type:</span><span class="detail-value">${tournament.tournament_type}</span></div><div class="detail-row"><span class="detail-label">Status:</span><span class="detail-value"><span class="status-badge status-${tournament.status}">${tournament.status}</span></span></div><div class="detail-row"><span class="detail-label">Payment:</span><span class="detail-value">${tournament.payment_type === 'free' ? 'FREE' : `₦${parseInt(tournament.entry_fee).toLocaleString()}`}</span></div><div class="detail-row"><span class="detail-label">Prize Pool:</span><span class="detail-value">₦${parseInt(tournament.prize_pool).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">Participants:</span><span class="detail-value">${tournament.participant_count || 0}${tournament.max_participants ? `/${tournament.max_participants}` : ''}</span></div>${tournament.payment_type === 'paid' ? `<div class="detail-row"><span class="detail-label">Revenue:</span><span class="detail-value">₦${parseInt(tournament.total_revenue || 0).toLocaleString()}</span></div>` : ''}</div><div><h4>Dates & Settings</h4><div class="detail-row"><span class="detail-label">Start:</span><span class="detail-value">${new Date(tournament.start_date).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">End:</span><span class="detail-value">${new Date(tournament.end_date).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">Token System:</span><span class="detail-value">${tournament.uses_tokens ? `Yes (${tournament.tokens_per_entry} tokens)` : 'No'}</span></div><div class="detail-row"><span class="detail-label">Unlimited Plays:</span><span class="detail-value">${tournament.unlimited_plays ? 'Yes' : 'No'}</span></div>${tournament.sponsor_name ? `<div class="detail-row"><span class="detail-label">Sponsor:</span><span class="detail-value">${tournament.sponsor_name}</span></div>` : ''}</div></div>`;
+    let html = `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;"><div><h4>Tournament Information</h4><div class="detail-row"><span class="detail-label">Type:</span><span class="detail-value">${tournament.tournament_type}</span></div><div class="detail-row"><span class="detail-label">Status:</span><span class="detail-value"><span class="status-badge status-${tournament.status}">${tournament.status}</span></span></div><div class="detail-row"><span class="detail-label">Payment:</span><span class="detail-value">${tournament.payment_type === 'free' ? 'FREE' : `₦${parseInt(tournament.entry_fee).toLocaleString()}`}</span></div><div class="detail-row"><span class="detail-label">Prize Pool:</span><span class="detail-value">₦${parseInt(tournament.prize_pool).toLocaleString()}</span></div><div class="detail-row"><span class="detail-label">Participants:</span><span class="detail-value">${tournament.participant_count || 0}${tournament.max_participants ? `/${tournament.max_participants}` : ''}</span></div>${tournament.payment_type === 'paid' ? `<div class="detail-row"><span class="detail-label">Revenue:</span><span class="detail-value">₦${parseInt(tournament.total_revenue || 0).toLocaleString()}</span></div>` : ''}</div><div><h4>Dates & Settings</h4><div class="detail-row"><span class="detail-label">Start:</span><span class="detail-value">${new Date(tournament.start_date).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' })} (Lagos)</span></div><div class="detail-row"><span class="detail-label">End:</span><span class="detail-value">${new Date(tournament.end_date).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' })} (Lagos)</span></div><div class="detail-row"><span class="detail-label">Token System:</span><span class="detail-value">${tournament.uses_tokens ? `Yes (${tournament.tokens_per_entry} tokens)` : 'No'}</span></div><div class="detail-row"><span class="detail-label">Unlimited Plays:</span><span class="detail-value">${tournament.unlimited_plays ? 'Yes' : 'No'}</span></div>${tournament.sponsor_name ? `<div class="detail-row"><span class="detail-label">Sponsor:</span><span class="detail-value">${tournament.sponsor_name}</span></div>` : ''}</div></div>`;
     if (participantsData.participants.length > 0) {
       html += `<h4>Top Participants</h4><table style="margin-top: 10px;"><thead><tr><th>Rank</th><th>Player</th><th>City</th><th>Best Score</th><th>Games Played</th><th>Payment</th></tr></thead><tbody>`;
       participantsData.participants.slice(0, 20).forEach(p => {
@@ -5371,6 +5752,7 @@ switchTab = function(tabName) {
     loadUsers();
   } else if (tabName === 'analytics') {
     loadAnalytics();
+    loadGeo(); loadInstalls();
   } else if (tabName === 'payouts') {
     loadPayouts();
   } else if (tabName === 'history') {

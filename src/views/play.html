@@ -5548,6 +5548,34 @@ function isInAppBrowser(){
   return !/Safari/.test(navigator.userAgent);
 }
 
+/* INSTALL COUNTING. track() only reaches Google/Meta when the marketing
+   site's tag is on the page, which it is not here, so installs were never
+   counted anywhere. These go to our own server instead: a random id kept in
+   this browser's storage (no personal data) and the step that happened.
+   Each step is sent at most once a day per device. */
+function installDeviceId(){
+  try{
+    let id=localStorage.getItem('wut_install_device');
+    if(!id){
+      id=(crypto.getRandomValues?Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('')
+         :(Date.now().toString(36)+Math.random().toString(36).slice(2))).slice(0,24);
+      localStorage.setItem('wut_install_device',id);
+    }
+    return id;
+  }catch(e){ return null; }
+}
+function installEvent(event, outcome){
+  try{
+    const id=installDeviceId(); if(!id) return;
+    const day=new Date().toISOString().slice(0,10);
+    const mark='wut_ie_'+event+(outcome?'_'+outcome:'');
+    if(localStorage.getItem(mark)===day) return;
+    localStorage.setItem(mark,day);
+    fetch('/web/app/install-event',{method:'POST',headers:H(),keepalive:true,
+      body:JSON.stringify({device:id,event:event,outcome:outcome||undefined})}).catch(()=>{});
+  }catch(e){}
+}
+
 function installDismissed(){
   try{ return localStorage.getItem('wut_install_dismissed')==='1'; }catch(e){ return false; }
 }
@@ -5571,14 +5599,17 @@ function showInstallCard(){
     $('installGo').onclick=async()=>{
       const p=installPrompt; installPrompt=null;
       $('installCard').hidden=true;
+      installEvent('install_click');
       try{
         p.prompt();
         const r=await p.userChoice;
         track('pwa_install_prompt',{outcome:r&&r.outcome});
+        if(r&&(r.outcome==='accepted'||r.outcome==='dismissed')) installEvent('install_choice',r.outcome);
         if(r&&r.outcome!=='accepted') dismissInstall();
       }catch(e){}
     };
     $('installCard').hidden=false;
+    installEvent('prompt_shown');
     return;
   }
 
@@ -5591,8 +5622,14 @@ function showInstallCard(){
       : 'Tap the Share button, then “Add to Home Screen”. '
         +'It opens full screen — and it is the only way an iPhone can alert you when a challenge is about to start.';
     $('installCard').hidden=false;
+    installEvent('ios_hint_shown');
   }
 }
+
+/* Opened from the home-screen icon. The one signal every phone gives,
+   iPhones included, and it also counts people who installed before counting
+   began, the first time they open the app. */
+if(isStandalone()) installEvent('opened_installed');
 
 window.addEventListener('beforeinstallprompt',e=>{
   /* Keep the event: without preventDefault the browser shows its own bar, and
@@ -5606,6 +5643,7 @@ window.addEventListener('appinstalled',()=>{
   installPrompt=null;
   $('installCard').hidden=true;
   track('pwa_installed',{});
+  installEvent('installed');
 });
 
 /* The worker is the shell cache and, later, the push receiver. Registration

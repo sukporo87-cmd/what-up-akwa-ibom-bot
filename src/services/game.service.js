@@ -42,6 +42,7 @@ const WhatsAppService = require('./whatsapp.service');
 const cloudinaryService = require('./cloudinary.service');
 const watchlistService = require('./watchlist.service');
 const { platformOf } = require('../utils/platform');
+const { formatLagos } = require('../utils/lagos-time');
 
 // ============================================
 // BASE CONFIGURATION
@@ -1783,8 +1784,65 @@ class GameService {
         }
     }
 
+    /**
+     * A tournament game may only START between the tournament's start and end
+     * time, and only while it is published (Upcoming or Active). Returns the
+     * message to send when it can't, or null when play is allowed.
+     *
+     * Every tournament game on every platform starts in startNewGame(), so
+     * this one check is the gate. It used to be missing: the end time only
+     * took a tournament off the lists, so anyone who had already joined could
+     * keep starting games until End Tournament was pressed (and before the
+     * start, through some paths). A game already running when the end time
+     * passes is allowed to finish.
+     *
+     * Compared by the database's own clock, the same one start/end are
+     * stored against, so it can't drift from the lists.
+     */
+    async tournamentClosedMessage(tournamentId) {
+        try {
+            const r = await pool.query(`
+                SELECT tournament_name, status, start_date, end_date,
+                       (start_date <= NOW()) AS started,
+                       (end_date > NOW())    AS still_open
+                FROM tournaments WHERE id = $1`, [tournamentId]);
+            const t = r.rows[0];
+            if (!t) return null;   // "Tournament not found" is handled below, as before
+            const head = `🏆 *${t.tournament_name}*\n\n`;
+            if (!['active', 'upcoming'].includes(t.status)) {
+                return head + (t.status === 'completed'
+                    ? 'This tournament has ended.\n\n'
+                    : 'This tournament is not open for play.\n\n') +
+                    'Type TOURNAMENTS to see what else is running, or PLAY for Classic Mode.';
+            }
+            if (!t.started) {
+                return head + `🔜 It starts on *${formatLagos(t.start_date)}* (Lagos time).\n\n` +
+                    'Come back then to play! 🎮\n\nType MENU to return.';
+            }
+            if (!t.still_open) {
+                return head + `⏰ This tournament closed at *${formatLagos(t.end_date)}* (Lagos time), ` +
+                    'so no more games can be started.\n\n' +
+                    'Type TOURNAMENTS to see what else is running, or PLAY for Classic Mode.';
+            }
+            return null;
+        } catch (error) {
+            logger.error(`Tournament window check failed for ${tournamentId}:`, error.message);
+            return null;
+        }
+    }
+
     async startNewGame(user, gameMode = 'classic', tournamentId = null) {
         try {
+            // Tournament not started yet, already closed, or ended: say so and
+            // stop, before anything is asked for or spent.
+            if (tournamentId !== null && tournamentId !== undefined) {
+                const closed = await this.tournamentClosedMessage(tournamentId);
+                if (closed) {
+                    await messagingService.sendMessage(user.phone_number, closed);
+                    return;
+                }
+            }
+
             // Must come first: everything below this line spends something.
             if (await this.promptForEmailIfDue(user, gameMode, tournamentId)) return;
 

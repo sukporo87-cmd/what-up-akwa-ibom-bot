@@ -14,6 +14,7 @@ const AdminAuthService = require('../services/admin-auth.service');
 const FinancialService = require('../services/financial.service');
 const loveQuestService = require('../services/love-quest.service');
 const { logger } = require('../utils/logger');
+const lagosTime = require('../utils/lagos-time');
 const analyticsService = require('../services/analytics.service');
 
 const payoutService = new PayoutService();
@@ -1141,66 +1142,38 @@ router.get('/api/analytics/games-count', authenticateAdmin, async (req, res) => 
 // PEAK TIMES ANALYTICS
 // ============================================
 router.get('/api/analytics/peak-times', authenticateAdmin, async (req, res) => {
+  // Counted straight from game_sessions, every time, in NIGERIAN time.
+  //
+  // This used to read a summary table (game_session_hourly_stats) that was
+  // filled ONCE, the first time the page was opened, and never again, while
+  // the chart only looks at the last 30 days. Thirty days after that first
+  // fill the chart went blank for good, however many games were played. The
+  // hours were also UTC, an hour behind Lagos. The old table is left alone,
+  // just no longer read.
   try {
-    // Check if hourly stats table exists and has data
-    const checkData = await pool.query(`
-      SELECT COUNT(*) as count FROM game_session_hourly_stats
-    `).catch(() => ({ rows: [{ count: 0 }] }));
-
-    if (parseInt(checkData.rows[0].count) === 0) {
-      logger.info('Populating hourly stats for the first time...');
-      
-      // Try to create the table if it doesn't exist
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS game_session_hourly_stats (
-          id SERIAL PRIMARY KEY,
-          date DATE NOT NULL,
-          hour_of_day INTEGER NOT NULL,
-          day_of_week INTEGER NOT NULL,
-          games_count INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(date, hour_of_day, day_of_week)
-        )
-      `).catch(err => logger.warn('Table might already exist:', err.message));
-      
-      // Populate with historical data
-      await pool.query(`
-        INSERT INTO game_session_hourly_stats (date, hour_of_day, day_of_week, games_count)
-        SELECT
-          DATE(completed_at) as date,
-          EXTRACT(HOUR FROM completed_at)::INTEGER as hour_of_day,
-          EXTRACT(DOW FROM completed_at)::INTEGER as day_of_week,
-          COUNT(*) as games_count
-        FROM game_sessions
-        WHERE status = 'completed'
-        AND completed_at IS NOT NULL
-        GROUP BY DATE(completed_at), EXTRACT(HOUR FROM completed_at), EXTRACT(DOW FROM completed_at)
-        ON CONFLICT (date, hour_of_day, day_of_week) 
-        DO UPDATE SET games_count = EXCLUDED.games_count
-      `).catch(err => logger.error('Error populating hourly stats:', err));
-    }
+    const raw = String(req.query.days || '30');
+    const days = raw === 'all' ? null : ([7, 30, 90].includes(parseInt(raw, 10)) ? parseInt(raw, 10) : 30);
+    const params = [];
+    let window = '';
+    if (days) { params.push(days); window = 'AND COALESCE(started_at, completed_at) >= NOW() - make_interval(days => $1)'; }
 
     const result = await pool.query(`
-      SELECT 
-        hour_of_day,
-        day_of_week,
-        SUM(games_count) as total_games,
-        CASE day_of_week
-          WHEN 0 THEN 'Sunday'
-          WHEN 1 THEN 'Monday'
-          WHEN 2 THEN 'Tuesday'
-          WHEN 3 THEN 'Wednesday'
-          WHEN 4 THEN 'Thursday'
-          WHEN 5 THEN 'Friday'
-          WHEN 6 THEN 'Saturday'
-        END as day_name
-      FROM game_session_hourly_stats
-      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-      GROUP BY hour_of_day, day_of_week
-      ORDER BY day_of_week, hour_of_day
-    `).catch(() => ({ rows: [] }));
+      WITH g AS (
+        SELECT timezone('Africa/Lagos', COALESCE(started_at, completed_at)::timestamptz) AS local_time
+        FROM game_sessions
+        WHERE status = 'completed' AND COALESCE(started_at, completed_at) IS NOT NULL
+        ${window}
+      )
+      SELECT EXTRACT(HOUR FROM local_time)::int AS hour_of_day,
+             EXTRACT(DOW FROM local_time)::int  AS day_of_week,
+             COUNT(*)::int                      AS total_games
+      FROM g
+      GROUP BY 1, 2
+      ORDER BY 2, 1
+    `, params);
 
-    res.json(result.rows);
+    const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    res.json(result.rows.map(r => ({ ...r, day_name: names[r.day_of_week] })));
   } catch (error) {
     logger.error('Error getting peak times:', error);
     res.status(500).json({ error: 'Failed to fetch peak times' });
@@ -2197,6 +2170,19 @@ router.get('/api/tournaments/:id(\\d+)', authenticateAdmin, async (req, res) => 
     }
 });
 
+// Tournament start/end arrive as LAGOS time (what the admin typed) and are
+// stored in UTC like every other time (see utils/lagos-time.js). The end
+// must come after the start: it is what stops new games being started.
+function tournamentWindow(startDate, endDate) {
+    const start = lagosTime.toDbUtc(startDate);
+    const end = lagosTime.toDbUtc(endDate);
+    if (!start || !end) return { error: 'Start and end need a date and a time' };
+    if (lagosTime.parseAdminTime(endDate) <= lagosTime.parseAdminTime(startDate)) {
+        return { error: 'The end time must be after the start time' };
+    }
+    return { start, end };
+}
+
 router.post('/api/tournaments', authenticateAdmin, async (req, res) => {
     try {
         const {
@@ -2232,7 +2218,10 @@ router.post('/api/tournaments', authenticateAdmin, async (req, res) => {
         if (usesTokens && !tokensPerEntry) {
             return res.status(400).json({ error: 'Tokens per entry required when using token system' });
         }
-        
+
+        const win = tournamentWindow(startDate, endDate);
+        if (win.error) return res.status(400).json({ error: win.error });
+
         // Create tournament
         const enableTurboMode = req.body.enableTurboMode !== false; // default true
         const result = await pool.query(`
@@ -2249,7 +2238,7 @@ router.post('/api/tournaments', authenticateAdmin, async (req, res) => {
             tournamentName, tournamentType || 'sponsored', sponsorName, sponsorLogoUrl,
             description, paymentType || 'free', usesTokens || false, tokensPerEntry,
             unlimitedPlays !== false, entryFee || 0, prizePool, maxParticipants,
-            startDate, endDate, questionCategory, customInstructions,
+            win.start, win.end, questionCategory, customInstructions,
             customBranding, status || 'upcoming', enableTurboMode
         ]);
         
@@ -2294,7 +2283,10 @@ router.put('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
             status
         } = req.body;
         const enableTurboMode = req.body.enableTurboMode !== false; // default true
-        
+
+        const win = tournamentWindow(startDate, endDate);
+        if (win.error) return res.status(400).json({ error: win.error });
+
         const result = await pool.query(`
             UPDATE tournaments
             SET tournament_name = $1,
@@ -2322,7 +2314,7 @@ router.put('/api/tournaments/:id', authenticateAdmin, async (req, res) => {
             tournamentName, tournamentType, sponsorName, sponsorLogoUrl,
             description, paymentType, usesTokens, tokensPerEntry,
             unlimitedPlays, entryFee, prizePool, maxParticipants,
-            startDate, endDate, questionCategory, customInstructions,
+            win.start, win.end, questionCategory, customInstructions,
             customBranding, status, enableTurboMode, tournamentId
         ]);
         
@@ -6550,7 +6542,7 @@ router.get('/tournaments/manage', async (req, res) => {
                                 <div class="col-4"><strong class="text-success">₦${parseInt(t.prize_pool || 0).toLocaleString()}</strong><br><small>Prize</small></div>
                                 <div class="col-4"><strong class="text-info">${t.total_games_played || 0}</strong><br><small>Games</small></div>
                             </div>
-                            <p class="small text-muted mb-1"><i class="bi bi-calendar me-1"></i>${new Date(t.start_date).toLocaleDateString()} - ${new Date(t.end_date).toLocaleDateString()}</p>
+                            <p class="small text-muted mb-1"><i class="bi bi-calendar me-1"></i>${lagosTime.formatLagos(t.start_date)} → ${lagosTime.formatLagos(t.end_date)} <span class="text-muted">(Lagos)</span></p>
                             <p class="small text-muted mb-0"><i class="bi bi-cash me-1"></i>${t.payment_type === 'free' ? 'Free Entry' : '₦' + (t.entry_fee || 0).toLocaleString() + ' Entry'}</p>
                             ${t.uses_tokens ? '<p class="small text-warning mb-0"><i class="bi bi-coin me-1"></i>' + (t.tokens_per_entry || 1) + ' tokens/game</p>' : ''}
                         </div>
@@ -6725,11 +6717,11 @@ router.get('/tournaments/manage', async (req, res) => {
                             <h6><i class="bi bi-calendar-range me-2"></i>Duration & Limits</h6>
                             <div class="row">
                                 <div class="col-md-4 mb-3">
-                                    <label class="form-label">Start Date *</label>
+                                    <label class="form-label">Starts (Lagos time) *</label>
                                     <input type="datetime-local" class="form-control" name="startDate" required>
                                 </div>
                                 <div class="col-md-4 mb-3">
-                                    <label class="form-label">End Date *</label>
+                                    <label class="form-label">Ends (Lagos time) *</label>
                                     <input type="datetime-local" class="form-control" name="endDate" required>
                                 </div>
                                 <div class="col-md-4 mb-3">
@@ -7144,11 +7136,11 @@ router.get('/tournaments/manage', async (req, res) => {
                             </div>
                             <div class="detail-item">
                                 <label>Start Date</label>
-                                <div class="value">\${new Date(t.start_date).toLocaleString()}</div>
+                                <div class="value">\${new Date(t.start_date).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} (Lagos)</div>
                             </div>
                             <div class="detail-item">
                                 <label>End Date</label>
-                                <div class="value">\${new Date(t.end_date).toLocaleString()}</div>
+                                <div class="value">\${new Date(t.end_date).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} (Lagos)</div>
                             </div>
                             <div class="detail-item">
                                 <label>Max Participants</label>
@@ -8542,6 +8534,10 @@ router.post('/api/notify-tournament5-winners', authenticateAdmin, async (req, re
 // ============================================
 // ADMIN MESSAGING SYSTEM
 // ============================================
+// Every messaging API needs an admin login, like the rest of admin. These
+// were open to anyone who knew the address: broadcast to every player, look
+// up players' phones and emails, read the message history. The page already
+// sends the login with every request, so nothing changes for an admin.
 
 // Serve messaging dashboard page
 router.get('/messaging', (req, res) => {
@@ -8549,7 +8545,7 @@ router.get('/messaging', (req, res) => {
 });
 
 // Search users for direct messaging
-router.get('/api/messaging/search-users', async (req, res) => {
+router.get('/api/messaging/search-users', authenticateAdmin, async (req, res) => {
   try {
     const { q } = req.query;
     if (!q || q.length < 2) return res.json({ users: [] });
@@ -8566,7 +8562,7 @@ router.get('/api/messaging/search-users', async (req, res) => {
 });
 
 // Send direct message to a user
-router.post('/api/messaging/send-direct', async (req, res) => {
+router.post('/api/messaging/send-direct', authenticateAdmin, async (req, res) => {
   try {
     const { phone, message, subject, kind, sentBy } = req.body;
     if (!phone || !message) return res.status(400).json({ error: 'Recipient and message required' });
@@ -8588,10 +8584,16 @@ router.post('/api/messaging/send-direct', async (req, res) => {
       return res.status(400).json({ error: outcome.reason || 'Could not deliver the message' });
     }
 
+    // How it went out (WhatsApp, Telegram, or email for web players) and the
+    // email subject, so the history can show them.
     await pool.query(`
-      INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status)
-      VALUES ('direct', $1, $2, $3, 'sent')
-    `, [phone, message, sentBy || 'admin']);
+      INSERT INTO admin_message_log (message_type, recipient_phone, content, sent_by, status, metadata)
+      VALUES ('direct', $1, $2, $3, 'sent', $4)
+    `, [phone, message, sentBy || 'admin', JSON.stringify({
+      channel: outcome.channel || null,
+      subject: outcome.channel === 'web' ? (subject || "A message from What's Up Trivia") : undefined,
+      kind: kind === 'marketing' ? 'marketing' : 'transactional'
+    })]);
 
     res.json({ success: true, message: 'Message sent' });
   } catch (error) {
@@ -8604,7 +8606,7 @@ router.post('/api/messaging/send-direct', async (req, res) => {
 });
 
 // Broadcast message to all users or filtered set
-router.post('/api/messaging/broadcast', async (req, res) => {
+router.post('/api/messaging/broadcast', authenticateAdmin, async (req, res) => {
   try {
     const { message, filter, sentBy } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
@@ -8655,34 +8657,43 @@ router.post('/api/messaging/broadcast', async (req, res) => {
 });
 
 // Get message history
-router.get('/api/messaging/history', async (req, res) => {
+router.get('/api/messaging/history', authenticateAdmin, async (req, res) => {
   try {
-    const { page = 1, limit = 50, type } = req.query;
+    const { type } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const offset = (page - 1) * limit;
-    let query = 'SELECT * FROM admin_message_log';
+    // Each row carries the recipient's username and name, so the history can
+    // say who a "web_e562f44ec7ff" is when a message is opened.
+    let query = `SELECT m.*, u.username AS recipient_username, u.full_name AS recipient_name
+                 FROM admin_message_log m
+                 LEFT JOIN users u ON u.phone_number = m.recipient_phone`;
     const params = [];
-    if (type) { params.push(type); query += ` WHERE message_type = $${params.length}`; }
-    query += ' ORDER BY created_at DESC';
+    if (type) { params.push(type); query += ` WHERE m.message_type = $${params.length}`; }
+    query += ' ORDER BY m.created_at DESC';
     params.push(limit); query += ` LIMIT $${params.length}`;
     params.push(offset); query += ` OFFSET $${params.length}`;
 
     const result = await pool.query(query, params);
-    const countResult = await pool.query('SELECT COUNT(*) FROM admin_message_log');
-    res.json({ messages: result.rows, total: parseInt(countResult.rows[0].count) });
+    // The total follows the type filter, so the page buttons are right.
+    const countResult = type
+      ? await pool.query('SELECT COUNT(*) FROM admin_message_log WHERE message_type = $1', [type])
+      : await pool.query('SELECT COUNT(*) FROM admin_message_log');
+    res.json({ messages: result.rows, total: parseInt(countResult.rows[0].count), page, limit });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // Templates CRUD
-router.get('/api/messaging/templates', async (req, res) => {
+router.get('/api/messaging/templates', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM admin_message_templates ORDER BY category, name');
     res.json({ templates: result.rows });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.post('/api/messaging/templates', async (req, res) => {
+router.post('/api/messaging/templates', authenticateAdmin, async (req, res) => {
   try {
     const { name, content, category, variables, createdBy } = req.body;
     const result = await pool.query(`
@@ -8693,7 +8704,7 @@ router.post('/api/messaging/templates', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.put('/api/messaging/templates/:id', async (req, res) => {
+router.put('/api/messaging/templates/:id', authenticateAdmin, async (req, res) => {
   try {
     const { name, content, category, variables } = req.body;
     const result = await pool.query(`
@@ -8704,7 +8715,7 @@ router.put('/api/messaging/templates/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.delete('/api/messaging/templates/:id', async (req, res) => {
+router.delete('/api/messaging/templates/:id', authenticateAdmin, async (req, res) => {
   try {
     await pool.query('DELETE FROM admin_message_templates WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -8712,7 +8723,7 @@ router.delete('/api/messaging/templates/:id', async (req, res) => {
 });
 
 // Schedule a message
-router.post('/api/messaging/schedule', async (req, res) => {
+router.post('/api/messaging/schedule', authenticateAdmin, async (req, res) => {
   try {
     const { messageType, recipientPhone, content, scheduledFor, filterCriteria, createdBy } = req.body;
     const result = await pool.query(`
@@ -8723,14 +8734,14 @@ router.post('/api/messaging/schedule', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.get('/api/messaging/scheduled', async (req, res) => {
+router.get('/api/messaging/scheduled', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM admin_scheduled_messages ORDER BY scheduled_for ASC');
     res.json({ scheduled: result.rows });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.delete('/api/messaging/scheduled/:id', async (req, res) => {
+router.delete('/api/messaging/scheduled/:id', authenticateAdmin, async (req, res) => {
   try {
     await pool.query("UPDATE admin_scheduled_messages SET status = 'cancelled' WHERE id = $1 AND status = 'pending'", [req.params.id]);
     res.json({ success: true });
@@ -8738,7 +8749,7 @@ router.delete('/api/messaging/scheduled/:id', async (req, res) => {
 });
 
 // Messaging stats
-router.get('/api/messaging/stats', async (req, res) => {
+router.get('/api/messaging/stats', authenticateAdmin, async (req, res) => {
   try {
     const [totalSent, todaySent, broadcasts, scheduled] = await Promise.all([
       pool.query("SELECT COUNT(*) FROM admin_message_log"),

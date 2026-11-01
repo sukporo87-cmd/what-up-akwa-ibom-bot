@@ -40,6 +40,7 @@ const auditService = require('../services/audit.service');
 const loveQuestService = require('../services/love-quest.service');
 const reviewInvites = require('../services/review-invite.service');
 const { logger } = require('../utils/logger');
+const { formatLagos } = require('../utils/lagos-time');
 
 const messagingService = new MessagingService();
 const gameService = GameService.shared;
@@ -1356,14 +1357,14 @@ Type the code, or type SKIP to continue:`
         message += `━━━━━━━━━━━━━━━━\n\n`;
         
         freeTournaments.forEach((t, index) => {
-          const endDate = new Date(t.end_date).toLocaleDateString();
+          const endDate = formatLagos(t.end_date);
           const sponsorTag = t.sponsor_name ? `\n_Sponsored by ${t.sponsor_name}_` : '';
           const startDate = new Date(t.start_date);
           const isUpcoming = t.is_upcoming || startDate > new Date();
           
           message += `${index + 1}️⃣ *${t.tournament_name}*${sponsorTag}\n`;
           if (isUpcoming) {
-            message += `🔜 Starts: ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n`;
+            message += `🔜 Starts: ${formatLagos(startDate)}\n`;
           }
           message += `💰 Prize Pool: ₦${t.prize_pool.toLocaleString()}\n`;
           message += `📅 Ends: ${endDate}\n`;
@@ -1378,14 +1379,14 @@ Type the code, or type SKIP to continue:`
         message += `━━━━━━━━━━━━━━━━\n\n`;
         
         paidTournaments.forEach((t, index) => {
-          const endDate = new Date(t.end_date).toLocaleDateString();
+          const endDate = formatLagos(t.end_date);
           const sponsorTag = t.sponsor_name ? `\n_Sponsored by ${t.sponsor_name}_` : '';
           const startDate = new Date(t.start_date);
           const isUpcoming = t.is_upcoming || startDate > new Date();
           
           message += `${startIndex + index + 1}️⃣ *${t.tournament_name}*${sponsorTag}\n`;
           if (isUpcoming) {
-            message += `🔜 Starts: ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n`;
+            message += `🔜 Starts: ${formatLagos(startDate)}\n`;
           }
           message += `💰 Prize Pool: ₦${t.prize_pool.toLocaleString()}\n`;
           message += `🎟️ Entry: ₦${t.entry_fee.toLocaleString()}\n`;
@@ -1452,7 +1453,7 @@ Type the code, or type SKIP to continue:`
           user.phone_number,
           `🏆 *${tournament.tournament_name}*\n\n` +
           `✅ You're already registered!\n\n` +
-          `🔜 This tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n` +
+          `🔜 This tournament starts on *${formatLagos(startDate)}* (Lagos time).\n\n` +
           `Come back then to play! 🎮\n\nType MENU to return.`
         );
         return;
@@ -1527,7 +1528,7 @@ Type the code, or type SKIP to continue:`
         
         if (isUpcoming) {
           const startDate = new Date(tournament.start_date);
-          message += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
+          message += `🔜 Tournament starts on *${formatLagos(startDate)}* (Lagos time).\n\n`;
           message += `Come back then to play! 🎮`;
           await messagingService.sendMessage(user.phone_number, message);
         } else {
@@ -1568,7 +1569,7 @@ Type the code, or type SKIP to continue:`
         message += `♾️ Unlimited plays after payment\n`;
       }
       
-      message += `📅 Duration: Until ${new Date(tournament.end_date).toLocaleDateString()}\n`;
+      message += `📅 Closes: ${formatLagos(tournament.end_date)} (Lagos time)\n`;
       
       if (tournament.max_participants) {
         const spotsLeft = tournament.max_participants - (tournament.participant_count || 0);
@@ -1760,7 +1761,7 @@ Type the code, or type SKIP to continue:`
         const isUpcoming = new Date(tournament.start_date) > new Date();
         if (isUpcoming) {
           const startDate = new Date(tournament.start_date);
-          confirmMsg += `🔜 Tournament starts on *${startDate.toLocaleDateString()}* at *${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}*.\n\n`;
+          confirmMsg += `🔜 Tournament starts on *${formatLagos(startDate)}* (Lagos time).\n\n`;
           confirmMsg += `Come back then to play! 🎮`;
           await messagingService.sendMessage(phone, confirmMsg);
         } else {

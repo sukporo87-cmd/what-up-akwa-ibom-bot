@@ -78,6 +78,37 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
 .char-count{font-size:12px;color:#64748b;text-align:right;margin-top:4px}
 .empty-state{text-align:center;padding:40px;color:#64748b}
 .empty-state .icon{font-size:48px;margin-bottom:12px}
+/* Message history: every row opens the full message. */
+.history-table tbody tr.msg-row{cursor:pointer}
+.history-table tbody tr.msg-row:hover{background:rgba(245,158,11,0.07)}
+.history-table tbody tr.msg-row:focus{outline:2px solid #f59e0b;outline-offset:-2px}
+.history-table td.msg-preview{max-width:420px;color:#cbd5e1}
+.history-table td.msg-preview .more{color:#f59e0b;font-size:12px;margin-left:6px;white-space:nowrap}
+.rcpt-name{font-weight:600;color:#fff}
+.rcpt-id{font-size:11px;color:#64748b}
+.pager{display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px;color:#94a3b8}
+.pager button{padding:7px 14px;font-size:13px}
+.msg-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.72);display:none;align-items:flex-start;justify-content:center;
+  z-index:9000;padding:40px 16px;overflow-y:auto}
+.msg-overlay.open{display:flex}
+.msg-dialog{background:#141827;border:1px solid #2d3348;border-radius:14px;width:100%;max-width:640px;
+  box-shadow:0 24px 60px rgba(0,0,0,0.5)}
+.msg-dialog .md-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #2d3348}
+.msg-dialog .md-head h3{font-size:16px;color:#fff;margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.msg-dialog .md-close{background:transparent;border:1px solid #2d3348;color:#94a3b8;width:34px;height:34px;border-radius:8px;
+  cursor:pointer;font-size:18px;line-height:1;flex-shrink:0}
+.msg-dialog .md-close:hover{color:#fff;border-color:#475569}
+.msg-dialog .md-body{padding:18px 22px}
+.md-facts{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;font-size:13px;margin-bottom:16px}
+.md-facts dt{color:#94a3b8}
+.md-facts dd{color:#e2e8f0;word-break:break-word}
+.md-text{background:#0f1117;border:1px solid #2d3348;border-radius:10px;padding:14px 16px;font-size:14px;line-height:1.6;
+  color:#e2e8f0;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow-y:auto;user-select:text}
+.md-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;border-radius:10px;
+  padding:10px 14px;font-size:13px;margin-bottom:14px;white-space:pre-wrap}
+.md-actions{display:flex;gap:10px;flex-wrap:wrap;padding:0 22px 20px}
+.md-actions .btn{padding:9px 16px;font-size:13px}
+@media (max-width:560px){.md-facts{grid-template-columns:1fr}.md-facts dt{margin-top:6px}}
 .toast{position:fixed;top:20px;right:20px;padding:14px 24px;border-radius:10px;font-size:14px;font-weight:500;z-index:9999;transform:translateX(120%);transition:transform .3s ease;max-width:400px}
 .toast.show{transform:translateX(0)}
 .toast-success{background:#059669;color:#fff}
@@ -246,7 +277,7 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
     <div class="card">
       <h3>📜 Message History</h3>
       <div style="margin-bottom:16px;display:flex;gap:12px">
-        <select id="historyFilter" onchange="loadHistory()" style="padding:8px;background:#0f1117;border:1px solid #2d3348;border-radius:6px;color:#fff;font-family:inherit">
+        <select id="historyFilter" onchange="historyPage=1;loadHistory()" style="padding:8px;background:#0f1117;border:1px solid #2d3348;border-radius:6px;color:#fff;font-family:inherit">
           <option value="">All Types</option><option value="direct">Direct</option><option value="broadcast">Broadcast</option><option value="scheduled">Scheduled</option>
         </select>
       </div>
@@ -275,6 +306,26 @@ body{font-family:'DM Sans',sans-serif;background:#0a0e1a;color:#e2e8f0;min-heigh
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Full view of one sent message, opened from History. -->
+<div class="msg-overlay" id="msgOverlay" onclick="if(event.target===this)closeMessage()">
+  <div class="msg-dialog" role="dialog" aria-modal="true" aria-labelledby="mdTitle">
+    <div class="md-head">
+      <h3 id="mdTitle">Message</h3>
+      <button class="md-close" onclick="closeMessage()" aria-label="Close">×</button>
+    </div>
+    <div class="md-body">
+      <dl class="md-facts" id="mdFacts"></dl>
+      <div class="md-error" id="mdError" hidden></div>
+      <div class="md-text" id="mdText"></div>
+    </div>
+    <div class="md-actions">
+      <button class="btn btn-primary" id="mdCopy" onclick="copyMessage()">📋 Copy message</button>
+      <button class="btn btn-secondary" id="mdCopyTo" onclick="copyRecipient()">Copy recipient</button>
+      <button class="btn btn-secondary" onclick="closeMessage()">Close</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const API_BASE = '/admin';
@@ -636,22 +687,134 @@ async function cancelScheduled(id) {
 }
 
 // History
+/* Every row opens the whole message, with who it went to, how, and what
+   happened. Text is escaped before it touches the page. */
+let historyRows = [];
+let openMsg = null;
+const HISTORY_PER_PAGE = 30;
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const lagosTime = (d) => d ? new Date(d).toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short',
+  year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
+function msgMeta(m) {
+  if (!m.metadata) return {};
+  if (typeof m.metadata === 'object') return m.metadata;
+  try { return JSON.parse(m.metadata); } catch (e) { return {}; }
+}
+function recipientCell(m) {
+  if (!m.recipient_phone) return `<span class="rcpt-name">${Number(m.recipient_count || 0).toLocaleString()} players</span>`;
+  const p = wutPlatform(m.recipient_phone);
+  const who = m.recipient_username ? '@' + m.recipient_username : (m.recipient_name || m.recipient_phone);
+  return `<div class="rcpt-name">${wutIcon(p)} ${esc(who)}</div><div class="rcpt-id">${esc(m.recipient_phone)}</div>`;
+}
+
 async function loadHistory() {
   const type = document.getElementById('historyFilter')?.value || '';
-  const data = await api(`/api/messaging/history?page=${historyPage}&limit=30&type=${type}`);
+  const data = await api(`/api/messaging/history?page=${historyPage}&limit=${HISTORY_PER_PAGE}&type=${encodeURIComponent(type)}`);
   if (!data) return;
   const body = document.getElementById('historyBody');
-  if (!data.messages?.length) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#64748b">No messages yet</td></tr>'; return; }
-  body.innerHTML = data.messages.map(m => `
-    <tr>
-      <td><span class="badge badge-${m.message_type}">${m.message_type}</span></td>
-      <td>${m.recipient_phone || `${m.recipient_count || 0} users`}</td>
-      <td title="${m.content.replace(/"/g, '&quot;')}">${m.content.substring(0, 60)}${m.content.length > 60 ? '...' : ''}</td>
-      <td><span class="badge badge-${m.status}">${m.status}</span></td>
-      <td>${m.sent_by || '-'}</td>
-      <td>${new Date(m.created_at).toLocaleString()}</td>
-    </tr>
-  `).join('');
+  historyRows = data.messages || [];
+  if (!historyRows.length) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#64748b">No messages yet</td></tr>';
+    renderHistoryPager(0);
+    return;
+  }
+  body.innerHTML = historyRows.map((m, i) => {
+    const text = String(m.content || '');
+    const preview = text.replace(/\s+/g, ' ').trim();
+    return `
+    <tr class="msg-row" tabindex="0" data-i="${i}" title="Open the full message">
+      <td><span class="badge badge-${esc(m.message_type)}">${esc(m.message_type)}</span></td>
+      <td>${recipientCell(m)}</td>
+      <td class="msg-preview">${esc(preview.substring(0, 70))}${preview.length > 70 ? '…<span class="more">Read all</span>' : ''}</td>
+      <td><span class="badge badge-${esc(m.status)}">${esc(m.status)}</span></td>
+      <td>${esc(m.sent_by || '-')}</td>
+      <td>${lagosTime(m.created_at)}</td>
+    </tr>`;
+  }).join('');
+  renderHistoryPager(data.total || 0);
+}
+
+function renderHistoryPager(total) {
+  const el = document.getElementById('historyPagination');
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PER_PAGE));
+  if (total <= HISTORY_PER_PAGE) { el.innerHTML = total ? `<div class="pager">${total} message${total === 1 ? '' : 's'}</div>` : ''; return; }
+  el.innerHTML = `<div class="pager">
+    <button class="btn btn-secondary" ${historyPage <= 1 ? 'disabled' : ''} onclick="historyGo(-1)">← Newer</button>
+    <span>Page ${historyPage} of ${pages} · ${total.toLocaleString()} messages</span>
+    <button class="btn btn-secondary" ${historyPage >= pages ? 'disabled' : ''} onclick="historyGo(1)">Older →</button>
+  </div>`;
+}
+function historyGo(step) { historyPage = Math.max(1, historyPage + step); loadHistory(); }
+
+document.addEventListener('click', (e) => {
+  const row = e.target.closest && e.target.closest('tr.msg-row');
+  if (row) showMessage(historyRows[Number(row.dataset.i)]);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('msgOverlay').classList.contains('open')) { closeMessage(); return; }
+  const row = e.target.closest && e.target.closest('tr.msg-row');
+  if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); showMessage(historyRows[Number(row.dataset.i)]); }
+});
+
+function showMessage(m) {
+  if (!m) return;
+  openMsg = m;
+  const meta = msgMeta(m);
+  const facts = [];
+  const add = (k, v) => { if (v !== undefined && v !== null && v !== '') facts.push(`<dt>${esc(k)}</dt><dd>${v}</dd>`); };
+  document.getElementById('mdTitle').innerHTML =
+    `<span class="badge badge-${esc(m.message_type)}">${esc(m.message_type)}</span>
+     <span class="badge badge-${esc(m.status)}">${esc(m.status)}</span> Message #${esc(m.id)}`;
+
+  if (m.recipient_phone) {
+    const p = wutPlatform(m.recipient_phone);
+    add('To', `${m.recipient_username ? '<b>@' + esc(m.recipient_username) + '</b>' : ''}${m.recipient_name ? ' · ' + esc(m.recipient_name) : ''}` || esc(m.recipient_phone));
+    add('Platform', `${wutIcon(p)} ${wutLabel(p)}`);
+    add('Player ID', esc(m.recipient_phone));
+    if (meta.channel) add('Delivered by', meta.channel === 'web' ? '✉️ Email (web player)' : esc(wutLabel(meta.channel)));
+    if (meta.subject) add('Email subject', esc(meta.subject));
+  } else {
+    add('To', `${Number(m.recipient_count || 0).toLocaleString()} players`);
+    if (meta.sent != null) add('Delivered', `${Number(meta.sent).toLocaleString()} sent${meta.failed ? ` · <span style="color:#fca5a5">${Number(meta.failed).toLocaleString()} failed</span>` : ''}`);
+    const f = meta.filter || {};
+    const aud = [];
+    if (f.platform) aud.push(wutLabel(f.platform) + ' only');
+    if (f.minGames) aud.push(`played ${f.minGames}+ games`);
+    if (f.maxGames) aud.push(`played up to ${f.maxGames} games`);
+    if (f.inactiveDays) aud.push(`inactive ${f.inactiveDays}+ days`);
+    if (f.hasEmail === true) aud.push('has an email');
+    if (f.hasEmail === false) aud.push('no email');
+    add('Audience', esc(aud.length ? aud.join(' · ') : 'Everyone'));
+  }
+  if (meta.kind) add('Kind', meta.kind === 'marketing' ? 'Marketing' : 'Account / service');
+  if (meta.scheduled_id) add('Scheduled', `Yes (schedule #${esc(meta.scheduled_id)})`);
+  add('Sent by', esc(m.sent_by || '-'));
+  add('Sent at', esc(lagosTime(m.created_at)) + ' <span style="color:#64748b">(Lagos time)</span>');
+  const text = String(m.content || '');
+  add('Length', `${text.length.toLocaleString()} characters`);
+
+  document.getElementById('mdFacts').innerHTML = facts.join('');
+  const err = document.getElementById('mdError');
+  if (m.error_message) { err.hidden = false; err.textContent = 'Not delivered: ' + m.error_message; } else { err.hidden = true; }
+  document.getElementById('mdText').textContent = text;
+  document.getElementById('mdCopyTo').hidden = !m.recipient_phone;
+  document.getElementById('msgOverlay').classList.add('open');
+  document.getElementById('mdCopy').focus();
+}
+function closeMessage() { document.getElementById('msgOverlay').classList.remove('open'); openMsg = null; }
+
+async function copyText(text, done) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {
+    const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select(); try { document.execCommand('copy'); } catch (e2) {} t.remove();
+  }
+  showToast(done);
+}
+function copyMessage() { if (openMsg) copyText(String(openMsg.content || ''), 'Message copied'); }
+function copyRecipient() {
+  if (!openMsg || !openMsg.recipient_phone) return;
+  copyText(openMsg.recipient_username ? '@' + openMsg.recipient_username : openMsg.recipient_phone, 'Recipient copied');
 }
 
 // Init
