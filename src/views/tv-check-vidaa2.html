@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WUT TV VIDAA check 2</title>
+<!--
+  WUT TV, phase 6 (Nov 5, 2026): the second VIDAA check. The first one showed
+  that in a VIDAA TV's browser the arrows and OK never reach a page: the
+  browser keeps them for its own cursor, which jumps between buttons and
+  clicks with OK. This page shows exactly what that cursor does, so we know
+  whether a click-only WUT TV could work there before VIDAA lets us publish
+  an app:
+    * four ordinary page buttons: does the cursor jump to them, and does OK
+      click them?
+    * three boxes marked as buttons the way Flutter's accessibility layer
+      marks them (role="button"): does the cursor treat them as buttons?
+    * one drawn area, like the WUT TV app, which draws its whole screen as
+      a picture: can the cursor move inside it, and where does OK click?
+    * sound, two ways: the Web Audio beep, and an ordinary sound file
+  Opened on the TV from https://play.whatsuptrivia.com.ng/tv-check-vidaa2.html.
+  It changes nothing anywhere and sends nothing anywhere.
+-->
+<style>
+  html, body { margin: 0; background: #1d0b5c; color: #fff; }
+  body { font: 1.25vw/1.3 sans-serif; padding: 1.4vw 2.6vw; }
+  h1 { font-size: 2vw; margin: 0 0 0.2vw; }
+  h2 { font-size: 1.4vw; margin: 0.8vw 0 0.3vw; color: #ffd84d; }
+  .lead { color: #d8d0ff; }
+  .cols { display: table; width: 100%; table-layout: fixed; }
+  .col { display: table-cell; vertical-align: top; padding-right: 2vw; }
+  .col:last-child { padding-right: 0; width: 34%; }
+  button, .role { font: inherit; font-size: 1.4vw; font-weight: bold; padding: 0.8vw 1.6vw; margin: 0 0.8vw 0.6vw 0;
+    border-radius: 0.8vw; border: 0.25vw solid transparent; background: #5b12fc; color: #fff; cursor: pointer; display: inline-block; }
+  button:focus, .role:focus { border-color: #ffd84d; outline: none; }
+  button.hit, .role.hit { background: #2fa36b; }
+  .role { background: #3d2a8c; }
+  #draw { display: block; width: 100%; height: 13vw; background: #2a0a8c; border-radius: 0.8vw; cursor: crosshair; }
+  .small { font-size: 1vw; color: #c8bff0; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 0.12vw 0.6vw 0.12vw 0; vertical-align: top; }
+  td.k { color: #d8d0ff; white-space: nowrap; width: 1%; }
+  .ok { color: #6be38a; font-weight: bold; }
+  .no { color: #ff8a8a; font-weight: bold; }
+  .mid { color: #ffd84d; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>WUT TV: VIDAA check 2 (the remote in the browser)</h1>
+<div class="lead">Do the 4 steps on the right, in order, then take one photo of the whole screen.</div>
+
+<div class="cols">
+  <div class="col">
+    <h2>1. Page buttons</h2>
+    <button id="b1">One</button><button id="b2">Two</button><button id="b3">Three</button><button id="b4">Four</button>
+    <h2>2. Boxes marked as buttons (as the app's would be)</h2>
+    <div class="role" role="button" tabindex="0" id="r1">Box A</div><div class="role" role="button" tabindex="0" id="r2">Box B</div><div class="role" role="button" tabindex="0" id="r3">Box C</div>
+    <h2>3. A drawn area, like the WUT TV app</h2>
+    <canvas id="draw" width="960" height="200"></canvas>
+    <h2>4. Sound</h2>
+    <button id="s1">Beep (Web Audio)</button><button id="s2">Beep (sound file)</button>
+  </div>
+  <div class="col">
+    <h2>What to do</h2>
+    <div class="small">
+      <b>1.</b> Press the arrows. Does the cursor jump from button to button? Put it on <b>One</b>, <b>Two</b>, <b>Three</b>, <b>Four</b> and press OK on each.<br>
+      <b>2.</b> Try to reach <b>Box A</b>, <b>Box B</b> and <b>Box C</b> and press OK on each.<br>
+      <b>3.</b> Try to move the cursor into the drawn area. Press OK on each of the four drawn squares.<br>
+      <b>4.</b> Press OK on both beeps. Say which ones you heard.
+    </div>
+    <h2>What the page saw</h2>
+    <table id="sum"></table>
+    <h2>Last events (newest first)</h2>
+    <table id="log"><tr><td class="small">Nothing yet.</td></tr></table>
+  </div>
+</div>
+
+<script>
+(function () {
+  var log = [];
+  var seen = { clicks: {}, cursorMoves: 0, inDrawing: 0, drawnHits: {}, keys: 0, webAudio: 'not tried', file: 'not tried', lastPos: '' };
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function add(what, detail) {
+    log.unshift([what, detail || '']);
+    if (log.length > 9) log.pop();
+    draw();
+  }
+  function row(k, v, cls) { return '<tr><td class="k">' + esc(k) + '</td><td' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(v) + '</td></tr>'; }
+  function draw() {
+    var t = '';
+    for (var i = 0; i < log.length; i++) t += row(log[i][0], log[i][1]);
+    document.getElementById('log').innerHTML = t || '<tr><td class="small">Nothing yet.</td></tr>';
+    var c = Object.keys(seen.clicks), d = Object.keys(seen.drawnHits);
+    var s = '';
+    s += row('Page buttons clicked', c.filter(function (x) { return /^(One|Two|Three|Four)$/.test(x); }).join(', ') || 'none', c.length ? 'ok' : 'mid');
+    s += row('Boxes clicked', c.filter(function (x) { return /^Box/.test(x); }).join(', ') || 'none', /Box/.test(c.join()) ? 'ok' : 'mid');
+    s += row('Cursor moves seen', String(seen.cursorMoves), seen.cursorMoves ? 'ok' : 'mid');
+    s += row('Cursor moves in the drawing', String(seen.inDrawing), seen.inDrawing ? 'ok' : 'mid');
+    s += row('Drawn squares clicked', d.join(', ') || 'none', d.length ? 'ok' : 'mid');
+    s += row('Cursor last at', seen.lastPos || 'unknown');
+    s += row('Remote keys reaching the page', String(seen.keys), seen.keys ? 'ok' : 'mid');
+    s += row('Web Audio beep', seen.webAudio, /played/.test(seen.webAudio) ? 'ok' : /fail/.test(seen.webAudio) ? 'no' : 'mid');
+    s += row('Sound file beep', seen.file, /played/.test(seen.file) ? 'ok' : /fail/.test(seen.file) ? 'no' : 'mid');
+    document.getElementById('sum').innerHTML = s;
+  }
+
+  // ---- clicks on page buttons and boxes ----
+  function wire(id, name) {
+    var el = document.getElementById(id);
+    el.addEventListener('click', function () {
+      seen.clicks[name] = true;
+      el.className += ' hit';
+      add('Clicked', name);
+    });
+    el.addEventListener('focus', function () { add('Focus on', name); });
+    el.addEventListener('mouseover', function () { add('Cursor over', name); });
+    el.addEventListener('keydown', function (e) {
+      // A box marked as a button clicks on OK, as a real button does.
+      if (/^Box/.test(name) && (e.keyCode === 13 || e.keyCode === 32)) el.click();
+    });
+  }
+  wire('b1', 'One'); wire('b2', 'Two'); wire('b3', 'Three'); wire('b4', 'Four');
+  wire('r1', 'Box A'); wire('r2', 'Box B'); wire('r3', 'Box C');
+
+  // ---- the drawn area ----
+  var cv = document.getElementById('draw'), g = cv.getContext('2d');
+  var squares = [ { n: 'Square 1', c: '#E8B64C' }, { n: 'Square 2', c: '#35D39A' }, { n: 'Square 3', c: '#7AA7FF' }, { n: 'Square 4', c: '#FF8FB1' } ];
+  var mark = null;
+  function paint() {
+    g.clearRect(0, 0, 960, 200);
+    for (var i = 0; i < 4; i++) {
+      var x = 40 + i * 230, s = squares[i];
+      g.fillStyle = seen.drawnHits[s.n] ? '#2fa36b' : s.c;
+      g.fillRect(x, 40, 190, 120);
+      g.fillStyle = '#16121f'; g.font = 'bold 30px sans-serif';
+      g.fillText(String(i + 1), x + 85, 112);
+      s.x = x;
+    }
+    if (mark) {
+      g.strokeStyle = '#fff'; g.lineWidth = 3;
+      g.beginPath(); g.arc(mark.x, mark.y, 12, 0, Math.PI * 2); g.stroke();
+    }
+  }
+  function where(e) {
+    var r = cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * 960 / r.width, y: (e.clientY - r.top) * 200 / r.height };
+  }
+  cv.addEventListener('mousemove', function (e) {
+    var p = where(e);
+    seen.inDrawing++;
+    mark = p; paint();
+    if (seen.inDrawing % 5 === 1) add('Cursor in drawing', Math.round(p.x) + ', ' + Math.round(p.y));
+  });
+  cv.addEventListener('click', function (e) {
+    var p = where(e), hit = null;
+    for (var i = 0; i < 4; i++) {
+      var s = squares[i];
+      if (p.x >= s.x && p.x <= s.x + 190 && p.y >= 40 && p.y <= 160) hit = s.n;
+    }
+    if (hit) seen.drawnHits[hit] = true;
+    mark = p; paint();
+    add('Click in drawing', (hit || 'between squares') + ' at ' + Math.round(p.x) + ', ' + Math.round(p.y));
+  });
+  paint();
+
+  // ---- the cursor anywhere, and any key ----
+  var lastMove = 0;
+  document.addEventListener('mousemove', function (e) {
+    seen.cursorMoves++;
+    seen.lastPos = Math.round(e.clientX) + ', ' + Math.round(e.clientY) + ' (screen ' + window.innerWidth + ' x ' + window.innerHeight + ')';
+    var now = Date.now();
+    if (now - lastMove > 700) { lastMove = now; draw(); }
+  });
+  document.addEventListener('pointerdown', function (e) { add('Pointer down', (e.pointerType || 'unknown') + ' at ' + Math.round(e.clientX) + ', ' + Math.round(e.clientY)); });
+  document.addEventListener('keydown', function (e) {
+    seen.keys++;
+    add('Key', 'keyCode ' + (e.keyCode || e.which || 0) + (e.key ? ', key "' + e.key + '"' : ''));
+  });
+
+  // ---- sound, two ways ----
+  var ac = null;
+  document.getElementById('s1').addEventListener('click', function () {
+    try {
+      var A = window.AudioContext || window.webkitAudioContext;
+      if (!A) { seen.webAudio = 'failed: no Web Audio'; return draw(); }
+      ac = ac || new A();
+      var go = function () {
+        var o = ac.createOscillator(), v = ac.createGain();
+        o.frequency.value = 880; v.gain.value = 0.25;
+        o.connect(v); v.connect(ac.destination);
+        o.start(); o.stop(ac.currentTime + 0.25);
+        seen.webAudio = 'played (state ' + ac.state + ')';
+        add('Beep', 'Web Audio, state ' + ac.state);
+      };
+      if (ac.state === 'suspended' && ac.resume) ac.resume().then(go, function (err) { seen.webAudio = 'failed: ' + err; draw(); });
+      else go();
+    } catch (err) { seen.webAudio = 'failed: ' + (err && err.message || err); draw(); }
+  });
+
+  // A quarter-second beep as a WAV file, made here, so nothing is downloaded.
+  function wavUrl() {
+    var rate = 22050, n = Math.floor(rate * 0.25), buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf), i;
+    function str(o, s) { for (var k = 0; k < s.length; k++) d.setUint8(o + k, s.charCodeAt(k)); }
+    str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+    d.setUint32(24, rate, true); d.setUint32(28, rate * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true);
+    str(36, 'data'); d.setUint32(40, n * 2, true);
+    for (i = 0; i < n; i++) d.setInt16(44 + i * 2, Math.round(Math.sin(2 * Math.PI * 660 * i / rate) * 9000), true);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  var fileUrl = null;
+  document.getElementById('s2').addEventListener('click', function () {
+    try {
+      fileUrl = fileUrl || wavUrl();
+      var a = new Audio(fileUrl);
+      var p = a.play();
+      if (p && p.then) p.then(function () { seen.file = 'played'; add('Beep', 'sound file'); }, function (err) { seen.file = 'failed: ' + (err && err.name || err); draw(); });
+      else { seen.file = 'played'; add('Beep', 'sound file'); }
+    } catch (err) { seen.file = 'failed: ' + (err && err.message || err); draw(); }
+  });
+
+  // Back arrives as a step back in the page's history on these TVs: keep the page.
+  if (window.history && history.pushState) {
+    history.pushState({ wut: 2 }, '');
+    window.addEventListener('popstate', function () { add('Back', 'page history step'); history.pushState({ wut: 2 }, ''); });
+  }
+
+  draw();
+})();
+</script>
+</body>
+</html>
