@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WUT TV VIDAA check</title>
+<!--
+  WUT TV, phase 6 (Oct 27, 2026): what a Hisense VIDAA TV can do, before any
+  VIDAA version of WUT TV is built. Opened on the TV from
+  https://play.whatsuptrivia.com.ng/tv-check-vidaa.html (in the TV's browser,
+  or installed as an app). It changes nothing anywhere: it only reads what
+  the TV says about itself, plays one short beep when OK is pressed, and asks
+  the server's /health page once.
+
+  Written in old-style JavaScript on purpose: VIDAA TVs from 2019 have a
+  browser as old as Chromium 47, and this page must work there too, to say
+  so.
+-->
+<style>
+  html, body { margin: 0; background: #241066; color: #fff; }
+  body { font: 1.3vw/1.28 sans-serif; padding: 1.6vw 3vw; }
+  h1 { font-size: 2.2vw; margin: 0 0 0.2vw; }
+  .lead { color: #d8d0ff; margin-bottom: 0.6vw; }
+  .cols { display: table; width: 100%; table-layout: fixed; }
+  .col { display: table-cell; vertical-align: top; padding-right: 2.5vw; }
+  .col:last-child { padding-right: 0; }
+  h2 { font-size: 1.5vw; margin: 0.7vw 0 0.2vw; color: #ffd84d; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 0.15vw 0.8vw 0.15vw 0; vertical-align: top; }
+  td.k { color: #d8d0ff; white-space: nowrap; width: 1%; }
+  .ok { color: #6be38a; font-weight: bold; }
+  .no { color: #ff8a8a; font-weight: bold; }
+  .mid { color: #ffd84d; font-weight: bold; }
+  .small { font-size: 1.05vw; color: #c8bff0; word-break: break-all; }
+  #bar { height: 0.6vw; width: 20%; background: #ffd84d; position: relative; left: 0; }
+</style>
+</head>
+<body>
+<h1>WUT TV: VIDAA check</h1>
+<div class="lead">Take a photo of this screen. Then press each button on the remote once: OK, the four arrows, Back, red, green, yellow, blue. Take a second photo.</div>
+
+<div class="cols">
+  <div class="col">
+    <h2>This TV</h2>
+    <table id="tv"></table>
+    <h2>Can it run WUT TV?</h2>
+    <table id="can"></table>
+  </div>
+  <div class="col">
+    <h2>Remote buttons pressed (newest first)</h2>
+    <table id="keys"><tr><td class="small">None yet.</td></tr></table>
+    <h2>Sound and speed</h2>
+    <table id="speed"></table>
+    <div id="bar"></div>
+    <h2>Hisense functions on this TV</h2>
+    <div id="fns" class="small">Looking&hellip;</div>
+  </div>
+</div>
+<div id="ua" class="small" style="margin-top:0.6vw"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  function el(id) { return document.getElementById(id); }
+
+  function row(tableId, key, value, cls) {
+    var tr = document.createElement('tr');
+    var a = document.createElement('td');
+    var b = document.createElement('td');
+    a.className = 'k';
+    a.textContent = key;
+    b.textContent = value;
+    if (cls) b.className = cls;
+    tr.appendChild(a);
+    tr.appendChild(b);
+    el(tableId).appendChild(tr);
+    return b;
+  }
+
+  function yes(tableId, key, ok, detail) {
+    return row(tableId, key, (ok ? 'YES' : 'NO') + (detail ? ' (' + detail + ')' : ''), ok ? 'ok' : 'no');
+  }
+
+  function attempt(fn, fallback) {
+    try { return fn(); } catch (e) { return fallback; }
+  }
+
+  var ua = navigator.userAgent || '';
+  el('ua').textContent = 'User agent: ' + ua + '  |  Page: ' + location.href;
+
+  // ---- This TV ---------------------------------------------------------
+
+  function hisense(name) {
+    var f = window[name];
+    if (typeof f !== 'function') return null;
+    return attempt(function () { var v = f(); return v === undefined || v === null ? '' : String(v); }, null);
+  }
+
+  var vidaa = /VIDAA\/([\d.]+)/i.exec(ua);
+  var chrome = /Chrom(?:e|ium)\/(\d+)/i.exec(ua);
+  var chromeMajor = chrome ? parseInt(chrome[1], 10) : 0;
+
+  var brand = hisense('Hisense_GetBrand');
+  var model = hisense('Hisense_GetModelName');
+  row('tv', 'Brand and model', [brand, model].filter(Boolean).join(' ') || 'not given');
+  row('tv', 'VIDAA version', vidaa ? vidaa[1] : (/hisense/i.test(ua) ? 'older (2019 or before)' : 'not in the user agent'));
+  row('tv', 'Firmware', hisense('Hisense_GetFirmWareVersion') || 'not given');
+  row('tv', 'Country code', hisense('Hisense_GetCountryCode') || 'not given');
+  row('tv', 'Browser engine', chromeMajor ? 'Chromium ' + chromeMajor : 'not Chromium, or not said');
+  row('tv', 'Screen', screen.width + ' x ' + screen.height + ', page ' + window.innerWidth + ' x ' + window.innerHeight +
+      ', pixel ratio ' + (window.devicePixelRatio || 1));
+
+  // ---- Can it run WUT TV? ---------------------------------------------
+
+  // Flutter's web build supports Chromium 96 and newer (95 and older are
+  // listed as unsupported).
+  yes('can', 'Browser new enough', chromeMajor >= 96, chromeMajor ? 'needs 96 or newer' : 'unknown');
+
+  var gl1 = attempt(function () {
+    var c = document.createElement('canvas');
+    return c.getContext('webgl') || c.getContext('experimental-webgl');
+  }, null);
+  var gl2 = attempt(function () { return document.createElement('canvas').getContext('webgl2'); }, null);
+  var gpu = '';
+  if (gl1) {
+    gpu = attempt(function () {
+      var ext = gl1.getExtension('WEBGL_debug_renderer_info');
+      return ext ? gl1.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl1.getParameter(gl1.RENDERER);
+    }, '');
+  }
+  yes('can', 'WebGL (drawing)', !!gl1, gpu ? String(gpu).slice(0, 26) : '');
+  yes('can', 'WebGL 2', !!gl2);
+
+  var wasm = typeof WebAssembly === 'object' && typeof WebAssembly.validate === 'function';
+  yes('can', 'WebAssembly', wasm);
+  // The test Flutter's loader makes before it picks the faster build: a
+  // tiny module with one garbage-collected struct type.
+  var wasmGc = wasm && attempt(function () {
+    return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0]));
+  }, false);
+  yes('can', 'Faster WebAssembly build', !!wasmGc, wasmGc ? '' : 'the normal build is used');
+
+  var AC = window.AudioContext || window.webkitAudioContext;
+  yes('can', 'Web Audio (sound)', !!AC);
+  yes('can', 'Saved sign-in (storage)', attempt(function () {
+    localStorage.setItem('wut-check', '1');
+    var ok = localStorage.getItem('wut-check') === '1';
+    localStorage.removeItem('wut-check');
+    return ok;
+  }, false));
+  yes('can', 'Live updates (EventSource)', typeof window.EventSource === 'function');
+  yes('can', 'Modern JavaScript', attempt(function () {
+    /* eslint-disable no-new-func */
+    new Function('return async () => { const a = 1n; return a ?? 0; }');
+    return true;
+  }, false));
+
+  var net = row('can', 'Reaches our server', 'checking…', 'mid');
+  var t0 = Date.now();
+  var x = new XMLHttpRequest();
+  x.open('GET', '/health?check=vidaa&t=' + t0);
+  x.onload = function () {
+    var ok = x.status === 200;
+    net.textContent = (ok ? 'YES' : 'NO') + ' (' + (ok ? (Date.now() - t0) + ' ms' : 'status ' + x.status) + ')';
+    net.className = ok ? 'ok' : 'no';
+  };
+  x.onerror = function () { net.textContent = 'NO (no connection)'; net.className = 'no'; };
+  x.send();
+
+  // ---- Hisense functions ----------------------------------------------
+
+  function hisenseNames() {
+    var seen = {};
+    var out = [];
+    function add(k) {
+      if (!seen[k] && /^(hisense|vidaa|omi)/i.test(k)) { seen[k] = 1; out.push(k); }
+    }
+    attempt(function () { Object.getOwnPropertyNames(window).forEach(add); });
+    attempt(function () { for (var k in window) add(k); });
+    return out.sort();
+  }
+  var names = hisenseNames();
+  if (!names.length) {
+    el('fns').textContent = 'None found.';
+  } else {
+    var parts = [];
+    names.forEach(function (n) {
+      var v = window[n];
+      // Only "Get" functions are called: they only read. Nothing is set.
+      if (typeof v === 'function' && /^Hisense_Get/.test(n)) {
+        var r = hisense(n);
+        if (r === null) parts.push(n + ' (fails)');
+        else if (/id$/i.test(n)) parts.push(n + ' = [' + r.length + ' characters, not shown]');
+        else parts.push(n + ' = ' + (r.length > 40 ? r.slice(0, 40) + '…' : r || '""'));
+      } else {
+        parts.push(n + (typeof v === 'function' ? '()' : ''));
+      }
+    });
+    el('fns').textContent = parts.join('  ·  ');
+  }
+
+  // ---- Remote buttons ---------------------------------------------------
+
+  var KEY_NAMES = {
+    13: 'OK', 37: 'Left', 38: 'Up', 39: 'Right', 40: 'Down', 8: 'Back (8)',
+    461: 'Back (461)', 10009: 'Back (10009)', 27: 'Escape', 403: 'Red', 404: 'Green',
+    405: 'Yellow', 406: 'Blue', 415: 'Play', 19: 'Pause', 413: 'Stop'
+  };
+  var pressed = [];
+  // Back keys are kept from leaving the page, so they can be seen here.
+  var HOLD = { 8: 1, 27: 1, 461: 1, 10009: 1 };
+
+  document.addEventListener('keydown', function (e) {
+    var code = e.keyCode || e.which || 0;
+    if (HOLD[code]) e.preventDefault();
+    pressed.unshift([KEY_NAMES[code] || 'Other', 'keyCode ' + code + (e.key ? ', key "' + e.key + '"' : '')]);
+    if (pressed.length > 9) pressed.pop();
+    var t = el('keys');
+    t.innerHTML = '';
+    pressed.forEach(function (p) { row('keys', p[0], p[1]); });
+    if (code === 13) beep();
+  }, true);
+
+  // Some TVs send Back as a step back in the page's history instead of a key.
+  attempt(function () {
+    history.pushState({ wut: 1 }, '');
+    window.addEventListener('popstate', function () {
+      pressed.unshift(['Back (history)', 'page history step']);
+      if (pressed.length > 9) pressed.pop();
+      el('keys').innerHTML = '';
+      pressed.forEach(function (p) { row('keys', p[0], p[1]); });
+      history.pushState({ wut: 1 }, '');
+    });
+  });
+
+  // ---- Sound and speed --------------------------------------------------
+
+  var sound = row('speed', 'Beep on OK', AC ? 'press OK' : 'no Web Audio', AC ? 'mid' : 'no');
+  var ctx = null;
+  function beep() {
+    if (!AC) return;
+    try {
+      if (!ctx) ctx = new AC();
+      if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+      var o = ctx.createOscillator();
+      var g = ctx.createGain();
+      o.frequency.value = 880;
+      g.gain.value = 0.15;
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(ctx.currentTime);
+      o.stop(ctx.currentTime + 0.25);
+      sound.textContent = 'played (did you hear it?) · audio ' + ctx.sampleRate + ' Hz';
+      sound.className = 'ok';
+    } catch (err) {
+      sound.textContent = 'failed: ' + String(err && err.message || err).slice(0, 50);
+      sound.className = 'no';
+    }
+  }
+
+  var fps = row('speed', 'Frames a second', 'measuring…', 'mid');
+  var raf = window.requestAnimationFrame || window.webkitRequestAnimationFrame;
+  if (!raf) {
+    fps.textContent = 'cannot measure';
+    fps.className = 'no';
+  } else {
+    var frames = 0;
+    var start = 0;
+    var bar = el('bar');
+    var tick = function (now) {
+      if (!start) start = now;
+      frames++;
+      bar.style.left = (40 + 40 * Math.sin(now / 300)) + '%';
+      if (now - start >= 3000) {
+        var f = Math.round(frames * 1000 / (now - start));
+        fps.textContent = f + (f >= 50 ? ' (smooth)' : f >= 30 ? ' (fair)' : ' (slow)');
+        fps.className = f >= 50 ? 'ok' : f >= 30 ? 'mid' : 'no';
+        frames = 0;
+        start = now;
+      }
+      raf(tick);
+    };
+    raf(tick);
+  }
+})();
+</script>
+</body>
+</html>
