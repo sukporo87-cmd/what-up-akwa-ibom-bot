@@ -146,7 +146,32 @@ const PHOTO_VERIFICATION_CONFIG = {
     REUSE_MAX_BITS: 3,
     REUSE_SCAN_OWN: 300,        // this player's most recent photos compared
     REUSE_SCAN_ALL: 2000,       // everyone's most recent photos compared
+
+    // WHEN ELSE A SELFIE IS ASKED FOR (14 Nov 2026). The Q13-15 check above
+    // is known to players: one who failed it simply stopped at Q11-12 and kept
+    // banking the Q10 milestone. Two more checks make the timing unpredictable:
+    //
+    // EARLY: a player who got past Q5 in a game is asked for a selfie at a
+    // random question between Q2 and Q5 of their NEXT game. At most twice a
+    // day (Lagos time) per player. Failing it asks again next game.
+    EARLY_FROM_Q: 2,
+    EARLY_TO_Q: 5,
+    EARLY_PER_DAY: 2,
+    // AFTER TURBO: the first time turbo fires in a game there is a 1-in-3
+    // chance of a selfie at the next question or the one after. Once a game.
+    TURBO_PHOTO_CHANCE: 1 / 3,
+
+    // Three failed photo checks within 7 days: a temporary suspension from
+    // Classic and tournaments for at least 72 hours, which does NOT lift by
+    // itself: an admin reviews it and lifts it (Admin > Fraud > Temp
+    // Suspensions > Lift Ban). No warning is given before the third.
+    FAILS_TO_SUSPEND: 3,
+    FAIL_WINDOW_DAYS: 7,
+    FAIL_SUSPENSION_HOURS: 72,
 };
+
+// The calendar day in Lagos, e.g. "2026-11-14".
+const lagosDay = () => new Date(Date.now() + 3600e3).toISOString().slice(0, 10);
 
 const messagingService = new MessagingService();
 const questionService = new QuestionService();
@@ -422,6 +447,9 @@ class GameService {
 
                 // Flag user
                 await restrictionsService.flagUserSuspicious(user.id, `turbo_${triggerType}`, triggerDetails);
+
+                // First turbo of the game: 1-in-3 chance of a selfie soon after
+                await this._maybePlanTurboPhoto(session);
 
                 // Audit log
                 await auditService.logTurboModeActivated(
@@ -863,7 +891,11 @@ class GameService {
         if (questionNumber < SUSPICIOUS_SESSION_CONFIG.PERFECT_THROUGH_Q) return { terminate: false };
 
         const expectedPerfectScore = PRIZE_LADDER[questionNumber];
-        if (session.current_score !== expectedPerfectScore) return { terminate: false };
+        // current_score comes back from the database as text ("10000.00")
+        // whenever the session was re-read (after turbo's GO, a captcha or a
+        // photo). Compared as-is it never matched, so the check silently did
+        // nothing in exactly the games turbo had already found too even.
+        if (Number(session.current_score) !== expectedPerfectScore) return { terminate: false };
         if (session.lifeline_5050_used || session.lifeline_skip_used) return { terminate: false };
 
         const trackingKey = `turbo_track:${session.session_key}`;
@@ -936,20 +968,172 @@ class GameService {
     // PHOTO VERIFICATION
     // ============================================
 
+    /**
+     * Should a selfie be asked for before this question? Returns why
+     * ('flagged', 'early' or 'turbo'), or false.
+     *
+     *   flagged  Q13-15, for suspicious sessions and players (unchanged)
+     *   early    the planned question in Q2-Q5, after a game past Q5
+     *   turbo    the planned question after turbo first fired (1 in 3)
+     *
+     * Early and turbo checks happen at most once a game, and only when no
+     * other check has happened yet. The Q13-15 check still applies to a
+     * flagged player even after an early one: a selfie at Q3 must not buy a
+     * free run to the top.
+     */
     async shouldRequestPhotoVerification(session, user, questionNumber) {
-        if (!PHOTO_VERIFICATION_CONFIG.TRIGGER_QUESTIONS.includes(questionNumber)) return false;
-        if (session.game_type === 'practice') return false;
-        if (session.photo_verification_requested) return false;
+        if (session.game_type === 'practice' || session.game_mode === 'practice') return false;
 
-        // Only for suspicious sessions
-        const isSuspicious = session.suspicious_flag === true;
-        const userSuspicious = await restrictionsService.isUserSuspicious(user.id);
+        const asked = await this._photoChecksThisGame(session);
+        // A game that started before this change and already had its check.
+        if (session.photo_verification_requested && asked.length === 0) return false;
+        // After a pass, the same question carries on: never ask twice for it.
+        if (asked.some(a => a.q === questionNumber)) return false;
 
-        return isSuspicious || userSuspicious.suspicious;
+        if (PHOTO_VERIFICATION_CONFIG.TRIGGER_QUESTIONS.includes(questionNumber) && !asked.some(a => a.q >= 13)) {
+            const isSuspicious = session.suspicious_flag === true;
+            const userSuspicious = await restrictionsService.isUserSuspicious(user.id);
+            if (isSuspicious || userSuspicious.suspicious) return 'flagged';
+        }
+
+        if (asked.length > 0) return false;
+
+        if ((await this._earlyPhotoQuestion(session, user, questionNumber)) === questionNumber) return 'early';
+
+        try {
+            const turboQ = await redis.get(`photo_turbo:${session.session_key}`);
+            if (turboQ && Number(turboQ) === questionNumber) return 'turbo';
+        } catch (e) { /* no turbo plan */ }
+
+        return false;
     }
 
-    async sendPhotoVerification(session, user, questionNumber) {
+    /** The photo checks already asked for in this game: [{ q, r }]. */
+    async _photoChecksThisGame(session) {
+        try {
+            const raw = await redis.get(`photo_asked:${session.session_key}`);
+            const list = raw ? JSON.parse(raw) : [];
+            return Array.isArray(list) ? list : [];
+        } catch (e) { return []; }
+    }
+
+    /**
+     * The question in Q2-Q5 this game asks for an early selfie at, or null.
+     * Decided once per game, the first time a question from Q2 on is sent:
+     * only if the player got past Q5 in an earlier game (photo_early_due) and
+     * has had fewer than 2 early checks today.
+     */
+    async _earlyPhotoQuestion(session, user, questionNumber) {
+        const cfg = PHOTO_VERIFICATION_CONFIG;
+        try {
+            const key = `photo_early:${session.session_key}`;
+            let plan = await redis.get(key);
+            if (plan === null) {
+                if (questionNumber < cfg.EARLY_FROM_Q) return null;
+                let target = 'none';
+                const due = await redis.get(`photo_early_due:${user.id}`);
+                const today = parseInt(await redis.get(`photo_early_count:${user.id}:${lagosDay()}`) || '0', 10);
+                const from = Math.max(cfg.EARLY_FROM_Q, questionNumber);
+                if (due && today < cfg.EARLY_PER_DAY && from <= cfg.EARLY_TO_Q) {
+                    target = String(from + Math.floor(Math.random() * (cfg.EARLY_TO_Q - from + 1)));
+                }
+                await redis.setex(key, 7200, target);
+                plan = target;
+            }
+            return plan === 'none' ? null : Number(plan);
+        } catch (error) {
+            logger.error('Early photo plan failed:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Turbo just fired. The first time in a game, a 1-in-3 chance of a selfie
+     * at the next question or the one after.
+     */
+    async _maybePlanTurboPhoto(session) {
+        try {
+            if (session.game_type === 'practice' || session.game_mode === 'practice') return;
+            const first = await redis.set(`photo_turbo_rolled:${session.session_key}`, '1', 'NX', 'EX', 7200);
+            if (!first) return;
+            if (Math.random() >= PHOTO_VERIFICATION_CONFIG.TURBO_PHOTO_CHANCE) return;
+            // current_question is already the NEXT question at this point.
+            const target = Number(session.current_question) + (Math.random() < 0.5 ? 0 : 1);
+            if (target > Object.keys(PRIZE_LADDER).length) return;
+            await redis.setex(`photo_turbo:${session.session_key}`, 7200, String(target));
+            logger.info(`📸 Turbo photo planned for session ${session.id} at Q${target}`);
+        } catch (error) {
+            logger.error('Turbo photo plan failed:', error.message);
+        }
+    }
+
+    /** Remember a photo check in this game, and use up an early check. */
+    async _notePhotoCheck(session, user, questionNumber, reason) {
+        try {
+            const asked = await this._photoChecksThisGame(session);
+            asked.push({ q: questionNumber, r: reason || 'flagged' });
+            await redis.setex(`photo_asked:${session.session_key}`, 7200, JSON.stringify(asked));
+            if (reason === 'early') {
+                await redis.del(`photo_early_due:${user.id}`);
+                const countKey = `photo_early_count:${user.id}:${lagosDay()}`;
+                await redis.incr(countKey);
+                await redis.expire(countKey, 2 * 86400);
+            }
+        } catch (error) {
+            logger.error('Could not note photo check:', error.message);
+        }
+    }
+
+    // ---------------- three strikes ----------------
+    async _ensurePhotoFailures() {
+        if (this._photoFailuresReady) return;
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS photo_failures (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL,
+                session_id  INTEGER,
+                reason      TEXT,
+                cleared     BOOLEAN NOT NULL DEFAULT false,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_photo_failures_user ON photo_failures (user_id, created_at DESC)`);
+        this._photoFailuresReady = true;
+    }
+
+    /**
+     * Records a failed photo check and returns how many count towards a
+     * suspension (failures in the last 7 days, since any earlier suspension).
+     * At 3, suspends for 72 hours and starts the count again.
+     */
+    async _photoFailureStrike(user, session, reason) {
+        const cfg = PHOTO_VERIFICATION_CONFIG;
+        try {
+            await this._ensurePhotoFailures();
+            await pool.query(`INSERT INTO photo_failures (user_id, session_id, reason) VALUES ($1, $2, $3)`,
+                [user.id, session.id || null, reason || null]);
+            const r = await pool.query(`
+                SELECT COUNT(*)::int AS n FROM photo_failures
+                WHERE user_id = $1 AND NOT cleared AND created_at > NOW() - make_interval(days => $2)`,
+                [user.id, cfg.FAIL_WINDOW_DAYS]);
+            const strikes = r.rows[0].n;
+            if (strikes >= cfg.FAILS_TO_SUSPEND) {
+                await restrictionsService.setPhotoFailureSuspension(user.id, cfg.FAIL_SUSPENSION_HOURS);
+                await pool.query(`UPDATE photo_failures SET cleared = true WHERE user_id = $1 AND NOT cleared`, [user.id]);
+                await auditService.logEvent(session.id, user.id, 'PHOTO_FAILURE_SUSPENSION', {
+                    failures: strikes, window_days: cfg.FAIL_WINDOW_DAYS, hours: cfg.FAIL_SUSPENSION_HOURS
+                });
+                return { strikes, suspended: true };
+            }
+            return { strikes, suspended: false };
+        } catch (error) {
+            logger.error('Could not record photo failure strike:', error.message);
+            return { strikes: 0, suspended: false };
+        }
+    }
+
+    async sendPhotoVerification(session, user, questionNumber, reason = 'flagged') {
         const challenge = { type: 'selfie', text: '📸 Take a quick selfie to verify you\'re the one playing!' };
+        await this._notePhotoCheck(session, user, questionNumber, reason);
 
         // Store verification state
         const photoKey = `photo_verify:${session.session_key}`;
@@ -1318,13 +1502,28 @@ class GameService {
         // still leave with ₦10,000. Tournament scores follow the same rule.
         session.current_score = 0;
 
-        const message = reason === 'timeout'
+        // An early check that failed is asked for again next game.
+        try {
+            const asked = await this._photoChecksThisGame(session);
+            if (asked.length && asked[asked.length - 1].r === 'early') {
+                await redis.setex(`photo_early_due:${user.id}`, 14 * 86400, '1');
+            }
+        } catch (e) { /* best effort */ }
+
+        const strike = await this._photoFailureStrike(user, session, reason);
+        const cfg = PHOTO_VERIFICATION_CONFIG;
+        // No warning before the third: the rule is in the Rules and Terms.
+        const strikeNote = strike.suspended
+            ? `\n\n⛔ Classic Mode and tournaments are now suspended for at least ${cfg.FAIL_SUSPENSION_HOURS} hours, pending review by our team. Practice Mode is still available.`
+            : '';
+
+        const message = (reason === 'timeout'
             ? `⏱️ *VERIFICATION TIMEOUT*\n\nYou didn't send a photo in time.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
             : reason === 'photo_reused'
             ? `❌ *VERIFICATION FAILED*\n\nThat photo has been sent before. Each check needs a new selfie, taken right then.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
             : reason === 'no_camera'
             ? `❌ *VERIFICATION FAILED*\n\nThis check needs a camera, and none could be opened on your device.\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`
-            : `❌ *VERIFICATION FAILED*\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`;
+            : `❌ *VERIFICATION FAILED*\n\n🎮 GAME OVER\n\n💰 Final Score: ₦0`) + strikeNote;
 
         await messagingService.sendMessage(user.phone_number, message);
         await this.completeGame(session, user, false, 'photo_verification_failed');
@@ -2163,8 +2362,29 @@ class GameService {
                 return;
             }
 
-            const finalScore = session.current_score;
+            let finalScore = session.current_score;
             const questionNumber = session.current_question;
+
+            // DAILY LIMIT. Classic winnings are capped at the daily maximum per
+            // Lagos day: a reward that would go past it is paid up to it. The
+            // limit used to be checked only when a game started, so a player
+            // on ₦28,000 could bank ₦10,000 and finish on ₦38,000. The ₦50,000
+            // top tier is always paid in full (it starts the 5-day cooldown).
+            let dailyCapNote = null;
+            if (session.game_type !== 'practice' && session.game_mode !== 'practice' && !session.is_tournament_game &&
+                !wonGrandPrize && Number(finalScore) > 0) {
+                try {
+                    const cap = await restrictionsService.capToDailyLimit(user.id, Number(finalScore));
+                    if (cap.amount < Number(finalScore)) {
+                        dailyCapNote = cap;
+                        finalScore = cap.amount;
+                        session.current_score = cap.amount;
+                        await auditService.logEvent(session.id, user.id, 'DAILY_LIMIT_CAPPED', {
+                            earned: cap.original, paid: cap.amount, won_today_before: cap.wonToday, limit: cap.limit
+                        });
+                    }
+                } catch (capErr) { logger.error('Daily limit cap failed:', capErr.message); }
+            }
             
             const timeoutKey = `timeout:${session.session_key}:q${questionNumber}`;
             this.clearQuestionTimeout(timeoutKey);
@@ -2276,6 +2496,13 @@ class GameService {
                 try { await restrictionsService.decrementPenaltyGames(user.id); } catch (e) {}
             }
 
+            // Got past Q5: the next game asks for an early selfie (Q2-Q5),
+            // at most twice a day (see PHOTO_VERIFICATION_CONFIG).
+            if (session.game_type !== 'practice' && session.game_mode !== 'practice' &&
+                (wonGrandPrize || Number(session.current_question) > 5)) {
+                try { await redis.setex(`photo_early_due:${user.id}`, 14 * 86400, '1'); } catch (e) {}
+            }
+
             // Share data / victory cards (unchanged from original)
             if (session.game_type !== 'practice') {
                 const questionsAnswered = session.current_question - 1;
@@ -2354,6 +2581,18 @@ class GameService {
                 await this.sendGrandPrizeMessage(user, finalScore);
             } else if (finalScore > 0 && !endReason) {
                 await this.sendWinMessage(user, finalScore, questionNumber);
+            }
+
+            // The win message above was written before the cap; say what is paid.
+            if (dailyCapNote) {
+                const n = (v) => '₦' + Number(v).toLocaleString();
+                await messagingService.sendMessage(user.phone_number,
+                    `📌 *Daily limit*\n\nClassic winnings are capped at ${n(dailyCapNote.limit)} a day. ` +
+                    `You had already won ${n(dailyCapNote.wonToday)} today, so ` +
+                    (dailyCapNote.amount > 0
+                        ? `*${n(dailyCapNote.amount)}* of this ${n(dailyCapNote.original)} reward is paid.`
+                        : `no more can be paid today.`) +
+                    `\n\n⏰ Your limit resets at midnight. Practice Mode is always available.`);
             }
 
             // Post-game state
@@ -2693,9 +2932,11 @@ class GameService {
             }
         }
 
-        // Standard photo verification check (Q13-15, suspicious sessions)
-        if (await this.shouldRequestPhotoVerification(session, user, questionNumber)) {
-            await this.sendPhotoVerification(session, user, questionNumber);
+        // Photo verification: Q13-15 for flagged players, an early check after a
+        // game past Q5, or one after turbo (see shouldRequestPhotoVerification)
+        const photoReason = await this.shouldRequestPhotoVerification(session, user, questionNumber);
+        if (photoReason) {
+            await this.sendPhotoVerification(session, user, questionNumber, photoReason);
             return;
         }
 

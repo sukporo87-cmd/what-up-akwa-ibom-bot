@@ -23,6 +23,9 @@ const Q1_TIMEOUT_CONFIG = {
 
 const togglesService = require('./toggles.service');
 
+// The reason shown to a player suspended for failing 3 photo checks.
+const PHOTO_SUSPENSION_REASON = 'Failed photo verification 3 times in 7 days';
+
 class RestrictionsService {
     
     // ============================================
@@ -233,6 +236,12 @@ class RestrictionsService {
                 };
             }
 
+            // A photo-failure suspension never lifts by itself: after its 72
+            // hours it waits for an admin to review it and lift it.
+            if (user.temp_suspension_reason === PHOTO_SUSPENSION_REASON) {
+                return { suspended: true, until, hoursRemaining: 0, awaitingReview: true, reason: user.temp_suspension_reason };
+            }
+
             // Suspension expired — clear it
             await pool.query(`
                 UPDATE users 
@@ -271,14 +280,45 @@ class RestrictionsService {
         }
     }
 
+    /**
+     * Three failed photo checks in 7 days (see game.service
+     * PHOTO_VERIFICATION_CONFIG). Lasts at least `hours`, then waits for an
+     * admin to lift it (Admin > Fraud > Temp Suspensions > Lift Ban). No
+     * reduced-timer probation afterwards.
+     */
+    async setPhotoFailureSuspension(userId, hours = 72) {
+        try {
+            await pool.query(`
+                UPDATE users
+                SET temp_suspended_until = NOW() + make_interval(hours => $1),
+                    temp_suspension_reason = $2,
+                    suspicious_user = true
+                WHERE id = $3
+            `, [hours, PHOTO_SUSPENSION_REASON, userId]);
+            logger.warn(`⛔ Photo-failure suspension set for user ${userId}: ${hours}h`);
+            return true;
+        } catch (error) {
+            logger.error('Error setting photo-failure suspension:', error);
+            return false;
+        }
+    }
+
     getTempSuspensionMessage(data) {
+        const photo = data.reason === PHOTO_SUSPENSION_REASON;
+        if (photo && data.awaitingReview) {
+            return `⛔ *SUSPENSION UNDER REVIEW* ⛔\n\n` +
+                   `📋 *Reason:* ${data.reason}\n\n` +
+                   `Your suspension from Classic Mode and tournaments is being reviewed by our team. ` +
+                   `You'll be able to play again once it has been lifted.\n\n` +
+                   `✅ Practice mode is still available!`;
+        }
         return `⛔ *TEMPORARY SUSPENSION* ⛔\n\n` +
                `Your account has been temporarily suspended for *${data.hoursRemaining} hours*.\n\n` +
                `📋 *Reason:* ${data.reason}\n\n` +
                `At What's Up Trivia, we have a zero-tolerance policy for anything that undermines fair play. ` +
                `Every player deserves an equal chance to win.\n\n` +
-               `⏳ *Suspension lifts:* ${data.until.toLocaleString('en-NG', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}\n\n` +
-               `⚠️ When you return, your next *5 games* will have reduced timers as a probation measure.\n\n` +
+               `⏳ *Suspension lifts:* ${data.until.toLocaleString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} (Lagos time)\n\n` +
+               (photo ? `🔎 After this, it stays in place until it has been reviewed by our team.\n\n` : `⚠️ When you return, your next *5 games* will have reduced timers as a probation measure.\n\n`) +
                `✅ Practice mode is still available!\n\n` +
                `_Play fair, play smart. 🎯_`;
     }
@@ -634,16 +674,21 @@ class RestrictionsService {
         return parseInt(process.env.DAILY_WIN_LIMIT) || 30000;
     }
     
+    /**
+     * Classic winnings on one LAGOS calendar day (midnight to midnight WAT).
+     * It used to count the UTC day, so a player's "day" reset at 1am Lagos
+     * time. `date` is a Lagos date ("YYYY-MM-DD"); today if left out.
+     */
     async getDailyWinnings(userId, date = null) {
         try {
-            const targetDate = date || new Date().toISOString().split('T')[0];
+            const targetDate = date || new Date(Date.now() + 3600e3).toISOString().split('T')[0];
             
             const result = await pool.query(`
                 SELECT COALESCE(SUM(amount), 0) as total
                 FROM transactions 
                 WHERE user_id = $1 
                 AND transaction_type = 'prize'
-                AND DATE(created_at) = $2
+                AND timezone('Africa/Lagos', created_at::timestamptz)::date = $2::date
             `, [userId, targetDate]);
             
             return parseFloat(result.rows[0].total) || 0;
@@ -679,6 +724,17 @@ class RestrictionsService {
         }
     }
     
+    /**
+     * How much of a Classic reward can be paid today without going past the
+     * daily maximum. { amount, original, wonToday, limit }.
+     */
+    async capToDailyLimit(userId, amount) {
+        const limit = this.getDailyWinLimit();
+        const wonToday = await this.getDailyWinnings(userId);
+        const remaining = Math.max(0, limit - wonToday);
+        return { amount: Math.min(amount, remaining), original: amount, wonToday, limit };
+    }
+
     getDailyLimitMessage(limitData) {
         return `🎉 *DAILY LIMIT REACHED* 🎉\n\n` +
                `Amazing! You've won ₦${limitData.currentWinnings.toLocaleString()} today!\n\n` +

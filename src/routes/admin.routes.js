@@ -4984,7 +4984,10 @@ router.get('/api/fraud/temp-suspensions', authenticateAdmin, async (req, res) =>
         const tempSuspended = await pool.query(`
             SELECT id, username, full_name, phone_number, temp_suspended_until, temp_suspension_reason
             FROM users
-            WHERE temp_suspended_until IS NOT NULL AND temp_suspended_until > NOW()
+            WHERE temp_suspended_until IS NOT NULL
+              AND (temp_suspended_until > NOW()
+                   -- photo-failure suspensions stay until an admin lifts them
+                   OR temp_suspension_reason = 'Failed photo verification 3 times in 7 days')
             ORDER BY temp_suspended_until DESC
         `);
         

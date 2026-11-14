@@ -5185,7 +5185,7 @@ function renderTempSuspendedUsers(users) {
       <td><strong>@${user.username || 'Unknown'}</strong><br><small>${user.full_name || ''}</small></td>
       <td>${user.temp_suspension_reason || 'Q1 timeout abuse'}</td>
       <td>${until.toLocaleString()}</td>
-      <td style="color: ${remainingMs > 0 ? '#dc2626' : '#059669'};">${remainingMs > 0 ? remainingHrs + 'h left' : 'Expired'}</td>
+      <td style="color: ${remainingMs > 0 ? '#dc2626' : '#b45309'};">${remainingMs > 0 ? remainingHrs + 'h left' : (/photo verification/i.test(user.temp_suspension_reason || '') ? '<strong>Awaiting your review</strong>' : 'Expired')}</td>
       <td>
         <button class="btn btn-primary btn-sm" onclick="viewUserProfile(${user.id})">👤 Profile</button>
         <button class="btn btn-success btn-sm" onclick="liftTempSuspension(${user.id})">✅ Lift Ban</button>
