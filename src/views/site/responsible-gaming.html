@@ -306,6 +306,44 @@ body.theme-light .consent-bar p{color:var(--ink-soft)}
 body.theme-light .invite-note{background:rgba(37,211,102,.09);color:#166534;border-color:rgba(22,101,52,.3)}
 body.theme-light .invite-note b{color:#14532d}
 
+
+/* ---- November 2026 update: new logo, WUT TV, WUT Kids, For businesses ---- */
+.logo img.logo-img{width:auto;height:44px}
+.site-footer .logo img.logo-img{height:58px}
+@media(max-width:379px){.logo img.logo-img{height:38px}}
+.mobile-nav{max-height:calc(100vh - var(--header-h));max-height:calc(100dvh - var(--header-h));overflow-y:auto}
+.header-biz{display:none;align-items:center;white-space:nowrap;font-size:13px;font-weight:600;text-decoration:none;color:var(--d-muted)!important;border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:7px 12px;transition:color .2s,border-color .2s}
+.header-biz:hover{color:#fff!important;border-color:var(--gold-bright)}
+body.theme-light .header-biz{color:var(--ink-soft)!important;border-color:#B9C6D8}
+body.theme-light .header-biz:hover{color:var(--navy)!important;border-color:var(--navy)}
+@media(min-width:920px){.main-nav ul{gap:20px}}
+@media(min-width:1100px){.header-biz{display:inline-flex}.main-nav ul{gap:24px}}
+.p-ic-tv{background:linear-gradient(135deg,#F59E0B,#FBBF24);color:#201300}
+.p-ic-kids{background:linear-gradient(135deg,#EC4899,#F9A8D4);color:#3a0a22}
+.plat-card.tv::before{background:linear-gradient(90deg,#F59E0B,#FBBF24)}
+.plat-card.kids::before{background:linear-gradient(90deg,#EC4899,#F9A8D4)}
+.plat-more{margin-top:18px}
+.soon-tag{position:absolute;top:18px;right:18px;font-family:var(--font-data);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 9px;border-radius:999px;background:rgba(236,72,153,.16);color:#F9A8D4}
+.plat-card .plat-points{list-style:none;margin:-4px 0 16px;display:grid;gap:6px;font-size:13.5px;color:var(--d-muted)}
+.plat-card .plat-points li{padding-left:16px;position:relative}
+.plat-card .plat-points li::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:6px;border-radius:50%;background:var(--gold-bright)}
+.biz-band{display:grid;gap:26px;align-items:center;background:linear-gradient(140deg,rgba(30,58,95,.55),rgba(17,36,63,.35));border:1px solid rgba(255,255,255,.12);border-radius:28px;padding:clamp(26px,5vw,48px)}
+@media(min-width:860px){.biz-band{grid-template-columns:1.05fr .95fr}}
+.biz-band h2{font-size:clamp(26px,4.2vw,38px);margin-bottom:12px}
+.biz-band p{color:var(--d-muted);max-width:520px;margin-bottom:22px}
+.biz-list{list-style:none;display:grid;gap:10px}
+.biz-list li{display:flex;gap:12px;align-items:flex-start;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:13px 15px;font-size:14px;color:var(--d-text)}
+.biz-list b{display:block;color:#fff;font-size:14.5px}
+.biz-list span{color:var(--d-muted);font-size:13px}
+.biz-list svg{width:20px;height:20px;flex-shrink:0;margin-top:2px;color:var(--gold-bright)}
+.mission{max-width:760px;margin:0 auto 34px;text-align:center}
+.mission p{font-size:clamp(16px,2.1vw,19px);line-height:1.7;color:var(--d-text)}
+.mission cite{display:block;margin-top:10px;font-style:normal;font-family:var(--font-data);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold-bright)}
+
+/* ---- legibility: button text must not inherit link colours ---- */
+.site-footer a.btn{color:#fff}
+body .page-band .btn-ghost{color:#fff;border-color:rgba(255,255,255,.34)}
+body .page-band .btn-ghost:hover{border-color:rgba(255,255,255,.6);color:#fff}
 </style>
 <script type="application/ld+json">
 {
@@ -317,7 +355,7 @@ body.theme-light .invite-note b{color:#14532d}
       "name": "What's Up Trivia",
       "url": "https://whatsuptrivia.com.ng/",
       "logo": "https://whatsuptrivia.com.ng/og-cover.png",
-      "description": "Skill-based trivia competition on Web-play, WhatsApp and Telegram, operated by SummerIsland Systems, Abuja.",
+      "description": "Skill & knowledge based trivia on Web-play, WhatsApp, Telegram and TV, operated by SummerIsland Systems, Abuja.",
       "email": "hello@whatsuptrivia.com.ng",
       "areaServed": { "@type": "Country", "name": "Nigeria" },
       "parentOrganization": { "@type": "Organization", "name": "SummerIsland Systems", "url": "https://sisystems.ng" },
@@ -353,19 +391,19 @@ body.theme-light .invite-note b{color:#14532d}
 <header class="site-header">
   <div class="header-inner">
     <a class="logo" href="/" aria-label="What's Up Trivia — home">
-      <img src="data:image/png;base64,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" alt="" width="30" height="32">
-      <span class="logo-word">What's Up <em>Trivia</em></span>
+      <img class="logo-img" src="/logo-wut.webp" alt="What's Up Trivia" width="400" height="145">
     </a>
     <nav class="main-nav" aria-label="Primary">
       <ul>
-        <li><a href="/">Home</a></li>
-        <li><a href="/about">About</a></li>
         <li><a href="/how-to-play">How to Play</a></li>
         <li><a href="/leaderboards">Leaderboards</a></li>
+        <li><a href="/wut-tv">WUT TV</a></li>
+        <li><a href="/kids" data-kids-link>WUT Kids</a></li>
         <li><a href="/reviews">Reviews</a></li>
-        <li><a href="/contact">Contact</a></li>
+        <li><a href="/about">About</a></li>
       </ul>
     </nav>
+    <a class="header-biz" href="/enterprise">For businesses</a>
     <button class="header-cta" data-open-picker type="button">Play now</button>
     <button class="hamburger" type="button" aria-expanded="false" aria-controls="mobileNav" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -375,10 +413,13 @@ body.theme-light .invite-note b{color:#14532d}
 <nav class="mobile-nav" id="mobileNav" aria-label="Mobile">
   <ul>
     <li><a href="/">Home</a></li>
-    <li><a href="/about">About</a></li>
     <li><a href="/how-to-play">How to Play</a></li>
     <li><a href="/leaderboards">Leaderboards</a></li>
+    <li><a href="/wut-tv">WUT TV</a></li>
+    <li><a href="/kids" data-kids-link>WUT Kids</a></li>
+    <li><a href="/enterprise">For businesses</a></li>
     <li><a href="/reviews">Reviews</a></li>
+    <li><a href="/about">About</a></li>
     <li><a href="/contact">Contact</a></li>
     <li><a href="/faq">FAQ</a></li>
     <li><a href="/rules">Game Rules</a></li>
@@ -477,11 +518,10 @@ body.theme-light .invite-note b{color:#14532d}
     <div class="footer-grid">
       <div class="footer-brand">
         <a class="logo" href="/" aria-label="What's Up Trivia — home">
-          <img src="data:image/png;base64,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" alt="" width="30" height="32">
-          <span class="logo-word" style="color:#fff">What's Up <em>Trivia</em></span>
+          <img class="logo-img" src="/logo-wut.webp" alt="What's Up Trivia" width="400" height="145">
         </a>
-        <p data-ck="footer.brand.blurb">Nigeria's #1 knowledge competition platform. One game engine, one leaderboard, one prize pool — on WhatsApp, Telegram and the web. Sponsored rewards up to ₦50,000.</p>
-        <p class="footer-tagline" data-ck="footer.brand.tagline">Play. Learn. Earn.</p>
+        <p data-ck="footer.brand.blurb">Nigeria's #1 skill &amp; knowledge based trivia platform. One game engine, one leaderboard, one prize pool — on WhatsApp, Telegram and the web. Sponsored rewards up to ₦50,000.</p>
+        <p class="footer-tagline" data-ck="footer.brand.tagline">Play. Learn. Win.</p>
         <div class="social-row" aria-label="Follow What's Up Trivia">
           <a href="https://instagram.com/whatsuptrivia" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none"/></svg></a>
           <a href="https://facebook.com/whatsuptrivia" target="_blank" rel="noopener" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 21v-7h2.4l.4-3h-2.8V9.1c0-.9.3-1.5 1.6-1.5h1.3V4.9c-.3 0-1.1-.1-2-.1-2 0-3.4 1.2-3.4 3.5V11H8.5v3H11v7h2.5Z"/></svg></a>
@@ -489,7 +529,7 @@ body.theme-light .invite-note b{color:#14532d}
         </div>
         <div class="footer-play-links">
           <a class="btn btn-web btn-sm" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">Web-play</a>
-          <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
+          <a class="btn btn-whatsapp btn-sm" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20play%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">WhatsApp</a>
           <a class="btn btn-telegram btn-sm" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">Telegram</a>
         </div>
       </div>
@@ -498,6 +538,8 @@ body.theme-light .invite-note b{color:#14532d}
         <ul>
           <li><a href="/how-to-play">How to Play</a></li>
           <li><a href="/leaderboards">Leaderboards</a></li>
+          <li><a href="/wut-tv">WUT TV</a></li>
+          <li><a href="/kids" data-kids-link>WUT Kids</a></li>
           <li><a href="/rules">Game Rules</a></li>
           <li><a href="/faq">FAQ</a></li>
         </ul>
@@ -506,6 +548,7 @@ body.theme-light .invite-note b{color:#14532d}
         <h4>Company</h4>
         <ul>
           <li><a href="/about">About Us</a></li>
+          <li><a href="/enterprise">For businesses</a></li>
           <li><a href="/reviews">Player Reviews</a></li>
           <li><a href="/contact">Contact</a></li>
         </ul>
@@ -528,31 +571,40 @@ body.theme-light .invite-note b{color:#14532d}
     <div class="footer-bottom">
       <p>&copy; <span id="fyear">2026</span> What's Up Trivia · A product of <a href="https://sisystems.ng" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">SummerIsland Systems</a>. All rights reserved.</p>
       <div class="footer-flags">
-        <span>🧠 100% skill-based</span>
+        <span>🧠 Skill &amp; knowledge based</span>
         <span>🇳🇬 Made in Nigeria</span>
       </div>
     </div>
   </div>
 </footer>
 
-<!-- Platform picker: one "Play now", three honest doors -->
+<!-- Platform picker: one "Play now", five honest doors -->
 <div class="picker-backdrop" id="pickerBackdrop"></div>
 <div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="pickerTitle" hidden>
   <button class="picker-close" type="button" aria-label="Close">✕</button>
   <h2 id="pickerTitle">Choose where to play</h2>
-  <p class="picker-sub">Same game, same leaderboard, same prize pool — your account works everywhere.</p>
+  <p class="picker-sub">Web-play, WhatsApp and Telegram share one leaderboard and one prize pool. Each platform has its own account.</p>
   <a class="picker-opt" id="pickWeb" href="https://play.whatsuptrivia.com.ng" target="_blank" rel="noopener">
     <span class="p-ic p-ic-web" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
     <span><span class="p-name">Web-play</span><br><span class="p-desc">Full browser game — nothing to install</span></span>
     <span class="p-tag">Newest</span>
   </a>
-  <a class="picker-opt" id="pickWhatsapp" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20compete%20on%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">
+  <a class="picker-opt" id="pickWhatsapp" href="https://wa.me/2349160363909?text=Hi%21%20I%20want%20to%20play%20What%27s%20Up%20Trivia" target="_blank" rel="noopener">
     <span class="p-ic p-ic-wa" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5 13.9c-.2.6-1.2 1.2-1.7 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.2.1.3 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.8 2.1 1.2 1.1 2.2 1.4 2.6 1.6.3.1.5.1.7-.1l.9-1c.2-.3.4-.2.7-.1l2 1c.3.1.5.2.6.3.1.2.1.8-.1 1.4Z"/></svg></span>
     <span><span class="p-name">WhatsApp</span><br><span class="p-desc">Chat the bot — where most players live</span></span>
   </a>
   <a class="picker-opt" id="pickTelegram" href="https://t.me/WhatsUpTrivia_bot" target="_blank" rel="noopener">
     <span class="p-ic p-ic-tg" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.9 4.6 18.6 19.9c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.2-8.3c.4-.4-.1-.6-.6-.2L6.1 13.5 1.2 12c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.7.2 1.4 1.6Z"/></svg></span>
     <span><span class="p-name">Telegram</span><br><span class="p-desc">Press START on @WhatsUpTrivia_bot</span></span>
+  </a>
+  <a class="picker-opt" id="pickTv" href="/wut-tv">
+    <span class="p-ic p-ic-tv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="m17 2-5 5-5-5"/></svg></span>
+    <span><span class="p-name">WUT TV</span><br><span class="p-desc">On your television: Solo or Party</span></span>
+  </a>
+  <a class="picker-opt" id="pickKids" href="/kids" data-kids-link>
+    <span class="p-ic p-ic-kids" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.4l-5.8 3.1 1.1-6.5L2.6 9.4l6.5-.9z"/></svg></span>
+    <span><span class="p-name">WUT Kids</span><br><span class="p-desc">Learning trivia for children</span></span>
+    <span class="p-tag">Soon</span>
   </a>
 </div>
 
@@ -575,7 +627,13 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
     web: 'https://play.whatsuptrivia.com.ng',
     whatsapp: 'https://wa.me/2349160363909?text=' +
       encodeURIComponent("Hi! I want to play What's Up Trivia"),
-    telegram: 'https://t.me/WhatsUpTrivia_bot'
+    telegram: 'https://t.me/WhatsUpTrivia_bot',
+    // --- added Nov 2026. Leave a value empty ('') until it exists. ---
+    KIDS_SITE: 'https://whatsuptriviakids.com.ng',
+    TV_APK: '',                 // Android TV download (GitHub Releases, never Render)
+    TV_DOWNLOADER_CODE: '',     // code for the Downloader app on Android TV
+    TV_STORE_GOOGLE_PLAY: '',   // Play Store listing, once approved
+    TV_STORE_LG: ''             // LG Content Store listing, once approved
   };
   C.SOCIAL = {
     instagram: 'https://instagram.com/whatsuptrivia',
@@ -597,7 +655,12 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
   // ACTIVITY_API: flip to true when /api/public/activity/recent
   //   ships. Until then the social-proof ticker stays dormant —
   //   it never invents events.
-  C.FEATURES = { REVIEWS_API: true, CONTENT_API: true, ACTIVITY_API: true };
+  C.FEATURES = { REVIEWS_API: true, CONTENT_API: true, ACTIVITY_API: true,
+    // KIDS_SITE_LIVE: true sends every "WUT Kids" link to LINKS.KIDS_SITE instead of /kids.
+    // The three *_API flags below stay false until those endpoints are deployed;
+    // while false, the forms open the visitor's email app instead.
+    // FAQ_DRAFTS shows the draft answers about TV, Kids and businesses on /faq once approved.
+    KIDS_SITE_LIVE: false, ENTERPRISE_API: false, KIDS_WAITLIST_API: false, TV_NOTIFY_API: false, FAQ_DRAFTS: false };
 
   // --- Analytics ---------------------------------------------------
   // Paste your IDs here and they apply site-wide. Empty string = that
@@ -1063,6 +1126,16 @@ document.addEventListener('DOMContentLoaded', function () {
 })();
 
 document.getElementById('fyear').textContent = new Date().getFullYear();
+
+/* ---------- WUT Kids links: own site once it is live ---------- */
+(function () {
+  var C = window.WUT_CONFIG;
+  if (!(C.FEATURES.KIDS_SITE_LIVE && C.LINKS.KIDS_SITE)) return;
+  [].forEach.call(document.querySelectorAll('[data-kids-link]'), function (a) {
+    a.href = C.LINKS.KIDS_SITE; a.target = '_blank'; a.rel = 'noopener';
+  });
+})();
+
 
 </script>
 <script defer src="/ticker.js"></script>

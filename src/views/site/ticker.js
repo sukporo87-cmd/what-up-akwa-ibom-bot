@@ -308,7 +308,9 @@
 
   function init() {
     load();
-    setInterval(load, POLL_MS);
+    // Never poll from a hidden tab; catch up when the tab comes back.
+    setInterval(function () { if (!document.hidden) load(); }, POLL_MS);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
     // The header height changes at breakpoints, so the offset is recomputed
     // rather than measured once at load.
     window.addEventListener('resize', function () {
