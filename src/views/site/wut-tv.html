@@ -354,6 +354,7 @@ body.theme-dark .chip-tv{color:#FBBF24;background:rgba(245,158,11,.14)}
 .cta-band p{color:var(--d-muted);max-width:540px;margin:0 auto 24px}
 /* ---- forms on the new pages ---- */
 .wf{display:grid;gap:14px}
+.wf[hidden]{display:none}
 .wf label,.wf legend{font-weight:600;font-size:14px;color:var(--ink)}
 body.theme-dark .wf label,body.theme-dark .wf legend{color:#fff}
 .wf .hint{font-weight:400;color:var(--ink-faint);font-size:13px}
@@ -486,7 +487,11 @@ body.theme-dark .tvp a.btn-gold{color:#1a1205}
 .tv-panel p{color:var(--d-muted);margin-bottom:14px}
 .tv-install{margin:6px 0 16px 22px;display:grid;gap:10px;color:var(--d-text);font-size:15.5px}
 .tv-code{display:inline-block;font-family:var(--font-data);font-weight:800;font-size:22px;letter-spacing:.14em;color:#1a1205;background:var(--gold-bright);padding:4px 12px;border-radius:10px;margin-left:4px}
-.tv-help{margin-top:8px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}
+.tv-alt{margin-top:22px;border-top:1px solid rgba(255,255,255,.08);padding-top:22px}
+.tv-alt.first{margin-top:0;border-top:0;padding-top:0}
+.tv-alt.first+#andDl,#andDl.second{margin-top:22px;border-top:1px solid rgba(255,255,255,.08);padding-top:22px}
+.tv-panel .tv-size{font-size:13.5px;margin:10px 0 0}
+.tv-help{margin-top:18px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}
 .tv-help summary{cursor:pointer;font-weight:700;color:var(--gold-bright);padding:8px 0;min-height:44px;display:flex;align-items:center}
 .tv-help ul{margin:8px 0 0 20px;display:grid;gap:8px;color:var(--d-muted);font-size:14.5px}
 .soon-pill{display:inline-block;font-family:var(--font-data);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px;border-radius:999px;background:rgba(251,191,36,.16);color:#FBBF24;margin-bottom:10px}
@@ -726,14 +731,27 @@ body .page-band .btn-ghost:hover{border-color:rgba(255,255,255,.6);color:#fff}
         <a class="btn btn-gold" id="andStoreLink" href="#" target="_blank" rel="noopener">Open in Google Play</a>
       </div>
       <div id="andSide" hidden>
-        <h3 id="andSideTitle">Install with the Downloader app</h3>
-        <ol class="tv-install">
-          <li>On your TV, open the app store and install the free app called <strong>Downloader</strong>.</li>
-          <li id="andCodeStep">Open Downloader and type this code: <span class="tv-code" id="andCode"></span></li>
-          <li>When the download finishes, choose <strong>Install</strong>. If your TV asks, allow Downloader to install apps, then choose Install again.</li>
-          <li>Open <strong>What's Up Trivia TV</strong> from your apps.</li>
-        </ol>
-        <p id="andApkRow" hidden>Prefer a direct download? <a id="andApkLink" href="#" rel="noopener">Download the Android TV app file (APK)</a>.</p>
+        <div id="andDl">
+          <h3 id="andSideTitle">Install with the Downloader app</h3>
+          <p>The quickest way on most Android TVs. It takes about two minutes.</p>
+          <ol class="tv-install">
+            <li>On your TV, open <strong>Google Play</strong>, search for <strong>Downloader</strong> and install it. It is free.</li>
+            <li id="andCodeStep">Open Downloader, type this code and press <strong>Go</strong>: <span class="tv-code" id="andCode"></span></li>
+            <li>When the download finishes, choose <strong>Install</strong>.</li>
+            <li>If your TV says it cannot install from this source, choose <strong>Settings</strong>, switch it on for Downloader, press <strong>Back</strong>, then choose <strong>Install</strong> again.</li>
+            <li>Choose <strong>Open</strong>. You will also find What's Up Trivia TV under <strong>Apps</strong> on your home screen.</li>
+          </ol>
+        </div>
+        <div class="tv-alt" id="andApkRow" hidden>
+          <h3 id="andApkTitle">Or download it with your TV's browser</h3>
+          <ol class="tv-install">
+            <li>Open <strong>whatsuptrivia.com.ng/wut-tv</strong> in the browser on your TV.</li>
+            <li>Choose <strong>Download the app</strong> below and wait for it to finish.</li>
+            <li>Open the downloaded file and choose <strong>Install</strong>. If your TV asks, allow the browser to install apps, then choose Install again.</li>
+          </ol>
+          <a class="btn btn-gold" id="andApkLink" href="#" rel="noopener">Download the app</a>
+          <p class="tv-size">Android TV app file (APK), about 58 MB.</p>
+        </div>
       </div>
       <div id="andSoon" hidden>
         <h3>The Android TV download is being prepared</h3>
@@ -742,9 +760,11 @@ body .page-band .btn-ghost:hover{border-color:rgba(255,255,255,.6);color:#fff}
       <details class="tv-help" id="andHelp">
         <summary>Install help</summary>
         <ul>
-          <li><strong>The Install button does nothing:</strong> your TV is blocking apps from outside its store. In the TV's Settings, find Apps, then the setting for installing unknown apps, and switch it on for Downloader.</li>
+          <li><strong>You cannot find Downloader:</strong> on some TVs the store is called Apps or Play Store. Search for "Downloader"; the one you want has an orange icon.</li>
+          <li><strong>Install does nothing:</strong> your TV is blocking apps from outside its store. Open Settings, then Apps, then Security and restrictions, then Install unknown apps, and switch it on for Downloader.</li>
+          <li><strong>Your TV warns about the app:</strong> that message appears for any app installed outside Google Play. Choose to continue.</li>
           <li><strong>You cannot find the app afterwards:</strong> look under Apps, then See all apps, on your TV's home screen.</li>
-          <li><strong>Still stuck?</strong> Email <a href="mailto:hello@whatsuptrivia.com.ng?subject=WUT%20TV%20install%20help">hello@whatsuptrivia.com.ng</a> and tell us your TV's make and model.</li>
+          <li><strong>Still stuck?</strong> Email <a href="mailto:hello@whatsuptrivia.com.ng?subject=WUT%20TV%20install%20help">hello@whatsuptrivia.com.ng</a> with your TV's make and model.</li>
         </ul>
       </details>
     </div>
@@ -924,8 +944,8 @@ window.WUT_CONFIG = window.WUT_CONFIG || {};
     telegram: 'https://t.me/WhatsUpTrivia_bot',
     // --- added Nov 2026. Leave a value empty ('') until it exists. ---
     KIDS_SITE: 'https://whatsuptriviakids.com.ng',
-    TV_APK: '',                 // Android TV download (GitHub Releases, never Render)
-    TV_DOWNLOADER_CODE: '',     // code for the Downloader app on Android TV
+    TV_APK: 'https://github.com/sukporo87-cmd/wut-tv-releases/releases/latest/download/WhatsUpTriviaTV.apk',                 // Android TV download (GitHub Releases, never Render)
+    TV_DOWNLOADER_CODE: '6314501',     // code for the Downloader app on Android TV
     TV_STORE_GOOGLE_PLAY: '',   // Play Store listing, once approved
     TV_STORE_LG: ''             // LG Content Store listing, once approved
   };
@@ -1543,6 +1563,14 @@ function wutForm(form, cfg) {
     d.textContent = 'It looks like you are on ' + (os === 'other' ? 'a TV' : NAMES[os]) + ', so that tab is open. The others are one press away.';
     d.hidden = false;
     /* on a TV the remote starts on "Get the app", one press from the right tab */
+    if (os === 'android' && hasApk && !m) {
+      var apk = document.getElementById('andApkRow'), dl = document.getElementById('andDl');
+      apk.parentNode.insertBefore(apk, dl); apk.classList.add('first'); dl.classList.add('second');
+      document.getElementById('andApkTitle').textContent = 'Download it on this TV';
+      document.getElementById('andSideTitle').textContent = 'Or use the Downloader app';
+      var first = apk.querySelector('li'); if (first) first.parentNode.removeChild(first);
+      var lede = dl.querySelector('p'); if (lede) lede.parentNode.removeChild(lede);
+    }
     var go = document.querySelector('.tv-top .btn-gold'); if (go) { try { go.focus({ preventScroll: true }); } catch (e) { go.focus(); } }
   }
   pick(os || 'android');
