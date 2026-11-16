@@ -100,6 +100,9 @@
   .states { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 14px; }
   @media (max-width: 760px) { .states { grid-template-columns: repeat(2, 1fr); } }
   .tvlist { max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px; }
+  .faded { opacity: .45; }
+  .warn-text { color: var(--amber); font-weight: 600; }
+  .faded-note { font-size: 12.5px; color: var(--teal); font-weight: 600; margin: 4px 0 0; }
   .reach { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
 
   .checklist li { list-style: none; padding: 6px 0; font-size: 13.5px; display: flex; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
@@ -204,7 +207,7 @@ async function showList() {
   const rows = j.campaigns;
   app.innerHTML =
     '<div class="card"><h2>New campaign</h2>' +
-    '<div class="hint">A branded party runs alongside everyone\'s Party: the brand is the host and never plays, a player in the room becomes co-host, and prizes come from what the brand has paid in. Start with the names; everything else is set on the next screen and can wait until you have it. <b>Nothing reaches a TV yet</b> (that comes with the next update).</div>' +
+    '<div class="hint">A branded party runs alongside everyone\'s Party: the brand is the host and never plays, a player in the room becomes co-host, and prizes come from what the brand has paid in. Start with the names; everything else is set on the next screen and can wait until you have it. Once published, it shows on the TVs it is set for (TV app 0.13.0 and later).</div>' +
     '<div class="grid3"><div class="field"><label for="nName">Campaign name</label><input type="text" id="nName" maxlength="60" placeholder="e.g. Back to School Quiz"></div>' +
     '<div class="field"><label for="nBrand">Brand</label><input type="text" id="nBrand" maxlength="40" placeholder="e.g. Indomie"></div>' +
     '<div class="field"><label>&nbsp;</label><button class="btn primary" id="nGo">Create draft</button> <span class="err" id="nErr"></span></div></div></div>' +
@@ -212,7 +215,8 @@ async function showList() {
     (rows.length ? '<div class="scroll"><table><thead><tr><th>Campaign</th><th>State</th><th>Runs</th><th>Where</th><th>Prize</th><th class="num">Paid in</th></tr></thead><tbody>' +
       rows.map(c => '<tr class="clickrow" data-id="' + esc(c.id) + '"><td>' + (c.pinned ? '📌 ' : '') + '<b>' + esc(c.name) + '</b><div class="dim">' + esc(c.brandName) + '</div></td>' +
         '<td>' + pill(c.state) + '</td><td>' + esc(lagos(c.startsAt, false)) + ' – ' + esc(lagos(c.endsAt, false)) + '</td>' +
-        '<td>' + esc(c.tvCount) + ' TV' + (c.tvCount === 1 ? '' : 's') + (c.regions.length ? '<div class="dim">' + esc(c.regions.join(', ')) + '</div>' : '') + '</td>' +
+        '<td>' + (c.audience === 'all' ? '<b>Every TV</b>' : c.audience === 'nigeria' ? '<b>Every TV in Nigeria</b>' + (c.tvCount ? '<div class="dim">and ' + esc(c.tvCount) + ' chosen</div>' : '') :
+          esc(c.tvCount) + ' TV' + (c.tvCount === 1 ? '' : 's') + (c.regions.length ? '<div class="dim">' + esc(c.regions.join(', ')) + '</div>' : '')) + '</td>' +
         '<td>' + esc(BASIS[c.prizeBasis] || '') + (c.prizeBasis !== 'none' ? '<div class="dim">' + (c.prizeType === 'cash' ? 'cash' : 'an item') + '</div>' : '') + '</td>' +
         '<td class="num">' + esc(naira(c.funded)) + '</td></tr>').join('') +
       '</tbody></table></div>' : '<div class="empty">No campaigns yet.</div>') + '</div>';
@@ -282,29 +286,51 @@ function brandCard(dis) {
     '</div>' + saveRow('brand', dis) + '</div>';
 }
 
+// How widely a campaign reaches (028): the chosen TVs and states, every TV
+// in Nigeria, or every TV anywhere.
+const AUDIENCE = {
+  chosen: 'The TVs and states I choose below',
+  nigeria: 'Every TV in Nigeria (any state), and any TV chosen below',
+  all: 'Every TV, anywhere: the widest reach'
+};
 function whenWhereCard(dis) {
   const chosen = new Set(C.tvs.map(t => t.id));
   const regions = new Set(C.regions);
   const r = C.reach;
-  return '<div class="card" data-section="when"><h2>When and where</h2><div class="hint">Typed and shown in <b>Lagos time</b>. A campaign runs on the TVs you choose by name, and on every TV in the states you tick. A TV\'s state comes from its internet connection, so it is close to city level, not exact.</div>' +
+  const aud = C.audience || 'chosen';
+  const inNigeria = OPTIONS.states.reduce((a, s) => a + (Number(s.tvs) || 0), 0);
+  const everywhere = OPTIONS.tvs.filter(t => t.recent).length;
+  const counts = { chosen: '', nigeria: ' <span class="dim">(' + inNigeria + ' active TVs today)</span>', all: ' <span class="dim">(' + everywhere + ' active TVs today, including TVs abroad or with no known place)</span>' };
+  const area = aud === 'nigeria' ? 'anywhere in Nigeria' : 'in the ticked states';
+  return '<div class="card" data-section="when"><h2>When and where</h2><div class="hint">Typed and shown in <b>Lagos time</b>. A campaign can run on every TV, on every TV in Nigeria, or on the TVs you choose by name and every TV in the states you tick. A TV\'s state comes from its internet connection, so it is close to city level, not exact.</div>' +
     '<div class="grid2">' +
     field('Starts', '<input type="datetime-local" data-k="startsAt" value="' + esc(lagosInput(C.startsAt)) + '"' + dis + '>') +
     field('Ends', '<input type="datetime-local" data-k="endsAt" value="' + esc(lagosInput(C.endsAt)) + '"' + dis + '>') +
     '</div>' +
-    '<div class="field" style="margin-top:14px"><label>States</label><div class="states opts">' +
+    '<div class="field" style="margin-top:14px"><label>Where it runs</label><div class="opts">' +
+      Object.entries(AUDIENCE).map(([k, v]) => '<label><input type="radio" name="audience" data-k="audience" value="' + k + '"' + (aud === k ? ' checked' : '') + dis + '> <span>' + esc(v) + counts[k] + '</span></label>').join('') +
+    '</div><div class="sub" id="audWarn"></div></div>' +
+    '<div id="whereStates"><div class="field" style="margin-top:14px"><label>States</label><div class="states opts">' +
     OPTIONS.states.map(s => '<label><input type="checkbox" data-state="' + esc(s.state) + '"' + (regions.has(s.state) ? ' checked' : '') + dis + '> ' + esc(s.state) +
       ' <span class="dim">(' + esc(s.tvs) + ')</span></label>').join('') +
-    '</div><div class="sub">The number beside each state is the TVs there seen in the last ' + esc(OPTIONS.activeDays) + ' days.</div></div>' +
-    '<div class="field" style="margin-top:14px"><label for="tvFilter">TVs chosen by name <span class="dim">(' + esc(chosen.size) + ' chosen)</span></label>' +
+    '</div><div class="sub">The number beside each state is the TVs there seen in the last ' + esc(OPTIONS.activeDays) + ' days.</div></div></div>' +
+    '<div class="faded-note" id="statesNote" hidden>Not needed: every state is already in. Ticks are kept for if you switch back.</div>' +
+    '<div id="whereTvs"><div class="field" style="margin-top:14px"><label for="tvFilter">TVs chosen by name <span class="dim">(' + esc(chosen.size) + ' chosen)</span></label>' +
     '<input type="text" id="tvFilter" placeholder="Search by name or place"' + dis + '>' +
     '<div class="tvlist opts" id="tvList" style="margin-top:8px">' +
     OPTIONS.tvs.map(t => '<label data-tvrow="' + esc((t.name + ' ' + (t.place || '') + ' ' + (t.tvName || '')).toLowerCase()) + '"><input type="checkbox" data-tv="' + esc(t.id) + '"' +
-      (chosen.has(t.id) ? ' checked' : '') + dis + '> <span><b>' + esc(t.name) + '</b> ' + (t.venue ? '<span class="pill venue">venue</span> ' : '') +
+      (chosen.has(t.id) ? ' checked' : '') + dis + '> <span><b>' + esc(t.name) + '</b> ' +
+      // The server's name too, when the TV is called something else, so it can be matched on the WUT TV page.
+      (t.tvName && t.tvName !== t.name ? '<span class="dim">(' + esc(t.tvName) + ')</span> ' : '') +
+      (t.venue ? '<span class="pill venue">venue</span> ' : '') +
       (t.blocked ? '<span class="pill warn">blocked</span> ' : '') +
       '<span class="dim">' + esc(t.place || 'place unknown') + ' · last seen ' + esc(lagos(t.lastSeen, false)) + '</span></span></label>').join('') +
-    (OPTIONS.tvs.length ? '' : '<div class="empty">No TVs registered yet.</div>') + '</div></div>' +
-    '<div class="reach"><b>Reach today:</b> ' + esc(r.chosen) + ' TV(s) chosen by name, and ' + esc(r.inRegions) + ' TV(s) seen in the last ' + esc(r.activeDays) +
-    ' days in the ticked states: <b>' + esc(r.activeTotal) + ' active TV(s)</b> in all. Saved changes update this.</div>' +
+    (OPTIONS.tvs.length ? '' : '<div class="empty">No TVs registered yet.</div>') + '</div></div></div>' +
+    '<div class="faded-note" id="tvsNote" hidden>Not needed: every TV is already in. Choices are kept for if you switch back.</div>' +
+    '<div class="reach"><b>Reach today:</b> ' + (aud === 'all'
+      ? 'every TV seen in the last ' + esc(r.activeDays) + ' days, anywhere'
+      : esc(r.chosen) + ' TV(s) chosen by name, and ' + esc(r.inRegions) + ' TV(s) seen in the last ' + esc(r.activeDays) + ' days ' + esc(area)) +
+    ': <b>' + esc(r.activeTotal) + ' active TV(s)</b> in all. Saved changes update this.</div>' +
     saveRow('when', dis) + '</div>';
 }
 
@@ -433,6 +459,20 @@ function saveRow(section, dis) {
 }
 
 // What each section sends. Only its own fields.
+function showAudience() {
+  const pick = document.querySelector('[data-k="audience"]:checked');
+  if (!pick) return;
+  const a = pick.value;
+  const states = document.getElementById('whereStates'), tvs = document.getElementById('whereTvs');
+  states.classList.toggle('faded', a !== 'chosen');
+  document.getElementById('statesNote').hidden = a === 'chosen';
+  tvs.classList.toggle('faded', a === 'all');
+  document.getElementById('tvsNote').hidden = a !== 'all';
+  const cash = C.prizeBasis !== 'none' && (C.prizeBasis === 'leaderboard' ? (C.prizeRanks || []).some(x => Number(x.amount) > 0) : C.prizeType === 'cash');
+  document.getElementById('audWarn').innerHTML = a === 'all' && cash
+    ? '<span class="warn-text">This campaign pays cash. On every TV anywhere, players abroad can win too: check the promotion approval covers them, or choose every TV in Nigeria.</span>' : '';
+}
+
 function collect(section) {
   const card = document.querySelector('[data-section="' + section + '"]');
   const out = {};
@@ -537,6 +577,10 @@ function wire() {
     p.addEventListener('input', () => { box.value = p.value.toUpperCase(); });
     box.addEventListener('input', () => { if (/^#[0-9a-f]{6}$/i.test(box.value)) p.value = box.value; });
   });
+
+  // where it runs: the states and TV lists fade when they are not needed
+  document.querySelectorAll('[data-k="audience"]').forEach(x => x.addEventListener('change', showAudience));
+  showAudience();
 
   // TV search
   const filter = document.getElementById('tvFilter');

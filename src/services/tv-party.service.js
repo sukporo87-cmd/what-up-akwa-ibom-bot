@@ -64,6 +64,26 @@
 // still out, writes the places of a prize game that is ended early (so the
 // leader can be paid), and asks tv-prize to settle the prize once a room has
 // ended. It never decides who is paid.
+//
+// BRANDED PARTIES (phase 7, steps 2 and 3, Nov 1, 2026). A TV can open a
+// room for a campaign set up on the admin page (tv-campaign.service). The
+// brand is the host and never plays; the room differs from today's Party in
+// these ways, and only these:
+//   * the category is the campaign's, set when the room opens; nobody can
+//     change it
+//   * only signed-in players can join, and each must first have agreed to
+//     the campaign's current terms (tv_campaign_consents)
+//   * nobody is host until a player types the 4-digit code the TV shows: the
+//     co-host. The co-host chooses the style and starts the game, plays like
+//     everyone else, and can win. A new code is shown if they leave
+//   * nobody can be removed, so a co-host cannot clear away the competition
+//   * no prize can be added from a phone: the brand's prizes come from the
+//     money it paid in (step 4)
+//   * after every 3rd question the TV shows the brand's sponsor card for a
+//     few seconds, and the next question waits for it
+//   * a campaign that is paused or ends takes no new players and starts no
+//     new games; a game already running plays to the end
+// Today's Party is unchanged.
 // ============================================
 
 const pool = require('../config/database');
@@ -85,6 +105,10 @@ const QUESTION_MS = 10000;
 const FIFTY_FIFTY_BONUS_MS = 5000;
 const ANSWER_GRACE_MS = 1500;
 const REVEAL_PAUSE_MS = 4000;
+// Branded parties: the sponsor card, after every 3rd question but the last.
+const SPONSOR_EVERY = 3;
+const SPONSOR_CARD_MS = 5000;
+const COHOST_TRIES = 5;             // wrong co-host codes per player per room, per 10 minutes
 const MIN_FINISHERS = 2;
 // 3, 2, 1, Go!: the first question appears this long after the host starts,
 // at the same moment on the TV and every phone (goAt, in server time).
@@ -281,7 +305,11 @@ class TvPartyService {
                 maxPlayers: state.maxPlayers,
                 playerCount: this._activeIds(state).length,
                 players: this._roster(state),
-                prize: state.prize || null
+                prize: state.prize || null,
+                // A branded party: the brand, and the code that makes a
+                // player co-host, shown only while nobody is.
+                campaign: state.campaign || null,
+                cohostCode: state.campaign && state.status === 'lobby' && !this._hostActive(state) ? (state.cohostCode || null) : null
             },
             game: g ? {
                 style: g.style || 'standard',
@@ -298,9 +326,15 @@ class TvPartyService {
                 of: (g.enrolled || []).filter(pid => this._active(state.players[pid])).length,
                 reveal: g.phase === 'reveal' ? g.lastReveal || null : null,
                 board: g.board || [],
-                final: g.final || null
+                final: g.final || null,
+                sponsor: g.phase === 'reveal' ? this._sponsorWindow(g) : null
             } : null
         };
+    }
+
+    /** The sponsor card's time on the TV, after this reveal, or null. */
+    _sponsorWindow(g) {
+        return g && g.sponsorFrom ? { from: g.sponsorFrom, until: g.nextAt } : null;
     }
 
     playerSnapshot(state, pid) {
@@ -323,6 +357,7 @@ class TvPartyService {
                 playerCount: this._activeIds(state).length,
                 maxPlayers: state.maxPlayers,
                 prize: state.prize || null,
+                campaign: state.campaign ? tvCampaigns.phoneView(state.campaign) : null,
                 // The countdown to the first question, for the phone to show.
                 ...(g && g.phase === 'starting' && g.goAt ? { goAt: g.goAt } : {}),
                 // While the room is open, each phone can change its avatar,
@@ -405,17 +440,29 @@ class TvPartyService {
      * A TV opens a Party room. A TV that already has a live room gets that
      * room back — a room belongs to the TV, not to the connection — unless
      * it asks for a fresh one, which closes the old room first.
+     *
+     * With a campaignId, the room is that campaign's branded party, if this
+     * TV may show it now. A TV whose live room is a different party (another
+     * campaign, or today's Party) has that room closed and gets a new one.
      */
-    async openRoom(device, { fresh = false } = {}) {
+    async openRoom(device, { fresh = false, campaignId = null } = {}) {
         await tvAuth.ensureSchema();
+
+        let campaign = null;
+        if (campaignId != null && campaignId !== '') {
+            campaign = await tvCampaigns.forDevice(campaignId, device.id);
+            if (!campaign) return { ok: false, reason: 'campaign_unavailable' };
+        }
 
         const existing = await this._liveRoomForDevice(device.id);
         if (existing && !fresh) {
             const state = await this._loadOrRebuild(existing);
-            if (state) {
+            const same = state && (state.campaign ? state.campaign.id : null) === (campaign ? campaign.id : null);
+            if (state && same) {
                 return {
                     ok: true, resumed: true, roomId: state.id, joinCode: state.code,
-                    joinUrl: this.joinUrl(state.code), status: state.status, maxPlayers: state.maxPlayers
+                    joinUrl: this.joinUrl(state.code), status: state.status, maxPlayers: state.maxPlayers,
+                    campaignId: state.campaign ? state.campaign.id : null
                 };
             }
         }
@@ -430,12 +477,17 @@ class TvPartyService {
         let row = null;
         for (let attempt = 0; attempt < 6 && !row; attempt++) {
             try {
-                const r = await pool.query(
-                    `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at)
-                     VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes')
-                     RETURNING id, join_code, created_at, expires_at`,
-                    [device.id, this._newCode(), maxPlayers]
-                );
+                const r = campaign
+                    ? await pool.query(
+                        `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at, campaign_id, categories)
+                         VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes', $4, $5)
+                         RETURNING id, join_code, created_at, expires_at`,
+                        [device.id, this._newCode(), maxPlayers, campaign.id, [campaign.category]])
+                    : await pool.query(
+                        `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at)
+                         VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes')
+                         RETURNING id, join_code, created_at, expires_at`,
+                        [device.id, this._newCode(), maxPlayers]);
                 row = r.rows[0];
             } catch (e) {
                 // 23505: that code is in use by a live room. Pick another.
@@ -453,20 +505,27 @@ class TvPartyService {
             closeReason: null,
             hostPlayerId: null,
             maxPlayers,
-            categories: [],
+            categories: campaign ? [campaign.category] : [],
             style: 'standard',
             createdAt: now,
             expiresAt: now + LOBBY_TTL_MS,
             players: {},
             order: [],
-            game: null
+            game: null,
+            ...(campaign ? { campaign, cohostCode: this._cohostCode() } : {})
         });
 
-        logger.info(`📺 TV ${device.id} opened room ${row.id} (code ${row.join_code})`);
+        logger.info(`📺 TV ${device.id} opened room ${row.id} (code ${row.join_code})${campaign ? ` for campaign ${campaign.id}` : ''}`);
         return {
             ok: true, resumed: false, roomId: row.id, joinCode: row.join_code,
-            joinUrl: this.joinUrl(row.join_code), status: 'lobby', maxPlayers
+            joinUrl: this.joinUrl(row.join_code), status: 'lobby', maxPlayers,
+            campaignId: campaign ? campaign.id : null
         };
+    }
+
+    /** The 4 numbers a player types to become a branded party's co-host. */
+    _cohostCode() {
+        return String(require('crypto').randomInt(0, 10000)).padStart(4, '0');
     }
 
     /**
@@ -510,6 +569,15 @@ class TvPartyService {
             rev: 0,
             tvLogCount: 0
         };
+        // A branded party keeps its brand, whatever the campaign's state now.
+        if (room.campaign_id) {
+            const view = await tvCampaigns.viewById(room.campaign_id);
+            if (view) {
+                rebuilt.campaign = view;
+                rebuilt.cohostCode = this._cohostCode();
+                if (view.category) rebuilt.categories = [view.category];
+            }
+        }
         for (const p of players.rows) {
             rebuilt.players[p.id] = {
                 id: p.id, name: p.display_name, key: p.name_key, avatar: p.avatar, colour: p.colour,
@@ -852,6 +920,12 @@ class TvPartyService {
             if (this._activeIds(state).length >= state.maxPlayers) {
                 return { ok: false, status: 409, reason: 'room_full' };
             }
+            // A branded party: signed in, and agreed to the campaign's terms.
+            if (state.campaign) {
+                if (!ctx.account) return { ok: false, status: 401, reason: 'signin_required' };
+                const may = await tvCampaigns.canJoin(state.campaign.id, ctx.account.id);
+                if (!may.ok) return { ok: false, status: may.reason === 'terms_required' ? 403 : 410, ...may };
+            }
 
             let name;
             if (ctx.account) {
@@ -917,20 +991,85 @@ class TvPartyService {
     }
 
     // ============================================
+    // A BRANDED PARTY, BEFORE JOINING (phase 7)
+    // ============================================
+
+    /**
+     * What the phone needs to know before it joins: whether this is a brand's
+     * party and, if so, the brand, its terms, and whether this account has
+     * agreed to them. A code that is not a live room counts as a miss, like
+     * a join.
+     */
+    async roomInfo(code, { ip, account } = {}) {
+        const out = await this._findLive(code, ip);
+        if (!out.ok) return out;
+        const state = out.state;
+        if (!state.campaign) return { ok: true, branded: false, status: state.status };
+        const terms = await tvCampaigns.terms(state.campaign.id);
+        const accepted = !!(account && terms && await tvCampaigns.hasConsent(state.campaign.id, account.id, terms.version));
+        return {
+            ok: true, branded: true, status: state.status,
+            campaign: tvCampaigns.phoneView(state.campaign),
+            terms: terms ? { version: terms.version, text: terms.text, shares: terms.shares, winnerShares: terms.winnerShares } : null,
+            live: !!(terms && terms.live), signedIn: !!account, accepted
+        };
+    }
+
+    /** A signed-in player agrees to the terms of the branded party behind this code. */
+    async acceptTerms(code, account, version, ip) {
+        const out = await this._findLive(code, ip);
+        if (!out.ok) return out;
+        if (!out.state.campaign) return { ok: false, reason: 'not_branded' };
+        return tvCampaigns.consent(out.state.campaign.id, account.id, version, ip);
+    }
+
+    async _findLive(code, ip) {
+        await tvAuth.ensureSchema();
+        ip = ip || 'unknown';
+        if (await this._isLimited(`tv_rate:miss:${ip}`, JOIN_MISS_LIMIT_PER_IP)) {
+            return { ok: false, status: 429, reason: 'too_many_attempts' };
+        }
+        const found = /^\d{6}$/.test(String(code || '')) ? await pool.query(
+            `SELECT id FROM tv_rooms WHERE join_code = $1 AND status IN ('lobby','playing')`, [String(code)]
+        ) : { rows: [] };
+        const state = found.rows[0] ? await this._loadOrRebuild(found.rows[0].id) : null;
+        if (!state) {
+            await this._overLimit(`tv_rate:miss:${ip}`, JOIN_MISS_LIMIT_PER_IP, JOIN_WINDOW_SECONDS);
+            return { ok: false, status: 404, reason: 'no_room' };
+        }
+        return { ok: true, state };
+    }
+
+    // ============================================
     // LOBBY ACTIONS
     // ============================================
 
-    async takeHost(roomId, pid) {
+    /**
+     * A player becomes host. In a branded party, the co-host: only with the
+     * 4 numbers the TV shows, so it is someone in the room, not someone sent
+     * the link.
+     */
+    async takeHost(roomId, pid, code) {
         return store.withRoom(roomId, async (state, tx) => {
             if (!state || state.status === 'closed' || state.status === 'finished') {
                 return { ok: false, reason: 'room_closed' };
             }
             if (state.hostPlayerId === pid) return { ok: true, already: true };
             if (this._hostActive(state)) return { ok: false, reason: 'host_taken' };
+            if (state.campaign) {
+                if (state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+                const key = `tv_rate:cohost:${state.id}:${pid}`;
+                if (await this._isLimited(key, COHOST_TRIES)) return { ok: false, status: 429, reason: 'too_many_attempts' };
+                if (!/^\d{4}$/.test(String(code || ''))) return { ok: false, status: 400, reason: 'code_required' };
+                if (String(code) !== state.cohostCode) {
+                    await this._overLimit(key, COHOST_TRIES, JOIN_WINDOW_SECONDS);
+                    return { ok: false, status: 400, reason: 'wrong_code' };
+                }
+            }
 
             state.hostPlayerId = pid;
             await pool.query(`UPDATE tv_rooms SET host_player_id = $2 WHERE id = $1`, [state.id, pid]);
-            tx.tv('room.host_changed', { hostPlayerId: pid });
+            tx.tv('room.host_changed', { hostPlayerId: pid, cohostCode: null });
             // The new host's phone switches to the host screen now, not at the
             // next coalesced lobby update.
             tx.player(pid, 'player.room', this.playerSnapshot(state, pid).room);
@@ -963,8 +1102,10 @@ class TvPartyService {
         });
     }
 
-    /** Categories are picked on the TV, by whoever holds the remote, or by the host. */
+    /** Categories are picked on the TV, by whoever holds the remote, or by the host. Never in a branded party. */
     async setCategories(roomId, actor, categories) {
+        const before = await store.load(roomId);
+        if (before && before.campaign) return { ok: false, reason: 'set_by_brand' };
         const wanted = [...new Set((Array.isArray(categories) ? categories : [])
             .map(c => String(c || '').trim().toLowerCase()).filter(Boolean))];
         if (wanted.length < 1 || wanted.length > MAX_CATEGORIES) return { ok: false, reason: 'pick_one_to_three' };
@@ -974,6 +1115,7 @@ class TvPartyService {
 
         return store.withRoom(roomId, async (state, tx) => {
             if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+            if (state.campaign) return { ok: false, reason: 'set_by_brand' };
             if (actor.playerId && state.hostPlayerId !== actor.playerId) return { ok: false, reason: 'not_host' };
 
             state.categories = wanted;
@@ -1014,7 +1156,9 @@ class TvPartyService {
             if (state.hostPlayerId === pid) {
                 state.hostPlayerId = null;
                 await pool.query(`UPDATE tv_rooms SET host_player_id = NULL WHERE id = $1`, [state.id]);
-                tx.tv('room.host_changed', { hostPlayerId: null });
+                // A branded party shows a new code, so the one that was seen is no good.
+                if (state.campaign) state.cohostCode = this._cohostCode();
+                tx.tv('room.host_changed', { hostPlayerId: null, cohostCode: state.campaign && state.status === 'lobby' ? state.cohostCode : null });
             }
             this._scheduleLobbyUpdate(state.id);
             return { ok: true, emptyMatch: this._noActiveEnrolled(state), allIn: this._allLocked(state) };
@@ -1030,6 +1174,8 @@ class TvPartyService {
                 return { ok: false, reason: 'room_closed' };
             }
             if (state.hostPlayerId !== hostPid) return { ok: false, reason: 'not_host' };
+            // The co-host is a player too, with a prize at stake: they cannot clear the room.
+            if (state.campaign) return { ok: false, reason: 'set_by_brand' };
             if (targetPid === hostPid) return { ok: false, reason: 'cannot_remove_self' };
             const target = state.players[targetPid];
             if (!target || target.removedAt) return { ok: false, reason: 'no_such_player' };
@@ -1090,6 +1236,11 @@ class TvPartyService {
             if (state.prize && state.prize.status === 'pending') return { ok: false, reason: 'prize_pending' };
             const players = this._activeIds(state);
             if (players.length < MIN_PLAYERS_TO_START) return { ok: false, reason: 'not_enough_players' };
+            // A branded party whose campaign has been paused or has ended starts no new game.
+            if (state.campaign) {
+                const live = await tvCampaigns.terms(state.campaign.id);
+                if (!live || !live.live) return { ok: false, reason: 'campaign_over' };
+            }
 
             // The room locks here: late joiners are turned away from now on.
             state.status = 'playing';
@@ -1225,6 +1376,7 @@ class TvPartyService {
             g.extendedAt = null;
             g.locked = {};
             g.nextAt = null;
+            g.sponsorFrom = null;
             g.lastReveal = null;
             g.raceFirstAt = null;
 
@@ -1538,9 +1690,18 @@ class TvPartyService {
                     ...(race ? { winnerPlayerId: winner ? winner.pid : null, winnerName, winnerMs: winner ? winner.ms : null } : {})
                 };
                 g.nextAt = Date.now() + REVEAL_PAUSE_MS;
+                // A branded party: the sponsor card after every 3rd question
+                // but the last, once the answer has been seen. The next
+                // question waits for it.
+                g.sponsorFrom = null;
+                if (state.campaign && g.position % SPONSOR_EVERY === 0 && g.position < QUESTIONS_PER_ROUND) {
+                    g.sponsorFrom = g.nextAt;
+                    g.nextAt += SPONSOR_CARD_MS;
+                }
 
                 tx.tv('game.reveal', {
                     position: g.position, correctAnswer: correct, trigger,
+                    ...(state.campaign ? { sponsor: this._sponsorWindow(g) } : {}),
                     correctCount, answered: Object.keys(g.locked).length,
                     of: g.enrolled.filter(pid => this._active(state.players[pid])).length,
                     style: g.style || 'standard',
@@ -1790,6 +1951,8 @@ module.exports.QUESTION_MS = QUESTION_MS;
 module.exports.FIFTY_FIFTY_BONUS_MS = FIFTY_FIFTY_BONUS_MS;
 module.exports.ANSWER_GRACE_MS = ANSWER_GRACE_MS;
 module.exports.REVEAL_PAUSE_MS = REVEAL_PAUSE_MS;
+module.exports.SPONSOR_EVERY = SPONSOR_EVERY;
+module.exports.SPONSOR_CARD_MS = SPONSOR_CARD_MS;
 module.exports.MAX_PLAYERS = MAX_PLAYERS;
 module.exports.MIN_FINISHERS = MIN_FINISHERS;
 module.exports.pointsFor = pointsFor;

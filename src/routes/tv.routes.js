@@ -24,6 +24,13 @@
 // tv-prize.service, never here.
 // Solo is phase 3; QR sign-in on the TV and the leaderboard are phase 4.
 //
+// BRANDED PARTIES (phase 7, steps 2 and 3): a TV lists the campaigns it may
+// show and opens a room for one; a phone reads the brand and its terms before
+// joining, agrees to them signed in, and a player becomes co-host with the
+// code on the TV. The finder lets a phone search and open a campaign on the
+// TV it scanned. The campaign rules are in tv-campaign.service and
+// tv-party.service, never here.
+//
 // ROUTE ORDER: every path below is either fully literal or ends in a literal
 // action, and room ids, join codes and pairing codes are constrained by
 // pattern, so no parameter route can shadow a literal one.
@@ -41,6 +48,7 @@ const tvIdentity = require('../services/tv-identity.service');
 const webAuthService = require('../services/web-auth.service');
 const tvPrize = require('../services/tv-prize.service');
 const tvFlags = require('../services/tv-flags.service');
+const tvCampaigns = require('../services/tv-campaign.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
@@ -53,7 +61,11 @@ const STATUS = {
     account_not_verified: 400, no_saved_details: 400, payment_unavailable: 503,
     not_the_winner: 403, claim_expired: 410, already_claimed: 409, account_in_room: 409, too_late: 409,
     too_many_attempts: 429, too_many_rooms: 429, too_many_rounds: 429, too_many_registrations: 429,
-    try_again: 503
+    try_again: 503,
+    // Branded parties (phase 7)
+    signin_required: 401, terms_required: 403, set_by_brand: 403, branded_party: 403, not_your_finder: 403,
+    campaign_unavailable: 404, no_campaign: 404, campaign_over: 410, finder_expired: 410,
+    wrong_code: 400, code_required: 400, terms_changed: 409, not_branded: 409
 };
 
 function getIp(req) {
@@ -246,9 +258,74 @@ router.get('/flags/:code([A-Za-z0-9-]{2,12}).png', async (req, res) => {
 
 router.post('/rooms', requireDevice, async (req, res) => {
     try {
-        const out = await party.openRoom(req.tvDevice, { fresh: !!(req.body && req.body.fresh) });
+        const body = req.body || {};
+        const out = await party.openRoom(req.tvDevice, {
+            fresh: !!body.fresh,
+            // A branded party (phase 7): the campaign's id, from /tv/campaigns.
+            campaignId: body.campaignId == null ? null : parseInt(body.campaignId, 10)
+        });
         return reply(res, out);
     } catch (error) { return fail(res, 'open room', error); }
+});
+
+// ============================================
+// BRANDED PARTIES ON THE TV (phase 7)
+// ============================================
+
+/** The campaigns this TV may show now, pinned first. ?q= searches them. */
+router.get('/campaigns', requireDevice, async (req, res) => {
+    try {
+        const q = typeof req.query.q === 'string' ? req.query.q : '';
+        return res.json({ success: true, campaigns: await tvCampaigns.availableFor(req.tvDevice.id, { q }) });
+    } catch (error) { return fail(res, 'campaigns', error); }
+});
+
+// A campaign's approved picture, sized for a TV. No token, for the reason the
+// flags have none (a picture fetch from the webOS app cannot send one); only
+// approved pictures are served. The address carries the upload time, so a
+// replaced picture is a new address and the old one can be cached for long.
+router.get('/campaign-art/:id(\\d+)/:slot(logo|tile|lobby|card|slide)', async (req, res) => {
+    try {
+        const out = await tvCampaigns.artFile(Number(req.params.id), req.params.slot);
+        if (!out.ok) return res.status(out.status).end();
+        res.set('Content-Type', out.type);
+        res.set('Cache-Control', req.query.v ? 'public, max-age=604800' : 'public, max-age=300');
+        return res.send(out.body);
+    } catch (error) { return fail(res, 'campaign art', error); }
+});
+
+// The finder: the TV shows a QR code, a phone searches and picks, and the TV
+// opens the campaign it was sent. The code lives 30 minutes.
+const FINDER = ':code([A-Za-z0-9]{8})';
+
+router.post('/finder', requireDevice, async (req, res) => {
+    try { return reply(res, await tvCampaigns.startFinder(req.tvDevice.id)); }
+    catch (error) { return fail(res, 'finder start', error); }
+});
+
+router.get(`/finder/${FINDER}`, requireDevice, async (req, res) => {
+    try { return reply(res, await tvCampaigns.finderStatus(req.tvDevice.id, String(req.params.code).toUpperCase())); }
+    catch (error) { return fail(res, 'finder status', error); }
+});
+
+/** The page the phone opens from the finder's QR code. */
+router.get(`/find/${FINDER}`, (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile('tv-find.html', { root: require('path').join(__dirname, '..', 'views') });
+});
+
+router.get(`/find/${FINDER}/campaigns`, async (req, res) => {
+    try {
+        const q = typeof req.query.q === 'string' ? req.query.q : '';
+        return reply(res, await tvCampaigns.finderList(String(req.params.code).toUpperCase(), q, getIp(req)));
+    } catch (error) { return fail(res, 'finder list', error); }
+});
+
+router.post(`/find/${FINDER}/pick`, async (req, res) => {
+    try {
+        return reply(res, await tvCampaigns.finderPick(String(req.params.code).toUpperCase(),
+                                                      parseInt((req.body || {}).campaignId, 10), getIp(req)));
+    } catch (error) { return fail(res, 'finder pick', error); }
 });
 
 /** Server-sent events for the room, to the TV that owns it. */
@@ -441,6 +518,23 @@ router.get('/leaderboard', optionalDevice, async (req, res, next) => {
 // PHONE
 // ============================================
 
+// A branded party (phase 7): before joining, the phone reads the brand, its
+// terms, and whether this account has agreed to them; then agrees, signed in.
+router.get('/rooms/:code(\\d{6})/info', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        return reply(res, await party.roomInfo(req.params.code, { ip: getIp(req), account: acct.ok ? acct.user : null }));
+    } catch (error) { return fail(res, 'room info', error); }
+});
+
+router.post('/rooms/:code(\\d{6})/terms', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await party.acceptTerms(req.params.code, acct.user, parseInt((req.body || {}).version, 10), getIp(req)));
+    } catch (error) { return fail(res, 'terms', error); }
+});
+
 router.post('/rooms/:code(\\d{6})/join', async (req, res) => {
     try {
         const body = req.body || {};
@@ -504,8 +598,9 @@ router.get('/rooms/:id(\\d+)/player-stream', requirePlayer, async (req, res) => 
     }
 });
 
+// In a branded party, with the co-host code the TV shows.
 router.post('/rooms/:id(\\d+)/host', requirePlayer, async (req, res) => {
-    try { return reply(res, await party.takeHost(Number(req.params.id), req.tvPlayerId)); }
+    try { return reply(res, await party.takeHost(Number(req.params.id), req.tvPlayerId, (req.body || {}).code)); }
     catch (error) { return fail(res, 'host', error); }
 });
 

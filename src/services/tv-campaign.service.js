@@ -40,9 +40,37 @@
 // One rule reaches today's Party already: a campaign's category is kept out
 // of the categories every TV offers, unless the campaign says otherwise
 // (reservedCategories, read by tv-party.service).
+//
+// STEPS 2 AND 3 (Nov 1, 2026): ON THE TVS AND THE PHONES. At the end of this
+// file, what the rest of WUT TV reads:
+//   * which campaigns a TV may show now (availableFor): published, between
+//     its start and end, and either chosen for that TV or running in the
+//     state the TV is in. Pinned first, then by name. Searchable.
+//   * what the TV shows of one (tvView) and what a phone shows (phoneView),
+//     built here so nothing else decides what a brand's party says
+//   * the artwork, served to the TVs from this server (artFile), approved
+//     pictures only, resized by Cloudinary to what a TV needs
+//   * the terms, and each player's agreement to them (consent), which a
+//     player gives once per terms version before their first game
+//   * the finder: a phone scans a QR code on the TV, searches, and opens a
+//     campaign on that TV (startFinder and the finder* methods), held in
+//     Redis for 30 minutes
+//
+// HOW WIDELY (Nov 1): a campaign's audience is 'chosen' (the TVs chosen by
+// name and the states ticked), 'nigeria' (every TV placed in a Nigerian
+// state, and any chosen by name) or 'all' (every TV, anywhere, including TVs
+// abroad or with no known place: the widest reach). A cash campaign set to
+// 'all' is warned about, not stopped: a promotion approved for Nigeria may
+// not cover winners abroad.
+//
+// A TV IS CALLED what it is called everywhere else in WUT TV: the admin's
+// name for it, else its owner's name for it, else the server's, else what
+// it said it was when it registered (tvName below).
 // ============================================
 
+const crypto = require('crypto');
 const pool = require('../config/database');
+const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 const { NIGERIAN_STATES } = require('../utils/ng-places');
@@ -52,6 +80,9 @@ const STATUSES = ['draft', 'published', 'paused', 'ended'];
 const BASES = ['none', 'per_game', 'per_tv_day', 'leaderboard'];
 const PRIZE_TYPES = ['cash', 'item'];
 const PERIODS = ['campaign', 'week', 'day'];
+// How widely a campaign reaches (028): the TVs chosen and states ticked; every
+// TV in Nigeria (plus any chosen by name); or every TV, anywhere.
+const AUDIENCES = ['chosen', 'nigeria', 'all'];
 const SHARED_FIELDS = ['username', 'city'];                                  // never email or phone
 const WINNER_FIELDS = ['full_name', 'username', 'city', 'email', 'phone'];
 const PRIZE_MIN = 100;
@@ -77,6 +108,25 @@ const ART = Object.freeze({
              help: '16:9, at least 1920 × 1080. Optional: without it the lobby background is used.' }
 });
 const MAX_ART_BYTES = 8 * 1024 * 1024;
+
+// What the TVs are sent: each picture resized by Cloudinary to the most a TV
+// draws it at, as a JPEG or PNG (a TV's browser may be years old), and kept in
+// this server's memory once fetched.
+const ART_WIDTH = Object.freeze({ logo: 800, tile: 960, lobby: 1920, card: 1920, slide: 1920 });
+const ART_CACHE_BYTES = 40 * 1024 * 1024;
+const ART_FETCH_TIMEOUT_MS = 10000;
+
+// The finder: a short code shown as a QR code on the TV.
+const FINDER_TTL_SECONDS = 30 * 60;
+const FINDER_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const FINDER_LOOKS_PER_IP = 120;            // searches and picks from one network, per 10 minutes
+const FINDER_WINDOW_SECONDS = 600;
+
+const FIELD_WORDS = Object.freeze({
+    username: 'your username', city: 'your city', full_name: 'your full name',
+    email: 'your email address', phone: 'your phone number'
+});
+const naira = n => '\u20a6' + Number(n || 0).toLocaleString('en-NG');
 
 const STATE_SET = new Map(NIGERIAN_STATES.map(s => [s.toLowerCase(), s]));
 
@@ -105,6 +155,9 @@ const colour = v => {
 };
 const intOrNull = v => (v === null || v === '' || v === undefined) ? null : Number(v);
 
+/** A TV's name, in the order the rest of WUT TV uses (tv-admin, tv-audit, tv-identity). */
+const tvName = d => d.admin_name || (d.details && d.details.ownName) || d.own_name || d.tv_name || d.label || `TV ${d.id}`;
+
 class TvCampaignService {
 
     constructor() {
@@ -112,6 +165,9 @@ class TvCampaignService {
         this._reservedAt = 0;
         this.storage = null;      // the Cloudinary service, loaded on first use (tests set a double)
         this.categories = null;   // the Party category report, loaded on first use (tests set a double)
+        this.http = null;         // axios, loaded on first use (tests set a double)
+        this.artCache = new Map();  // url -> { body, type }
+        this.artCacheBytes = 0;
     }
 
     _storage() {
@@ -162,7 +218,7 @@ class TvCampaignService {
     _summary(c, now) {
         return {
             id: c.id, name: c.name, brandName: c.brand_name, status: c.status, state: this.stateOf(c, now),
-            startsAt: c.starts_at, endsAt: c.ends_at, pinned: c.pinned, regions: c.regions || [],
+            startsAt: c.starts_at, endsAt: c.ends_at, pinned: c.pinned, regions: c.regions || [], audience: c.audience || 'chosen',
             tvCount: c.tv_count || 0, category: c.category, prizeBasis: c.prize_basis, prizeType: c.prize_type,
             funded: c.funded || 0, updatedAt: c.updated_at
         };
@@ -174,7 +230,8 @@ class TvCampaignService {
         if (!c) return { ok: false, error: 'No such campaign' };
         const [tvs, art, funds] = await Promise.all([
             pool.query(
-                `SELECT d.id, d.tv_name, d.admin_name, d.approx_location, d.venue, d.last_seen, d.blocked
+                `SELECT d.id, d.tv_name, d.admin_name, d.details->>'ownName' AS own_name, d.label,
+                        d.approx_location, d.venue, d.last_seen, d.blocked
                  FROM tv_campaign_tvs t JOIN tv_devices d ON d.id = t.tv_device_id
                  WHERE t.campaign_id = $1 ORDER BY d.id`, [c.id]),
             pool.query(`SELECT * FROM tv_campaign_art WHERE campaign_id = $1`, [c.id]),
@@ -207,7 +264,7 @@ class TvCampaignService {
             id: c.id, name: c.name, brandName: c.brand_name, tagline: c.tagline, offerText: c.offer_text, offerUrl: c.offer_url,
             colourMain: c.colour_main, colourAccent: c.colour_accent,
             status: c.status, state: this.stateOf(c), startsAt: c.starts_at, endsAt: c.ends_at, pinned: c.pinned,
-            regions: c.regions || [], category: c.category, categoryPublic: c.category_public,
+            regions: c.regions || [], audience: c.audience || 'chosen', category: c.category, categoryPublic: c.category_public,
             prizeBasis: c.prize_basis, prizeType: c.prize_type, prizeAmount: c.prize_amount, prizeItem: c.prize_item,
             prizeRanks: Array.isArray(c.prize_ranks) ? c.prize_ranks : [], leaderboardPeriod: c.leaderboard_period,
             minPlayers: c.min_players, capPerPlayer: c.cap_per_player, prizeGamesPerTvDay: c.prize_games_per_tv_day,
@@ -218,7 +275,7 @@ class TvCampaignService {
             createdBy: c.created_by, createdAt: c.created_at, updatedBy: c.updated_by, updatedAt: c.updated_at,
             publishedBy: c.published_by, publishedAt: c.published_at, endedAt: c.ended_at,
             tvs: tvs.map(t => ({
-                id: t.id, name: t.admin_name || t.tv_name || `TV ${t.id}`, place: t.approx_location || null,
+                id: t.id, name: tvName(t), serverName: t.tv_name || null, place: t.approx_location || null,
                 state: stateFromPlace(t.approx_location), venue: !!t.venue, lastSeen: t.last_seen, blocked: !!t.blocked
             })),
             art: artBySlot,
@@ -232,7 +289,11 @@ class TvCampaignService {
         };
     }
 
-    /** How many TVs the campaign reaches today: chosen ones, and ones in its states seen in the last 30 days. */
+    /**
+     * How many TVs the campaign reaches today: chosen ones, and the ones its
+     * area takes in (its states, every state, or everywhere) seen in the last
+     * 30 days.
+     */
     async _reach(c, chosenIds) {
         const r = await pool.query(
             `SELECT id, approx_location, last_seen, blocked FROM tv_devices
@@ -240,15 +301,17 @@ class TvCampaignService {
             [String(ACTIVE_TV_DAYS)]
         );
         const states = new Set(c.regions || []);
+        const audience = c.audience || 'chosen';
         const chosen = new Set(chosenIds.map(Number));
         let inRegions = 0;
         const all = new Set();
         for (const d of r.rows) {
             const st = stateFromPlace(d.approx_location);
-            if (st && states.has(st)) { inRegions++; all.add(d.id); }
+            const inArea = audience === 'all' || (st && (audience === 'nigeria' || states.has(st)));
+            if (inArea) { inRegions++; all.add(d.id); }
             if (chosen.has(Number(d.id))) all.add(d.id);
         }
-        return { chosen: chosen.size, inRegions, activeTotal: all.size, activeDays: ACTIVE_TV_DAYS };
+        return { audience, chosen: chosen.size, inRegions, activeTotal: all.size, activeDays: ACTIVE_TV_DAYS };
     }
 
     /** What a campaign still needs before it can be published. A warning does not stop it. */
@@ -260,7 +323,8 @@ class TvCampaignService {
         add('brand', c.name && c.brand_name, 'The campaign and brand names');
         const datesOk = c.starts_at && c.ends_at && new Date(c.ends_at) > new Date(c.starts_at) && new Date(c.ends_at).getTime() > now;
         add('dates', datesOk, 'A start and an end, with the end still to come');
-        add('where', tvs.length > 0 || (c.regions || []).length > 0, 'At least one TV or one state');
+        add('where', (c.audience && c.audience !== 'chosen') || tvs.length > 0 || (c.regions || []).length > 0,
+            'Every TV, every TV in Nigeria, or at least one TV or one state');
 
         let catOk = false;
         if (c.category) {
@@ -296,6 +360,9 @@ class TvCampaignService {
                     : 'Money paid in');
         }
         add('approval', !!c.approval_reference, 'The promotion approval reference (FCCPC), if one is needed', true);
+        if (c.audience === 'all' && this.paysCash(c)) {
+            add('abroad', false, 'Cash prizes on every TV, anywhere: TVs abroad or with no known place can win too. Check the promotion approval covers them, or choose every TV in Nigeria', true);
+        }
         return out;
     }
 
@@ -414,6 +481,12 @@ class TvCampaignService {
             set.ends_at = ends;
         }
         if (starts && ends && new Date(ends) <= new Date(starts)) return err('The end must come after the start');
+
+        // How widely: the chosen TVs and states, every TV in Nigeria, or every TV.
+        if (body.audience !== undefined) {
+            if (!AUDIENCES.includes(body.audience)) return err('Choose where the campaign runs');
+            set.audience = body.audience;
+        }
 
         // Where: states. Chosen TVs have their own call (setTvs).
         if (body.regions !== undefined) {
@@ -819,7 +892,7 @@ class TvCampaignService {
     async options() {
         await tvAuth.ensureSchema();
         const r = await pool.query(
-            `SELECT id, tv_name, admin_name, approx_location, venue, platform, last_seen, blocked
+            `SELECT id, tv_name, admin_name, details->>'ownName' AS own_name, label, approx_location, venue, platform, last_seen, blocked
              FROM tv_devices ORDER BY last_seen DESC LIMIT 2000`
         );
         const active = Date.now() - ACTIVE_TV_DAYS * 864e5;
@@ -829,7 +902,7 @@ class TvCampaignService {
             const recent = !d.blocked && d.last_seen && new Date(d.last_seen).getTime() > active;
             if (st && recent) perState.set(st, perState.get(st) + 1);
             return {
-                id: d.id, name: d.admin_name || d.tv_name || `TV ${d.id}`, tvName: d.tv_name, adminName: d.admin_name,
+                id: d.id, name: tvName(d), tvName: d.tv_name, adminName: d.admin_name, ownName: d.own_name || null,
                 place: d.approx_location || null, state: st, venue: !!d.venue, platform: d.platform,
                 lastSeen: d.last_seen, blocked: !!d.blocked, recent
             };
@@ -849,8 +922,341 @@ class TvCampaignService {
         return {
             ok: true, tvs, categories, activeDays: ACTIVE_TV_DAYS,
             states: NIGERIAN_STATES.map(s => ({ state: s, tvs: perState.get(s) })),
-            art: this.artSpec(), sharedFields: SHARED_FIELDS, winnerFields: WINNER_FIELDS
+            art: this.artSpec(), sharedFields: SHARED_FIELDS, winnerFields: WINNER_FIELDS, audiences: AUDIENCES
         };
+    }
+
+    // ============================================
+    // ON THE TVS AND PHONES (steps 2 and 3)
+    // ============================================
+
+    /** A campaign that can be played right now: published and between its dates. */
+    isLiveRow(c, now = new Date()) {
+        return !!c && c.status === 'published' && this.stateOf(c, now) === 'live';
+    }
+
+    /**
+     * The campaigns this TV may show now, pinned first and then by name. With
+     * a search, only those whose name, brand, tagline or category has it.
+     * Never throws: a TV home screen must open even if this cannot be read.
+     */
+    async availableFor(deviceId, { q } = {}) {
+        try {
+            await tvAuth.ensureSchema();
+            const d = await pool.query(`SELECT id, approx_location FROM tv_devices WHERE id = $1`, [Number(deviceId)]);
+            if (!d.rows[0]) return [];
+            const state = stateFromPlace(d.rows[0].approx_location);
+            const r = await pool.query(
+                `SELECT c.* FROM tv_campaigns c
+                 WHERE c.status = 'published' AND c.starts_at <= NOW() AND c.ends_at > NOW()
+                   AND (c.audience = 'all'
+                        OR ($2::text IS NOT NULL AND (c.audience = 'nigeria' OR $2::text = ANY(c.regions)))
+                        OR EXISTS (SELECT 1 FROM tv_campaign_tvs t WHERE t.campaign_id = c.id AND t.tv_device_id = $1))
+                 ORDER BY c.pinned DESC, LOWER(c.name), c.id
+                 LIMIT 60`,
+                [d.rows[0].id, state]
+            );
+            let rows = r.rows.filter(c => this.isLiveRow(c));
+            const words = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 60);
+            if (words) {
+                rows = rows.filter(c => [c.name, c.brand_name, c.tagline, c.category]
+                    .some(x => x && String(x).toLowerCase().includes(words)));
+            }
+            const art = await this._approvedArt(rows.map(c => c.id));
+            return rows.map(c => this.tvView(c, art.get(c.id) || {}));
+        } catch (e) {
+            logger.error(`TV campaigns for TV ${deviceId} could not be read: ${e.message}`);
+            return [];
+        }
+    }
+
+    /** One campaign, if this TV may show it now; else null. */
+    async forDevice(campaignId, deviceId) {
+        const id = Number(campaignId);
+        if (!Number.isInteger(id) || id <= 0) return null;
+        const list = await this.availableFor(deviceId);
+        return list.find(c => c.id === id) || null;
+    }
+
+    /** The TV view of a campaign by id, whatever its state (a room already open keeps its brand). */
+    async viewById(campaignId) {
+        const c = await this._row(campaignId);
+        if (!c) return null;
+        const art = await this._approvedArt([c.id]);
+        return this.tvView(c, art.get(c.id) || {});
+    }
+
+    async _approvedArt(ids) {
+        const out = new Map();
+        if (!ids.length) return out;
+        const r = await pool.query(
+            `SELECT campaign_id, slot, uploaded_at FROM tv_campaign_art
+             WHERE campaign_id = ANY($1::int[]) AND approved_at IS NOT NULL`,
+            [ids]
+        );
+        for (const a of r.rows) {
+            if (!out.has(a.campaign_id)) out.set(a.campaign_id, {});
+            // The upload time in the address, so a replaced picture is never
+            // served from a TV's cache.
+            out.get(a.campaign_id)[a.slot] = `/tv/campaign-art/${a.campaign_id}/${a.slot}?v=${new Date(a.uploaded_at).getTime() || 0}`;
+        }
+        return out;
+    }
+
+    /** The prize in words: a full line for the campaign screen, a short one for tiles. */
+    prizeWords(c) {
+        const basis = c.prize_basis;
+        if (!basis || basis === 'none') return { text: 'Play for the fun of it', short: 'Just for fun' };
+        if (basis === 'leaderboard') {
+            const ranks = Array.isArray(c.prize_ranks) ? c.prize_ranks : [];
+            const per = { campaign: 'campaign', week: 'weekly', day: 'daily' }[c.leaderboard_period] || 'campaign';
+            const top = ranks[0] ? (Number(ranks[0].amount) > 0 ? naira(ranks[0].amount) : String(ranks[0].item || 'a prize')) : 'a prize';
+            return {
+                text: `Top ${ranks.length || 1} on the ${per} leaderboard win prizes. First place: ${top}`,
+                short: `${per[0].toUpperCase()}${per.slice(1)} leaderboard prizes`
+            };
+        }
+        const what = c.prize_type === 'cash' ? naira(c.prize_amount) : String(c.prize_item || 'A prize');
+        if (basis === 'per_tv_day') {
+            const n = Number(c.prize_games_per_tv_day) || 1;
+            return {
+                text: `${what} to the winner of ${n === 1 ? 'the first game' : `each of the first ${n} games`} on this TV every day`,
+                short: `${what} a day on this TV`
+            };
+        }
+        return { text: `${what} to the winner of every game`, short: `${what} every game` };
+    }
+
+    /** Who can play and win, in one line. */
+    rulesLine(c) {
+        const parts = ['Signed-in players only'];
+        if (c.prize_basis && c.prize_basis !== 'none') {
+            parts.push(c.for_children ? `For children: ${c.min_age_to_win} and over to win` : `${c.min_age_to_win || 18} and over to win`);
+            if (c.min_players) parts.push(`at least ${c.min_players} players for a prize`);
+        }
+        return parts.join(' · ');
+    }
+
+    /** Everything a TV shows of a campaign. Never the money paid, the terms text, or internal notes. */
+    tvView(c, art = {}) {
+        const words = this.prizeWords(c);
+        return {
+            id: c.id, name: c.name, brandName: c.brand_name, tagline: c.tagline || null,
+            offerText: c.offer_text || null, offerUrl: c.offer_url || null,
+            colourMain: c.colour_main || '#5B12FC', colourAccent: c.colour_accent || '#FADF05',
+            category: c.category ? String(c.category).toLowerCase() : null,
+            pinned: !!c.pinned, endsAt: c.ends_at,
+            prize: {
+                basis: c.prize_basis, type: c.prize_type, amount: c.prize_amount || null, item: c.prize_item || null,
+                ranks: Array.isArray(c.prize_ranks) ? c.prize_ranks : [], period: c.leaderboard_period || null,
+                minPlayers: c.min_players, text: words.text, short: words.short
+            },
+            rules: this.rulesLine(c), forChildren: !!c.for_children, minAgeToWin: c.min_age_to_win,
+            termsVersion: c.terms_version,
+            art: {
+                logo: art.logo || null, tile: art.tile || null, lobby: art.lobby || null,
+                card: art.card || null, slide: art.slide || art.lobby || null
+            }
+        };
+    }
+
+    /** What a phone shows, from the TV view a room carries. */
+    phoneView(v) {
+        if (!v) return null;
+        return {
+            id: v.id, name: v.name, brandName: v.brandName, tagline: v.tagline,
+            colourMain: v.colourMain, colourAccent: v.colourAccent,
+            logo: v.art && v.art.logo, tile: v.art && v.art.tile,
+            prizeText: v.prize && v.prize.text, prizeShort: v.prize && v.prize.short,
+            rules: v.rules, category: v.category, offerText: v.offerText, offerUrl: v.offerUrl, endsAt: v.endsAt
+        };
+    }
+
+    /** The terms a player agrees to, with what the brand will see, in words. */
+    async terms(campaignId) {
+        const c = await this._row(campaignId);
+        if (!c) return null;
+        const words = list => (list || []).map(f => FIELD_WORDS[f]).filter(Boolean);
+        return {
+            version: c.terms_version, text: c.terms_text || '', brandName: c.brand_name,
+            shares: words(c.shared_fields), winnerShares: words(c.winner_fields),
+            live: this.isLiveRow(c)
+        };
+    }
+
+    async hasConsent(campaignId, userId, version) {
+        const r = await pool.query(
+            `SELECT 1 FROM tv_campaign_consents WHERE campaign_id = $1 AND user_id = $2 AND terms_version = $3`,
+            [Number(campaignId), Number(userId), Number(version)]
+        );
+        return r.rows.length > 0;
+    }
+
+    /**
+     * May this signed-in player join a game of this campaign now? They must
+     * have agreed to its current terms, and the campaign must still be on.
+     */
+    async canJoin(campaignId, userId) {
+        const c = await this._row(campaignId);
+        if (!this.isLiveRow(c)) return { ok: false, reason: 'campaign_over' };
+        if (!(await this.hasConsent(c.id, userId, c.terms_version))) {
+            return { ok: false, reason: 'terms_required', termsVersion: c.terms_version };
+        }
+        return { ok: true };
+    }
+
+    /** A player agrees to the terms, at the version they were shown. */
+    async consent(campaignId, userId, version, ip) {
+        await tvAuth.ensureSchema();
+        const c = await this._row(campaignId);
+        if (!c) return { ok: false, reason: 'no_campaign' };
+        if (!this.isLiveRow(c)) return { ok: false, reason: 'campaign_over' };
+        if (Number(version) !== Number(c.terms_version)) {
+            return { ok: false, reason: 'terms_changed', termsVersion: c.terms_version };
+        }
+        await pool.query(
+            `INSERT INTO tv_campaign_consents (campaign_id, user_id, terms_version, accepted_ip)
+             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+            [c.id, Number(userId), c.terms_version, tvAuth._inet(ip)]
+        );
+        return { ok: true, termsVersion: c.terms_version };
+    }
+
+    // ---------- the artwork, for the TVs ----------
+
+    _http() {
+        if (!this.http) this.http = require('axios');
+        return this.http;
+    }
+
+    /** An approved picture, resized for a TV: { ok, body, type } or { ok: false, status }. */
+    async artFile(campaignId, slot) {
+        const id = Number(campaignId);
+        if (!Number.isInteger(id) || id <= 0 || !ART[slot]) return { ok: false, status: 404 };
+        await tvAuth.ensureSchema();
+        const r = await pool.query(
+            `SELECT url, format FROM tv_campaign_art WHERE campaign_id = $1 AND slot = $2 AND approved_at IS NOT NULL`,
+            [id, slot]
+        );
+        const a = r.rows[0];
+        if (!a) return { ok: false, status: 404 };
+        const src = this.sizedUrl(a.url, slot, a.format);
+        if (!src) return { ok: false, status: 404 };
+        const hit = this.artCache.get(src);
+        if (hit) return { ok: true, ...hit };
+
+        let res;
+        try {
+            res = await this._http().get(src, {
+                responseType: 'arraybuffer', timeout: ART_FETCH_TIMEOUT_MS,
+                maxContentLength: MAX_ART_BYTES, validateStatus: s => s === 200
+            });
+        } catch (_) {
+            return { ok: false, status: 502 };
+        }
+        const body = Buffer.from(res.data);
+        if (!body.length) return { ok: false, status: 502 };
+        const declared = String((res.headers && res.headers['content-type']) || '');
+        const type = /^image\/(png|jpeg)$/.test(declared) ? declared : (a.format === 'png' ? 'image/png' : 'image/jpeg');
+        while (this.artCache.size && this.artCacheBytes + body.length > ART_CACHE_BYTES) {
+            const k = this.artCache.keys().next().value;
+            this.artCacheBytes -= this.artCache.get(k).body.length;
+            this.artCache.delete(k);
+        }
+        this.artCache.set(src, { body, type });
+        this.artCacheBytes += body.length;
+        return { ok: true, body, type };
+    }
+
+    /** The Cloudinary address of a picture at a TV's size. Only our own pictures. */
+    sizedUrl(url, slot, format) {
+        let u;
+        try { u = new URL(String(url)); } catch (e) { return null; }
+        if (u.protocol !== 'https:' || u.hostname !== 'res.cloudinary.com') return null;
+        const at = u.pathname.indexOf('/image/upload/');
+        if (at < 0) return null;
+        const fmt = format === 'png' ? 'png' : 'jpg';
+        const head = u.pathname.slice(0, at + '/image/upload/'.length);
+        const rest = u.pathname.slice(at + '/image/upload/'.length);
+        return `https://res.cloudinary.com${head}c_limit,w_${ART_WIDTH[slot] || 1920},q_auto,f_${fmt}/${rest}`;
+    }
+
+    // ---------- the finder: search on a phone, open on the TV ----------
+
+    _finderCode() {
+        let s = '';
+        for (let i = 0; i < 8; i++) s += FINDER_ALPHABET[crypto.randomInt(FINDER_ALPHABET.length)];
+        return s;
+    }
+
+    finderUrl(code) {
+        const base = (process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng').replace(/\/+$/, '');
+        return `${base}/tv/find/${code}`;
+    }
+
+    async _finder(code) {
+        if (!/^[A-Z0-9]{8}$/.test(String(code || ''))) return null;
+        try {
+            const raw = await redis.get(`tv_finder:${code}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+
+    async _saveFinder(code, f) {
+        await redis.setex(`tv_finder:${code}`, FINDER_TTL_SECONDS, JSON.stringify(f));
+    }
+
+    /** The TV asks for a code to show as a QR code. */
+    async startFinder(deviceId) {
+        const code = this._finderCode();
+        const f = { deviceId: Number(deviceId), pick: null, at: Date.now() };
+        try { await this._saveFinder(code, f); } catch (e) { return { ok: false, reason: 'try_again' }; }
+        return { ok: true, code, url: this.finderUrl(code), expiresAt: f.at + FINDER_TTL_SECONDS * 1000 };
+    }
+
+    /** The TV checks whether a phone has picked a campaign. A pick is handed over once. */
+    async finderStatus(deviceId, code) {
+        const f = await this._finder(code);
+        if (!f) return { ok: false, reason: 'finder_expired' };
+        if (f.deviceId !== Number(deviceId)) return { ok: false, reason: 'not_your_finder' };
+        if (!f.pick) return { ok: true, pick: null };
+        const pick = f.pick;
+        f.pick = null;
+        try { await this._saveFinder(code, f); } catch (e) { /* the TV may be told twice; harmless */ }
+        return { ok: true, pick };
+    }
+
+    async _finderLimited(ip) {
+        try {
+            const key = `tv_rate:finder:${ip || 'unknown'}`;
+            const n = await redis.incr(key);
+            if (n === 1) await redis.expire(key, FINDER_WINDOW_SECONDS);
+            return n > FINDER_LOOKS_PER_IP;
+        } catch (e) { return false; }
+    }
+
+    /** The phone lists (and searches) the campaigns the TV it scanned may show. */
+    async finderList(code, q, ip) {
+        if (await this._finderLimited(ip)) return { ok: false, reason: 'too_many_attempts' };
+        const f = await this._finder(code);
+        if (!f) return { ok: false, reason: 'finder_expired' };
+        const d = await pool.query(
+            `SELECT id, tv_name, admin_name, details->>'ownName' AS own_name, label FROM tv_devices WHERE id = $1`, [f.deviceId]);
+        const name = d.rows[0] ? tvName(d.rows[0]) : 'This TV';
+        const list = await this.availableFor(f.deviceId, { q });
+        return { ok: true, tvName: name, campaigns: list.map(v => this.phoneView(v)) };
+    }
+
+    /** The phone opens a campaign on the TV. */
+    async finderPick(code, campaignId, ip) {
+        if (await this._finderLimited(ip)) return { ok: false, reason: 'too_many_attempts' };
+        const f = await this._finder(code);
+        if (!f) return { ok: false, reason: 'finder_expired' };
+        const c = await this.forDevice(campaignId, f.deviceId);
+        if (!c) return { ok: false, reason: 'campaign_unavailable' };
+        f.pick = c.id;
+        try { await this._saveFinder(code, f); } catch (e) { return { ok: false, reason: 'try_again' }; }
+        return { ok: true, name: c.name };
     }
 }
 
@@ -858,3 +1264,4 @@ module.exports = new TvCampaignService();
 module.exports.TvCampaignService = TvCampaignService;
 module.exports.stateFromPlace = stateFromPlace;
 module.exports.ART = ART;
+module.exports.FINDER_TTL_SECONDS = FINDER_TTL_SECONDS;

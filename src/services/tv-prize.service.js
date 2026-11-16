@@ -52,6 +52,9 @@
 // them used at once, and can change them until they are paid.
 //
 // NOTHING OUTSIDE THE TV TABLES IS WRITTEN. users and payout_details are read.
+//
+// A BRANDED PARTY (phase 7) takes no prize from a phone: its prizes come from
+// the money the brand paid in. Its host form is off and adding is refused.
 // ============================================
 
 const pool = require('../config/database');
@@ -203,6 +206,8 @@ class TvPrizeService {
         const checked = await this._checkAmount(amount);
         const state = await store.load(roomId);
         if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+        // A branded party's prizes are the brand's, paid in upfront (phase 7).
+        if (state.campaign) return { ok: false, reason: 'branded_party' };
         if (state.hostPlayerId !== pid) return { ok: false, reason: 'not_host' };
         if (!checked.ok) return checked;
         return { ok: true, min: checked.cfg.min, max: checked.cfg.max, quote: this.price(checked.amount) };
@@ -214,7 +219,8 @@ class TvPrizeService {
         const state = await store.load(roomId);
         if (!state) return { ok: false, reason: 'no_room' };
         return {
-            ok: true, on: cfg.on, min: cfg.min, max: cfg.max, feeBps: FEE_BPS,
+            // A branded party takes no prize from a phone: its prizes are the brand's.
+            ok: true, on: cfg.on && !state.campaign, min: cfg.min, max: cfg.max, feeBps: FEE_BPS,
             prize: state.prize || null, youAreHost: state.hostPlayerId === pid
         };
     }
@@ -249,6 +255,7 @@ class TvPrizeService {
         // so two taps cannot add two prizes. The payment page is opened after.
         const reserved = await store.withRoom(roomId, async (state, tx) => {
             if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
+            if (state.campaign) return { ok: false, reason: 'branded_party' };
             if (state.hostPlayerId !== pid) return { ok: false, reason: 'not_host' };
             const me = state.players[pid];
             if (!me || me.userId !== user.id) return { ok: false, reason: 'host_not_signed_in' };

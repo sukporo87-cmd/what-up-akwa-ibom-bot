@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16121f">
+<meta name="robots" content="noindex">
+<title>What's Up Trivia TV — Find a brand party</title>
+<link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  WUT TV, phase 7: find a brand party from a phone. Opened from the QR code on
+  the TV's Brand parties screen (/tv/find/<code>). Lists the brand parties
+  that TV may show, searches them, and opens one on the TV. Nothing else: the
+  player then joins from the TV's own join code, as for any Party.
+-->
+<style>
+:root{
+  --night:#16121f; --slate:#241d33; --raise:#2e2540; --line:#3b3150;
+  --brass:#e8b64c; --mint:#35d39a; --ember:#ff6b5b;
+  --paper:#f2eee9; --mute:#9b8fb0;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --body:'Inter',system-ui,-apple-system,sans-serif;
+  --pad:clamp(16px,5vw,28px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);font-size:16px;line-height:1.45;
+  min-height:100dvh;border-top:6px solid var(--brass)}
+main{padding:var(--pad);padding-bottom:calc(var(--pad) + env(safe-area-inset-bottom));max-width:520px;margin:0 auto;
+  display:flex;flex-direction:column;gap:16px}
+h1,h2{font-family:var(--display);font-weight:800;margin:0;line-height:1.1;letter-spacing:-.01em}
+h1{font-size:clamp(28px,8vw,36px)}
+p{margin:0}
+.mute{color:var(--mute)}
+.small{font-size:14px}
+label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+input{width:100%;font:inherit;font-size:18px;padding:12px 14px;border-radius:14px;border:2px solid var(--line);
+  background:var(--slate);color:var(--paper);outline:none}
+input:focus{border-color:var(--brass)}
+button{font:inherit;font-weight:700;border:0;border-radius:14px;padding:14px 16px;cursor:pointer;width:100%;min-height:50px;
+  background:var(--brass);color:var(--night)}
+button:focus-visible{outline:3px solid var(--paper);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+.card{background:var(--slate);border-radius:18px;overflow:hidden}
+.card .art{aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:800;
+  font-size:26px;padding:12px;text-align:center;background-size:cover;background-position:center}
+.card .body{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.card b{font-size:17px}
+.pin{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--brass);margin-bottom:2px}
+.note{background:var(--slate);border-radius:18px;padding:14px 16px}
+.done{border:2px solid var(--mint)}
+.done h2{color:var(--mint);font-size:22px}
+.err{color:var(--ember);font-weight:600}
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite"></main>
+<script>
+(function(){
+'use strict';
+
+var CODE = ((location.pathname.match(/\/tv\/find\/([A-Za-z0-9]{8})$/) || [])[1] || '').toUpperCase();
+var S = { tvName: '', list: null, q: '', error: '', expired: false, busy: false, opened: null, timer: null, ask: 0 };
+
+function h(tag, attrs, kids){
+  var el = document.createElement(tag);
+  if (attrs) for (var k in attrs){
+    var v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'text') el.textContent = v;
+    else if (k === 'on') for (var ev in v) el.addEventListener(ev, v[ev]);
+    else if (k === 'style') el.style.cssText = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  (kids || []).forEach(function(c){ if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+function json(r){ return r.json().catch(function(){ return { success: false, reason: 'server_error' }; }); }
+var WHY = {
+  finder_expired: 'This code has expired. Open Brand parties on the TV again and scan the new code.',
+  campaign_unavailable: 'That brand party is not on this TV any more.',
+  too_many_attempts: 'Too many tries from this network. Wait a few minutes.',
+  offline: 'No connection. Check your signal and try again.'
+};
+function why(r){ return WHY[r] || 'Something went wrong. Try again.'; }
+function until(t){
+  try { return 'until ' + new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); } catch (e) { return ''; }
+}
+// A colour from the server is #RRGGBB; anything else is not used.
+function hex(c, d){ return /^#[0-9A-Fa-f]{6}$/.test(String(c || '')) ? c : d; }
+
+function search(){
+  var mine = ++S.ask;
+  fetch('/tv/find/' + CODE + '/campaigns?q=' + encodeURIComponent(S.q), { credentials: 'same-origin' })
+    .then(json).catch(function(){ return { success: false, reason: 'offline' }; })
+    .then(function(j){
+      if (mine !== S.ask) return;          // a newer search has been sent
+      if (j.success){ S.tvName = j.tvName || 'this TV'; S.list = j.campaigns || []; S.error = ''; }
+      else if (j.reason === 'finder_expired'){ S.expired = true; }
+      else S.error = why(j.reason);
+      render();
+    });
+}
+
+function pick(c){
+  if (S.busy) return;
+  S.busy = true; S.error = ''; render();
+  fetch('/tv/find/' + CODE + '/pick', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId: c.id }) })
+    .then(json).catch(function(){ return { success: false, reason: 'offline' }; })
+    .then(function(j){
+      S.busy = false;
+      if (j.success) S.opened = c;
+      else if (j.reason === 'finder_expired') S.expired = true;
+      else S.error = why(j.reason);
+      render();
+    });
+}
+
+function card(c){
+  var main = hex(c.colourMain, '#5B12FC'), accent = hex(c.colourAccent, '#FADF05');
+  var art = h('div', { class: 'art', style: 'background-color:' + main + ';color:' + accent +
+    (c.tile ? ';background-image:url("' + c.tile.replace(/"/g, '') + '")' : '') }, c.tile ? [] : [ c.brandName || c.name ]);
+  if (c.tile) art.setAttribute('aria-hidden', 'true');
+  return h('div', { class: 'card' }, [ art,
+    h('div', { class: 'body' }, [
+      h('div', {}, [ h('b', { text: c.name }), h('br'),
+        h('span', { class: 'mute small', text: [c.prizeShort, until(c.endsAt)].filter(Boolean).join(' · ') }) ]),
+      c.tagline ? h('p', { class: 'small', text: c.tagline }) : null,
+      h('button', { disabled: S.busy, text: 'Open on the TV', on: { click: function(){ pick(c); } } })
+    ]) ]);
+}
+
+function render(){
+  var app = document.getElementById('app');
+  var kids;
+  if (!CODE || S.expired){
+    kids = [ h('h1', { text: 'Code expired' }), h('p', { class: 'mute', text: WHY.finder_expired }) ];
+  } else if (S.opened){
+    kids = [ h('div', { class: 'note done' }, [
+        h('h2', { text: 'Opening on the TV' }),
+        h('p', { text: S.opened.name + ' is opening on ' + S.tvName + '. Scan the join code on the TV to play.' }) ]),
+      h('button', { text: 'Find another', on: { click: function(){ S.opened = null; render(); } } }) ];
+  } else {
+    var input = h('input', { id: 'q', type: 'search', enterkeyhint: 'search', autocomplete: 'off', placeholder: 'Brand or party name', value: S.q });
+    input.addEventListener('input', function(){
+      S.q = input.value;
+      clearTimeout(S.timer);
+      S.timer = setTimeout(search, 300);
+    });
+    kids = [ h('h1', { text: 'Find a brand party' }),
+      h('p', { class: 'mute', text: S.tvName ? 'For the TV you scanned: ' + S.tvName : 'Loading…' }),
+      h('div', {}, [ h('label', { for: 'q', text: 'Search' }), input ]) ];
+    if (S.error) kids.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+    if (S.list){
+      S.list.forEach(function(c){ kids.push(card(c)); });
+      if (!S.list.length) kids.push(h('p', { class: 'note mute', text: S.q ? 'No brand party matches “' + S.q + '”.' : 'There are no brand parties on this TV right now.' }));
+    }
+  }
+  // Do not rebuild under a thumb that is typing.
+  var active = document.activeElement;
+  if (active && active.id === 'q' && app.contains(active) && !S.opened && !S.expired){
+    var keep = app.querySelector('#q');
+    var rest = kids.slice(3);
+    while (keep.parentNode.nextSibling) app.removeChild(keep.parentNode.nextSibling);
+    rest.forEach(function(k){ app.appendChild(k); });
+    return;
+  }
+  app.replaceChildren.apply(app, kids);
+}
+
+window.__find = S;
+render();
+if (CODE) search();
+})();
+</script>
+</body>
+</html>

@@ -21,6 +21,12 @@
   Credentials: the server sets an httpOnly cookie on /tv when you join, which
   is what EventSource sends. The same token is kept in localStorage so a phone
   that locks, refreshes or drops signal comes straight back as the same player.
+
+  A BRAND'S PARTY (phase 7): the page asks the server first whether the code
+  is a brand's party. If it is, the player signs in, agrees to the brand's
+  terms, and joins as their account; nobody plays as a guest. A player becomes
+  co-host by typing the 4 numbers on the TV, then picks the style and starts.
+  The category is the brand's, and there is no prize to add from here.
 -->
 <style>
 :root{
@@ -136,6 +142,22 @@ button:disabled{opacity:.45;cursor:default}
 .money.total{border-bottom:0;font-weight:700;font-size:17px}
 select{width:100%;font:inherit;font-size:18px;padding:12px 14px;border-radius:14px;border:2px solid var(--line);background:var(--slate);color:var(--paper)}
 a.go{display:block;text-align:center;text-decoration:none;font-weight:600;border-radius:14px;padding:16px 18px;background:var(--brass);color:var(--night);font-size:18px}
+/* a brand's party (phase 7) */
+.brand{display:flex;align-items:center;gap:12px;margin:calc(-1 * var(--pad)) calc(-1 * var(--pad)) 0;padding:14px var(--pad);
+  background:var(--brand-main,#5b12fc);color:var(--brand-ink,#fff)}
+.brand .logo{width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;overflow:hidden;
+  background:var(--brand-ink,#fff);color:var(--brand-main,#5b12fc);font-family:var(--display);font-weight:800;font-size:22px}
+.brand .logo img{width:100%;height:100%;object-fit:contain}
+.brand .by{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.85}
+.brand .nm{font-family:var(--display);font-weight:800;font-size:20px;line-height:1.15}
+.terms{background:var(--slate);border-radius:16px;padding:14px 16px;max-height:240px;overflow:auto;font-size:14px;line-height:1.55;
+  color:#cfc6de;white-space:pre-wrap}
+.agree{display:flex;gap:10px;align-items:flex-start;font-weight:500;font-size:15px;line-height:1.4;margin:0}
+.agree input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--brass)}
+input.code4{font-family:var(--display);font-weight:800;font-size:34px;letter-spacing:.5em;text-align:center;padding:10px 0 10px .5em;
+  border-color:var(--brass)}
+.styles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.styles button.on{background:var(--mint);color:var(--night)}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -156,6 +178,7 @@ var S = {
   reviewing: null, review: null, reviewError: '',
   prizeOpts: null, prizeLoading: false, quote: null, prizeForm: { amount: '' },
   claimCode: null, claimAsked: false, claimed: null, claimError: '',
+  info: null, agreed: false, cohostCode: '',
   offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
 };
 
@@ -226,6 +249,15 @@ var WHY = {
   bad_player_token: 'This phone is no longer in that game.',
   no_categories: 'Pick the categories on the TV first.',
   not_enough_players: 'You need at least 2 players to start.',
+  signin_required: 'Sign in to play this brand\u2019s party.',
+  terms_required: 'Agree to the terms first.',
+  terms_changed: 'The terms have just changed. Read them again, please.',
+  set_by_brand: 'The brand sets that for this party.',
+  branded_party: 'This party\u2019s prizes come from the brand.',
+  wrong_code: 'That\u2019s not the code on the TV. Check it and try again.',
+  code_required: 'Type the 4 numbers shown on the TV.',
+  campaign_over: 'This brand\u2019s party has ended.',
+  campaign_unavailable: 'This brand\u2019s party is not on right now.',
   offline: 'No connection. Check your signal and try again.',
   server_error: 'Something went wrong. Try again.'
 };
@@ -238,12 +270,23 @@ function boot(){
     .then(function(r){ return r.json(); })
     .then(function(j){ S.account = j && j.authenticated && j.user ? j.user : null; })
     .catch(function(){ S.account = null; })
+    .then(loadInfo)
     .then(function(){
       var saved = load();
       if (saved && saved.token){ S.token = saved.token; S.roomId = saved.roomId; return rejoin(); }
-      S.screen = 'join'; render();
+      S.screen = branded() ? 'brand' : 'join'; render();
     });
 }
+
+// Is this a brand's party? Asked before joining, with this phone's sign-in.
+function loadInfo(){
+  return fetch('/tv/rooms/' + CODE + '/info', { credentials: 'same-origin' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if (j && j.success) S.info = j; })
+    .catch(function(){});
+}
+function branded(){ return !!((S.room && S.room.campaign) || (S.info && S.info.branded)); }
+function campaign(){ return (S.room && S.room.campaign) || (S.info && S.info.campaign) || null; }
 
 // Comes back as the same player: the server recognises the token, or failing
 // that the phone cookie, and never creates a second player for this phone.
@@ -253,10 +296,10 @@ function rejoin(){
     if (j.reason === 'removed' || j.reason === 'room_closed' || j.reason === 'no_room'){
       forget(); S.token = null; S.screen = 'ended'; S.ended = j.reason; return render();
     }
-    if (j.reason === 'name_required' || j.reason === 'name_too_short'){
-      forget(); S.token = null; S.screen = 'join'; return render();
+    if (j.reason === 'name_required' || j.reason === 'name_too_short' || j.reason === 'signin_required' || j.reason === 'terms_required'){
+      forget(); S.token = null; S.screen = branded() ? 'brand' : 'join'; return render();
     }
-    S.error = why(j.reason); S.screen = 'join'; render();
+    S.error = why(j.reason); S.screen = branded() ? 'brand' : 'join'; render();
   });
 }
 
@@ -270,8 +313,13 @@ function join(name, opts){
     S.busy = false;
     if (j.success){ S.nameTaken = null; return joined(j); }
     if (j.reason === 'name_taken'){ S.nameTaken = { name: j.name, numbered: j.suggestions && j.suggestions.numbered }; return render(); }
-    if (j.reason === 'removed' || j.reason === 'already_started' || j.reason === 'room_closed' || j.reason === 'no_room'){
+    if (j.reason === 'removed' || j.reason === 'already_started' || j.reason === 'room_closed' || j.reason === 'no_room' || j.reason === 'campaign_over'){
       S.screen = 'ended'; S.ended = j.reason; return render();
+    }
+    // A brand's party: signed out or new terms in the meantime. Ask again.
+    if (j.reason === 'signin_required' || j.reason === 'terms_required' || j.reason === 'not_signed_in'){
+      if (j.reason !== 'terms_required') S.account = null;
+      return loadInfo().then(function(){ S.error = why(j.reason); S.screen = 'brand'; render(); });
     }
     S.error = why(j.reason); render();
   });
@@ -347,9 +395,10 @@ function end(reason){
 document.addEventListener('visibilitychange', function(){
   if (document.visibilityState !== 'visible') return;
   if (S.screen === 'play' && !done() && (!S.es || S.es.readyState === 2)) rejoin();
-  if ((S.screen === 'join' || done()) && !S.account){
+  if ((S.screen === 'join' || S.screen === 'brand' || done()) && !S.account){
     fetch('/web/auth/me', { credentials: 'same-origin' }).then(function(r){ return r.json(); })
-      .then(function(j){ if (j && j.authenticated){ S.account = j.user; render(); } }).catch(function(){});
+      .then(function(j){ if (j && j.authenticated){ S.account = j.user; return S.screen === 'brand' ? loadInfo() : null; } })
+      .then(function(){ render(); }).catch(function(){});
   }
 });
 
@@ -398,8 +447,146 @@ function meBlock(){
   return h('div', { class: 'me' }, [
     h('div', { class: 'face', 'aria-hidden': 'true', text: S.me.avatar || '' }),
     h('div', {}, [ h('div', { class: 'name', text: S.me.name }),
-                   h('div', { class: 'mute small', text: S.room && S.room.youAreHost ? 'Host' : 'Player' }) ])
+                   h('div', { class: 'mute small', text: S.room && S.room.youAreHost ? (branded() ? 'Co-host' : 'Host') : 'Player' }) ])
   ]);
+}
+
+// ---------- a brand's party (phase 7) ----------
+function brandBar(){
+  var c = campaign();
+  if (!c) return null;
+  var hex = function(v, d){ return /^#[0-9A-Fa-f]{6}$/.test(String(v || '')) ? v : d; };
+  document.body.style.setProperty('--brand-main', hex(c.colourMain, '#5B12FC'));
+  document.body.style.setProperty('--brand-ink', hex(c.colourAccent, '#FFFFFF'));
+  var logo = h('div', { class: 'logo', 'aria-hidden': 'true' },
+    c.logo ? [ h('img', { src: c.logo, alt: '' }) ] : [ String(c.brandName || c.name || '?').charAt(0).toUpperCase() ]);
+  return h('div', { class: 'brand' }, [ logo,
+    h('div', {}, [ h('div', { class: 'by', text: (c.brandName || '') + ' presents' }), h('div', { class: 'nm', text: c.name }) ]) ]);
+}
+function prizeLine(c){
+  if (!c || !c.prizeText) return null;
+  return h('div', { class: 'panel' }, [ h('b', { style: 'color:var(--brass)', text: c.prizeText }),
+    c.rules ? h('span', { class: 'mute small', text: c.rules }) : null ]);
+}
+function brandScreen(){
+  var info = S.info || {}, c = campaign() || {}, t = info.terms || {};
+  var out = [ brandBar() ];
+  if (info.live === false){
+    out.push(h('h1', { text: 'Not on right now' }), h('p', { class: 'mute', text: WHY.campaign_unavailable }));
+    return out;
+  }
+  if (!S.account){
+    out.push(h('h1', { text: 'Sign in to play' }));
+    out.push(h('p', { class: 'mute', text: 'Brand parties are for signed-in players, so prizes go to the right person. It takes a minute, and you stay signed in.' }));
+    out.push(prizeLine(c));
+    out.push(h('a', { class: 'go', href: '/', target: '_blank', rel: 'noopener', text: 'Sign in or make an account' }));
+    out.push(h('p', { class: 'mute small', text: 'Then come back to this page. It notices by itself.' }));
+  } else if (!info.accepted && !S.agreed){
+    var box = h('input', { type: 'checkbox', id: 'agree' });
+    var go = h('button', { class: 'go', disabled: true, text: S.busy ? 'Joining\u2026' : 'Agree and join', on: { click: agreeAndJoin } });
+    box.addEventListener('change', function(){ go.disabled = !box.checked || S.busy; });
+    var shares = (t.shares || []).length ? (t.shares || []).join(' and ') : 'only that you played';
+    out.push(h('h1', { text: 'Before you play' }));
+    out.push(h('div', { class: 'terms', tabindex: '0', 'aria-label': 'The terms', text: t.text || '' }));
+    out.push(h('div', { class: 'panel' }, [
+      h('b', { text: 'What ' + (c.brandName || 'the brand') + ' will see' }),
+      h('span', { class: 'mute', text: cap(shares) + '. Never your email or phone number.' }),
+      (t.winnerShares || []).length ? h('b', { text: 'If you win' }) : null,
+      (t.winnerShares || []).length ? h('span', { class: 'mute', text: 'Also ' + t.winnerShares.join(', ') + ', to award the prize.' }) : null
+    ]));
+    out.push(h('label', { class: 'agree', for: 'agree' }, [ box, h('span', { text: 'I agree to these terms (version ' + (t.version || 1) + ')' }) ]));
+    out.push(go);
+  } else {
+    out.push(h('h1', { text: 'Ready to play' }));
+    out.push(prizeLine(c));
+    out.push(h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Joining\u2026' : 'Join as ' + S.account.username,
+                           on: { click: function(){ join('', { asAccount: true }); } } }));
+  }
+  out.push(h('p', { id: 'err', class: 'err', role: 'alert', text: S.error }));
+  out.push(h('div', { class: 'spacer' }));
+  out.push(h('p', { class: 'mute small', style: 'text-align:center', text: 'What\u2019s Up Trivia TV \u00b7 TV code ' + CODE }));
+  return out;
+}
+function cap(x){ x = String(x || ''); return x.charAt(0).toUpperCase() + x.slice(1); }
+function agreeAndJoin(){
+  if (S.busy) return;
+  var t = (S.info && S.info.terms) || {};
+  S.busy = true; S.error = ''; render();
+  fetch('/tv/rooms/' + CODE + '/terms', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: t.version }) })
+    .then(function(r){ return r.json().catch(function(){ return { success: false, reason: 'server_error' }; }); })
+    .catch(function(){ return { success: false, reason: 'offline' }; })
+    .then(function(j){
+      S.busy = false;
+      if (j.success){ S.agreed = true; return join('', { asAccount: true }); }
+      if (j.reason === 'campaign_over'){ S.screen = 'ended'; S.ended = 'campaign_over'; return render(); }
+      if (j.reason === 'not_signed_in') S.account = null;
+      return loadInfo().then(function(){ S.error = why(j.reason); render(); });
+    });
+}
+
+// The co-host: 4 numbers from the TV, then the style and Start.
+function cohostAsk(){
+  var input = h('input', { id: 'cohost', class: 'code4', inputmode: 'numeric', maxlength: '4', autocomplete: 'off',
+                           'aria-label': 'The 4 numbers on the TV', placeholder: '\u2022\u2022\u2022\u2022', value: S.cohostCode });
+  var send = function(){
+    S.cohostCode = (input.value || '').replace(/[^0-9]/g, '').slice(0, 4);
+    if (S.cohostCode.length !== 4){ S.error = WHY.code_required; return render(); }
+    act('/host', { code: S.cohostCode }).then(function(j){ if (j && j.success){ S.cohostCode = ''; S.error = ''; render(); } });
+  };
+  input.addEventListener('input', function(){ S.cohostCode = input.value.replace(/[^0-9]/g, '').slice(0, 4); });
+  input.addEventListener('keydown', function(e){ if (e.key === 'Enter') send(); });
+  return h('div', { class: 'panel' }, [
+    h('b', { style: 'font-size:17px', text: 'Run this game?' }),
+    h('span', { class: 'mute small', text: 'Enter the 4 numbers shown on the TV. The first person to enter them is the co-host: they choose the style and start the game. The co-host plays too, and can win.' }),
+    input,
+    h('button', { class: 'go', disabled: S.busy, text: 'Become co-host', on: { click: send } })
+  ]);
+}
+function brandLobby(r){
+  var c = campaign() || {};
+  var out = [ brandBar(), meBlock(), h('h1', { text: r.youAreHost ? 'You are the co-host' : 'You\u2019re in' }), styleNote(r) ];
+  if (r.youAreHost){
+    var style = r.style || 'standard';
+    out.push(h('div', { class: 'panel' }, [
+      h('b', { text: 'Style' }),
+      h('div', { class: 'styles', role: 'group', 'aria-label': 'Style' }, ['standard', 'race'].map(function(x){
+        return h('button', { class: style === x ? 'on' : '', 'aria-pressed': style === x ? 'true' : 'false', disabled: S.busy,
+                             text: x === 'race' ? 'Race' : 'Standard', on: { click: function(){ if (style !== x) act('/style', { style: x }); } } });
+      })),
+      h('span', { class: 'mute small', text: 'Category: ' + pretty(c.category || (r.categories || [])[0] || '') + ' (set by the brand)' })
+    ]));
+    var list = (r.players || []).map(function(p){
+      return h('li', {}, [ h('span', { class: 'dot', style: 'background:' + p.colour }),
+        h('span', { 'aria-hidden': 'true', text: p.avatar }), h('span', { class: 'who', text: p.name + (p.host ? ' (co-host)' : '') }) ]);
+    });
+    out.push(h('div', { class: 'panel' }, [ h('h2', { text: (r.playerCount || 0) + ' of ' + (r.maxPlayers || 20) + ' players' }),
+                                           h('ul', { class: 'people' }, list) ]));
+    out.push(prizeLine(c));
+    out.push(h('div', { class: 'spacer' }));
+    var canStart = (r.playerCount || 0) >= 2;
+    out.push(h('button', { class: 'go', text: 'Start the game', disabled: !canStart || S.busy, on: { click: function(){ act('/start'); } } }));
+    if (!canStart) out.push(h('p', { class: 'mute small', text: WHY.not_enough_players }));
+  } else {
+    out.push(h('p', { class: 'mute', text: (r.playerCount || 0) + ' playing. Watch the TV \u2014 the game starts when the co-host is ready.' }));
+    out.push(prizeLine(c));
+    if (r.hostFree) out.push(cohostAsk());
+    out.push(h('div', { class: 'spacer' }));
+  }
+  out.push(h('button', { class: 'quiet', text: 'Change avatar', on: { click: function(){ S.picking = true; S.error = ''; render(); } } }));
+  out.push(h('button', { class: 'quiet', text: 'Leave', on: { click: function(){
+    if (!confirm('Leave this game?')) return;
+    act('/leave').then(function(j){ if (j && j.success){ end('left'); render(); } });
+  } } }));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  return out;
+}
+function brandOffer(){
+  var c = campaign();
+  if (!c || !c.offerText) return null;
+  var kids = [ h('b', { text: 'From ' + (c.brandName || 'the brand') }), h('span', { text: c.offerText }) ];
+  if (c.offerUrl && /^https:\/\//.test(c.offerUrl)) kids.push(h('a', { class: 'go', href: c.offerUrl, target: '_blank', rel: 'noopener', text: 'See the offer' }));
+  return h('div', { class: 'panel' }, kids);
 }
 
 function joinScreen(){
@@ -474,6 +661,7 @@ function styleNote(r){
 
 function lobbyScreen(){
   var r = S.room || {};
+  if (r.campaign) return brandLobby(r);
   var out = [ meBlock(), h('h1', { text: r.youAreHost ? 'You are the host' : 'You\u2019re in' }), styleNote(r) ];
   if (r.youAreHost) out = out.concat(prizeHost(r));
   else out = out.concat(prizeBanner(r));
@@ -647,7 +835,7 @@ function raceResultScreen(r){
 
 function finishedScreen(){
   var f = S.game.final || {};
-  var out = [ meBlock() ];
+  var out = [ brandBar(), meBlock() ];
   if (f.rank){
     out.push(h('div', { class: 'place', text: f.won ? '1st' : ordinal(f.rank) }));
     out.push(h('h1', { text: f.won ? 'You won' : 'of ' + f.of + ' players' }));
@@ -664,6 +852,7 @@ function finishedScreen(){
   ]));
   if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
   out = out.concat(prizeResult());
+  out.push(brandOffer());
   // A guest who won the prize collects it, and their points, in one step above.
   var collecting = !!(S.room && S.room.prize && S.room.prize.status === 'claiming' && S.me && S.room.prize.winnerPlayerId === S.me.id);
   if (S.me && !S.me.signedIn && f.points && !collecting) out = out.concat(keepBlock(f.points));
@@ -965,6 +1154,7 @@ function endedScreen(){
     room_closed: ['Game ended', 'This game is over. Scan the code on the TV to join the next one.'],
     already_started: ['Already started', WHY.already_started],
     no_room: ['No game found', WHY.no_room],
+    campaign_over: ['This party has ended', 'The brand\u2019s party is over. Thanks for playing.'],
     left: ['You left', 'Scan the code on the TV to join again.']
   }[S.ended] || ['Game ended', ''];
   return [ h('h1', { text: copy[0] }), h('p', { class: 'mute', text: copy[1] }) ];
@@ -977,6 +1167,7 @@ function render(){
   var kids;
   if (S.screen === 'loading') kids = [ h('p', { class: 'mute', text: 'Connecting…' }) ];
   else if (S.screen === 'join') kids = joinScreen();
+  else if (S.screen === 'brand') kids = brandScreen();
   else if (S.screen === 'ended') kids = endedScreen();
   else {
     var g = S.game, st = S.room && S.room.status;
@@ -994,6 +1185,8 @@ function render(){
   if (S.screen === 'join' && active && active.tagName === 'INPUT' && app.contains(active) && !S.nameTaken && !S.error && !S.busy) return;
   // Nor under the host typing a prize amount; the next update after that redraws.
   if (active && active.id === 'pamt' && app.contains(active) && !S.busy) return;
+  // Nor under a player typing the co-host code.
+  if (active && active.id === 'cohost' && app.contains(active) && !S.busy && !S.error) return;
   app.replaceChildren.apply(app, kids.filter(Boolean));
 }
 

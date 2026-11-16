@@ -29,8 +29,8 @@
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
 // 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
 // 023-tv-identity.sql, 024-tv-venue.sql, 025-tv-prizes.sql,
-// 026-tv-prize-claims.sql and 027-tv-campaigns.sql and are byte-identical to
-// them; a test checks they have not drifted.
+// 026-tv-prize-claims.sql, 027-tv-campaigns.sql and 028-tv-branded-rooms.sql
+// and are byte-identical to them; a test checks they have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -71,12 +71,14 @@ class TvAuthService {
         // admin page's settings), then 023 (which TV is which, Solo answers),
         // then 024 (venue TVs), then 025 (prizes and payouts), then 026 (a
         // guest winner's claim), which alters tv_prizes and so comes after it,
-        // then 027 (branded-party campaigns), which refers to tv_devices.
+        // then 027 (branded-party campaigns), which refers to tv_devices,
+        // then 028 (branded rooms, consents), which refers to 027.
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
                            ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS,
-                           ...TvAuthService.CLAIM_SCHEMA_STATEMENTS, ...TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.CLAIM_SCHEMA_STATEMENTS, ...TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS,
+                           ...TvAuthService.BRANDED_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -634,6 +636,29 @@ TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS = Object.freeze([
 )`,
     `CREATE INDEX IF NOT EXISTS idx_tv_campaign_funds_campaign
     ON tv_campaign_funds (campaign_id)`
+]);
+
+
+// Phase 7, steps 2 and 3 (028): a Party room can be a campaign's branded
+// party, how widely a campaign reaches, and what each player agreed to before
+// playing one. Alters only TV tables.
+TvAuthService.BRANDED_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_rooms
+    ADD COLUMN IF NOT EXISTS campaign_id INTEGER REFERENCES tv_campaigns(id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_rooms_campaign
+    ON tv_rooms (campaign_id, created_at)
+    WHERE campaign_id IS NOT NULL`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'chosen'
+        CHECK (audience IN ('chosen','nigeria','all'))`,
+    `CREATE TABLE IF NOT EXISTS tv_campaign_consents (
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    terms_version       INTEGER NOT NULL CHECK (terms_version >= 1),
+    accepted_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    accepted_ip         INET,
+    PRIMARY KEY (campaign_id, user_id, terms_version)
+)`
 ]);
 
 module.exports = new TvAuthService();
