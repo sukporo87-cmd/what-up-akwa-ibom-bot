@@ -98,7 +98,7 @@ function requestFacts(req, userId) {
         return facts;
     }
     return {
-        ip: (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null,
+        ip: require('../utils/client-ip').clientIp(req),
         user_agent: req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 300) : null
     };
 }

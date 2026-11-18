@@ -32,7 +32,7 @@ function tooMany(ip) {
 }
 
 router.post('/install-event', express.json({ limit: '1kb' }), async (req, res) => {
-    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+    const ip = require('../utils/client-ip').clientIp(req) || 'unknown';
     if (tooMany(ip)) return res.status(429).json({ success: false });
 
     let userId = null;

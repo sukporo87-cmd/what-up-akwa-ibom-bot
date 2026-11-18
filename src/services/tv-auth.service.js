@@ -29,8 +29,9 @@
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
 // 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
 // 023-tv-identity.sql, 024-tv-venue.sql, 025-tv-prizes.sql,
-// 026-tv-prize-claims.sql, 027-tv-campaigns.sql and 028-tv-branded-rooms.sql
-// and are byte-identical to them; a test checks they have not drifted.
+// 026-tv-prize-claims.sql, 027-tv-campaigns.sql, 028-tv-branded-rooms.sql and
+// 029-tv-campaign-awards.sql and are byte-identical to them; a test checks they
+// have not drifted.
 // ============================================
 
 const crypto = require('crypto');
@@ -72,13 +73,17 @@ class TvAuthService {
         // then 024 (venue TVs), then 025 (prizes and payouts), then 026 (a
         // guest winner's claim), which alters tv_prizes and so comes after it,
         // then 027 (branded-party campaigns), which refers to tv_devices,
-        // then 028 (branded rooms, consents), which refers to 027.
+        // then 028 (branded rooms, consents), which refers to 027, then 029
+        // (a brand's prizes), which refers to 028's rooms and alters 025's
+        // payouts, then 030 (Live Rounds and the Brand Cup), which refers to
+        // 027's campaigns and 018's rooms and players.
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
                            ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS,
                            ...TvAuthService.CLAIM_SCHEMA_STATEMENTS, ...TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS,
-                           ...TvAuthService.BRANDED_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.BRANDED_SCHEMA_STATEMENTS, ...TvAuthService.AWARD_SCHEMA_STATEMENTS,
+                           ...TvAuthService.LIVE_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -659,6 +664,201 @@ TvAuthService.BRANDED_SCHEMA_STATEMENTS = Object.freeze([
     accepted_ip         INET,
     PRIMARY KEY (campaign_id, user_id, terms_version)
 )`
+]);
+
+// Phase 7, steps 4 and 5 (029): a brand's prizes, paid from the money it paid
+// in (reserved when a game that can win one starts, won or released when it
+// ends; a leaderboard's places when its period ends), the payout queue taking
+// a brand's prize as well as a host's, and how often the brand's offer was
+// opened. Alters only TV tables.
+TvAuthService.AWARD_SCHEMA_STATEMENTS = Object.freeze([
+    `CREATE TABLE IF NOT EXISTS tv_campaign_awards (
+    id                  SERIAL PRIMARY KEY,
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    basis               TEXT NOT NULL CHECK (basis IN ('per_game','per_tv_day','leaderboard')),
+    tv_room_id          INTEGER REFERENCES tv_rooms(id),
+    tv_device_id        INTEGER REFERENCES tv_devices(id),
+    period_key          TEXT CHECK (period_key IS NULL OR char_length(period_key) <= 40),
+    place               SMALLINT NOT NULL DEFAULT 1 CHECK (place BETWEEN 1 AND 10),
+    prize_type          TEXT NOT NULL CHECK (prize_type IN ('cash','item')),
+    amount              INTEGER CHECK (amount IS NULL OR amount > 0),
+    item                TEXT CHECK (item IS NULL OR char_length(item) <= 120),
+    status              TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN (
+                            'reserved','released','won','sent','received','void'
+                        )),
+    user_id             INTEGER REFERENCES users(id),
+    tv_player_id        INTEGER REFERENCES tv_players(id),
+    winner_details      JSONB,
+    reason              TEXT CHECK (reason IS NULL OR char_length(reason) <= 200),
+    sent_note           TEXT CHECK (sent_note IS NULL OR char_length(sent_note) <= 200),
+    sent_by             TEXT,
+    sent_at             TIMESTAMPTZ,
+    received_at         TIMESTAMPTZ,
+    voided_by           TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at         TIMESTAMPTZ,
+    CONSTRAINT tv_campaign_awards_what CHECK (
+        (prize_type = 'cash' AND amount IS NOT NULL AND item IS NULL) OR
+        (prize_type = 'item' AND item IS NOT NULL AND amount IS NULL)
+    ),
+    CONSTRAINT tv_campaign_awards_winner CHECK (status NOT IN ('won','sent','received') OR user_id IS NOT NULL),
+    CONSTRAINT tv_campaign_awards_where CHECK (
+        (basis = 'leaderboard' AND period_key IS NOT NULL AND tv_room_id IS NULL) OR
+        (basis <> 'leaderboard' AND tv_room_id IS NOT NULL)
+    )
+)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_campaign_awards_room
+    ON tv_campaign_awards (tv_room_id)
+    WHERE tv_room_id IS NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_campaign_awards_place
+    ON tv_campaign_awards (campaign_id, period_key, place)
+    WHERE basis = 'leaderboard'`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaign_awards_campaign
+    ON tv_campaign_awards (campaign_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaign_awards_user
+    ON tv_campaign_awards (user_id)
+    WHERE user_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_campaign_awards_tv_day
+    ON tv_campaign_awards (tv_device_id, period_key)
+    WHERE basis = 'per_tv_day'`,
+    `ALTER TABLE tv_payouts
+    ADD COLUMN IF NOT EXISTS tv_campaign_award_id INTEGER REFERENCES tv_campaign_awards(id)`,
+    `ALTER TABLE tv_payouts
+    ALTER COLUMN tv_prize_id DROP NOT NULL`,
+    `ALTER TABLE tv_payouts DROP CONSTRAINT IF EXISTS tv_payouts_source,
+    ADD CONSTRAINT tv_payouts_source CHECK ((tv_prize_id IS NULL) <> (tv_campaign_award_id IS NULL))`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_payouts_campaign_award
+    ON tv_payouts (tv_campaign_award_id)
+    WHERE tv_campaign_award_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS tv_campaign_offer_opens (
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    opened_on           DATE NOT NULL,
+    source              TEXT NOT NULL CHECK (source IN ('tv','phone')),
+    opens               INTEGER NOT NULL DEFAULT 0 CHECK (opens >= 0),
+    PRIMARY KEY (campaign_id, opened_on, source)
+)`
+]);
+
+// Phase 7, Live Rounds and the Brand Cup (030): a campaign can be a Live Round
+// (ranked rounds at set times, on every TV in its area at once) or a Brand Cup
+// (rounds in stages, ending in a final); the rounds, where each player says
+// they are, each account's entry in a round, and disputes. Alters only TV
+// tables.
+TvAuthService.LIVE_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'party'
+        CHECK (kind IN ('party','live','cup'))`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS area_unit TEXT NOT NULL DEFAULT 'state'
+        CHECK (area_unit IN ('none','city','state','country'))`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS area_cities TEXT[] NOT NULL DEFAULT '{}'`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS area_countries TEXT[] NOT NULL DEFAULT '{}'`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS dispute_hours SMALLINT NOT NULL DEFAULT 48
+        CHECK (dispute_hours BETWEEN 24 AND 72)`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS final_where TEXT NOT NULL DEFAULT 'home'
+        CHECK (final_where IN ('home','venue'))`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS featured_order SMALLINT
+        CHECK (featured_order IS NULL OR featured_order BETWEEN 1 AND 99)`,
+    `CREATE TABLE IF NOT EXISTS tv_live_rounds (
+    id                  SERIAL PRIMARY KEY,
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    name                TEXT NOT NULL CHECK (char_length(name) BETWEEN 2 AND 60),
+    stage               SMALLINT CHECK (stage IS NULL OR stage BETWEEN 1 AND 8),
+    starts_at           TIMESTAMPTZ NOT NULL,
+    questions           SMALLINT NOT NULL DEFAULT 15 CHECK (questions BETWEEN 10 AND 30),
+    tiebreak_text       TEXT CHECK (tiebreak_text IS NULL OR char_length(tiebreak_text) BETWEEN 10 AND 200),
+    tiebreak_answer     NUMERIC CHECK (tiebreak_answer IS NULL OR abs(tiebreak_answer) < 1000000000000),
+    through_count       SMALLINT CHECK (through_count IS NULL OR through_count BETWEEN 1 AND 10000),
+    state_quota         SMALLINT CHECK (state_quota IS NULL OR state_quota BETWEEN 1 AND 1000),
+    reserves            SMALLINT NOT NULL DEFAULT 3 CHECK (reserves BETWEEN 0 AND 20),
+    ranked_per_tv       SMALLINT CHECK (ranked_per_tv IS NULL OR ranked_per_tv BETWEEN 1 AND 20),
+    venue_tvs           INTEGER[] NOT NULL DEFAULT '{}',
+    prize_ranks         JSONB,
+    status              TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN (
+                            'scheduled','open','playing','ranked','final','cancelled','failed'
+                        )),
+    question_ids        INTEGER[],
+    fail_reason         TEXT CHECK (fail_reason IS NULL OR char_length(fail_reason) <= 200),
+    opened_at           TIMESTAMPTZ,
+    started_at          TIMESTAMPTZ,
+    ranked_at           TIMESTAMPTZ,
+    final_at            TIMESTAMPTZ,
+    created_by          TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by          TEXT,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_live_rounds_campaign
+    ON tv_live_rounds (campaign_id, starts_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_live_rounds_due
+    ON tv_live_rounds (status, starts_at)`,
+    `ALTER TABLE tv_rooms
+    ADD COLUMN IF NOT EXISTS live_round_id INTEGER REFERENCES tv_live_rounds(id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_rooms_live_round
+    ON tv_rooms (live_round_id)
+    WHERE live_round_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS tv_live_locations (
+    campaign_id         INTEGER NOT NULL REFERENCES tv_campaigns(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    city                TEXT CHECK (city IS NULL OR char_length(city) BETWEEN 2 AND 40),
+    state               TEXT CHECK (state IS NULL OR char_length(state) BETWEEN 2 AND 40),
+    country             TEXT CHECK (country IS NULL OR char_length(country) BETWEEN 2 AND 56),
+    set_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (campaign_id, user_id)
+)`,
+    `CREATE TABLE IF NOT EXISTS tv_live_entries (
+    round_id            INTEGER NOT NULL REFERENCES tv_live_rounds(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    tv_room_id          INTEGER NOT NULL REFERENCES tv_rooms(id),
+    tv_player_id        INTEGER NOT NULL REFERENCES tv_players(id),
+    tv_device_id        INTEGER NOT NULL REFERENCES tv_devices(id),
+    ranked              BOOLEAN NOT NULL,
+    why_unranked        TEXT CHECK (why_unranked IS NULL OR why_unranked IN (
+                            'outside_area','no_location','tv_unknown','already_through','not_through',
+                            'not_venue','one_per_tv','reserve_not_needed','disqualified'
+                        )),
+    city                TEXT,
+    state               TEXT,
+    country             TEXT,
+    tv_state            TEXT,
+    seed                INTEGER,
+    stepped_in          BOOLEAN NOT NULL DEFAULT false,
+    correct             SMALLINT,
+    total_ms            INTEGER,
+    tiebreak_value      NUMERIC,
+    tiebreak_ms         INTEGER,
+    place               INTEGER,
+    outcome             TEXT CHECK (outcome IS NULL OR outcome IN ('through','reserve','out')),
+    reserve_order       SMALLINT,
+    disqualified_by     TEXT,
+    disqualified_reason TEXT CHECK (disqualified_reason IS NULL OR char_length(disqualified_reason) <= 200),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (round_id, user_id),
+    CONSTRAINT tv_live_entries_why CHECK (ranked = (why_unranked IS NULL))
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_live_entries_place
+    ON tv_live_entries (round_id, place)
+    WHERE place IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_live_entries_player
+    ON tv_live_entries (tv_player_id)`,
+    `CREATE TABLE IF NOT EXISTS tv_live_disputes (
+    id                  SERIAL PRIMARY KEY,
+    round_id            INTEGER NOT NULL REFERENCES tv_live_rounds(id),
+    user_id             INTEGER NOT NULL REFERENCES users(id),
+    text                TEXT NOT NULL CHECK (char_length(text) BETWEEN 10 AND 1000),
+    status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered')),
+    answer              TEXT CHECK (answer IS NULL OR char_length(answer) BETWEEN 2 AND 1000),
+    answered_by         TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    answered_at         TIMESTAMPTZ
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_tv_live_disputes_round
+    ON tv_live_disputes (round_id, status)`
 ]);
 
 module.exports = new TvAuthService();

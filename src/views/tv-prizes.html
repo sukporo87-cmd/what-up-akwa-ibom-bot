@@ -55,7 +55,7 @@ a{color:var(--brass)}
 <script>
 (function(){
 'use strict';
-var S = { account: null, payouts: [], asks: [], saved: null, banks: null, busy: false, errors: {}, open: {}, code: '', note: '' };
+var S = { account: null, payouts: [], asks: [], items: [], saved: null, banks: null, busy: false, errors: {}, open: {}, code: '', note: '' };
 
 function h(tag, attrs, kids){
   var el = document.createElement(tag);
@@ -91,6 +91,7 @@ var WHY = {
   account_in_room: 'This account already played in that game, so it can\u2019t collect its prize too.',
   already_confirmed: 'You have already confirmed this one.',
   not_paid_yet: 'This hasn\u2019t been sent yet.',
+  not_sent_yet: 'This hasn\u2019t been sent yet.',
   offline: 'No connection. Check your signal and try again.'
 };
 function why(r){ return WHY[r] || 'That did not work. Try again.'; }
@@ -110,7 +111,7 @@ function load(){
     S.account = j && j.authenticated && j.user ? j.user : null;
     if (!S.account) return render();
     return get('/tv/payouts').then(function(p){
-      if (p.success){ S.payouts = p.payouts || []; S.asks = p.asks || []; S.saved = p.saved || null; }
+      if (p.success){ S.payouts = p.payouts || []; S.asks = p.asks || []; S.saved = p.saved || null; S.items = p.items || []; }
       else if (p.reason === 'not_signed_in') S.account = null;
       render();
     });
@@ -218,7 +219,8 @@ function when(t){
 function card(po){
   var st = STATUS[po.status] || [po.status, 'wait'];
   var kids = [
-    h('p', { class: 'mute small', text: (po.kind === 'refund' ? 'Your prize, coming back to you' : 'A prize you won') + ' · ' + day(po.created_at) }),
+    h('p', { class: 'mute small', text: (po.kind === 'refund' ? 'Your prize, coming back to you'
+      : po.campaign ? 'You won this in the ' + po.campaign + ', from ' + po.brand : 'A prize you won') + ' · ' + day(po.created_at) }),
     h('div', { class: 'amount', text: naira(po.amount) }),
     h('div', {}, [ h('span', { class: 'tag ' + st[1], text: st[0] }) ])
   ];
@@ -252,6 +254,34 @@ function card(po){
   return h('div', { class: 'card' }, kids);
 }
 
+// A brand's prize that is a thing, not money (phase 7): sent by our team,
+// and the winner says when it arrives.
+function itemCard(it){
+  var key = 'item' + it.id;
+  var tag = it.status === 'received' ? ['You confirmed it arrived · ' + day(it.receivedAt), 'ok']
+          : it.status === 'sent' ? ['On its way', 'ok'] : ['We will be in touch to get it to you', 'wait'];
+  var kids = [
+    h('p', { class: 'mute small', text: 'You won this in the ' + it.campaign + ', from ' + it.brand + (it.wonAt ? ' · ' + day(it.wonAt) : '') }),
+    h('div', { class: 'amount', text: it.item }),
+    h('div', {}, [ h('span', { class: 'tag ' + tag[1], text: tag[0] }) ])
+  ];
+  if (it.sentNote && it.status !== 'won') kids.push(h('p', { class: 'small', text: it.sentNote }));
+  if (it.status === 'sent'){
+    kids.push(h('button', { class: 'go', disabled: S.busy, text: 'Yes, it arrived', on: { click: function(){
+      if (S.busy) return;
+      S.busy = true; S.errors[key] = ''; render();
+      post('/tv/campaign-prizes/' + it.id + '/received', {}).then(function(j){
+        S.busy = false;
+        if (!j.success){ S.errors[key] = why(j.reason); return render(); }
+        S.note = 'Thank you: confirmed.';
+        load();
+      });
+    } } }));
+  }
+  kids.push(h('p', { class: 'err', role: 'alert', text: S.errors[key] || '' }));
+  return h('div', { class: 'card' }, kids);
+}
+
 function render(){
   var app = document.getElementById('app');
   var active = document.activeElement;
@@ -265,7 +295,8 @@ function render(){
     if (S.note) kids.push(h('p', { class: 'tag ok', role: 'status', text: S.note }));
     S.asks.forEach(function(a){ kids.push(askCard(a)); });
     S.payouts.forEach(function(po){ kids.push(card(po)); });
-    if (!S.payouts.length && !S.asks.length) kids.push(h('p', { class: 'mute', text: 'Nothing here yet. Prizes you win in a WUT TV Party game show here.' }));
+    (S.items || []).forEach(function(it){ kids.push(itemCard(it)); });
+    if (!S.payouts.length && !S.asks.length && !(S.items || []).length) kids.push(h('p', { class: 'mute', text: 'Nothing here yet. Prizes you win in a WUT TV Party game show here.' }));
     kids.push(claimForm());
   }
   app.replaceChildren.apply(app, kids);

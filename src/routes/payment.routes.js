@@ -709,7 +709,7 @@ router.get('/callback', async (req, res) => {
 
     // Capture user's real IP for device tracking
     try {
-        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
+        const clientIp = require('../utils/client-ip').clientIp(req);
         if (clientIp && userId) {
             const deviceTrackingService = require('../services/device-tracking.service');
             await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'payment_callback');
@@ -925,7 +925,7 @@ const userId = refParts[2]; // userId is always the 3rd part
 
 // Capture user's real IP for device tracking
 try {
-    const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress;
+    const clientIp = require('../utils/client-ip').clientIp(req);
     if (clientIp && userId) {
         const deviceTrackingService = require('../services/device-tracking.service');
         await deviceTrackingService.recordIP(parseInt(userId), clientIp, 'tournament_payment_callback');

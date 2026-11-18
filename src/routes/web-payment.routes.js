@@ -30,9 +30,8 @@ const paymentService = new PaymentService();
 const VERIFY_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 function clientIp(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-        || req.socket?.remoteAddress
-        || null;
+    // The real address, not one a client can put in a header (utils/client-ip).
+    return require('../utils/client-ip').clientIp(req);
 }
 
 /**

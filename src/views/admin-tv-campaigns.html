@@ -17,6 +17,18 @@
   Publishing is refused, with what is missing, until everything is ready.
   Nothing set here is shown on a TV until step 2.
 
+  Steps 4 and 5 (Nov 17): the prizes won, paid from the money paid in (an
+  item is marked sent here; a cash prize is paid from the WUT TV payout
+  queue), the leaderboard as it stands, and the brand's report, on its own
+  page, to print or save as a PDF.
+
+  Live Rounds and the Brand Cup (Nov 18): the campaign's type (an everyday
+  party, Live Rounds at set times, or a Brand Cup in stages), what each
+  player types to say where they are, the dispute window, where a cup's
+  final is played, the place in the TV carousel, and the rounds themselves:
+  set up, changed or cancelled before their lobby opens; afterwards, how one
+  went, its audit file, its disputes, and taking a player off the results.
+
   Times are typed and shown in Lagos time. Every value from the server is
   escaped with esc() before it is placed in the page.
 -->
@@ -70,6 +82,7 @@
   .btn.coral:hover { filter: brightness(.95); color: #fff; }
   .btn.danger:hover { border-color: var(--red); color: var(--red); }
   .btn:disabled { opacity: .45; cursor: default; }
+  a.btn { text-decoration: none; display: inline-block; }
   .saved { font-size: 12.5px; color: var(--green); font-weight: 600; }
   .err { font-size: 13px; color: var(--red); font-weight: 600; }
 
@@ -134,6 +147,19 @@
   .banner { border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
   .banner.warn { background: var(--amber-soft); border: 1px solid #f0d189; color: #6b4600; }
   .banner.info { background: var(--teal-soft); border: 1px solid #b9e2df; color: var(--teal-ink); }
+  /* Live Rounds and the Brand Cup */
+  .pill.open { background: var(--coral-soft); color: #b2381c; }
+  .pill.playing { background: var(--green-soft); color: var(--green); }
+  .pill.ranked { background: var(--blue-soft); color: var(--blue); }
+  .pill.final { background: var(--teal-soft); color: var(--teal-ink); }
+  .pill.cancelled, .pill.failed { background: var(--red-soft); color: var(--red); }
+  .roundform { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-top: 12px; }
+  .detail { border-top: 2px solid var(--line); margin-top: 16px; padding-top: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0 14px; }
+  @media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tiles div { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; }
+  .tiles b { display: block; font-family: 'Fredoka', sans-serif; font-size: 20px; }
+  .tiles span { font-size: 12px; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -213,7 +239,8 @@ async function showList() {
     '<div class="field"><label>&nbsp;</label><button class="btn primary" id="nGo">Create draft</button> <span class="err" id="nErr"></span></div></div></div>' +
     '<div class="card"><h2>Campaigns</h2><div class="hint">Pinned campaigns are shown first, on this page and on the TVs.</div>' +
     (rows.length ? '<div class="scroll"><table><thead><tr><th>Campaign</th><th>State</th><th>Runs</th><th>Where</th><th>Prize</th><th class="num">Paid in</th></tr></thead><tbody>' +
-      rows.map(c => '<tr class="clickrow" data-id="' + esc(c.id) + '"><td>' + (c.pinned ? '📌 ' : '') + '<b>' + esc(c.name) + '</b><div class="dim">' + esc(c.brandName) + '</div></td>' +
+      rows.map(c => '<tr class="clickrow" data-id="' + esc(c.id) + '"><td>' + (c.pinned ? '📌 ' : '') + '<b>' + esc(c.name) + '</b><div class="dim">' + esc(c.brandName) +
+        (c.kind === 'live' ? ' · Live Rounds' : c.kind === 'cup' ? ' · Brand Cup' : '') + '</div></td>' +
         '<td>' + pill(c.state) + '</td><td>' + esc(lagos(c.startsAt, false)) + ' – ' + esc(lagos(c.endsAt, false)) + '</td>' +
         '<td>' + (c.audience === 'all' ? '<b>Every TV</b>' : c.audience === 'nigeria' ? '<b>Every TV in Nigeria</b>' + (c.tvCount ? '<div class="dim">and ' + esc(c.tvCount) + ' chosen</div>' : '') :
           esc(c.tvCount) + ' TV' + (c.tvCount === 1 ? '' : 's') + (c.regions.length ? '<div class="dim">' + esc(c.regions.join(', ')) + '</div>' : '')) + '</td>' +
@@ -252,8 +279,110 @@ function render() {
   app.innerHTML = actionBar() +
     (ended ? '<div class="banner info">This campaign has ended. It can no longer be changed, except its notes.</div>' : '') +
     (C.status !== 'draft' && !ended ? '<div class="banner warn">This campaign is published. Changes apply to new games. A change to the terms, or to the details players share, makes a new version of the terms (now version ' + esc(C.termsVersion) + '), which players will be asked to accept again.</div>' : '') +
-    checklistCard() + brandCard(dis) + whenWhereCard(dis) + questionsCard(dis) + prizesCard(dis) + termsCard(dis) + artCard(ended) + moneyCard() + notesCard();
+    checklistCard() + brandCard(dis) + typeCard(dis) + '<div id="rounds"></div>' + whenWhereCard(dis) + questionsCard(dis) + prizesCard(dis) + termsCard(dis) + artCard(ended) + moneyCard() +
+    '<div id="prizesWon"></div>' + notesCard();
   wire();
+  wireType();
+  if (C.kind && C.kind !== 'party') loadRounds();
+  if (C.status !== 'draft') loadPrizesWon();
+}
+
+// ============================================================
+// PRIZES WON (step 4)
+// ============================================================
+const AWARD_STATUS = {
+  reserved: ['In play', 'scheduled'], won: ['Won', 'live'], sent: ['Sent', 'live'], received: ['Received', 'ok'],
+  released: ['Not won', 'draft'], void: ['Taken back', 'paused']
+};
+const PAYOUT_STATUS = {
+  awaiting_details: 'waiting for bank details', ready: 'ready to pay', held: 'held', sending: 'being sent',
+  paid: 'paid', failed: 'failed', cancelled: 'cancelled'
+};
+const NOT_WON = {
+  too_few_finished: 'too few players finished', game_not_finished: 'the game ended early', no_eligible_player: 'nobody could win it',
+  pool_empty: 'the money ran out', tv_day_done: 'the TV\'s prize games were done'
+};
+let SHOW_RELEASED = false;
+
+async function loadPrizesWon() {
+  const box = document.getElementById('prizesWon');
+  if (!box) return;
+  const j = await api('/campaigns/' + C.id + '/prizes');
+  if (!j || !j.success) { box.innerHTML = '<div class="card"><h2>Prizes won</h2><div class="err">' + esc((j && j.error) || 'Could not load the prizes') + '</div></div>'; return; }
+  if (j.basis === 'none' && !j.awards.length) { box.innerHTML = ''; return; }
+  const can = OPTIONS.canRecordMoney;
+  const shown = j.awards.filter(a => SHOW_RELEASED || a.status !== 'released');
+  const released = j.awards.filter(a => a.status === 'released');
+  const where = a => a.basis === 'leaderboard'
+    ? 'Leaderboard ' + esc((a.periodKey || '').replace('week:', 'week ').replace('day:', '').replace('campaign', 'the campaign')) + ', place ' + esc(a.place)
+    : (a.tvName ? esc(a.tvName) : 'TV') + ' <span class="dim">room #' + esc(a.roomId) + '</span>';
+  const winner = a => {
+    if (!a.userId) return '<span class="dim">—</span>';
+    const w = a.winner || {};
+    const d = (C.winnerFields || []).filter(k => k !== 'username' && w[k]).map(k => esc(FIELD_LABEL[k] || k) + ': ' + esc(w[k])).join('<br>');
+    return '<b>' + esc(a.username || ('#' + a.userId)) + '</b>' + (d ? '<div class="dim">' + d + '</div>' : '');
+  };
+  const state = a => {
+    const st = AWARD_STATUS[a.status] || [a.status, 'draft'];
+    let more = '';
+    if (a.prizeType === 'cash' && a.payout) more = '<div class="dim">payout #' + esc(a.payout.id) + ': ' + esc(PAYOUT_STATUS[a.payout.status] || a.payout.status) + '</div>';
+    if (a.status === 'sent' || a.status === 'received') more = '<div class="dim">' + esc(a.sentNote || '') + ' · by ' + esc(a.sentBy || '') + ' ' + esc(lagos(a.sentAt)) + '</div>';
+    if (a.status === 'released') more = '<div class="dim">' + esc(NOT_WON[a.reason] || a.reason || '') + '</div>';
+    if (a.status === 'void') more = '<div class="dim">' + esc(a.reason || '') + ' · by ' + esc(a.voidedBy || '') + '</div>';
+    return '<span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + more;
+  };
+  const acts = a => {
+    const b = [];
+    if (a.prizeType === 'item' && a.status === 'won') b.push('<button class="btn primary" data-sent="' + esc(a.id) + '">Mark sent</button>');
+    if (can && (a.status === 'won' || a.status === 'reserved') && !(a.payout && ['paid', 'sending'].includes(a.payout.status))) {
+      b.push('<button class="btn danger" data-void="' + esc(a.id) + '">Take back</button>');
+    }
+    return b.join(' ');
+  };
+  let board = '';
+  if (j.leaderboard) {
+    board = '<h3 style="font-family:Fredoka,sans-serif;font-size:16px;color:var(--teal-ink);margin:6px 0 8px">Leaderboard now: ' + esc(j.leaderboard.label) +
+      ' <span class="dim">(' + esc(lagos(j.leaderboard.from)) + ' to ' + esc(lagos(j.leaderboard.to)) + ')</span></h3>' +
+      (j.leaderboard.rows.length ? '<div class="scroll"><table><thead><tr><th>Place</th><th>Player</th><th class="num">Right answers</th><th class="num">Games</th><th>City</th></tr></thead><tbody>' +
+        j.leaderboard.rows.map(r => '<tr><td>' + esc(r.place) + '</td><td><b>' + esc(r.username) + '</b></td><td class="num">' + esc(r.correct) +
+          '</td><td class="num">' + esc(r.games) + '</td><td class="dim">' + esc(r.city || '') + '</td></tr>').join('') + '</tbody></table></div>'
+        : '<div class="empty">No counted games in this period yet.</div>') +
+      '<div class="dim" style="margin:8px 0 16px">Ranked by right answers (Race: questions taken), then less time. Games count when at least ' + esc(C.minPlayers) +
+      ' players finish. Places are given out a few minutes after each period ends, to the next player down who can win.</div>';
+  }
+  const m = j.money;
+  box.innerHTML = '<div class="card"><h2>Prizes won</h2><div class="hint">Each prize is held from the money paid in while a game that can win it is played, then goes to the best-placed player who can win it (old enough, and under the limit per player), or is let go if nobody does. A cash prize is paid from the <a href="/admin/tv">WUT TV payout queue</a>; an item is sent by us, then <b>Mark sent</b> here with how it went. <b>Take back</b> (Super Admin or Finance Officer) cancels a prize that has not been paid, for example after cheating; its money is free again.</div>' +
+    '<div class="money"><div><b>' + esc(naira(m.won)) + '</b><span>Won in cash</span></div><div><b>' + esc(naira(m.paidOut)) + '</b><span>Paid out</span></div>' +
+    '<div><b>' + esc(naira(m.owed)) + '</b><span>Won, not paid yet</span></div><div><b>' + esc(naira(m.left)) + '</b><span>Left for prizes</span></div></div>' +
+    board +
+    (shown.length ? '<div class="scroll"><table><thead><tr><th>When</th><th>Prize</th><th>Where</th><th>Winner</th><th>Status</th><th></th></tr></thead><tbody>' +
+      shown.map(a => '<tr><td class="dim">' + esc(lagos(a.resolvedAt || a.createdAt)) + '</td><td><b>' + esc(a.prizeType === 'cash' ? naira(a.amount) : a.item) + '</b></td><td>' + where(a) +
+        '</td><td>' + winner(a) + '</td><td>' + state(a) + '</td><td>' + acts(a) + '</td></tr>').join('') + '</tbody></table></div>'
+      : '<div class="empty">No prizes won yet.</div>') +
+    (released.length ? '<div class="row" style="margin-top:10px"><span class="dim">' + esc(released.length) + (released.length === 1 ? ' prize' : ' prizes') + ' not won.</span><button class="btn" id="toggleReleased">' +
+      (SHOW_RELEASED ? 'Hide them' : 'Show them') + '</button></div>' : '') +
+    '<span class="err" id="awardErr"></span></div>';
+  const err = () => document.getElementById('awardErr');
+  const t = document.getElementById('toggleReleased');
+  if (t) t.onclick = () => { SHOW_RELEASED = !SHOW_RELEASED; loadPrizesWon(); };
+  box.querySelectorAll('[data-sent]').forEach(b => b.addEventListener('click', async () => {
+    const note = prompt('How was it sent? (e.g. "Delivered by GIG, waybill 12345"). The winner is told this.', '');
+    if (note == null) return;
+    b.disabled = true;
+    const r = await api('/campaign-prizes/' + b.dataset.sent + '/sent', { method: 'POST', body: JSON.stringify({ note }) });
+    b.disabled = false;
+    if (r && !r.success) { err().textContent = r.error; return; }
+    loadPrizesWon();
+  }));
+  box.querySelectorAll('[data-void]').forEach(b => b.addEventListener('click', async () => {
+    const reason = prompt('Why is this prize being taken back? (kept on record; the winner is not told by the app)', '');
+    if (reason == null) return;
+    b.disabled = true;
+    const r = await api('/campaign-prizes/' + b.dataset.void + '/void', { method: 'POST', body: JSON.stringify({ reason }) });
+    b.disabled = false;
+    if (r && !r.success) { err().textContent = r.error; return; }
+    reload();
+  }));
 }
 
 function actionBar() {
@@ -264,6 +393,7 @@ function actionBar() {
   if (C.status === 'published' || C.status === 'paused') b.push('<button class="btn danger" data-act="end">End now</button>');
   if (C.status !== 'ended') b.push('<button class="btn" data-act="pin">' + (C.pinned ? 'Unpin' : '📌 Pin') + '</button>');
   if (C.status === 'draft') b.push('<button class="btn danger" data-act="delete">Delete draft</button>');
+  if (C.status !== 'draft') b.push('<a class="btn" href="/admin/tv/campaigns/report?id=' + esc(C.id) + '" target="_blank" rel="noopener">📊 Brand report</a>');
   return '<div class="bar"><a href="#" class="btn">← All</a><h2>' + (C.pinned ? '📌 ' : '') + esc(C.name) + ' ' + pill(C.state) + '</h2>' + b.join('') +
     '<span class="err" id="actErr"></span></div>';
 }
@@ -446,6 +576,257 @@ function notesCard() {
     (C.publishedAt ? ' · published by ' + esc(C.publishedBy || '—') + ' ' + esc(lagos(C.publishedAt)) : '') + (C.endedAt ? ' · ended ' + esc(lagos(C.endedAt)) : '') + '</div></div>';
 }
 
+// ============================================================
+// LIVE ROUNDS AND THE BRAND CUP (Nov 18)
+// ============================================================
+const KIND = {
+  party: ['Everyday party', 'Open any time on its TVs. Prizes per game, per TV per day, or a leaderboard (below).'],
+  live: ['Live Rounds', 'Ranked rounds at set times, on every TV in the area at once, with one question set. Players are ranked across all the TVs. The everyday party stays open between rounds, for fun.'],
+  cup: ['Brand Cup', 'Live Rounds in stages: qualifiers, then each stage takes the players who went through from the one before, down to the final.']
+};
+const UNIT = {
+  state: 'Their state (the usual)', city: 'Their city or town, and state', country: 'Their country', none: 'Nothing: rank by where the TV is'
+};
+const ROUND_STATUS = { scheduled: 'Scheduled', open: 'Lobby open', playing: 'Playing', ranked: 'Ranked', final: 'Final', cancelled: 'Cancelled', failed: 'Did not run' };
+const WHY_SHORT = {
+  ranked: 'Ranked', outside_area: 'Outside the area', no_location: 'No place given', tv_unknown: 'TV place unknown', already_through: 'Already through',
+  not_through: 'Not through', not_venue: 'Not the venue', one_per_tv: 'One per TV', reserve_not_needed: 'Reserve not needed', disqualified: 'Taken off'
+};
+const rpill = s => '<span class="pill ' + esc(s) + '">' + esc(ROUND_STATUS[s] || s) + '</span>';
+
+function typeCard(dis) {
+  const kind = C.kind || 'party';
+  const kdis = dis || C.status !== 'draft' ? ' disabled' : '';
+  return '<div class="card" data-section="type"><h2>Type</h2><div class="hint">What the campaign is. The type can only be changed while it is a draft. For Live Rounds and a Brand Cup, a player is ranked only when the TV\'s place (from its internet connection) and the place they type agree, and are in the area under <b>When and where</b>. Everyone else plays for fun.</div>' +
+    '<div class="field"><div class="opts">' + Object.entries(KIND).map(([k, v]) =>
+      '<label><input type="radio" name="kind" data-k="kind" value="' + k + '"' + (kind === k ? ' checked' : '') + kdis + '> <span><b>' + esc(v[0]) + '</b><br><span class="dim">' + esc(v[1]) + '</span></span></label>').join('') + '</div></div>' +
+    '<div id="liveBits"' + (kind === 'party' ? ' hidden' : '') + '>' +
+    '<div class="grid2" style="margin-top:12px">' +
+    '<div class="field"><label>Each player types</label><div class="opts">' + Object.entries(UNIT).map(([k, v]) =>
+      '<label><input type="radio" name="unit" data-k="areaUnit" value="' + k + '"' + ((C.areaUnit || 'state') === k ? ' checked' : '') + dis + '> ' + esc(v) + '</label>').join('') + '</div>' +
+      '<div class="sub">Once per campaign, on their phone, before their first round. It stays put after their first ranked round.</div></div>' +
+    '<div>' +
+    field('Cities that count', '<input type="text" data-k="areaCities" maxlength="600" value="' + esc((C.areaCities || []).join(', ')) + '"' + dis + '>', 'For a city area: names separated by commas, e.g. "Ikeja, Lekki". Blank: any city in the states chosen.') +
+    field('Countries that count', '<input type="text" data-k="areaCountries" maxlength="900" value="' + esc((C.areaCountries || []).join(', ')) + '"' + dis + '>', 'For a country area: names separated by commas. Blank: any country (set Where it runs to every TV).') +
+    '</div></div>' +
+    '<div class="grid3" style="margin-top:12px">' +
+    field('Dispute window (hours)', '<input type="number" min="24" max="72" data-k="disputeHours" value="' + esc(C.disputeHours || 48) + '"' + dis + '>', 'After each round, players who played can question the results for this long. Prizes are made once it closes and every question has an answer.') +
+    '<div class="field" id="finalWhere"' + (kind === 'cup' ? '' : ' hidden') + '><label>The final is played</label><div class="opts">' +
+      '<label><input type="radio" name="fw" data-k="finalWhere" value="home"' + ((C.finalWhere || 'home') === 'home' ? ' checked' : '') + dis + '> On TVs at home</label>' +
+      '<label><input type="radio" name="fw" data-k="finalWhere" value="venue"' + (C.finalWhere === 'venue' ? ' checked' : '') + dis + '> At a venue (choose its TVs on the final round)</label></div>' +
+      '<div class="sub">As the brand chose. Can be changed until the final starts.</div></div>' +
+    '</div></div>' +
+    '<div class="grid3" style="margin-top:12px">' +
+    field('Place in the TV carousel', '<input type="number" min="1" max="99" data-k="featuredOrder" value="' + esc(C.featuredOrder || '') + '"' + dis + '>', '1 is first after pinned campaigns. Blank: after the numbered ones, ending soonest first.') +
+    '</div>' + saveRow('type', dis) + '</div>';
+}
+
+function wireType() {
+  const card = document.querySelector('[data-section="type"]');
+  if (!card) return;
+  const show = () => {
+    const k = (card.querySelector('[data-k="kind"]:checked') || {}).value || 'party';
+    document.getElementById('liveBits').hidden = k === 'party';
+    document.getElementById('finalWhere').hidden = k !== 'cup';
+  };
+  card.querySelectorAll('[data-k="kind"]').forEach(x => x.addEventListener('change', show));
+}
+
+let ROUNDS = [];
+let OPEN_ROUND = null;      // the round whose details are shown
+let EDIT_ROUND = null;      // the round being changed, or 'new'
+
+async function loadRounds() {
+  const box = document.getElementById('rounds');
+  if (!box) return;
+  const j = await api('/campaigns/' + C.id + '/rounds');
+  if (!j) return;
+  if (!j.success) { box.innerHTML = '<div class="card"><h2>Rounds</h2><div class="err">' + esc(j.error) + '</div></div>'; return; }
+  ROUNDS = j.rounds;
+  drawRounds();
+}
+
+function drawRounds() {
+  const box = document.getElementById('rounds');
+  const cup = C.kind === 'cup';
+  const ended = C.status === 'ended';
+  const rows = ROUNDS.map(r => '<tr><td><b>' + esc(r.name) + '</b>' + (cup && r.stage ? '<div class="dim">Stage ' + esc(r.stage) + '</div>' : '') + '</td>' +
+    '<td>' + esc(lagos(r.startsAt)) + '<div class="dim">lobby from ' + esc(lagos(r.lobbyOpensAt).split(', ').pop()) + '</div></td>' +
+    '<td>' + rpill(r.status) + (r.failReason ? '<div class="dim">' + esc(r.failReason) + '</div>' : '') + (r.openDisputes ? '<div><span class="pill coral">' + esc(r.openDisputes) + ' dispute' + (r.openDisputes === 1 ? '' : 's') + '</span></div>' : '') + '</td>' +
+    '<td class="num">' + esc(r.questions) + '</td>' +
+    '<td class="num">' + (r.players ? esc(r.rankedPlayers) + ' / ' + esc(r.players) + '<div class="dim">on ' + esc(r.rooms) + ' TV' + (r.rooms === 1 ? '' : 's') + '</div>' : '—') + '</td>' +
+    '<td>' + (cup && (r.throughCount || r.stateQuota) ? (r.stateQuota ? 'Top ' + esc(r.stateQuota) + ' per state' : 'Top ' + esc(r.throughCount)) + (r.reserves ? ' + ' + esc(r.reserves) + ' reserves' : '') : '') +
+      ((r.prizeRanks || []).length ? '<div class="dim">' + esc(r.prizeRanks.length) + ' prize place' + (r.prizeRanks.length === 1 ? '' : 's') + '</div>' : '') + '</td>' +
+    '<td style="white-space:nowrap">' + (r.status === 'scheduled' && !ended ? '<button class="btn" data-redit="' + esc(r.id) + '">Change</button> ' : '') +
+      (['scheduled', 'open'].includes(r.status) && !ended ? '<button class="btn danger" data-rcancel="' + esc(r.id) + '">Cancel</button> ' : '') +
+      (!['scheduled', 'cancelled'].includes(r.status) ? '<button class="btn" data-ropen="' + esc(r.id) + '">' + (OPEN_ROUND === r.id ? 'Hide' : 'Details') + '</button>' : '') + '</td></tr>').join('');
+  box.innerHTML = '<div class="card"><h2>Rounds</h2><div class="hint">Each round starts at its time on every TV that can show this campaign. Its lobby opens <b>15 minutes before</b>, and entry closes <b>a minute before</b>. The questions are chosen when the lobby opens. A round can be changed until its lobby opens.' +
+    (cup ? ' Stage 1 rounds are the qualifiers; a player who goes through in one plays later qualifiers for fun. Each later stage takes everyone who went through from the stage before, and its reserves fill the places of anyone who does not come.' : '') + '</div>' +
+    (ROUNDS.length ? '<div class="scroll"><table><thead><tr><th>Round</th><th>Starts (Lagos)</th><th>State</th><th class="num">Qs</th><th class="num">Ranked / players</th><th>' + (cup ? 'Goes through' : 'Prizes') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="empty">No rounds yet.</div>') +
+    (ended ? '' : (EDIT_ROUND ? roundForm(EDIT_ROUND === 'new' ? null : ROUNDS.find(r => r.id === EDIT_ROUND)) : '<div class="row" style="margin-top:12px"><button class="btn primary" id="rAdd">+ Add a round</button></div>')) +
+    '<div id="roundDetail"></div></div>';
+  wireRounds();
+  if (OPEN_ROUND) loadRoundDetail(OPEN_ROUND);
+}
+
+function roundForm(r) {
+  const cup = C.kind === 'cup';
+  const v = r || { questions: 15, reserves: 3, prizeRanks: [], venueTvs: [] };
+  const venues = new Set((v.venueTvs || []).map(Number));
+  const venueTvs = OPTIONS.tvs.filter(t => t.venue || venues.has(t.id));
+  const ranks = (v.prizeRanks || []).length ? v.prizeRanks : [{}];
+  return '<div class="roundform" id="rForm"><h2 style="font-size:17px">' + (r ? 'Change ' + esc(r.name) : 'A new round') + '</h2>' +
+    '<div class="grid3" style="margin-top:8px">' +
+    field('Name', '<input type="text" id="rName" maxlength="60" placeholder="' + (cup ? 'e.g. Qualifier 1' : 'e.g. Sunday round') + '" value="' + esc(v.name || '') + '">') +
+    field('Starts (Lagos time)', '<input type="datetime-local" id="rStart" value="' + esc(lagosInput(v.startsAt)) + '">', 'At least 20 minutes from now, and an hour from the campaign\'s other rounds.') +
+    field('Questions', '<input type="number" id="rQs" min="10" max="30" value="' + esc(v.questions || 15) + '">', '10 to 30. 15 is about 8 minutes.') +
+    '</div>' +
+    (cup ? '<div class="grid3" style="margin-top:10px">' +
+      field('Stage', '<input type="number" id="rStage" min="1" max="8" value="' + esc(v.stage || '') + '">', '1 for the qualifiers, 2 for the next, and so on. The highest is the final.') +
+      field('How many go through', '<input type="number" id="rThrough" min="1" max="10000" value="' + esc(v.throughCount || '') + '">', 'Blank for the final.') +
+      field('Or the top in each state', '<input type="number" id="rQuota" min="1" max="1000" value="' + esc(v.stateQuota || '') + '">', 'A quota per state instead of one cut, so one state cannot take every place.') +
+      field('Reserves', '<input type="number" id="rRes" min="0" max="20" value="' + esc(v.reserves == null ? 3 : v.reserves) + '">', 'The next ones below the cut (per state with a quota). They step in for anyone who does not come.') +
+      field('Ranked players per TV', '<input type="number" id="rPerTv" min="1" max="20" value="' + esc(v.rankedPerTv || '') + '">', 'Blank for no limit. From stage 2, 1 unless you change it.') +
+      '</div>' : '') +
+    '<div class="grid2" style="margin-top:10px">' +
+    field('Number question for exact ties', '<input type="text" id="rTbq" maxlength="200" value="' + esc(v.tiebreakText || '') + '" placeholder="e.g. How many goals were scored in the 2026 World Cup final?">', 'Every ranked player types a number at the end. It only ever separates players with exactly the same right answers and time.') +
+    field('Its answer', '<input type="text" id="rTba" maxlength="20" value="' + esc(v.tiebreakAnswer == null ? '' : v.tiebreakAnswer) + '" placeholder="e.g. 4">') +
+    '</div>' +
+    '<div class="field" style="margin-top:10px"><label>Prizes for this round, by place</label><div id="rRanks">' +
+      ranks.map((x, i) => rankRow(i, x, '')).join('') + '</div><button class="btn" id="rAddRank" style="margin-top:6px">+ Add a place</button>' +
+      '<div class="sub">Blank for none. Each goes to the best-placed player who can win it, once the results are final. Cash comes from the money the brand paid in.</div></div>' +
+    (cup && C.finalWhere === 'venue' ? '<div class="field" style="margin-top:10px"><label>Venue TVs (only these are ranked)</label><div class="opts">' +
+      (venueTvs.length ? venueTvs.map(t => '<label><input type="checkbox" data-venuetv="' + esc(t.id) + '"' + (venues.has(t.id) ? ' checked' : '') + '> ' + esc(t.name) + ' <span class="dim">' + esc(t.place || '') + '</span></label>').join('')
+        : '<span class="dim">No TV is marked as a venue on the WUT TV page yet.</span>') +
+      '</div><div class="sub">For the final at a venue. Blank: every TV in the area is ranked.</div></div>' : '') +
+    '<div class="row" style="margin-top:12px"><button class="btn primary" id="rSave">' + (r ? 'Save changes' : 'Add the round') + '</button><button class="btn" id="rCancelForm">Never mind</button><span class="err" id="rErr"></span></div></div>';
+}
+
+function wireRounds() {
+  const add = document.getElementById('rAdd');
+  if (add) add.onclick = () => { EDIT_ROUND = 'new'; drawRounds(); };
+  document.querySelectorAll('[data-redit]').forEach(b => b.onclick = () => { EDIT_ROUND = Number(b.dataset.redit); drawRounds(); });
+  document.querySelectorAll('[data-ropen]').forEach(b => b.onclick = () => {
+    const id = Number(b.dataset.ropen);
+    OPEN_ROUND = OPEN_ROUND === id ? null : id;
+    drawRounds();
+  });
+  document.querySelectorAll('[data-rcancel]').forEach(b => b.onclick = async () => {
+    if (!confirm('Cancel this round? Any lobby open for it is closed, and it cannot be brought back.')) return;
+    b.disabled = true;
+    const r = await api('/live-rounds/' + b.dataset.rcancel + '/cancel', { method: 'POST' });
+    b.disabled = false;
+    if (r && !r.success) { alert(r.error); return; }
+    loadRounds(); reload();
+  });
+  const form = document.getElementById('rForm');
+  if (!form) return;
+  document.getElementById('rCancelForm').onclick = () => { EDIT_ROUND = null; drawRounds(); };
+  document.getElementById('rAddRank').onclick = () => {
+    const box = document.getElementById('rRanks');
+    if (box.querySelectorAll('[data-rank]').length >= 10) return;
+    box.insertAdjacentHTML('beforeend', rankRow(box.querySelectorAll('[data-rank]').length, {}, ''));
+    wireRanks();
+  };
+  wireRanks();
+  document.getElementById('rSave').onclick = async () => {
+    const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
+    const num = id => { const x = val(id); return x === undefined ? undefined : (x === '' ? null : Number(x)); };
+    const body = {
+      name: val('rName'), startsAt: val('rStart'), questions: num('rQs'), tiebreakText: val('rTbq'), tiebreakAnswer: val('rTba'),
+      prizeRanks: [...form.querySelectorAll('[data-rank]')].map(row => {
+        const amount = row.querySelector('[data-rk="amount"]').value.trim();
+        const item = row.querySelector('[data-rk="item"]').value.trim();
+        return amount !== '' ? { amount: Number(amount) } : { item };
+      }).filter(x => x.amount !== undefined || x.item)
+    };
+    if (C.kind === 'cup') Object.assign(body, { stage: num('rStage'), throughCount: num('rThrough'), stateQuota: num('rQuota'), reserves: num('rRes'), rankedPerTv: num('rPerTv') });
+    if (form.querySelector('[data-venuetv]') || (C.kind === 'cup' && C.finalWhere === 'venue')) body.venueTvs = [...form.querySelectorAll('[data-venuetv]:checked')].map(x => Number(x.dataset.venuetv));
+    const editing = EDIT_ROUND !== 'new';
+    const b = document.getElementById('rSave');
+    b.disabled = true;
+    const r = editing ? await api('/live-rounds/' + EDIT_ROUND, { method: 'PUT', body: JSON.stringify(body) })
+                      : await api('/campaigns/' + C.id + '/rounds', { method: 'POST', body: JSON.stringify(body) });
+    b.disabled = false;
+    if (!r) return;
+    if (!r.success) { document.getElementById('rErr').textContent = r.error; return; }
+    EDIT_ROUND = null;
+    await loadRounds();
+    reload();
+  };
+}
+
+async function loadRoundDetail(id) {
+  const box = document.getElementById('roundDetail');
+  if (!box) return;
+  box.innerHTML = '<div class="detail"><div class="empty">Loading…</div></div>';
+  const j = await api('/live-rounds/' + id);
+  if (!j) return;
+  if (!j.success) { box.innerHTML = '<div class="detail"><div class="err">' + esc(j.error) + '</div></div>'; return; }
+  const r = j.round, cnt = j.counts || {};
+  const players = Object.values(cnt).reduce((a, n) => a + n, 0);
+  const why = Object.entries(cnt).filter(([k]) => k !== 'ranked').map(([k, n]) => esc(WHY_SHORT[k] || k) + ': ' + esc(n)).join(' · ');
+  const canChange = ['playing', 'ranked'].includes(r.status);
+  const ent = j.entries.map(e => '<tr><td class="num">' + esc(e.place || '') + '</td><td><b>' + esc(e.username) + '</b>' +
+      (e.outcome ? ' <span class="pill ' + (e.outcome === 'through' ? 'ok' : e.outcome === 'reserve' ? 'warn' : 'draft') + '">' + esc(e.outcome + (e.reserveOrder ? ' ' + e.reserveOrder : '')) + '</span>' : '') +
+      (e.steppedIn ? ' <span class="pill venue">stepped in</span>' : '') + '</td>' +
+    '<td>' + (e.ranked ? '<span class="pill ok">Ranked</span>' : '<span class="pill draft" title="' + esc(j.why[e.whyUnranked] || '') + '">' + esc(WHY_SHORT[e.whyUnranked] || e.whyUnranked) + '</span>') +
+      (e.disqualifiedReason ? '<div class="dim">' + esc(e.disqualifiedReason) + ' (' + esc(e.disqualifiedBy) + ')</div>' : '') + '</td>' +
+    '<td class="num">' + esc(e.correct == null ? '' : e.correct) + '</td><td class="num">' + esc(e.totalMs == null ? '' : (e.totalMs / 1000).toFixed(1) + ' s') + '</td>' +
+    '<td class="dim">' + esc([e.city, e.state, e.country].filter(Boolean).join(', ') || '—') + '<br>TV: ' + esc(e.tvPlace || 'unknown') + '</td>' +
+    '<td>' + (canChange && e.ranked ? '<button class="btn danger" data-dq="' + esc(e.userId) + '">Take off</button>' : '') +
+      (canChange && e.whyUnranked === 'disqualified' ? '<button class="btn" data-rs="' + esc(e.userId) + '">Put back</button>' : '') + '</td></tr>').join('');
+  const disputes = j.disputes.map(d => '<div class="roundform" style="margin-top:8px"><b>' + esc(d.username) + '</b> <span class="dim">' + esc(lagos(d.createdAt)) + '</span>' +
+    '<p style="margin:6px 0">' + esc(d.text) + '</p>' +
+    (d.status === 'answered' ? '<div class="dim"><b>Answered</b> by ' + esc(d.answeredBy) + ': ' + esc(d.answer) + '</div>'
+      : '<div class="field"><textarea data-dtext="' + esc(d.id) + '" maxlength="1000" style="min-height:70px" placeholder="The answer the player will see on the results page"></textarea></div>' +
+        '<div class="row" style="margin-top:6px"><button class="btn primary" data-dans="' + esc(d.id) + '">Send the answer</button></div>') + '</div>').join('');
+  box.innerHTML = '<div class="detail"><div class="row"><h2 style="font-size:17px;margin-right:auto">' + esc(r.name) + ' ' + rpill(r.status) + '</h2>' +
+    '<a class="btn" href="' + esc(r.resultsUrl) + '" target="_blank" rel="noopener">Public results page</a>' +
+    (players ? '<button class="btn" id="rAudit">Download the audit file</button>' : '') + '</div>' +
+    '<div class="tiles"><div><b>' + esc(players) + '</b><span>players</span></div><div><b>' + esc(cnt.ranked || 0) + '</b><span>ranked</span></div>' +
+    '<div><b>' + esc(Object.values(j.rooms || {}).reduce((a, n) => a + n, 0)) + '</b><span>TVs</span></div>' +
+    '<div><b>' + esc(j.disputes.filter(d => d.status === 'open').length) + '</b><span>open disputes</span></div></div>' +
+    (why ? '<div class="hint">Playing for fun: ' + why + '</div>' : '') +
+    (r.status === 'ranked' ? '<div class="banner info">Not final yet. Players can question the results until <b>' + esc(lagos(j.closesAt)) + '</b>. The results become final, and the prizes are made, once that has passed and every dispute below has an answer. Taking a player off works out the places again.</div>' : '') +
+    (r.status === 'final' ? '<div class="banner info">Final since ' + esc(lagos(r.finalAt)) + '. Its prizes are in <b>Prizes won</b> below.</div>' : '') +
+    (j.disputes.length ? '<h2 style="font-size:16px;margin-top:6px">Disputes</h2>' + disputes : '') +
+    (j.entries.length ? '<h2 style="font-size:16px;margin-top:14px">Players</h2><div class="scroll"><table><thead><tr><th class="num">#</th><th>Player</th><th>Ranked</th><th class="num">Right</th><th class="num">Time</th><th>Typed place / TV</th><th></th></tr></thead><tbody>' + ent + '</tbody></table></div>'
+      : '<div class="empty">Nobody played this round.</div>') +
+    '<span class="err" id="rdErr"></span></div>';
+  const err = document.getElementById('rdErr');
+  const audit = document.getElementById('rAudit');
+  if (audit) audit.onclick = async () => {
+    const res = await fetch('/admin/tv/api/live-rounds/' + id + '/audit', { headers: { 'Authorization': 'Bearer ' + sessionToken } });
+    if (!res.ok) { err.textContent = 'The audit file could not be made'; return; }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'live-round-' + id + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  box.querySelectorAll('[data-dq]').forEach(b => b.onclick = async () => {
+    const reason = prompt('Why take this player off the results? They can see the reason.');
+    if (!reason) return;
+    const x = await api('/live-rounds/' + id + '/entries/' + b.dataset.dq + '/disqualify', { method: 'POST', body: JSON.stringify({ reason }) });
+    if (x && !x.success) { err.textContent = x.error; return; }
+    loadRoundDetail(id);
+  });
+  box.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
+    const x = await api('/live-rounds/' + id + '/entries/' + b.dataset.rs + '/restore', { method: 'POST' });
+    if (x && !x.success) { err.textContent = x.error; return; }
+    loadRoundDetail(id);
+  });
+  box.querySelectorAll('[data-dans]').forEach(b => b.onclick = async () => {
+    const t = box.querySelector('[data-dtext="' + b.dataset.dans + '"]');
+    const x = await api('/live-disputes/' + b.dataset.dans + '/answer', { method: 'POST', body: JSON.stringify({ answer: t.value }) });
+    if (x && !x.success) { err.textContent = x.error; return; }
+    loadRoundDetail(id);
+  });
+}
+
 function field(label, control, sub) {
   return '<div class="field">' + (label ? '<label>' + esc(label) + '</label>' : '') + control + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div>';
 }
@@ -483,6 +864,14 @@ function collect(section) {
     else out[k] = el.value;
   });
   if (section === 'when') out.regions = [...card.querySelectorAll('[data-state]:checked')].map(x => x.dataset.state);
+  if (section === 'type') {
+    const list = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+    out.areaCities = list(out.areaCities);
+    out.areaCountries = list(out.areaCountries);
+    out.disputeHours = Number(out.disputeHours);
+    out.featuredOrder = out.featuredOrder === '' ? null : Number(out.featuredOrder);
+    if (C.status !== 'draft') delete out.kind;
+  }
   if (section === 'terms') {
     out.sharedFields = [...card.querySelectorAll('[data-shared]:checked')].map(x => x.dataset.shared);
     out.winnerFields = [...card.querySelectorAll('[data-winner]:checked')].map(x => x.dataset.winner);
@@ -643,7 +1032,7 @@ function wire() {
 function wireRanks() {
   document.querySelectorAll('[data-delrank]').forEach(b => {
     b.onclick = () => {
-      const box = document.getElementById('ranks');
+      const box = b.closest('[data-rank]').parentElement;
       b.closest('[data-rank]').remove();
       box.querySelectorAll('[data-rank]').forEach((r, i) => { r.querySelector('.dim').textContent = 'Place ' + (i + 1); });
     };

@@ -31,6 +31,18 @@
 // TV it scanned. The campaign rules are in tv-campaign.service and
 // tv-party.service, never here.
 //
+// A BRAND'S PRIZES AND REPORT (phase 7, steps 4 and 5): the brand's offer link
+// on the TV's QR code and the phone's button is /tv/offer/:id, which counts
+// the opening (no more than a count per day) and sends the player on to the
+// brand. A winner of an item says it arrived from the /tv/prizes page.
+//
+// LIVE ROUNDS AND THE BRAND CUP (Nov 18): a TV opens a room for a campaign's
+// round in its lobby time; a phone says where its player is, once per
+// campaign, and types the number at the end; anyone can see a round's places
+// and questions at /tv/live/:id, and a player who played can question the
+// results there while the dispute window is open. The rules are in
+// tv-live-round.service and tv-party.service, never here.
+//
 // ROUTE ORDER: every path below is either fully literal or ends in a literal
 // action, and room ids, join codes and pairing codes are constrained by
 // pattern, so no parameter route can shadow a literal one.
@@ -49,6 +61,7 @@ const webAuthService = require('../services/web-auth.service');
 const tvPrize = require('../services/tv-prize.service');
 const tvFlags = require('../services/tv-flags.service');
 const tvCampaigns = require('../services/tv-campaign.service');
+const liveRounds = require('../services/tv-live-round.service');
 
 const STATUS = {
     no_device_token: 401, unknown_device: 401, no_player_token: 401, bad_player_token: 401,
@@ -65,13 +78,29 @@ const STATUS = {
     // Branded parties (phase 7)
     signin_required: 401, terms_required: 403, set_by_brand: 403, branded_party: 403, not_your_finder: 403,
     campaign_unavailable: 404, no_campaign: 404, campaign_over: 410, finder_expired: 410,
-    wrong_code: 400, code_required: 400, terms_changed: 409, not_branded: 409
+    wrong_code: 400, code_required: 400, terms_changed: 409, not_branded: 409,
+    // Live Rounds and the Brand Cup
+    location_required: 403, already_in_round: 409, round_not_open: 409, round_closed: 410, set_by_round: 403,
+    not_in_live: 409, location_locked: 409, not_live: 409, type_city: 400, type_country: 400, bad_number: 400,
+    not_now: 409, not_ranked: 403, results_final: 409, not_ranked_yet: 409, window_closed: 410, not_in_round: 403,
+    say_more: 400, too_many_disputes: 429, already_answered: 409
 };
 
 function getIp(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-        || req.socket?.remoteAddress
-        || null;
+    // The load test (tools/loadtest) plays thousands of phones from a few
+    // machines. On a server where WUT_LOADTEST_KEY is set (a staging copy,
+    // never the live server), a request carrying that key says which pretend
+    // phone it is, so the limits per network apply to each pretend phone as
+    // they would to real ones. Unset, as on the live server, this does nothing.
+    const key = process.env.WUT_LOADTEST_KEY;
+    const sent = req.headers['x-loadtest-key'];
+    if (key && key.length >= 24 && typeof sent === 'string' && sent.length === key.length &&
+        require('crypto').timingSafeEqual(Buffer.from(sent), Buffer.from(key))) {
+        const fake = String(req.headers['x-loadtest-ip'] || '').trim();
+        if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(fake)) return fake;
+    }
+    // The real address, not one a client can put in a header (utils/client-ip).
+    return require('../utils/client-ip').clientIp(req);
 }
 
 function reply(res, out, okExtra = {}) {
@@ -262,7 +291,9 @@ router.post('/rooms', requireDevice, async (req, res) => {
         const out = await party.openRoom(req.tvDevice, {
             fresh: !!body.fresh,
             // A branded party (phase 7): the campaign's id, from /tv/campaigns.
-            campaignId: body.campaignId == null ? null : parseInt(body.campaignId, 10)
+            campaignId: body.campaignId == null ? null : parseInt(body.campaignId, 10),
+            // A Live Round of that campaign, in its lobby time (Nov 18).
+            liveRoundId: body.liveRoundId == null ? null : parseInt(body.liveRoundId, 10)
         });
         return reply(res, out);
     } catch (error) { return fail(res, 'open room', error); }
@@ -292,6 +323,17 @@ router.get('/campaign-art/:id(\\d+)/:slot(logo|tile|lobby|card|slide)', async (r
         res.set('Cache-Control', req.query.v ? 'public, max-age=604800' : 'public, max-age=300');
         return res.send(out.body);
     } catch (error) { return fail(res, 'campaign art', error); }
+});
+
+// The brand's offer (step 5): counted, then on to the brand's own page. No
+// token: it is opened from a QR code on a TV or a link on a phone.
+router.get('/offer/:id(\\d+)', async (req, res) => {
+    try {
+        const url = await tvCampaigns.openOffer(Number(req.params.id), req.query.from === 'phone' ? 'phone' : 'tv');
+        if (!url) return res.status(404).type('text/plain').send('This offer is no longer available.');
+        res.set('Cache-Control', 'no-store');
+        return res.redirect(302, url);
+    } catch (error) { return fail(res, 'offer', error); }
 });
 
 // The finder: the TV shows a QR code, a phone searches and picks, and the TV
@@ -535,6 +577,15 @@ router.post('/rooms/:code(\\d{6})/terms', async (req, res) => {
     } catch (error) { return fail(res, 'terms', error); }
 });
 
+// A Live Round: where this signed-in player is, for the campaign behind the code.
+router.post('/rooms/:code(\\d{6})/location', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await party.saveLocation(req.params.code, acct.user, req.body || {}, getIp(req)));
+    } catch (error) { return fail(res, 'location', error); }
+});
+
 router.post('/rooms/:code(\\d{6})/join', async (req, res) => {
     try {
         const body = req.body || {};
@@ -626,6 +677,12 @@ router.post('/rooms/:id(\\d+)/answer', requirePlayer, async (req, res) => {
 router.post('/rooms/:id(\\d+)/seen', requirePlayer, async (req, res) => {
     try { return reply(res, await party.seen(Number(req.params.id), req.tvPlayerId, parseInt((req.body || {}).position, 10))); }
     catch (error) { return fail(res, 'seen', error); }
+});
+
+/** A Live Round's number question, at the end. */
+router.post('/rooms/:id(\\d+)/tiebreak', requirePlayer, async (req, res) => {
+    try { return reply(res, await party.tiebreakAnswer(Number(req.params.id), req.tvPlayerId, (req.body || {}).value)); }
+    catch (error) { return fail(res, 'tiebreak', error); }
 });
 
 router.post('/rooms/:id(\\d+)/fifty', requirePlayer, async (req, res) => {
@@ -807,6 +864,54 @@ router.post('/payouts/:id(\\d+)/not-received', async (req, res) => {
         if (!acct.ok) return reply(res, acct);
         return reply(res, await tvPrize.reportNotReceived(acct.user.id, Number(req.params.id)));
     } catch (error) { return fail(res, 'payout not received', error); }
+});
+
+/** The winner of a brand's item says it arrived (phase 7, step 4). */
+router.post('/campaign-prizes/:id(\\d+)/received', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await require('../services/tv-campaign-prize.service').confirmItem(acct.user.id, Number(req.params.id)));
+    } catch (error) { return fail(res, 'campaign prize received', error); }
+});
+
+// ============================================
+// A LIVE ROUND'S PUBLIC PAGE (Nov 18)
+// ============================================
+
+/** The page anyone can open: the round, and once ranked, the places and the questions. */
+router.get('/live/:id(\\d+)', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile('tv-live.html', { root: require('path').join(__dirname, '..', 'views') });
+});
+
+/** The page's data. A signed-in player also gets their own line and their disputes. */
+router.get('/live/:id(\\d+)/data', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        const find = typeof req.query.find === 'string' ? req.query.find : null;
+        res.set('Cache-Control', 'no-store');
+        return reply(res, await liveRounds.publicData(Number(req.params.id), { account: acct.ok ? acct.user : null, find }));
+    } catch (error) { return fail(res, 'live round data', error); }
+});
+
+/** A player who played questions the results, while the window is open. */
+router.post('/live/:id(\\d+)/dispute', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        return reply(res, await liveRounds.dispute(Number(req.params.id), acct.user, (req.body || {}).text));
+    } catch (error) { return fail(res, 'live round dispute', error); }
+});
+
+/**
+ * What the server sees as your address, and the headers it came from. Only
+ * the caller's own request is shown. To confirm on the live server that a
+ * made-up X-Forwarded-For header no longer counts (utils/client-ip).
+ */
+router.get('/ip-check', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    return res.json({ success: true, ...require('../utils/client-ip').describe(req) });
 });
 
 /** One tap from the host: an uncollected prize back, within 48 hours. */

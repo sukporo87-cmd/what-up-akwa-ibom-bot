@@ -158,6 +158,12 @@ input.code4{font-family:var(--display);font-weight:800;font-size:34px;letter-spa
   border-color:var(--brass)}
 .styles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .styles button.on{background:var(--mint);color:var(--night)}
+/* a Live Round (Nov 18) */
+.round{border:2px solid var(--brass)}
+.round .when{font-family:var(--display);font-weight:800;font-size:26px;color:var(--brass);line-height:1.1}
+.fun{background:var(--raise);border-left:4px solid var(--ember);border-radius:10px;padding:10px 14px;font-size:14px}
+.ranked{background:var(--raise);border-left:4px solid var(--mint);border-radius:10px;padding:10px 14px;font-size:14px}
+input.num{font-family:var(--display);font-weight:800;font-size:34px;text-align:center;border-color:var(--brass)}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -179,6 +185,7 @@ var S = {
   prizeOpts: null, prizeLoading: false, quote: null, prizeForm: { amount: '' },
   claimCode: null, claimAsked: false, claimed: null, claimError: '',
   info: null, agreed: false, cohostCode: '',
+  loc: { state: '', city: '', country: '' }, tbValue: '', livePlace: null, livePlaceT: null,
   offset: 0, es: null, lastRev: null, retry: 0, clockT: null, busy: false
 };
 
@@ -258,6 +265,16 @@ var WHY = {
   code_required: 'Type the 4 numbers shown on the TV.',
   campaign_over: 'This brand\u2019s party has ended.',
   campaign_unavailable: 'This brand\u2019s party is not on right now.',
+  location_required: 'Say where you are first.',
+  already_in_round: 'You\u2019re already in this round on another TV. Leave that one first.',
+  set_by_round: 'The round sets that: it starts by itself at its time.',
+  not_in_live: 'There\u2019s no 50:50 in a Live Round.',
+  location_locked: 'You\u2019ve played a ranked round in this campaign, so where you are stays as it was.',
+  pick_state: 'Choose your state.',
+  type_city: 'Type your city or town.',
+  type_country: 'Type your country.',
+  bad_number: 'Type a number.',
+  round_closed: 'This round has started. You can watch it on the TV.',
   offline: 'No connection. Check your signal and try again.',
   server_error: 'Something went wrong. Try again.'
 };
@@ -296,7 +313,7 @@ function rejoin(){
     if (j.reason === 'removed' || j.reason === 'room_closed' || j.reason === 'no_room'){
       forget(); S.token = null; S.screen = 'ended'; S.ended = j.reason; return render();
     }
-    if (j.reason === 'name_required' || j.reason === 'name_too_short' || j.reason === 'signin_required' || j.reason === 'terms_required'){
+    if (j.reason === 'name_required' || j.reason === 'name_too_short' || j.reason === 'signin_required' || j.reason === 'terms_required' || j.reason === 'location_required'){
       forget(); S.token = null; S.screen = branded() ? 'brand' : 'join'; return render();
     }
     S.error = why(j.reason); S.screen = branded() ? 'brand' : 'join'; render();
@@ -315,6 +332,10 @@ function join(name, opts){
     if (j.reason === 'name_taken'){ S.nameTaken = { name: j.name, numbered: j.suggestions && j.suggestions.numbered }; return render(); }
     if (j.reason === 'removed' || j.reason === 'already_started' || j.reason === 'room_closed' || j.reason === 'no_room' || j.reason === 'campaign_over'){
       S.screen = 'ended'; S.ended = j.reason; return render();
+    }
+    // A Live Round: where they are is still needed.
+    if (j.reason === 'location_required'){
+      return loadInfo().then(function(){ S.error = why(j.reason); S.screen = 'brand'; render(); });
     }
     // A brand's party: signed out or new terms in the meantime. Ask again.
     if (j.reason === 'signin_required' || j.reason === 'terms_required' || j.reason === 'not_signed_in'){
@@ -366,11 +387,26 @@ function connect(){
   on('player.clock_extended', function(d){ if (S.game && S.game.position === d.position) S.game.expiresAt = d.expiresAt; });
   on('player.result', function(d){ S.game = Object.assign({}, S.game, { phase: 'reveal', lastResult: d }); });
   on('player.finished', function(d){ S.game = Object.assign({}, S.game, { phase: 'done', final: d }); });
+  // A brand's prize (phase 7, step 4): whether this game is played for it,
+  // and, at the end, what it means for this phone.
+  on('player.brand_prize', function(ev){
+    var bp = Object.assign({}, (S.game && S.game.brandPrize) || {});
+    if (ev.stage === 'start'){ bp.on = !!ev.on; bp.text = ev.text || null; }
+    else { bp.settled = true; bp.mine = ev; }
+    S.game = Object.assign({}, S.game, { brandPrize: bp });
+  });
   on('player.prize', function(d){
     S.room = Object.assign({}, S.room, { prize: d.prize, maxPlayers: d.maxPlayers || (S.room && S.room.maxPlayers) });
     if (d.claimCode) S.claimCode = d.claimCode;
     if (S.prizeOpts) S.prizeOpts.prize = d.prize;
     if (d.prize) S.quote = null;
+  });
+  // A Live Round's number question, at the end (Nov 18).
+  on('player.tiebreak', function(d){
+    S.game = Object.assign({}, S.game, { phase: 'tiebreak', tiebreak: { endsAt: d.endsAt, ranked: d.ranked !== false, sent: false } });
+  });
+  on('player.tiebreak_locked', function(d){
+    if (S.game && S.game.tiebreak) S.game.tiebreak = Object.assign({}, S.game.tiebreak, { sent: true, value: d.value });
   });
   on('player.removed', function(){ end('removed'); });
   on('room.closed', function(d){ end(d.reason === 'host' || d.reason === 'tv' ? 'closed_by_host' : 'room_closed'); });
@@ -447,7 +483,7 @@ function meBlock(){
   return h('div', { class: 'me' }, [
     h('div', { class: 'face', 'aria-hidden': 'true', text: S.me.avatar || '' }),
     h('div', {}, [ h('div', { class: 'name', text: S.me.name }),
-                   h('div', { class: 'mute small', text: S.room && S.room.youAreHost ? (branded() ? 'Co-host' : 'Host') : 'Player' }) ])
+                   h('div', { class: 'mute small', text: liveRole() || (S.room && S.room.youAreHost ? (branded() ? 'Co-host' : 'Host') : 'Player') }) ])
   ]);
 }
 
@@ -468,9 +504,99 @@ function prizeLine(c){
   return h('div', { class: 'panel' }, [ h('b', { style: 'color:var(--brass)', text: c.prizeText }),
     c.rules ? h('span', { class: 'mute small', text: c.rules }) : null ]);
 }
+// ---------- a Live Round (Nov 18) ----------
+// One ranked round at a set time on every TV in the area. The phone says
+// where its player is (once per campaign), counts down to the start, and at
+// the end shows the player's place across the area.
+function round(){ return (S.room && S.room.live) || (S.info && S.info.round) || null; }
+// Rounds are set in Lagos time, so they are shown in it, whatever the phone's clock says.
+function clock(t){
+  try { return new Date(t).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Africa/Lagos' }); } catch (e) { return ''; }
+}
+function day(t){
+  try { return new Date(t).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'Africa/Lagos' }); } catch (e) { return ''; }
+}
+function left(ms){
+  ms = Math.max(0, ms); var m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+var UNRANKED = {
+  outside_area: 'This TV, or the place you gave, is outside the area for this round.',
+  no_location: 'You did not say where you are.',
+  tv_unknown: 'We couldn\u2019t tell where this TV is.',
+  already_through: 'You\u2019re already through to the next stage.',
+  not_through: 'This stage is for the players who went through from the last one.',
+  not_venue: 'This round is ranked at the venue only.',
+  one_per_tv: 'One ranked player per TV in this round, and another player here was placed higher.',
+  reserve_not_needed: 'You\u2019re a reserve, and everyone who went through came to play.'
+};
+function liveRole(){
+  var r = S.room && S.room.live;
+  if (!r || !r.started) return null;
+  return r.unranked ? 'Playing for fun' : 'Ranked';
+}
+function rankedLine(){
+  var r = S.room && S.room.live;
+  if (!r || !r.started) return null;
+  if (r.unranked) return h('div', { class: 'fun' }, [ h('b', { text: 'Playing for fun. ' }), UNRANKED[r.unranked] || '' ]);
+  return h('div', { class: 'ranked' }, [ h('b', { text: 'You\u2019re ranked' }), ' across ' + (r.area || 'the area') + '.' ]);
+}
+function roundPanel(r){
+  if (!r) return null;
+  var stage = r.kind === 'cup' && r.stage ? 'Stage ' + r.stage + ' \u00b7 ' : '';
+  return h('div', { class: 'panel round' }, [
+    h('span', { class: 'mute small', text: stage + 'Live Round \u00b7 ' + (r.area || '') }),
+    h('b', { style: 'font-size:18px', text: r.name || 'Live Round' }),
+    h('div', { class: 'when', text: day(r.startsAt) + ', ' + clock(r.startsAt) }),
+    h('span', { class: 'mute small', text: (r.questions || 15) + ' questions on every TV at once. Entry closes a minute before the start.' })
+  ]);
+}
+// Where the player is: the campaign asks for a state, a city and state, or a country.
+function needsPlace(){
+  var r = S.info && S.info.round;
+  if (!r || r.unit === 'none') return false;
+  var l = r.location;
+  return !(l && (r.unit === 'country' ? l.country : (r.unit === 'city' ? (l.state && l.city) : l.state)));
+}
+function placeForm(){
+  var r = S.info.round, kids = [ h('b', { style: 'font-size:17px', text: 'Where are you playing from?' }),
+    h('span', { class: 'mute small', text: 'Asked once for this campaign. To be ranked, it must match where this TV is. Winners show ID to claim a prize.' }) ];
+  var send = function(){
+    S.busy = true; S.error = ''; render();
+    fetch('/tv/rooms/' + CODE + '/location', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: S.loc.state, city: S.loc.city, country: S.loc.country }) })
+      .then(function(x){ return x.json().catch(function(){ return { success: false, reason: 'server_error' }; }); })
+      .catch(function(){ return { success: false, reason: 'offline' }; })
+      .then(function(j){
+        S.busy = false;
+        if (j.success){ S.info.round.location = j.location; return join('', { asAccount: true }); }
+        S.error = why(j.reason); render();
+      });
+  };
+  if (r.unit === 'country'){
+    var dl = r.countries ? h('datalist', { id: 'countries' }, r.countries.map(function(c){ return h('option', { value: c }); })) : null;
+    var cin = h('input', { id: 'country', maxlength: '56', autocomplete: 'country-name', placeholder: 'Country', value: S.loc.country, list: dl ? 'countries' : null });
+    cin.addEventListener('input', function(){ S.loc.country = cin.value; });
+    kids.push(cin); if (dl) kids.push(dl);
+  } else {
+    var sel = h('select', { id: 'state', 'aria-label': 'State' }, [ h('option', { value: '', text: 'Choose your state' }) ].concat(
+      (r.states || []).map(function(x){ return h('option', { value: x, text: x, selected: S.loc.state === x ? 'selected' : null }); })));
+    sel.addEventListener('change', function(){ S.loc.state = sel.value; });
+    kids.push(sel);
+    if (r.unit === 'city'){
+      var cl = r.cities ? h('datalist', { id: 'cities' }, r.cities.map(function(c){ return h('option', { value: c }); })) : null;
+      var tin = h('input', { id: 'city', maxlength: '40', autocomplete: 'address-level2', placeholder: 'City or town', value: S.loc.city, list: cl ? 'cities' : null });
+      tin.addEventListener('input', function(){ S.loc.city = tin.value; });
+      kids.push(tin); if (cl) kids.push(cl);
+    }
+  }
+  kids.push(h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Joining\u2026' : 'Save and join', on: { click: send } }));
+  return h('div', { class: 'panel' }, kids);
+}
+
 function brandScreen(){
   var info = S.info || {}, c = campaign() || {}, t = info.terms || {};
-  var out = [ brandBar() ];
+  var out = [ brandBar(), roundPanel(info.round) ];
   if (info.live === false){
     out.push(h('h1', { text: 'Not on right now' }), h('p', { class: 'mute', text: WHY.campaign_unavailable }));
     return out;
@@ -496,6 +622,9 @@ function brandScreen(){
     ]));
     out.push(h('label', { class: 'agree', for: 'agree' }, [ box, h('span', { text: 'I agree to these terms (version ' + (t.version || 1) + ')' }) ]));
     out.push(go);
+  } else if (needsPlace()){
+    out.push(h('h1', { text: 'One more thing' }));
+    out.push(placeForm());
   } else {
     out.push(h('h1', { text: 'Ready to play' }));
     out.push(prizeLine(c));
@@ -518,7 +647,7 @@ function agreeAndJoin(){
     .catch(function(){ return { success: false, reason: 'offline' }; })
     .then(function(j){
       S.busy = false;
-      if (j.success){ S.agreed = true; return join('', { asAccount: true }); }
+      if (j.success){ S.agreed = true; if (needsPlace()) return render(); return join('', { asAccount: true }); }
       if (j.reason === 'campaign_over'){ S.screen = 'ended'; S.ended = 'campaign_over'; return render(); }
       if (j.reason === 'not_signed_in') S.account = null;
       return loadInfo().then(function(){ S.error = why(j.reason); render(); });
@@ -543,7 +672,30 @@ function cohostAsk(){
     h('button', { class: 'go', disabled: S.busy, text: 'Become co-host', on: { click: send } })
   ]);
 }
+function liveLobby(r){
+  var lr = r.live, c = campaign() || {};
+  var out = [ brandBar(), meBlock(), h('h1', { text: 'You\u2019re in' }), roundPanel(lr) ];
+  var cd = h('p', { id: 'liveleft', class: 'banner', text: 'Starts in ' + left(new Date(lr.startsAt).getTime() - now()) });
+  out.push(cd);
+  clearInterval(S.liveT);
+  S.liveT = setInterval(function(){
+    var el = document.getElementById('liveleft');
+    if (!el || !S.room || S.room.status !== 'lobby'){ clearInterval(S.liveT); return; }
+    el.textContent = 'Starts in ' + left(new Date(lr.startsAt).getTime() - now());
+  }, 1000);
+  out.push(h('p', { class: 'mute', text: (r.playerCount || 0) + ' playing on this TV. The round starts by itself: keep this page open and watch the TV.' }));
+  out.push(prizeLine(c));
+  out.push(h('div', { class: 'spacer' }));
+  out.push(h('button', { class: 'quiet', text: 'Change avatar', on: { click: function(){ S.picking = true; S.error = ''; render(); } } }));
+  out.push(h('button', { class: 'quiet', text: 'Leave', on: { click: function(){
+    if (!confirm('Leave this round?')) return;
+    act('/leave').then(function(j){ if (j && j.success){ end('left'); render(); } });
+  } } }));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  return out;
+}
 function brandLobby(r){
+  if (r.live) return liveLobby(r);
   var c = campaign() || {};
   var out = [ brandBar(), meBlock(), h('h1', { text: r.youAreHost ? 'You are the co-host' : 'You\u2019re in' }), styleNote(r) ];
   if (r.youAreHost){
@@ -729,11 +881,13 @@ function questionScreen(){
   var secs = h('span', { id: 'secs', class: 'mute' });
   var out = [
     h('div', { class: 'qhead' }, [ h('b', { text: 'Question ' + g.position + ' of ' + (g.total || 15) }), secs ]),
+    S.room && S.room.live && S.room.live.unranked ? h('p', { class: 'mute small', text: 'Playing for fun' }) : null,
     h('div', { class: 'clock', 'aria-hidden': 'true' }, [ bar ]),
     grid
   ];
   if (closed) out.push(h('p', { class: 'mute', id: 'opens', text: 'Read the question on the TV\u2026' }));
-  else if (g.locked) out.push(h('p', { class: 'mute', text: g.style === 'race' ? 'Locked in. Watch the TV to see who got it.' : 'Locked in. Watch the TV for the answer.' }));
+  else if (g.locked) out.push(h('p', { class: 'mute', text: g.style === 'race' ? 'Locked in. Watch the TV to see who got it.' :
+    (S.room && S.room.live ? 'Locked in. Every TV shows the answer at the same moment.' : 'Locked in. Watch the TV for the answer.') }));
   else if (g.style !== 'race' && g.fiftyFiftyAvailable !== false && letters.length === 4)
     out.push(h('button', { class: 'quiet', text: '50:50 — remove two wrong answers', on: { click: fifty } }));
   out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
@@ -777,7 +931,19 @@ function countdownStep(){
   return null;
 }
 
+function liveWait(){
+  clearInterval(S.waitT);
+  S.waitT = setInterval(function(){
+    if (!S.room || !S.room.goAt || S.room.goAt - now() <= 3000 || (S.game && S.game.phase === 'question')){ clearInterval(S.waitT); render(); return; }
+    var el = document.getElementById('goleft'); if (el) el.textContent = left(S.room.goAt - now());
+  }, 500);
+  return [ brandBar(), meBlock(), h('h1', { text: 'Entry has closed' }), rankedLine(),
+           h('p', { class: 'mute', text: 'Question 1 appears on every TV at the same moment, in' }),
+           h('div', { class: 'place', id: 'goleft', text: left(S.room.goAt - now()) }) ];
+}
 function countdownScreen(){
+  // A Live Round: entry closes a minute before question 1, so there is a wait first.
+  if (S.room && S.room.live && S.room.goAt && S.room.goAt - now() > 3000) return liveWait();
   var step = countdownStep();
   if (!S.cdT && step) S.cdT = setInterval(function(){
     var now2 = countdownStep();
@@ -788,11 +954,13 @@ function countdownScreen(){
     S.cdShown = step;
     try { if (navigator.vibrate) navigator.vibrate(step === 'Go!' ? 220 : 60); } catch(e){}
   }
-  if (!step) return [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }) ];
+  var bpLine = S.game && S.game.brandPrize && S.game.brandPrize.text
+    ? h('p', { class: S.game.brandPrize.on ? 'banner' : 'mute small', text: S.game.brandPrize.text }) : null;
+  if (!step) return [ meBlock(), h('h1', { text: 'Get ready' }), h('p', { class: 'mute', text: 'The first question is about to appear on the TV.' }), bpLine ];
   return [ meBlock(), h('div', { class: 'countdown' }, [
     h('div', { class: 'n' + (step === 'Go!' ? ' go' : ''), text: step }),
     h('p', { class: 'mute', text: step === 'Go!' ? 'Eyes on the TV!' : 'Get ready…' })
-  ]) ];
+  ]), bpLine ];
 }
 
 function resultScreen(){
@@ -809,7 +977,7 @@ function resultScreen(){
       h('div', { class: 'stat' }, [ h('span', { text: 'Your place' }), h('b', { text: r.rank ? r.rank + ' of ' + r.of : '—' }) ])
     ]),
     h('div', { class: 'spacer' }),
-    h('p', { class: 'mute small', text: (S.game.position || 0) < 15 ? 'Next question in a moment.' : 'That was the last question.' })
+    h('p', { class: 'mute small', text: (S.game.position || 0) < (S.game.total || 15) ? 'Next question in a moment.' : 'That was the last question.' })
   ];
 }
 
@@ -833,10 +1001,88 @@ function raceResultScreen(r){
   ];
 }
 
+// A Live Round's number question: only ranked players answer, and it only
+// ever settles an exact tie.
+function tiebreakScreen(){
+  var tb = S.game.tiebreak || {};
+  var out = [ meBlock(), h('h1', { text: 'The number question' }) ];
+  if (!tb.ranked){
+    out.push(h('p', { class: 'mute', text: 'Ranked players are typing a number for the question on the TV. It only settles exact ties.' }));
+    return out;
+  }
+  if (tb.sent){
+    out.push(h('p', { class: 'banner', text: 'Sent: ' + tb.value + '. It only counts if you tie exactly with someone.' }));
+    return out;
+  }
+  var input = h('input', { id: 'tbnum', class: 'num', inputmode: 'decimal', maxlength: '14', autocomplete: 'off', placeholder: '0', value: S.tbValue,
+                           'aria-label': 'Your answer, as a number' });
+  input.addEventListener('input', function(){ S.tbValue = input.value.replace(/[^0-9.,\-]/g, ''); });
+  var send = function(){
+    S.tbValue = (input.value || '').replace(/[^0-9.,\-]/g, '');
+    if (!S.tbValue){ S.error = WHY.bad_number; return render(); }
+    act('/tiebreak', { value: S.tbValue }).then(function(j){
+      if (j && j.success && S.game && S.game.tiebreak){ S.game.tiebreak = Object.assign({}, S.game.tiebreak, { sent: true, value: j.value }); S.error = ''; render(); }
+    });
+  };
+  input.addEventListener('keydown', function(e){ if (e.key === 'Enter') send(); });
+  var secs = h('p', { id: 'tbleft', class: 'mute', text: left(tb.endsAt - now()) + ' left' });
+  clearInterval(S.tbT);
+  S.tbT = setInterval(function(){
+    var el = document.getElementById('tbleft');
+    if (!el || !S.game || S.game.phase !== 'tiebreak'){ clearInterval(S.tbT); return; }
+    el.textContent = left(S.game.tiebreak.endsAt - now()) + ' left';
+  }, 500);
+  out.push(h('p', { class: 'mute', text: 'Read the question on the TV and type your answer as a number. The closest wins an exact tie.' }));
+  out.push(input, secs, h('button', { class: 'go', disabled: S.busy, text: 'Send', on: { click: send } }));
+  out.push(h('p', { class: 'err', role: 'alert', text: S.error }));
+  return out;
+}
+
+// After a Live Round: the player's place across the area, as soon as every TV
+// has finished, read from the round's own page.
+function livePlace(lv){
+  if (lv.unranked) return [ h('div', { class: 'fun' }, [ h('b', { text: 'You played for fun. ' }), UNRANKED[lv.unranked] || '' ]),
+    lv.resultsUrl ? h('a', { class: 'quiet', href: lv.resultsUrl, target: '_blank', rel: 'noopener', style: 'display:block;text-align:center;color:var(--brass)', text: 'See the results' }) : null ];
+  var me = S.livePlace;
+  if (!me && !S.livePlaceT){
+    var ask = function(){
+      fetch('/tv/live/' + lv.roundId + '/data', { credentials: 'same-origin' })
+        .then(function(x){ return x.json(); })
+        .then(function(j){
+          if (j && j.success && j.me && j.me.place){ S.livePlace = j.me; clearInterval(S.livePlaceT); render(); }
+        }).catch(function(){});
+    };
+    // Every phone in the area asks at about the same time, so each waits a little differently.
+    S.livePlaceT = setInterval(ask, 10000 + Math.floor(Math.random() * 5000));
+    setTimeout(ask, 3000 + Math.floor(Math.random() * 4000));
+  }
+  var out = [];
+  if (!me){
+    out.push(h('div', { class: 'panel round' }, [ h('b', { text: 'Your place across ' + ((S.room && S.room.live && S.room.live.area) || 'the area') }),
+      h('span', { class: 'mute', text: 'Working it out as every TV finishes. Keep this page open.' }) ]));
+  } else {
+    var oc = me.outcome === 'through' ? 'You\u2019re through to the next stage!' :
+             me.outcome === 'reserve' ? 'You\u2019re reserve ' + me.reserveOrder + ' for the next stage.' :
+             me.outcome === 'out' ? 'Not through this time.' : null;
+    out.push(h('div', { class: 'panel round' }, [
+      h('span', { class: 'mute small', text: 'Across ' + ((S.room && S.room.live && S.room.live.area) || 'the area') }),
+      h('div', { class: 'place', text: ordinal(me.place) }),
+      h('b', { text: 'of ' + me.of + ' ranked players' }),
+      oc ? h('div', { class: 'won', style: 'font-size:22px', text: oc }) : null,
+      h('span', { class: 'mute small', text: 'Results become final after the dispute window. Prizes are made then.' })
+    ]));
+  }
+  if (lv.resultsUrl) out.push(h('a', { class: 'go', href: lv.resultsUrl, target: '_blank', rel: 'noopener', text: 'See the full results' }));
+  return out;
+}
+
 function finishedScreen(){
   var f = S.game.final || {};
   var out = [ brandBar(), meBlock() ];
-  if (f.rank){
+  if (f.rank && f.live){
+    // A Live Round: this TV's places are only part of it; the area's come below.
+    out.push(h('h1', { text: ordinal(f.rank) + ' on this TV' }));
+  } else if (f.rank){
     out.push(h('div', { class: 'place', text: f.won ? '1st' : ordinal(f.rank) }));
     out.push(h('h1', { text: f.won ? 'You won' : 'of ' + f.of + ' players' }));
   } else {
@@ -847,11 +1093,13 @@ function finishedScreen(){
     h('div', { class: 'stat' }, [ h('span', { text: 'Questions taken' }), h('b', { text: String(f.taken || 0) }) ]),
     h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
   ] : [
-    h('div', { class: 'stat' }, [ h('span', { text: 'Correct' }), h('b', { text: (f.correct || 0) + ' of 15' }) ]),
+    h('div', { class: 'stat' }, [ h('span', { text: 'Correct' }), h('b', { text: (f.correct || 0) + ' of ' + (f.total || 15) }) ]),
     h('div', { class: 'stat' }, [ h('span', { text: 'TV points earned' }), h('b', { text: String(f.points || 0) }) ])
   ]));
-  if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
+  if (f.live) out = out.concat(livePlace(f.live));
+  else if (f.counted === false) out.push(h('p', { class: 'banner', text: 'Fewer than two players finished, so this game has no winner. Your points still count.' }));
   out = out.concat(prizeResult());
+  out = out.concat(brandPrizeResult());
   out.push(brandOffer());
   // A guest who won the prize collects it, and their points, in one step above.
   var collecting = !!(S.room && S.room.prize && S.room.prize.status === 'claiming' && S.me && S.room.prize.winnerPlayerId === S.me.id);
@@ -1052,6 +1300,22 @@ function collect(){
   });
 }
 
+// A brand's prize at the end (phase 7, step 4): won, passed over (and why),
+// or not won by anyone. The winner is also sent a message.
+function brandPrizeResult(){
+  var bp = S.game && S.game.brandPrize;
+  if (!bp) return [];
+  if (!bp.settled) return bp.on ? [ h('p', { class: 'banner', text: 'Working out who won the prize\u2026' }) ] : [];
+  var m = bp.mine;
+  if (!m) return [];
+  if (m.won){
+    return [ h('div', { class: 'panel prize' }, [ h('div', { class: 'won', text: m.text }),
+      m.sub ? h('p', { class: 'small', text: m.sub }) : null,
+      h('a', { class: 'go', href: m.link || '/tv/prizes', text: m.kind === 'cash' ? 'Get paid' : 'See my prize' }) ]) ];
+  }
+  return [ h('p', { class: 'banner', text: m.text }) ];
+}
+
 function prizeResult(){
   var p = S.room && S.room.prize;
   if (!p) return [];
@@ -1175,6 +1439,7 @@ function render(){
     else if (g && g.phase === 'done' && S.reviewing === 'open') kids = reviewScreen();
     else if (g && g.phase === 'done') kids = finishedScreen();
     else if (g && g.phase === 'question') kids = questionScreen();
+    else if (g && g.phase === 'tiebreak') kids = tiebreakScreen();
     else if (g && g.phase === 'reveal' && g.lastResult) kids = resultScreen();
     else if (S.picking && (!st || st === 'lobby')) kids = pickerScreen();
     else if (st === 'playing') kids = countdownScreen();
@@ -1187,6 +1452,8 @@ function render(){
   if (active && active.id === 'pamt' && app.contains(active) && !S.busy) return;
   // Nor under a player typing the co-host code.
   if (active && active.id === 'cohost' && app.contains(active) && !S.busy && !S.error) return;
+  // Nor under a Live Round player typing their place or the number.
+  if (active && /^(tbnum|city|country)$/.test(active.id) && app.contains(active) && !S.busy && !S.error) return;
   app.replaceChildren.apply(app, kids.filter(Boolean));
 }
 

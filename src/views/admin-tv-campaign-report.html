@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📊 Brand report | WUT TV</title>
+<!--
+  WUT TV, phase 7, step 5: the brand's report. Served at
+  /admin/tv/campaigns/report?id=<campaign>, opened from the campaign page.
+
+  Made to be sent to the brand: print it, or save it as a PDF from the print
+  window, and download the tables as spreadsheets (CSV). The whole campaign,
+  or chosen Lagos days.
+
+  It shows only what a brand may see: totals; players' usernames and cities
+  only where the campaign's terms said so; winners' details only as each
+  winner agreed; venue TVs by name, home TVs only by state. The money paid in
+  and out is shown to a Super Admin or Finance Officer only (the server
+  leaves it out for anyone else); untick it before printing if the brand
+  should not see it.
+
+  Every value from the server is escaped with esc() before it is placed in
+  the page.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* White, in report navy and gold: its own colours. */
+  :root {
+    --bg: #f7f8fc; --surface: #ffffff; --surface2: #f1f4fb; --border: #dde3f1; --line: #e9edf6;
+    --text: #141c33; --dim: #5f6a85; --navy: #23396f; --navy-ink: #172650; --navy-soft: #e5ebf8;
+    --gold: #d99a00; --gold-soft: #fff3d1; --green: #12805a; --green-soft: #def5ea; --red: #c93545;
+  }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  a { color: var(--navy); }
+  .topbar { background: #fff; border-bottom: 1px solid var(--border); box-shadow: 0 2px 0 var(--gold);
+    padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 22px; color: var(--navy); }
+  .topbar h1 span { color: var(--gold); }
+  .topbar .back { font-size: 13px; font-weight: 600; text-decoration: none; }
+  .container { max-width: 1060px; margin: 0 auto; padding: 22px 22px 80px; }
+
+  .tools { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; margin-bottom: 18px;
+    display: flex; gap: 10px 14px; align-items: flex-end; flex-wrap: wrap; }
+  .tools label { display: block; font-size: 12px; font-weight: 600; color: var(--dim); margin-bottom: 4px; }
+  .tools input[type=date] { border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; font: inherit; font-size: 13.5px; color: var(--text); }
+  .tools .check { display: flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; }
+  .btn { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 10px; padding: 8px 14px;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--navy); color: var(--navy); }
+  .btn.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .btn.primary:hover { background: var(--navy-ink); color: #fff; }
+  .spacer { flex: 1; }
+
+  .cover { background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 26px 28px; margin-bottom: 18px;
+    border-top: 6px solid var(--navy); }
+  .cover .brand { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); }
+  .cover h2 { font-family: 'Fredoka', sans-serif; font-size: 32px; color: var(--navy-ink); margin: 4px 0 8px; line-height: 1.15; }
+  .cover .meta { font-size: 13.5px; color: var(--dim); line-height: 1.7; }
+  .cover .meta b { color: var(--text); font-weight: 600; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } .topbar { padding: 12px 16px; } .container { padding: 16px 14px 70px; } }
+  .tile { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+  .tile b { display: block; font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 28px; color: var(--navy-ink); line-height: 1.1; }
+  .tile span { font-size: 12.5px; color: var(--dim); line-height: 1.4; display: block; margin-top: 4px; }
+  .tile.gold { background: var(--gold-soft); border-color: #f0d68e; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 22px; margin-bottom: 16px; break-inside: avoid; }
+  .card h3 { font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 18px; color: var(--navy-ink); margin-bottom: 4px; }
+  .card .hint { font-size: 12.5px; color: var(--dim); margin-bottom: 12px; line-height: 1.5; }
+  .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .head .csv { margin-left: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim);
+    padding: 7px 9px; border-bottom: 2px solid var(--line); font-weight: 600; white-space: nowrap; }
+  td { padding: 8px 9px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .dim { color: var(--dim); font-size: 12px; }
+  .barcell { width: 34%; }
+  .bar { height: 10px; border-radius: 6px; background: var(--navy-soft); overflow: hidden; margin-top: 4px; }
+  .bar i { display: block; height: 100%; background: var(--navy); border-radius: 6px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; white-space: nowrap; }
+  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.wait { background: var(--gold-soft); color: #8a6100; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .empty { padding: 14px; text-align: center; color: var(--dim); font-size: 13px; }
+  .err { color: var(--red); font-weight: 600; font-size: 13.5px; }
+  .note { font-size: 12px; color: var(--dim); line-height: 1.6; }
+  .note li { margin-left: 18px; }
+  .foot { font-size: 11.5px; color: var(--dim); text-align: center; margin-top: 18px; }
+
+  @media print {
+    body { background: #fff; }
+    .topbar, .tools, .noprint { display: none !important; }
+    .container { max-width: none; padding: 0; }
+    .card, .tile, .cover { box-shadow: none; }
+    .tiles { grid-template-columns: repeat(4, 1fr); }
+    .scroll { overflow: visible; }
+    @page { margin: 14mm; }
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>📊 Brand <span>report</span></h1>
+  <a class="back" id="back" href="/admin/tv/campaigns">← Branded parties</a>
+</div>
+<div class="container">
+  <div class="tools">
+    <div><label for="from">From (Lagos day)</label><input type="date" id="from"></div>
+    <div><label for="to">To</label><input type="date" id="to"></div>
+    <button class="btn" id="go">Show</button>
+    <button class="btn" id="all">Whole campaign</button>
+    <span class="spacer"></span>
+    <label class="check" id="moneyWrap" hidden><input type="checkbox" id="showMoney" checked> Include the money</label>
+    <button class="btn primary" id="print">Print or save as PDF</button>
+  </div>
+  <div id="app"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+'use strict';
+let sessionToken = null;
+try { sessionToken = localStorage.getItem('adminSessionToken'); } catch (e) {}
+if (!sessionToken) window.location.href = '/admin';
+const ID = Number(new URLSearchParams(location.search).get('id'));
+document.getElementById('back').href = '/admin/tv/campaigns' + (ID ? '#' + ID : '');
+
+async function api(path) {
+  const r = await fetch('/admin/tv/api' + path, { headers: { 'Authorization': 'Bearer ' + sessionToken } });
+  if (r.status === 401) { try { localStorage.removeItem('adminSessionToken'); } catch (e) {} window.location.href = '/admin'; return null; }
+  return r.json().catch(() => ({ success: false, error: 'The server sent something unexpected' }));
+}
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
+const num = n => Number(n || 0).toLocaleString('en-NG');
+function lagos(t, withTime = false) {
+  if (!t) return '—';
+  const o = { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', year: 'numeric' };
+  if (withTime) { o.hour = 'numeric'; o.minute = '2-digit'; }
+  try { return new Date(t).toLocaleString('en-GB', o); } catch (e) { return '—'; }
+}
+const dayLabel = d => { try { return new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); } catch (e) { return d; } };
+const FIELD = { full_name: 'Full name', username: 'Username', city: 'City', email: 'Email', phone: 'Phone' };
+const AUDIENCE = { all: 'Every TV, anywhere', nigeria: 'Every TV in Nigeria', chosen: 'Chosen TVs and states' };
+const NOT_WON = {
+  too_few_finished: 'too few players finished', game_not_finished: 'the game ended early', no_eligible_player: 'nobody could win it',
+  pool_empty: 'the prize money ran out', tv_day_done: 'the TV had played its prize games'
+};
+
+let R = null;
+
+// ---- spreadsheets ----
+function csv(name, header, rows) {
+  const cell = v => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const text = [header, ...rows].map(r => r.map(cell).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function fileName(what) {
+  const c = R.campaign;
+  const slug = String(c.brandName + '-' + c.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return slug + '-' + what + (R.range.from || R.range.to ? '-' + (R.range.from || 'start') + '-to-' + (R.range.to || 'now') : '') + '.csv';
+}
+const DOWNLOAD = {
+  days: () => csv(fileName('by-day'), ['Day', 'Games', 'Games finished', 'Players', 'Sponsor card showings', 'Player views of the card', 'Offer opened (TV)', 'Offer opened (phone)'],
+    R.byDay.map(d => [d.day, d.games, d.finished, d.players, d.cards, d.views, d.opensTv, d.opensPhone])),
+  places: () => csv(fileName('by-state'), ['State', 'TVs', 'Games'], R.byState.map(s => [s.state, s.tvs, s.games])),
+  tvs: () => csv(fileName('busiest-tvs'), ['TV', 'Where', 'Venue', 'Games', 'Players'], R.topTvs.map(t => [t.name, t.place || '', t.venue ? 'Yes' : 'No', t.games, t.players])),
+  players: () => {
+    const sh = R.campaign.shared;
+    const head = [...(sh.includes('username') ? ['Username'] : []), ...(sh.includes('city') ? ['City'] : []), 'Games', 'Right answers'];
+    csv(fileName('players'), head, R.players.map(p => [...(sh.includes('username') ? [p.username || ''] : []), ...(sh.includes('city') ? [p.city || ''] : []), p.games, p.correct]));
+  },
+  winners: () => {
+    const f = R.campaign.winnerFields;
+    csv(fileName('winners'), ['Won on', 'Prize', 'How', ...f.map(k => FIELD[k] || k), 'Status'],
+      R.winners.map(w => [lagos(w.when, true), w.prize.cash != null ? 'NGN ' + w.prize.cash : w.prize.item, how(w), ...f.map(k => w.winner[k] || ''), w.status]));
+  }
+};
+function how(w) {
+  if (w.basis === 'leaderboard') return 'Leaderboard (' + String(w.period || '').replace('week:', 'week ').replace('day:', '').replace('campaign', 'whole campaign') + '), place ' + w.place;
+  return w.basis === 'per_tv_day' ? 'Prize game of the day' : 'Won a game';
+}
+
+// ---- the report ----
+async function load() {
+  const app = document.getElementById('app');
+  if (!ID) { app.innerHTML = '<div class="card"><div class="err">No campaign chosen. Open the report from a campaign.</div></div>'; return; }
+  const q = new URLSearchParams();
+  const f = document.getElementById('from').value, t = document.getElementById('to').value;
+  if (f) q.set('from', f);
+  if (t) q.set('to', t);
+  app.innerHTML = '<div class="empty">Loading…</div>';
+  const j = await api('/campaigns/' + ID + '/report' + (q.toString() ? '?' + q : ''));
+  if (!j) return;
+  if (!j.success) { app.innerHTML = '<div class="card"><div class="err">' + esc(j.error) + '</div></div>'; return; }
+  R = j;
+  document.getElementById('moneyWrap').hidden = !j.money;
+  render();
+}
+
+function render() {
+  const c = R.campaign, T = R.totals;
+  const span = R.range.from || R.range.to
+    ? (R.range.from ? dayLabel(R.range.from) : 'the start') + ' to ' + (R.range.to ? dayLabel(R.range.to) : 'today')
+    : 'The whole campaign';
+  const maxGames = Math.max(1, ...R.byDay.map(d => d.games));
+  const showMoney = R.money && document.getElementById('showMoney').checked;
+  const sh = c.shared || [];
+
+  document.getElementById('app').innerHTML =
+    '<div class="cover"><div class="brand">' + esc(c.brandName) + ' on What’s Up Trivia TV</div><h2>' + esc(c.name) + '</h2>' +
+    '<div class="meta"><b>' + esc(span) + '</b> · campaign ' + esc(lagos(c.startsAt)) + ' to ' + esc(lagos(c.endedAt || c.endsAt)) + '<br>' +
+    'Where: ' + esc(AUDIENCE[c.audience] || c.audience) + (c.audience === 'chosen' && c.regions.length ? ' (' + esc(c.regions.join(', ')) + ')' : '') +
+    ' · Questions: ' + esc(c.category || '—') + '<br>Prize: ' + esc(c.prize) + '<br>' + esc(c.rules) + '</div></div>' +
+
+    '<div class="tiles">' +
+      tile(num(T.games), 'games played (' + num(T.finished) + ' to the end)') +
+      tile(num(T.players), 'players, ' + num(T.plays) + ' plays in all') +
+      tile(num(T.tvs), 'TVs that opened the party') +
+      tile(num(T.agreed), 'players agreed to the terms') +
+      tile(num(T.cards), 'sponsor card showings', true) +
+      tile(num(T.views), 'player views of the sponsor card', true) +
+      tile(num(T.opensTv + T.opensPhone), 'times the offer was opened (' + num(T.opensTv) + ' from the TV, ' + num(T.opensPhone) + ' from phones)', true) +
+      tile(num(T.prizesWon), 'prizes won') +
+    '</div>' +
+
+    '<div class="card"><div class="head"><h3>Day by day</h3><button class="btn csv noprint" data-dl="days">Download (CSV)</button></div>' +
+      (R.byDay.length ? '<div class="scroll"><table><thead><tr><th>Day</th><th class="num">Games</th><th class="barcell"></th><th class="num">Players</th><th class="num">Card showings</th><th class="num">Card views</th><th class="num">Offer opened</th></tr></thead><tbody>' +
+        R.byDay.map(d => '<tr><td style="white-space:nowrap">' + esc(dayLabel(d.day)) + '</td><td class="num"><b>' + esc(d.games) + '</b></td><td class="barcell"><div class="bar"><i style="width:' + Math.round(100 * d.games / maxGames) + '%"></i></div></td>' +
+          '<td class="num">' + esc(d.players) + '</td><td class="num">' + esc(d.cards) + '</td><td class="num">' + esc(d.views) + '</td><td class="num">' + esc(d.opensTv + d.opensPhone) + '</td></tr>').join('') +
+        '</tbody></table></div>' : '<div class="empty">No games in this period.</div>') + '</div>' +
+
+    '<div class="grid2">' +
+      '<div class="card"><div class="head"><h3>Where it was played</h3><button class="btn csv noprint" data-dl="places">CSV</button></div><div class="hint">A TV’s state comes from its internet connection, so it is close to city level, not exact.</div>' +
+        (R.byState.length ? '<table><thead><tr><th>State</th><th class="num">TVs</th><th class="num">Games</th></tr></thead><tbody>' +
+          R.byState.map(s => '<tr><td>' + esc(s.state) + '</td><td class="num">' + esc(s.tvs) + '</td><td class="num">' + esc(s.games) + '</td></tr>').join('') + '</tbody></table>'
+          : '<div class="empty">No TVs yet.</div>') + '</div>' +
+      '<div class="card"><div class="head"><h3>Busiest TVs</h3><button class="btn csv noprint" data-dl="tvs">CSV</button></div><div class="hint">Venues are named. A TV in someone’s home is shown only by its state.</div>' +
+        (R.topTvs.length ? '<table><thead><tr><th>TV</th><th class="num">Games</th><th class="num">Players</th></tr></thead><tbody>' +
+          R.topTvs.map(t => '<tr><td><b>' + esc(t.name) + '</b>' + (t.place ? '<div class="dim">' + esc(t.place) + '</div>' : '') + '</td><td class="num">' + esc(t.games) + '</td><td class="num">' + esc(t.players) + '</td></tr>').join('') + '</tbody></table>'
+          : '<div class="empty">No TVs yet.</div>') + '</div>' +
+    '</div>' +
+
+    (R.leaderboard ? '<div class="card"><h3>Leaderboard: ' + esc(R.leaderboard.label) + '</h3><div class="hint">' + esc(lagos(R.leaderboard.from, true)) + ' to ' + esc(lagos(R.leaderboard.to, true)) + '. Right answers, then the quicker player.</div>' +
+      (R.leaderboard.rows.length ? '<table><thead><tr><th>Place</th><th>Player</th><th class="num">Right answers</th><th class="num">Games</th></tr></thead><tbody>' +
+        R.leaderboard.rows.map(r => '<tr><td>' + esc(r.place) + '</td><td><b>' + esc(r.name) + '</b></td><td class="num">' + esc(r.correct) + '</td><td class="num">' + esc(r.games) + '</td></tr>').join('') + '</tbody></table>'
+        : '<div class="empty">No counted games in this period yet.</div>') + '</div>' : '') +
+
+    '<div class="card"><div class="head"><h3>Winners</h3>' + (R.winners.length ? '<button class="btn csv noprint" data-dl="winners">Download (CSV)</button>' : '') + '</div>' +
+      '<div class="hint">Each winner’s details are only what they agreed to share in the terms (' + esc((c.winnerFields || []).map(k => FIELD[k] || k).join(', ') || 'nothing beyond the prize') + ').' +
+      (T.prizesNotWon ? ' ' + esc(T.prizesNotWon) + (T.prizesNotWon === 1 ? ' prize was' : ' prizes were') + ' not won: ' + esc(R.notWon.map(x => x.n + ' because ' + (NOT_WON[x.reason] || x.reason)).join('; ')) + '.' : '') + '</div>' +
+      (R.winners.length ? '<div class="scroll"><table><thead><tr><th>Won on</th><th>Prize</th><th>How</th><th>Winner</th><th>Status</th></tr></thead><tbody>' +
+        R.winners.map(w => '<tr><td class="dim">' + esc(lagos(w.when, true)) + '</td><td><b>' + esc(w.prize.cash != null ? naira(w.prize.cash) : w.prize.item) + '</b></td><td>' + esc(how(w)) + '</td><td>' +
+          (Object.keys(w.winner).length ? (c.winnerFields || []).filter(k => w.winner[k]).map(k => [k, w.winner[k]]).map(([k, v]) => '<div><span class="dim">' + esc(FIELD[k] || k) + ':</span> ' + esc(v) + '</div>').join('') : '<span class="dim">—</span>') +
+          '</td><td><span class="pill ' + (['paid', 'received', 'sent'].includes(w.status) ? 'ok' : 'wait') + '">' + esc(w.status) + '</span></td></tr>').join('') + '</tbody></table></div>'
+        : '<div class="empty">No prizes won in this period.</div>') + '</div>' +
+
+    playersCard(sh) +
+
+    (showMoney ? '<div class="card"><h3>The prize money</h3><div class="hint">What the brand paid in for prizes, and where it went. Our own fee is agreed and settled apart, and is not shown here.</div>' +
+      '<div class="tiles" style="margin:0">' + tile(naira(R.money.funded), 'paid in for prizes') + tile(naira(R.money.won), 'won in cash') +
+        tile(naira(R.money.paidOut), 'paid out to winners') + tile(naira(R.money.left), 'left for prizes') + '</div></div>' : '') +
+
+    '<div class="card"><h3>How these are counted</h3><ul class="note">' +
+      '<li>A game is counted from the moment its first question is asked. Players are the different accounts that answered at least one question; plays are each player in each game.</li>' +
+      '<li>The sponsor card shows on the TV for five seconds after questions 3, 6, 9 and 12. A showing is counted for each of those a game reached; player views are each showing times the players in that game.</li>' +
+      '<li>The offer is counted each time its link is opened, from the QR code at the end of a game on the TV or the button on a player’s phone. Only counts are kept, nothing about who opened it.</li>' +
+      '<li>Every player signed in and agreed to the campaign’s terms before playing. ' +
+        (sh.length ? 'They agreed the brand may see their ' + esc(sh.map(k => (FIELD[k] || k).toLowerCase()).join(' and ')) + '.' : 'They did not agree to share any personal details, so none are shown.') +
+        ' Email addresses and phone numbers are never shared, except a winner’s where they agreed to it.</li>' +
+    '</ul></div>' +
+    '<div class="foot">What’s Up Trivia TV · report made ' + esc(lagos(R.generatedAt, true)) + ' (Lagos time)</div>';
+
+  document.querySelectorAll('[data-dl]').forEach(b => b.addEventListener('click', () => DOWNLOAD[b.dataset.dl]()));
+}
+
+function tile(big, small, gold) {
+  return '<div class="tile' + (gold ? ' gold' : '') + '"><b>' + esc(big) + '</b><span>' + esc(small) + '</span></div>';
+}
+
+function playersCard(sh) {
+  if (!R.players) {
+    return '<div class="card"><h3>Players</h3><div class="hint">The terms did not ask players to share any details with the brand, so only the totals above are given.</div></div>';
+  }
+  const shown = R.players.slice(0, 100);
+  return '<div class="card"><div class="head"><h3>Players</h3><button class="btn csv noprint" data-dl="players">Download all ' + esc(num(R.players.length)) + ' (CSV)</button></div>' +
+    '<div class="hint">As each agreed to share: ' + esc(sh.map(k => (FIELD[k] || k).toLowerCase()).join(' and ')) + '. Most games first' + (R.players.length > shown.length ? '; the first ' + shown.length + ' are shown here' : '') + '.</div>' +
+    (R.byCity ? '<div class="dim" style="margin-bottom:10px">Cities: ' + esc(R.byCity.slice(0, 12).map(x => x.city + ' ' + x.players).join(' · ')) + '</div>' : '') +
+    (shown.length ? '<div class="scroll"><table><thead><tr>' + (sh.includes('username') ? '<th>Username</th>' : '') + (sh.includes('city') ? '<th>City</th>' : '') +
+      '<th class="num">Games</th><th class="num">Right answers</th></tr></thead><tbody>' +
+      shown.map(p => '<tr>' + (sh.includes('username') ? '<td><b>' + esc(p.username || '') + '</b></td>' : '') + (sh.includes('city') ? '<td>' + esc(p.city || '') + '</td>' : '') +
+        '<td class="num">' + esc(p.games) + '</td><td class="num">' + esc(p.correct) + '</td></tr>').join('') + '</tbody></table></div>'
+      : '<div class="empty">No players in this period.</div>') + '</div>';
+}
+
+document.getElementById('go').addEventListener('click', load);
+document.getElementById('all').addEventListener('click', () => { document.getElementById('from').value = ''; document.getElementById('to').value = ''; load(); });
+document.getElementById('print').addEventListener('click', () => window.print());
+document.getElementById('showMoney').addEventListener('change', () => { if (R) render(); });
+load();
+</script>
+</body>
+</html>

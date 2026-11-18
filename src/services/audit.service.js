@@ -42,10 +42,10 @@ class AuditService {
 
     // What one web request looks like, for the audit trail.
     //
-    // ip is the first X-Forwarded-For entry, read the same way web-auth.routes
-    // reads it for sessions. That entry can be supplied by the client, so the
-    // whole chain is kept beside it: a first hop that disagrees with the rest
-    // is itself worth seeing.
+    // ip is the real address (utils/client-ip: Cloudflare's CF-Connecting-IP,
+    // which a client cannot set), as every route reads it. The whole
+    // X-Forwarded-For chain is still kept beside it: a first address that
+    // disagrees with ip is a client sending a made-up one, worth seeing.
     //
     // open_connections counts this user's SSE streams on THIS server process,
     // which is where the streams live. Two means two tabs or two devices
@@ -53,9 +53,7 @@ class AuditService {
     static describeWebRequest(req, userId) {
         const headers = (req && req.headers) || {};
         const chain = String(headers['x-forwarded-for'] || '');
-        const ip = chain.split(',')[0].trim()
-            || (req && req.socket && req.socket.remoteAddress)
-            || null;
+        const ip = require('../utils/client-ip').clientIp(req);
 
         let openConnections = null;
         try {

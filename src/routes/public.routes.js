@@ -450,10 +450,9 @@ const ReviewsService = require('../services/reviews.service');
 const reviewInvites = require('../services/review-invite.service');
 const reviewsService = new ReviewsService();
 
-// Same convention the rest of the codebase uses for client IPs
+// The real address, not one a client can put in a header (utils/client-ip).
 function clientIp(req) {
-    const fwd = req.headers['x-forwarded-for'];
-    return (fwd ? String(fwd).split(',')[0].trim() : req.socket.remoteAddress) || null;
+    return require('../utils/client-ip').clientIp(req);
 }
 
 // GET /api/public/reviews?limit=&offset=&sort=recent|top

@@ -18,9 +18,8 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // ============================================
 
 function getIp(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-        || req.socket?.remoteAddress
-        || null;
+    // The real address, not one a client can put in a header (utils/client-ip).
+    return require('../utils/client-ip').clientIp(req);
 }
 
 /** Reads the session token from cookie or Authorization header. */

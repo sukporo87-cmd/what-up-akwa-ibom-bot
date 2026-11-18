@@ -49,6 +49,14 @@
 //   POST /admin/tv/api/campaigns/:id/publish | pause | resume | end
 //   PUT  /admin/tv/api/campaigns/:id/pin           { pinned }
 //
+// A BRAND'S PRIZES AND REPORT (phase 7, steps 4 and 5):
+//   GET  /admin/tv/campaigns/report                the report page (?id=)
+//   GET  /admin/tv/api/campaigns/:id/prizes        money, prizes won, leaderboard
+//   POST /admin/tv/api/campaign-prizes/:id/sent    { note }  an item has gone to its winner
+//   POST /admin/tv/api/campaign-prizes/:id/void    { reason }  Super Admin / Finance Officer
+//   GET  /admin/tv/api/campaigns/:id/report        ?from=&to= (Lagos days); the money only
+//                                                  for a Super Admin / Finance Officer
+//
 // Every API route needs an admin session, checked exactly as the main admin
 // router checks it (admin-auth.service validateSession), and every change is
 // written to the admin activity log, so the Audit Trail can answer who
@@ -92,7 +100,8 @@ function requireFinance(req, res, next) {
 }
 
 function ip(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || null;
+    // The real address, not one a client can put in a header (utils/client-ip).
+    return require('../utils/client-ip').clientIp(req);
 }
 
 async function log(req, action, details) {
@@ -331,6 +340,13 @@ router.get('/campaigns', (req, res) => {
     res.sendFile('admin-tv-campaigns.html', { root: './src/views' });
 });
 
+// The brand's report (step 5): its own page, made to be printed or saved as
+// a PDF and sent to the brand.
+router.get('/campaigns/report', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile('admin-tv-campaign-report.html', { root: './src/views' });
+});
+
 router.get('/api/campaigns', requireAdmin, async (req, res) => {
     try { return send(res, await tvCampaigns.list()); } catch (e) { return fail(res, 'campaigns', e); }
 });
@@ -474,6 +490,127 @@ router.put('/api/campaigns/:id(\\d+)/pin', requireAdmin, async (req, res) => {
         if (out.ok) await log(req, out.pinned ? 'tv_campaign_pinned' : 'tv_campaign_unpinned', { campaignId: id });
         return send(res, out);
     } catch (e) { return fail(res, 'campaign pin', e); }
+});
+
+// ---- a brand's prizes (step 4) and report (step 5) ----
+const campaignPrizes = require('../services/tv-campaign-prize.service');
+const campaignReport = require('../services/tv-campaign-report.service');
+const isFinance = req => FINANCE_ROLES.includes(String((req.adminSession && req.adminSession.role_name) || '').toLowerCase());
+
+router.get('/api/campaigns/:id(\\d+)/prizes', requireAdmin, async (req, res) => {
+    try { return send(res, await campaignPrizes.adminView(Number(req.params.id))); } catch (e) { return fail(res, 'campaign prizes', e); }
+});
+
+router.post('/api/campaign-prizes/:id(\\d+)/sent', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const note = String((req.body || {}).note || '');
+        const out = await campaignPrizes.markSent(id, note, who(req));
+        if (out.ok) await log(req, 'tv_campaign_prize_sent', { awardId: id, note: note.slice(0, 200) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign prize sent', e); }
+});
+
+router.post('/api/campaign-prizes/:id(\\d+)/void', requireAdmin, requireFinance, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const reason = String((req.body || {}).reason || '');
+        const out = await campaignPrizes.void(id, reason, who(req));
+        if (out.ok) await log(req, 'tv_campaign_prize_voided', { awardId: id, reason: reason.slice(0, 200) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign prize void', e); }
+});
+
+router.get('/api/campaigns/:id(\\d+)/report', requireAdmin, async (req, res) => {
+    try {
+        const out = await campaignReport.report(Number(req.params.id), {
+            from: req.query.from, to: req.query.to, includeMoney: isFinance(req)
+        });
+        return send(res, out);
+    } catch (e) { return fail(res, 'campaign report', e); }
+});
+
+// ---- Live Rounds and the Brand Cup (Nov 18) ----
+// Any admin sets up, changes and cancels a campaign's rounds, sees how one
+// went, downloads its audit file, answers disputes, and takes a player off
+// the results (with the reason) while they are not yet final. The rules are
+// in tv-live-round.service.
+const liveRounds = require('../services/tv-live-round.service');
+
+router.get('/api/campaigns/:id(\\d+)/rounds', requireAdmin, async (req, res) => {
+    try { return send(res, await liveRounds.list(Number(req.params.id))); } catch (e) { return fail(res, 'live rounds', e); }
+});
+
+router.post('/api/campaigns/:id(\\d+)/rounds', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await liveRounds.create(id, req.body || {}, who(req));
+        if (out.ok) await log(req, 'tv_live_round_created', { campaignId: id, roundId: out.id, name: String((req.body || {}).name || '').slice(0, 60) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live round create', e); }
+});
+
+router.get('/api/live-rounds/:id(\\d+)', requireAdmin, async (req, res) => {
+    try { return send(res, await liveRounds.detail(Number(req.params.id))); } catch (e) { return fail(res, 'live round', e); }
+});
+
+router.put('/api/live-rounds/:id(\\d+)', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await liveRounds.update(id, req.body || {}, who(req));
+        if (out.ok && out.changed && out.changed.length) await log(req, 'tv_live_round_changed', { roundId: id, changed: out.changed });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live round update', e); }
+});
+
+router.post('/api/live-rounds/:id(\\d+)/cancel', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await liveRounds.cancel(id, who(req));
+        if (out.ok) await log(req, 'tv_live_round_cancelled', { roundId: id });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live round cancel', e); }
+});
+
+router.get('/api/live-rounds/:id(\\d+)/audit', requireAdmin, async (req, res) => {
+    try {
+        const out = await liveRounds.auditCsv(Number(req.params.id));
+        if (!out) return res.status(404).json({ success: false, error: 'No such round' });
+        await log(req, 'tv_live_round_audit', { roundId: Number(req.params.id) });
+        res.set('Content-Type', 'text/csv; charset=utf-8');
+        res.set('Content-Disposition', `attachment; filename="${out.name}"`);
+        res.set('Cache-Control', 'no-store');
+        return res.send(out.body);
+    } catch (e) { return fail(res, 'live round audit', e); }
+});
+
+router.post('/api/live-rounds/:id(\\d+)/entries/:userId(\\d+)/disqualify', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id), userId = Number(req.params.userId);
+        const reason = String((req.body || {}).reason || '');
+        const out = await liveRounds.disqualify(id, userId, reason, who(req));
+        if (out.ok) await log(req, 'tv_live_entry_disqualified', { roundId: id, userId, reason: reason.slice(0, 200) });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live round disqualify', e); }
+});
+
+router.post('/api/live-rounds/:id(\\d+)/entries/:userId(\\d+)/restore', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id), userId = Number(req.params.userId);
+        const out = await liveRounds.restore(id, userId, who(req));
+        if (out.ok) await log(req, 'tv_live_entry_restored', { roundId: id, userId });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live round restore', e); }
+});
+
+router.post('/api/live-disputes/:id(\\d+)/answer', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const answer = String((req.body || {}).answer || '');
+        const out = await liveRounds.answerDispute(id, answer, who(req));
+        if (out.ok) await log(req, 'tv_live_dispute_answered', { disputeId: id, roundId: out.roundId });
+        return send(res, out);
+    } catch (e) { return fail(res, 'live dispute answer', e); }
 });
 
 module.exports = router;

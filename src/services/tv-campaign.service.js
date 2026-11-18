@@ -63,6 +63,15 @@
 // 'all' is warned about, not stopped: a promotion approved for Nigeria may
 // not cover winners abroad.
 //
+// LIVE ROUNDS AND THE BRAND CUP (Nov 18): a campaign's kind is 'party'
+// (today's), 'live' (ranked rounds at set times, on every TV in the area at
+// once) or 'cup' (rounds in stages, ending in a final). The rounds are kept
+// and run by tv-live-round.service; here are the campaign's own settings for
+// them: the area each player types (city, state, country, or nothing), the
+// cities or countries that count, the dispute window, where a cup's final is
+// played, and the campaign's place in the TV home screen carousel. A TV is
+// told each campaign's next round with the rest of the campaign (tvView).
+//
 // A TV IS CALLED what it is called everywhere else in WUT TV: the admin's
 // name for it, else its owner's name for it, else the server's, else what
 // it said it was when it registered (tvName below).
@@ -75,6 +84,7 @@ const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 const { NIGERIAN_STATES } = require('../utils/ng-places');
 const { parseAdminTime } = require('../utils/lagos-time');
+const campaignPrizes = require('./tv-campaign-prize.service');
 
 const STATUSES = ['draft', 'published', 'paused', 'ended'];
 const BASES = ['none', 'per_game', 'per_tv_day', 'leaderboard'];
@@ -90,6 +100,11 @@ const PRIZE_MAX = 1000000;
 const MAX_RANKS = 10;
 const RESERVED_CACHE_MS = 15 * 1000;
 const ACTIVE_TV_DAYS = 30;
+// Live Rounds and the Brand Cup (030)
+const KINDS = ['party', 'live', 'cup'];
+const AREA_UNITS = ['none', 'city', 'state', 'country'];
+const FINAL_WHERE = ['home', 'venue'];
+const liveRounds = () => require('./tv-live-round.service');
 
 // The artwork. Every picture but the logo is 16:9 and drawn full width, so it
 // is checked for that shape and a size that stays sharp on a TV. The logo is
@@ -220,7 +235,7 @@ class TvCampaignService {
             id: c.id, name: c.name, brandName: c.brand_name, status: c.status, state: this.stateOf(c, now),
             startsAt: c.starts_at, endsAt: c.ends_at, pinned: c.pinned, regions: c.regions || [], audience: c.audience || 'chosen',
             tvCount: c.tv_count || 0, category: c.category, prizeBasis: c.prize_basis, prizeType: c.prize_type,
-            funded: c.funded || 0, updatedAt: c.updated_at
+            funded: c.funded || 0, updatedAt: c.updated_at, kind: c.kind || 'party', featuredOrder: c.featured_order || null
         };
     }
 
@@ -238,6 +253,8 @@ class TvCampaignService {
             pool.query(`SELECT * FROM tv_campaign_funds WHERE campaign_id = $1 ORDER BY recorded_at, id`, [c.id])
         ]);
         const campaign = this._full(c, tvs.rows, art.rows, funds.rows);
+        const money = await campaignPrizes.poolOf(c.id);
+        Object.assign(campaign, { paidOut: money.paidOut, reserved: money.reserved, won: money.won, owed: money.owed, left: money.left });
         campaign.reach = await this._reach(c, tvs.rows.map(t => t.id));
         campaign.checklist = await this._checklist(c, tvs.rows, art.rows, campaign.funded);
         campaign.publishable = campaign.checklist.every(x => x.ok || x.warning);
@@ -272,6 +289,8 @@ class TvCampaignService {
             termsText: c.terms_text, termsVersion: c.terms_version,
             sharedFields: c.shared_fields || [], winnerFields: c.winner_fields || [],
             approvalReference: c.approval_reference, notes: c.notes,
+            kind: c.kind || 'party', areaUnit: c.area_unit || 'state', areaCities: c.area_cities || [], areaCountries: c.area_countries || [],
+            disputeHours: c.dispute_hours || 48, finalWhere: c.final_where || 'home', featuredOrder: c.featured_order || null,
             createdBy: c.created_by, createdAt: c.created_at, updatedBy: c.updated_by, updatedAt: c.updated_at,
             publishedBy: c.published_by, publishedAt: c.published_at, endedAt: c.ended_at,
             tvs: tvs.map(t => ({
@@ -284,8 +303,9 @@ class TvCampaignService {
                 recordedBy: f.recorded_by, recordedAt: f.recorded_at
             })),
             funded,
-            // Paid out and reserved come with the prizes (step 4). Until then, nothing.
-            paidOut: 0, reserved: 0, left: funded
+            // Paid out, held for games in play, and left: filled in by get()
+            // from the prizes (step 4).
+            paidOut: 0, reserved: 0, won: 0, owed: 0, left: funded
         };
     }
 
@@ -358,6 +378,20 @@ class TvCampaignService {
                 need.minimum > 0
                     ? `Money paid in covers ${need.what} (₦${need.minimum.toLocaleString('en-NG')}); paid in so far ₦${funded.toLocaleString('en-NG')}`
                     : 'Money paid in');
+        }
+        // Live Rounds and the Brand Cup: the rounds, and the money their prizes need.
+        if (c.kind && c.kind !== 'party') {
+            try {
+                for (const x of await liveRounds().checklist(c)) add(x.key, x.ok, x.text, x.warning);
+                const rm = await liveRounds().roundsMoney(c.id);
+                if (rm.cash > 0) {
+                    const need = rm.cash + (this.paysCash(c) ? this.fundingNeeded(c).minimum : 0);
+                    add('round_money', funded >= need,
+                        `Money paid in covers the rounds' cash prizes${this.paysCash(c) ? ' and the everyday party prize' : ''} (₦${need.toLocaleString('en-NG')}); paid in so far ₦${funded.toLocaleString('en-NG')}`);
+                }
+            } catch (e) {
+                add('rounds', false, `The rounds could not be read (${e.message})`);
+            }
         }
         add('approval', !!c.approval_reference, 'The promotion approval reference (FCCPC), if one is needed', true);
         if (c.audience === 'all' && this.paysCash(c)) {
@@ -570,6 +604,55 @@ class TvCampaignService {
         if (body.approvalReference !== undefined) set.approval_reference = oneLine(body.approvalReference, 80);
         if (body.notes !== undefined) set.notes = clean(body.notes, 1000);
 
+        // Live Rounds and the Brand Cup (030).
+        if (body.kind !== undefined && body.kind !== (c.kind || 'party')) {
+            if (!KINDS.includes(body.kind)) return err('Choose the campaign type');
+            if (c.status !== 'draft') return err('The campaign type can only be changed while it is a draft');
+            const r = await pool.query(`SELECT COUNT(*)::int AS n FROM tv_live_rounds WHERE campaign_id = $1 AND status <> 'cancelled'`, [c.id]);
+            if (body.kind === 'party' && r.rows[0].n > 0) return err('Cancel its rounds first: an everyday party has no rounds');
+            set.kind = body.kind;
+        }
+        if (body.areaUnit !== undefined) {
+            if (!AREA_UNITS.includes(body.areaUnit)) return err('Choose what players type: city, state, country, or nothing');
+            set.area_unit = body.areaUnit;
+        }
+        const placeList = (v, max, what) => {
+            if (!Array.isArray(v)) return { error: `${what} must be a list` };
+            const out = [];
+            for (const x of v) {
+                const t = oneLine(x, 56);
+                if (!t) continue;
+                if (t.length < 2 || !/^[\p{L}][\p{L} .'()-]*$/u.test(t)) return { error: `"${String(x).slice(0, 30)}" is not a place name` };
+                if (!out.some(o => o.toLowerCase() === t.toLowerCase())) out.push(t);
+            }
+            if (out.length > max) return { error: `At most ${max} ${what.toLowerCase()}` };
+            return { list: out };
+        };
+        if (body.areaCities !== undefined) {
+            const v = placeList(body.areaCities, 30, 'Cities');
+            if (v.error) return err(v.error);
+            set.area_cities = v.list;
+        }
+        if (body.areaCountries !== undefined) {
+            const v = placeList(body.areaCountries, 60, 'Countries');
+            if (v.error) return err(v.error);
+            set.area_countries = v.list;
+        }
+        if (body.disputeHours !== undefined) {
+            const v = intOrNull(body.disputeHours);
+            if (!Number.isInteger(v) || v < 24 || v > 72) return err('The dispute window is between 24 and 72 hours');
+            set.dispute_hours = v;
+        }
+        if (body.finalWhere !== undefined) {
+            if (!FINAL_WHERE.includes(body.finalWhere)) return err('Choose where the final is played');
+            set.final_where = body.finalWhere;
+        }
+        if (body.featuredOrder !== undefined) {
+            const v = intOrNull(body.featuredOrder);
+            if (v !== null && (!Number.isInteger(v) || v < 1 || v > 99)) return err('The place in the carousel is a number from 1 to 99, or blank');
+            set.featured_order = v;
+        }
+
         // Only what really changes is written (and logged): the page sends a whole section at a time.
         const same = (col, v) => {
             const was = c[col];
@@ -664,6 +747,9 @@ class TvCampaignService {
         const f = await pool.query(`SELECT COUNT(*)::int AS n FROM tv_campaign_funds WHERE campaign_id = $1`, [c.id]);
         if (f.rows[0].n > 0) return { ok: false, error: 'Money has been recorded against this campaign, so it is kept' };
         const art = await pool.query(`SELECT public_id FROM tv_campaign_art WHERE campaign_id = $1`, [c.id]);
+        // A draft's rounds never started (a draft is on no TV), so they go with it.
+        await pool.query(`DELETE FROM tv_live_rounds WHERE campaign_id = $1 AND status IN ('scheduled','cancelled')
+                          AND EXISTS (SELECT 1 FROM tv_campaigns WHERE id = $1 AND status = 'draft')`, [c.id]);
         await pool.query(`DELETE FROM tv_campaigns WHERE id = $1 AND status = 'draft'`, [c.id]);
         this._reserved = null;
         const st = this._storage();
@@ -922,7 +1008,8 @@ class TvCampaignService {
         return {
             ok: true, tvs, categories, activeDays: ACTIVE_TV_DAYS,
             states: NIGERIAN_STATES.map(s => ({ state: s, tvs: perState.get(s) })),
-            art: this.artSpec(), sharedFields: SHARED_FIELDS, winnerFields: WINNER_FIELDS, audiences: AUDIENCES
+            art: this.artSpec(), sharedFields: SHARED_FIELDS, winnerFields: WINNER_FIELDS, audiences: AUDIENCES,
+            kinds: KINDS, areaUnits: AREA_UNITS, finalWhere: FINAL_WHERE
         };
     }
 
@@ -952,7 +1039,7 @@ class TvCampaignService {
                    AND (c.audience = 'all'
                         OR ($2::text IS NOT NULL AND (c.audience = 'nigeria' OR $2::text = ANY(c.regions)))
                         OR EXISTS (SELECT 1 FROM tv_campaign_tvs t WHERE t.campaign_id = c.id AND t.tv_device_id = $1))
-                 ORDER BY c.pinned DESC, LOWER(c.name), c.id
+                 ORDER BY c.pinned DESC, c.featured_order NULLS LAST, c.ends_at, LOWER(c.name), c.id
                  LIMIT 60`,
                 [d.rows[0].id, state]
             );
@@ -963,7 +1050,21 @@ class TvCampaignService {
                     .some(x => x && String(x).toLowerCase().includes(words)));
             }
             const art = await this._approvedArt(rows.map(c => c.id));
-            return rows.map(c => this.tvView(c, art.get(c.id) || {}));
+            // A prize the brand's money no longer covers, or this TV's prize
+            // games for today already played, is not offered (step 4).
+            const off = new Map();
+            try {
+                const left = await campaignPrizes.leftFor(rows.filter(c => this.paysCash(c)).map(c => c.id));
+                for (const c of rows) {
+                    const why = await campaignPrizes.unavailable(c, d.rows[0].id, left.get(Number(c.id)));
+                    if (why) off.set(c.id, why);
+                }
+            } catch (e) {
+                logger.error(`TV campaigns for TV ${deviceId}: prize state not read — ${e.message}`);
+            }
+            // Live Rounds and the Brand Cup: each campaign's next round.
+            const next = await liveRounds().nextFor(rows.filter(c => c.kind && c.kind !== 'party').map(c => c.id));
+            return rows.map(c => this.tvView(c, art.get(c.id) || {}, { off: off.get(c.id) || null, next: next.get(Number(c.id)) || null }));
         } catch (e) {
             logger.error(`TV campaigns for TV ${deviceId} could not be read: ${e.message}`);
             return [];
@@ -1037,17 +1138,30 @@ class TvCampaignService {
         return parts.join(' · ');
     }
 
-    /** Everything a TV shows of a campaign. Never the money paid, the terms text, or internal notes. */
-    tvView(c, art = {}) {
-        const words = this.prizeWords(c);
+    /**
+     * Everything a TV shows of a campaign. Never the money paid, the terms
+     * text, or internal notes. live.off says the prize is not on offer just
+     * now (step 4: the money is used up, or this TV's prize games for today
+     * are done), and why. The offer link goes through /tv/offer/<id>, which
+     * counts the opening for the brand's report and sends the player on to
+     * the brand's own page.
+     */
+    tvView(c, art = {}, live = {}) {
+        const off = live && live.off ? live.off : null;
+        const words = off ? campaignPrizes.offWords(off, c) : this.prizeWords(c);
         return {
             id: c.id, name: c.name, brandName: c.brand_name, tagline: c.tagline || null,
-            offerText: c.offer_text || null, offerUrl: c.offer_url || null,
+            offerText: c.offer_text || null, offerUrl: c.offer_url ? this.offerLink(c.id) : null,
             colourMain: c.colour_main || '#5B12FC', colourAccent: c.colour_accent || '#FADF05',
             category: c.category ? String(c.category).toLowerCase() : null,
             pinned: !!c.pinned, endsAt: c.ends_at,
+            // Live Rounds and the Brand Cup: the kind, the carousel place, and the next round.
+            kind: c.kind || 'party', featuredOrder: c.featured_order || null,
+            live: c.kind && c.kind !== 'party' ? {
+                area: liveRounds().areaLabel(c), unit: c.area_unit || 'state', next: (live && live.next) || null
+            } : null,
             prize: {
-                basis: c.prize_basis, type: c.prize_type, amount: c.prize_amount || null, item: c.prize_item || null,
+                basis: off ? 'none' : c.prize_basis, type: c.prize_type, amount: c.prize_amount || null, item: c.prize_item || null,
                 ranks: Array.isArray(c.prize_ranks) ? c.prize_ranks : [], period: c.leaderboard_period || null,
                 minPlayers: c.min_players, text: words.text, short: words.short
             },
@@ -1068,8 +1182,35 @@ class TvCampaignService {
             colourMain: v.colourMain, colourAccent: v.colourAccent,
             logo: v.art && v.art.logo, tile: v.art && v.art.tile,
             prizeText: v.prize && v.prize.text, prizeShort: v.prize && v.prize.short,
-            rules: v.rules, category: v.category, offerText: v.offerText, offerUrl: v.offerUrl, endsAt: v.endsAt
+            rules: v.rules, category: v.category, offerText: v.offerText,
+            offerUrl: v.offerUrl ? v.offerUrl + (v.offerUrl.includes('?') ? '&' : '?') + 'from=phone' : null, endsAt: v.endsAt,
+            kind: v.kind || 'party'
         };
+    }
+
+    /** The address the TV's QR code and the phone's button open: counted, then on to the brand. */
+    offerLink(campaignId) {
+        return `${process.env.WEB_PLAY_URL || 'https://play.whatsuptrivia.com.ng'}/tv/offer/${Number(campaignId)}`;
+    }
+
+    /**
+     * Someone opened the brand's offer: one more on today's count (Lagos day),
+     * from the TV's QR code or the phone's button. Nothing about who. Returns
+     * the brand's own address, or null if there is none.
+     */
+    async openOffer(campaignId, source) {
+        await tvAuth.ensureSchema();
+        const c = await this._row(campaignId);
+        if (!c || !c.offer_url || !/^https:\/\//.test(c.offer_url)) return null;
+        const from = source === 'phone' ? 'phone' : 'tv';
+        try {
+            await pool.query(
+                `INSERT INTO tv_campaign_offer_opens (campaign_id, opened_on, source, opens) VALUES ($1, $2, $3, 1)
+                 ON CONFLICT (campaign_id, opened_on, source) DO UPDATE SET opens = tv_campaign_offer_opens.opens + 1`,
+                [c.id, campaignPrizes.lagosDay(Date.now()), from]
+            );
+        } catch (e) { logger.error(`Campaign ${c.id}: offer opening not counted — ${e.message}`); }
+        return c.offer_url;
     }
 
     /** The terms a player agrees to, with what the brand will see, in words. */

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16121f">
+<title>Live Round results — What's Up Trivia TV</title>
+<link rel="icon" href="/media/icon-192.png" sizes="192x192" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!--
+  WUT TV, phase 7: a Live Round's page (Nov 18, 2026). Served at
+  /tv/live/:id, opened from the QR code on the TV at the end of the round and
+  from the link on each phone. Anyone with the link sees the round; once it
+  is ranked, the places (usernames, right answers, time, and the state when
+  the area is by state or city), the cut line in a cup, the questions with
+  their answers, and the winners once final. A signed-in player who played
+  also sees their own line and can question the results while the dispute
+  window is open. Refreshes itself while the round is on. Every value goes on
+  the page as text.
+-->
+<style>
+:root{
+  --night:#16121f; --slate:#241d33; --raise:#2e2540; --line:#3b3150;
+  --brass:#e8b64c; --mint:#35d39a; --ember:#ff6b5b; --paper:#f2eee9; --mute:#9b8fb0;
+  --brand:#5b12fc; --brand-ink:#fadf05;
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --body:'Inter',system-ui,-apple-system,sans-serif;
+  --pad:clamp(16px,5vw,28px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--night);color:var(--paper);font-family:var(--body);font-size:16px;line-height:1.45;min-height:100dvh}
+.top{background:var(--brand);color:var(--brand-ink);padding:18px var(--pad)}
+.top .by{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.85}
+.top h1{font-family:var(--display);font-weight:800;margin:4px 0 0;font-size:clamp(26px,7vw,36px);line-height:1.1}
+.top .sub{margin-top:6px;font-weight:600}
+main{padding:var(--pad);padding-bottom:calc(var(--pad) + env(safe-area-inset-bottom));max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h2{font-family:var(--display);font-weight:800;margin:0;font-size:22px;line-height:1.15}
+p{margin:0}
+.mute{color:var(--mute)}
+.small{font-size:14px}
+.card{background:var(--slate);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.me{border:2px solid var(--brass)}
+.big{font-family:var(--display);font-weight:800;font-size:56px;line-height:.95;color:var(--brass)}
+.tag{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--raise);white-space:nowrap}
+.tag.through{color:var(--mint)}.tag.reserve{color:var(--brass)}.tag.final{color:var(--mint)}.tag.open{color:var(--brass)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:9px 8px;border-bottom:1px solid var(--line);font-size:15px}
+td.n,th.n{text-align:right}
+tr.cut td{border-bottom:2px dashed var(--brass)}
+tr.mine td{background:var(--raise)}
+ol.qs{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:10px}
+ol.qs b{color:var(--mint)}
+ul.rules{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;color:#cfc6de;font-size:14px}
+input,textarea{width:100%;font:inherit;font-size:16px;padding:11px 13px;border-radius:12px;border:2px solid var(--line);background:var(--night);color:var(--paper)}
+textarea{min-height:110px;resize:vertical}
+input:focus,textarea:focus{outline:none;border-color:var(--brass)}
+button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:12px 16px;cursor:pointer;background:var(--raise);color:var(--paper)}
+button.go{background:var(--brass);color:var(--night)}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:8px}
+.row input{flex:1}
+.err{color:var(--ember);font-weight:600;min-height:1.2em}
+a{color:var(--brass)}
+.scroll{overflow-x:auto}
+@media (max-width:420px){td,th{padding:8px 5px}.hide-s{display:none}}
+</style>
+</head>
+<body>
+<div class="top" id="top"><div class="by">What's Up Trivia TV</div><h1>Live Round</h1></div>
+<main id="app" aria-live="polite"><p class="mute">Loading…</p></main>
+<script>
+(function(){
+'use strict';
+var ID = (location.pathname.match(/\/tv\/live\/(\d+)/) || [])[1] || '';
+var S = { d: null, find: '', busy: false, err: '', disputeText: '', sent: false, timer: null };
+
+function h(tag, attrs, kids){
+  var el = document.createElement(tag);
+  if (attrs) for (var k in attrs){
+    var v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'text') el.textContent = v;
+    else if (k === 'on') for (var ev in v) el.addEventListener(ev, v[ev]);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  (kids || []).forEach(function(c){ if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+function when(t){
+  try { return new Date(t).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Africa/Lagos' }); }
+  catch (e) { return ''; }
+}
+function ordinal(n){ var s = ['th','st','nd','rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+function secs(x){ var n = Number(x); return (isFinite(n) ? n.toFixed(1) : '0.0') + '\u00a0s'; }
+function hex(v, d){ return /^#[0-9A-Fa-f]{6}$/.test(String(v || '')) ? v : d; }
+var WHY = {
+  not_signed_in: 'Sign in first, then come back to this page.',
+  not_in_round: 'Only players who played this round can question its results.',
+  say_more: 'Say what you think is wrong, in a sentence or two.',
+  too_many_disputes: 'You have already sent two questions about this round.',
+  window_closed: 'The time to question these results has passed.',
+  results_final: 'These results are final.',
+  not_ranked_yet: 'The round has not been ranked yet.',
+  offline: 'No connection. Try again.'
+};
+
+function load(){
+  var q = S.find ? '?find=' + encodeURIComponent(S.find) : '';
+  return fetch('/tv/live/' + ID + '/data' + q, { credentials: 'same-origin' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ S.d = j; render(); schedule(); })
+    .catch(function(){ S.d = S.d || { success: false, reason: 'offline' }; render(); schedule(); });
+}
+// While the round is on, the page checks again every 20 seconds.
+function schedule(){
+  clearTimeout(S.timer);
+  var st = S.d && S.d.round && S.d.round.status;
+  if (st === 'scheduled' || st === 'open' || st === 'playing') S.timer = setTimeout(load, 20000);
+}
+
+function header(d){
+  var top = document.getElementById('top');
+  top.style.setProperty('--brand', hex(d.campaign.colourMain, '#5B12FC'));
+  top.style.setProperty('--brand-ink', hex(d.campaign.colourAccent, '#FADF05'));
+  document.documentElement.style.setProperty('--brand', hex(d.campaign.colourMain, '#5B12FC'));
+  var stage = d.campaign.kind === 'cup' && d.round.stage ? ' · stage ' + d.round.stage : '';
+  top.replaceChildren(
+    h('div', { class: 'by', text: d.campaign.brandName + ' · ' + d.campaign.name + stage }),
+    h('h1', { text: d.round.name }),
+    h('div', { class: 'sub', text: when(d.round.startsAt) + ' · ' + d.campaign.area })
+  );
+  document.title = d.round.name + ' — ' + d.campaign.name;
+}
+
+function statusCard(d){
+  var r = d.round, c = d.counts || {};
+  if (r.status === 'failed') return h('div', { class: 'card' }, [ h('h2', { text: 'This round did not go ahead' }), h('p', { class: 'mute', text: r.failReason || '' }) ]);
+  if (r.status === 'scheduled' || r.status === 'open') {
+    var lob = d.lobby || {};
+    return h('div', { class: 'card' }, [ h('h2', { text: r.status === 'open' ? 'The lobby is open' : 'Coming up' }),
+      h('p', { text: 'Starts ' + when(r.startsAt) + '. Entry closes a minute before.' }),
+      r.status === 'open' ? h('p', { class: 'mute', text: (lob.players || 0) + ' players waiting on ' + (lob.tvs || 0) + (lob.tvs === 1 ? ' TV' : ' TVs') + '.' }) : null ]);
+  }
+  if (r.status === 'playing') {
+    return h('div', { class: 'card' }, [ h('h2', { text: 'Playing now' }),
+      h('p', { text: (c.players || 0) + ' players on ' + (c.tvs || 0) + (c.tvs === 1 ? ' TV' : ' TVs') + ', ' + (c.ranked || 0) + ' of them ranked.' }),
+      h('p', { class: 'mute small', text: 'The places appear here once every TV has finished.' }) ]);
+  }
+  var final = r.status === 'final';
+  return h('div', { class: 'card' }, [
+    h('div', {}, [ h('span', { class: 'tag ' + (final ? 'final' : 'open'), text: final ? 'Final' : 'Not final yet' }) ]),
+    h('p', { text: (c.ranked || 0) + ' ranked players on ' + (c.tvs || 0) + (c.tvs === 1 ? ' TV' : ' TVs') + (c.players > c.ranked ? ', and ' + (c.players - c.ranked) + ' playing for fun.' : '.') }),
+    final ? null : h('p', { class: 'mute small', text: 'Players can question these results until ' + when(d.closesAt) + '. They become final then, once every question has an answer.' })
+  ]);
+}
+
+function meCard(d){
+  var m = d.me;
+  if (!m) return null;
+  var kids = [ h('span', { class: 'mute small', text: 'You played as ' + m.username }) ];
+  if (!m.ranked) {
+    kids.push(h('h2', { text: 'You played for fun' }));
+    kids.push(h('p', { text: m.disqualifiedReason ? 'Taken off the results: ' + m.disqualifiedReason : (m.why || '') }));
+  } else if (m.place) {
+    kids.push(h('div', { class: 'big', text: ordinal(m.place) }));
+    kids.push(h('b', { text: 'of ' + m.of + ' ranked players · ' + m.correct + ' right in ' + secs(m.seconds) }));
+    if (m.outcome === 'through') kids.push(h('span', { class: 'tag through', text: 'Through to the next stage' }));
+    if (m.outcome === 'reserve') kids.push(h('span', { class: 'tag reserve', text: 'Reserve ' + m.reserveOrder + ' for the next stage' }));
+  } else {
+    kids.push(h('p', { text: 'You’re ranked. Your place appears here once every TV has finished.' }));
+  }
+  (d.myDisputes || []).forEach(function(x){
+    kids.push(h('div', { class: 'card', style: 'background:var(--raise)' }, [ h('b', { text: 'You asked' }), h('p', { text: x.text }),
+      x.answer ? h('p', {}, [ h('b', { text: 'Answer: ' }), x.answer ]) : h('p', { class: 'mute small', text: 'Waiting for an answer.' }) ]));
+  });
+  if (d.canDispute) kids.push(disputeForm());
+  return h('div', { class: 'card me' }, kids);
+}
+
+function disputeForm(){
+  if (S.sent) return h('p', { class: 'mute', text: 'Sent. We’ll answer here before the results are final.' });
+  var t = h('textarea', { id: 'dtext', maxlength: '1000', placeholder: 'For example: question 7 had two right answers.' });
+  t.value = S.disputeText;
+  t.addEventListener('input', function(){ S.disputeText = t.value; });
+  return h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, [
+    h('b', { text: 'Something wrong with these results?' }), t,
+    h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Sending…' : 'Send', on: { click: function(){
+      S.busy = true; S.err = ''; render();
+      fetch('/tv/live/' + ID + '/dispute', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: S.disputeText }) })
+        .then(function(r){ return r.json(); }).catch(function(){ return { success: false, reason: 'offline' }; })
+        .then(function(j){ S.busy = false; if (j.success){ S.sent = true; S.disputeText = ''; return load(); } S.err = WHY[j.reason] || 'That did not work. Try again.'; render(); });
+    } } }),
+    h('p', { class: 'err', role: 'alert', text: S.err })
+  ]);
+}
+
+function board(d){
+  if (!d.board) return null;
+  var showState = d.board.some(function(x){ return x.state; });
+  var cutAt = d.cut && d.cut.top ? d.cut.top : null;
+  var mine = d.me && d.me.username;
+  var rows = d.board.map(function(x){
+    var cls = (cutAt && x.place === cutAt ? 'cut' : '') + (mine && x.username === mine ? ' mine' : '');
+    return h('tr', { class: cls.trim() || null }, [
+      h('td', { class: 'n', text: String(x.place) }),
+      h('td', {}, [ x.username, x.outcome === 'through' ? h('span', { class: 'tag through', style: 'margin-left:6px', text: 'through' }) :
+                                x.outcome === 'reserve' ? h('span', { class: 'tag reserve', style: 'margin-left:6px', text: 'reserve ' + x.reserveOrder }) : null ]),
+      showState ? h('td', { class: 'hide-s', text: x.state || '' }) : null,
+      h('td', { class: 'n', text: String(x.correct) }),
+      h('td', { class: 'n', text: secs(x.seconds) })
+    ]);
+  });
+  var head = h('tr', {}, [ h('th', { class: 'n', text: '#' }), h('th', { text: 'Player' }), showState ? h('th', { class: 'hide-s', text: 'State' }) : null,
+                          h('th', { class: 'n', text: 'Right' }), h('th', { class: 'n', text: 'Time' }) ]);
+  var findIn = h('input', { id: 'find', maxlength: '30', placeholder: 'Find a username', value: S.find, 'aria-label': 'Find a username' });
+  var go = function(){ S.find = findIn.value.trim(); load(); };
+  findIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); });
+  var kids = [ h('h2', { text: 'The places' }) ];
+  if (d.cut) kids.push(h('p', { class: 'mute small', text: d.cut.perState
+      ? 'The top ' + d.cut.perState + ' in each state go through' + (d.cut.reserves ? ', and the next ' + d.cut.reserves + ' are reserves.' : '.')
+      : 'The top ' + d.cut.top + ' go through (above the dashed line)' + (d.cut.reserves ? ', and the next ' + d.cut.reserves + ' are reserves.' : '.') }));
+  kids.push(h('div', { class: 'row' }, [ findIn, h('button', { text: 'Find', on: { click: go } }) ]));
+  if (S.find) kids.push(d.found
+    ? h('p', {}, [ h('b', { text: d.found.username }), ': ' + ordinal(d.found.place) + ', ' + d.found.correct + ' right in ' + secs(d.found.seconds) ])
+    : h('p', { class: 'mute', text: 'No ranked player called ' + S.find + ' in this round.' }));
+  kids.push(h('div', { class: 'scroll' }, [ h('table', {}, [ h('thead', {}, [ head ]), h('tbody', {}, rows) ]) ]));
+  if ((d.counts.ranked || 0) > d.board.length) kids.push(h('p', { class: 'mute small', text: 'The first ' + d.board.length + ' of ' + d.counts.ranked + '. Find anyone else by username.' }));
+  return h('div', { class: 'card' }, kids);
+}
+
+function winners(d){
+  if (!d.winners || !d.winners.length) return null;
+  return h('div', { class: 'card' }, [ h('h2', { text: 'Prizes' }),
+    h('p', { class: 'mute small', text: 'Each prize goes to the best-placed player who can win it (old enough, and under the campaign’s limit per player).' }),
+    h('ol', { class: 'qs' }, d.winners.map(function(w){ return h('li', {}, [ h('b', { text: w.prize }), ' — ' + w.username ]); })) ]);
+}
+
+function questions(d){
+  if (!d.questions) return null;
+  var kids = [ h('h2', { text: 'The questions' }), h('ol', { class: 'qs' }, d.questions.map(function(q){
+    return h('li', {}, [ h('span', { text: q.text || '' }), h('br'), h('b', { text: q.answer || '' }) ]);
+  })) ];
+  if (d.tiebreak) kids.push(h('p', {}, [ h('b', { text: 'Number question: ' }), d.tiebreak.text + ' ', h('b', { text: 'Answer: ' + d.tiebreak.answer }) ]));
+  return h('div', { class: 'card' }, kids);
+}
+
+function rules(d){
+  return h('div', { class: 'card' }, [ h('h2', { text: 'How it’s decided' }),
+    h('ul', { class: 'rules' }, (d.rules || []).map(function(x){ return h('li', { text: x }); })) ]);
+}
+
+function render(){
+  var app = document.getElementById('app');
+  var d = S.d;
+  var active = document.activeElement;
+  if (active && (active.id === 'dtext' || active.id === 'find') && app.contains(active) && !S.busy) return;
+  if (!d) return;
+  if (!d.success) { app.replaceChildren(h('h2', { text: 'Round not found' }), h('p', { class: 'mute', text: 'Check the link, or scan the code on the TV again.' })); return; }
+  header(d);
+  var kids = [ statusCard(d), meCard(d), winners(d), board(d), questions(d), rules(d) ];
+  if (!d.signedIn && (d.round.status === 'ranked' || d.round.status === 'final')) {
+    kids.splice(1, 0, h('p', { class: 'mute small' }, [ 'Played this round? ', h('a', { href: '/', target: '_blank', rel: 'noopener', text: 'Sign in' }),
+      ' to see your own place and ask about the results.' ]));
+  }
+  app.replaceChildren.apply(app, kids.filter(Boolean));
+}
+
+document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') load(); });
+load();
+})();
+</script>
+</body>
+</html>

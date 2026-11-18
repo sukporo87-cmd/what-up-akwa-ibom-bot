@@ -669,7 +669,9 @@ async function loadPrizes() {
     [naira(m.revenue), 'Kept: fees (and setup charges before Oct 19)'], [naira(m.prize_collected), 'Prizes paid in by hosts'],
     [naira(m.owed), m.owed_count + ' payout(s) owed now'], [naira(m.paid_out), m.paid_count + ' paid out'],
     [naira(m.forfeited), (m.forfeited_count || 0) + ' forfeited prize(s), kept'],
-    [String(m.not_received_count || 0), 'paid, winner says not received yet']
+    [String(m.not_received_count || 0), 'paid, winner says not received yet'],
+    // Brands' prizes (phase 7) are in the totals above; shown apart here.
+    [naira(m.brand_paid_out || 0) + ' / ' + naira(m.brand_owed || 0), 'brands\u2019 prizes: paid out / owed']
   ].map(([b, t]) => '<div class="stat"><b>' + esc(b) + '</b><span>' + esc(t) + '</span></div>').join('');
 
   const c = j.config;
@@ -705,7 +707,10 @@ async function loadPrizes() {
       if (['awaiting_details', 'ready', 'failed'].includes(x.status)) acts.push('<button class="btn danger" data-hold="' + esc(x.id) + '">Hold</button>');
       if (x.status === 'held') acts.push('<button class="btn" data-release="' + esc(x.id) + '">Release</button>');
       return '<tr><td class="mono">' + esc(x.id) + '</td><td><b>' + esc(x.username) + '</b></td>' +
-        '<td>' + (x.kind === 'refund' ? 'Refund' : 'Prize') + ' <span class="dim">room #' + esc(x.tv_room_id) + '</span></td>' +
+        // A brand's prize (phase 7) names its campaign, and links to it.
+        '<td>' + (x.kind === 'refund' ? 'Refund' : 'Prize') +
+          (x.campaign_id ? ' <a href="/admin/tv/campaigns#' + esc(x.campaign_id) + '">' + esc(x.campaign_name || 'campaign') + '</a> <span class="dim">' + esc(x.brand_name || '') + '</span>' : '') +
+          (x.tv_room_id ? ' <span class="dim">room #' + esc(x.tv_room_id) + '</span>' : '') + '</td>' +
         '<td class="num"><b>' + esc(naira(x.amount)) + '</b></td><td>' + bank + '</td>' +
         '<td><span class="pill ' + st[1] + '">' + esc(st[0]) + '</span>' + (x.hold_reason ? '<div class="dim">' + esc(x.hold_reason) + '</div>' : '') +
           (x.paid_reference ? '<div class="dim">ref ' + esc(x.paid_reference) + ' by ' + esc(x.paid_by || '') + '</div>' : '') +

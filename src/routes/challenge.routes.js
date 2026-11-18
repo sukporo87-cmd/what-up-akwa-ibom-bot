@@ -63,9 +63,8 @@ async function requireChallengeAuth(req, res, next) {
 }
 
 function clientIp(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-        || req.socket?.remoteAddress
-        || null;
+    // The real address, not one a client can put in a header (utils/client-ip).
+    return require('../utils/client-ip').clientIp(req);
 }
 
 // The kill switch. `challenge` is a real mode in system_toggles, so the whole

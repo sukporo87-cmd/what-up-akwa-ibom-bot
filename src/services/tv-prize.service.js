@@ -55,6 +55,9 @@
 //
 // A BRANDED PARTY (phase 7) takes no prize from a phone: its prizes come from
 // the money the brand paid in. Its host form is off and adding is refused.
+// A brand's cash prize (tv-campaign-prize, step 4) is paid through this same
+// queue: its payout names the award (tv_campaign_award_id) instead of a
+// host's prize, and is marked paid, held and confirmed the same way.
 // ============================================
 
 const pool = require('../config/database');
@@ -708,9 +711,13 @@ class TvPrizeService {
             `SELECT po.id, po.kind, po.amount, po.status, po.bank_name, po.account_name,
                     RIGHT(po.account_number, 4) AS last4, po.details_verified, po.created_at, po.paid_at,
                     po.paid_reference, po.received_at, po.not_received_at,
-                    pr.tv_room_id, pr.prize_amount, pr.outcome_reason
-             FROM tv_payouts po JOIN tv_prizes pr ON pr.id = po.tv_prize_id
-             WHERE po.user_id = $1
+                    COALESCE(pr.tv_room_id, ca.tv_room_id) AS tv_room_id, COALESCE(pr.prize_amount, ca.amount) AS prize_amount,
+                    pr.outcome_reason, c.name AS campaign, c.brand_name AS brand
+             FROM tv_payouts po
+             LEFT JOIN tv_prizes pr ON pr.id = po.tv_prize_id
+             LEFT JOIN tv_campaign_awards ca ON ca.id = po.tv_campaign_award_id
+             LEFT JOIN tv_campaigns c ON c.id = ca.campaign_id
+             WHERE po.user_id = $1 AND po.status <> 'cancelled'
              ORDER BY po.created_at DESC
              LIMIT 50`,
             [userId]
@@ -723,10 +730,13 @@ class TvPrizeService {
              ORDER BY id DESC`,
             [userId]
         );
+        // A brand's prizes that are things rather than money (phase 7, step 4).
+        const items = await require('./tv-campaign-prize.service').itemsFor(userId);
         return {
             ok: true,
             asks: asks.rows.map(x => ({ id: Number(x.id), amount: Number(x.prize_amount), until: x.host_window_ends_at })),
             payouts: r.rows.map(x => ({ ...x, amount: Number(x.amount), prize_amount: Number(x.prize_amount) })),
+            items,
             saved: saved ? { bankName: saved.bank_name, accountName: saved.account_name, last4: String(saved.account_number).slice(-4) } : null
         };
     }
@@ -886,10 +896,14 @@ class TvPrizeService {
         const payouts = await pool.query(
             `SELECT po.id, po.tv_prize_id, po.kind, po.amount, po.status, po.hold_reason, po.bank_name, po.bank_code,
                     po.account_number, po.account_name, po.details_verified, po.details_at, po.paid_at,
-                    po.paid_reference, po.paid_by, po.created_at, po.received_at, po.not_received_at, u.username, pr.tv_room_id
+                    po.paid_reference, po.paid_by, po.created_at, po.received_at, po.not_received_at, u.username,
+                    COALESCE(pr.tv_room_id, ca.tv_room_id) AS tv_room_id, po.tv_campaign_award_id,
+                    ca.campaign_id, c.name AS campaign_name, c.brand_name
              FROM tv_payouts po
              JOIN users u ON u.id = po.user_id
-             JOIN tv_prizes pr ON pr.id = po.tv_prize_id
+             LEFT JOIN tv_prizes pr ON pr.id = po.tv_prize_id
+             LEFT JOIN tv_campaign_awards ca ON ca.id = po.tv_campaign_award_id
+             LEFT JOIN tv_campaigns c ON c.id = ca.campaign_id
              ORDER BY (po.status IN ('awaiting_details','ready','held','sending','failed')) DESC, po.created_at DESC
              LIMIT 200`
         );
@@ -1041,7 +1055,9 @@ class TvPrizeService {
                 COALESCE(SUM(amount) FILTER (WHERE status IN ('awaiting_details','ready','held','sending','failed')), 0)::int AS owed,
                 COUNT(*) FILTER (WHERE status IN ('awaiting_details','ready','held','sending','failed'))::int AS owed_count,
                 COUNT(*) FILTER (WHERE status = 'paid' AND received_at IS NULL AND not_received_at IS NOT NULL)::int AS not_received_count,
-                COALESCE(SUM(amount) FILTER (WHERE kind = 'refund' AND status = 'paid'${paidWhen}), 0)::int AS refunded
+                COALESCE(SUM(amount) FILTER (WHERE kind = 'refund' AND status = 'paid'${paidWhen}), 0)::int AS refunded,
+                COALESCE(SUM(amount) FILTER (WHERE tv_campaign_award_id IS NOT NULL AND status = 'paid'${paidWhen}), 0)::int AS brand_paid_out,
+                COALESCE(SUM(amount) FILTER (WHERE tv_campaign_award_id IS NOT NULL AND status IN ('awaiting_details','ready','held','sending','failed')), 0)::int AS brand_owed
              FROM tv_payouts`,
             pp
         );
@@ -1064,7 +1080,11 @@ class TvPrizeService {
             owed: Number(b.owed) || 0,
             owed_count: Number(b.owed_count) || 0,
             not_received_count: Number(b.not_received_count) || 0,
-            refunded: Number(b.refunded) || 0
+            refunded: Number(b.refunded) || 0,
+            // Of the above, brands' prizes (phase 7): the brand's money, paid
+            // in upfront, passing through; never revenue.
+            brand_paid_out: Number(b.brand_paid_out) || 0,
+            brand_owed: Number(b.brand_owed) || 0
         };
     }
 }

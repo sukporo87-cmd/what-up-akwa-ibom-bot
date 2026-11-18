@@ -67,11 +67,8 @@ const authenticateAdminWithQuery = async (req, res, next) => {
   next();
 };
 
-const getIpAddress = (req) => {
-  return req.headers['x-forwarded-for']?.split(',')[0] ||
-         req.connection.remoteAddress ||
-         req.socket.remoteAddress;
-};
+// The real address, not one a client can put in a header (utils/client-ip).
+const getIpAddress = (req) => require('../utils/client-ip').clientIp(req);
 
 // ============================================
 // PUBLIC ROUTES (No Auth Required)
