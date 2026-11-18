@@ -200,6 +200,7 @@ function disputeForm(){
 function board(d){
   if (!d.board) return null;
   var showState = d.board.some(function(x){ return x.state; });
+  var race = d.round && d.round.style === 'race';
   var cutAt = d.cut && d.cut.top ? d.cut.top : null;
   var mine = d.me && d.me.username;
   var rows = d.board.map(function(x){
@@ -210,11 +211,12 @@ function board(d){
                                 x.outcome === 'reserve' ? h('span', { class: 'tag reserve', style: 'margin-left:6px', text: 'reserve ' + x.reserveOrder }) : null ]),
       showState ? h('td', { class: 'hide-s', text: x.state || '' }) : null,
       h('td', { class: 'n', text: String(x.correct) }),
+      race ? h('td', { class: 'n', text: String(x.wrong || 0) }) : null,
       h('td', { class: 'n', text: secs(x.seconds) })
     ]);
   });
   var head = h('tr', {}, [ h('th', { class: 'n', text: '#' }), h('th', { text: 'Player' }), showState ? h('th', { class: 'hide-s', text: 'State' }) : null,
-                          h('th', { class: 'n', text: 'Right' }), h('th', { class: 'n', text: 'Time' }) ]);
+                          h('th', { class: 'n', text: 'Right' }), race ? h('th', { class: 'n', text: 'Wrong' }) : null, h('th', { class: 'n', text: 'Time' }) ]);
   var findIn = h('input', { id: 'find', maxlength: '30', placeholder: 'Find a username', value: S.find, 'aria-label': 'Find a username' });
   var go = function(){ S.find = findIn.value.trim(); load(); };
   findIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); });

@@ -108,7 +108,7 @@
 <body>
 <div class="topbar">
   <h1>📊 Brand <span>report</span></h1>
-  <a class="back" id="back" href="/admin/tv/campaigns">← Branded parties</a>
+  <a class="back" id="back" href="/admin/tv/campaigns">← Campaigns</a>
 </div>
 <div class="container">
   <div class="tools">
@@ -244,7 +244,7 @@ function render() {
         '</tbody></table></div>' : '<div class="empty">No games in this period.</div>') + '</div>' +
 
     '<div class="grid2">' +
-      '<div class="card"><div class="head"><h3>Where it was played</h3><button class="btn csv noprint" data-dl="places">CSV</button></div><div class="hint">A TV’s state comes from its internet connection, so it is close to city level, not exact.</div>' +
+      '<div class="card"><div class="head"><h3>Where it was played</h3><button class="btn csv noprint" data-dl="places">CSV</button></div><div class="hint">A TV’s state is the one an admin set, else the one its players’ phones shared, else a guess from its internet connection.</div>' +
         (R.byState.length ? '<table><thead><tr><th>State</th><th class="num">TVs</th><th class="num">Games</th></tr></thead><tbody>' +
           R.byState.map(s => '<tr><td>' + esc(s.state) + '</td><td class="num">' + esc(s.tvs) + '</td><td class="num">' + esc(s.games) + '</td></tr>').join('') + '</tbody></table>'
           : '<div class="empty">No TVs yet.</div>') + '</div>' +

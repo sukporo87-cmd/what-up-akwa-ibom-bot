@@ -315,7 +315,7 @@ router.get('/campaigns', requireDevice, async (req, res) => {
 // flags have none (a picture fetch from the webOS app cannot send one); only
 // approved pictures are served. The address carries the upload time, so a
 // replaced picture is a new address and the old one can be cached for long.
-router.get('/campaign-art/:id(\\d+)/:slot(logo|tile|lobby|card|slide)', async (req, res) => {
+router.get('/campaign-art/:id(\\d+)/:slot(logo|tile|lobby|card|card2|card3|card4|slide)', async (req, res) => {
     try {
         const out = await tvCampaigns.artFile(Number(req.params.id), req.params.slot);
         if (!out.ok) return res.status(out.status).end();
@@ -584,6 +584,16 @@ router.post('/rooms/:code(\\d{6})/location', async (req, res) => {
         if (!acct.ok) return reply(res, acct);
         return reply(res, await party.saveLocation(req.params.code, acct.user, req.body || {}, getIp(req)));
     } catch (error) { return fail(res, 'location', error); }
+});
+
+// A Live Round: where this signed-in player's phone is (032). Only the state is kept.
+router.post('/rooms/:code(\\d{6})/here', async (req, res) => {
+    try {
+        const acct = await webAccount(req);
+        if (!acct.ok) return reply(res, acct);
+        const b = req.body || {};
+        return reply(res, await party.savePhoneLocation(req.params.code, acct.user, { lat: b.lat, lon: b.lon, accuracy: b.accuracy }, getIp(req)));
+    } catch (error) { return fail(res, 'phone location', error); }
 });
 
 router.post('/rooms/:code(\\d{6})/join', async (req, res) => {

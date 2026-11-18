@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📣 Branded parties | WUT TV</title>
+<title>📣 Campaigns | WUT TV</title>
 <!--
   WUT TV, phase 7, step 1: branded parties. Served at /admin/tv/campaigns,
   linked from the WUT TV page.
@@ -164,7 +164,7 @@
 </head>
 <body>
 <div class="topbar">
-  <h1>📣 Branded <span>parties</span></h1>
+  <h1>📣 <span>Campaigns</span></h1>
   <a class="back" href="/admin/tv">← WUT TV</a>
 </div>
 <div class="container" id="app"><div class="empty">Loading…</div></div>
@@ -233,7 +233,7 @@ async function showList() {
   const rows = j.campaigns;
   app.innerHTML =
     '<div class="card"><h2>New campaign</h2>' +
-    '<div class="hint">A branded party runs alongside everyone\'s Party: the brand is the host and never plays, a player in the room becomes co-host, and prizes come from what the brand has paid in. Start with the names; everything else is set on the next screen and can wait until you have it. Once published, it shows on the TVs it is set for (TV app 0.13.0 and later).</div>' +
+    '<div class="hint">A campaign runs alongside everyone\'s Party: the brand is the host and never plays, a player in the room becomes co-host, and prizes come from what the brand has paid in. Start with the names; everything else is set on the next screen and can wait until you have it. Once published, it shows on the TVs it is set for (TV app 0.13.0 and later).</div>' +
     '<div class="grid3"><div class="field"><label for="nName">Campaign name</label><input type="text" id="nName" maxlength="60" placeholder="e.g. Back to School Quiz"></div>' +
     '<div class="field"><label for="nBrand">Brand</label><input type="text" id="nBrand" maxlength="40" placeholder="e.g. Indomie"></div>' +
     '<div class="field"><label>&nbsp;</label><button class="btn primary" id="nGo">Create draft</button> <span class="err" id="nErr"></span></div></div></div>' +
@@ -432,7 +432,7 @@ function whenWhereCard(dis) {
   const everywhere = OPTIONS.tvs.filter(t => t.recent).length;
   const counts = { chosen: '', nigeria: ' <span class="dim">(' + inNigeria + ' active TVs today)</span>', all: ' <span class="dim">(' + everywhere + ' active TVs today, including TVs abroad or with no known place)</span>' };
   const area = aud === 'nigeria' ? 'anywhere in Nigeria' : 'in the ticked states';
-  return '<div class="card" data-section="when"><h2>When and where</h2><div class="hint">Typed and shown in <b>Lagos time</b>. A campaign can run on every TV, on every TV in Nigeria, or on the TVs you choose by name and every TV in the states you tick. A TV\'s state comes from its internet connection, so it is close to city level, not exact.</div>' +
+  return '<div class="card" data-section="when"><h2>When and where</h2><div class="hint">Typed and shown in <b>Lagos time</b>. A campaign can run on every TV, on every TV in Nigeria, or on the TVs you choose by name and every TV in the states you tick. A TV\'s state is the one set on the TV admin page, else the one its players\' phones shared, else a guess from its internet connection, which is often wrong in Nigeria.</div>' +
     '<div class="grid2">' +
     field('Starts', '<input type="datetime-local" data-k="startsAt" value="' + esc(lagosInput(C.startsAt)) + '"' + dis + '>') +
     field('Ends', '<input type="datetime-local" data-k="endsAt" value="' + esc(lagosInput(C.endsAt)) + '"' + dis + '>') +
@@ -466,13 +466,21 @@ function whenWhereCard(dis) {
 
 function questionsCard(dis) {
   const cats = OPTIONS.categories;
-  return '<div class="card" data-section="questions"><h2>Questions</h2><div class="hint">The questions come from one category of the Challenge question bank, set here; the co-host cannot change it. Add the brand\'s own questions on the <a href="/admin/questions">Questions</a> page under a new category name, then choose it here. A category needs at least 10 questions at every difficulty from 1 to 15 to fill a game.</div>' +
+  return '<div class="card" data-section="questions"><h2>Questions and game</h2><div class="hint">The questions come from one category of the Challenge question bank, set here. The style and the sponsor card time are set here too; the co-host cannot change any of them. Add the brand\'s own questions on the <a href="/admin/questions">Questions</a> page under a new category name, then choose it here. A category needs at least 10 questions at every difficulty from 1 to 15 to fill a game.</div>' +
     '<div class="grid2">' +
     field('Category', '<select data-k="category"' + dis + '><option value="">Choose…</option>' +
       cats.map(c => '<option value="' + esc(c.category) + '"' + (c.category === C.category ? ' selected' : '') + '>' + esc(pretty(c.category)) +
         (c.ready ? '' : ' (not enough questions yet)') + (c.campaign && c.category !== C.category ? ' (kept for ' + esc(c.campaign) + ')' : '') + '</option>').join('') + '</select>') +
     '<div class="field"><label>&nbsp;</label><div class="opts"><label><input type="checkbox" data-k="categoryPublic"' + (C.categoryPublic ? ' checked' : '') + dis + '> Also offer this category in everyone\'s games</label></div>' +
     '<div class="sub">Off (the usual): the category is kept for this campaign and taken out of everyone\'s Party, the Categories tile and Solo.</div></div>' +
+    '</div>' +
+    '<div class="grid2" style="margin-top:10px">' +
+    field('Style', '<select data-k="style"' + dis + '>' +
+      [['standard', 'Standard'], ['race', 'Race']].map(o => '<option value="' + o[0] + '"' + ((C.style || 'standard') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>',
+      'Standard: right answers, then speed. Race: the fastest right answer takes each question, and a wrong answer costs a point. Shown in the lobby before the game starts.' +
+      (C.kind && C.kind !== 'party' ? ' This is for the everyday games; each Live Round has its own style, set on the round.' : '')) +
+    field('Sponsor card time (seconds)', '<input type="number" min="3" max="30" data-k="sponsorSeconds" value="' + esc(C.sponsorSeconds || 8) + '"' + dis + '>',
+      'How long each sponsor card stays on the TV after every 3rd question: 3 to 30 seconds. Upload up to four cards under Artwork to show a different one at each break.') +
     '</div>' +
     '<div id="catWarn"></div>' +
     saveRow('questions', dis) + '</div>';
@@ -597,7 +605,7 @@ const rpill = s => '<span class="pill ' + esc(s) + '">' + esc(ROUND_STATUS[s] ||
 function typeCard(dis) {
   const kind = C.kind || 'party';
   const kdis = dis || C.status !== 'draft' ? ' disabled' : '';
-  return '<div class="card" data-section="type"><h2>Type</h2><div class="hint">What the campaign is. The type can only be changed while it is a draft. For Live Rounds and a Brand Cup, a player is ranked only when the TV\'s place (from its internet connection) and the place they type agree, and are in the area under <b>When and where</b>. Everyone else plays for fun.</div>' +
+  return '<div class="card" data-section="type"><h2>Type</h2><div class="hint">What the campaign is. The type can only be changed while it is a draft. For Live Rounds and a Brand Cup, a player is ranked only when their phone\'s location (shared for each round) and the place they type agree, and are in the area under <b>When and where</b>. Everyone else plays for fun.</div>' +
     '<div class="field"><div class="opts">' + Object.entries(KIND).map(([k, v]) =>
       '<label><input type="radio" name="kind" data-k="kind" value="' + k + '"' + (kind === k ? ' checked' : '') + kdis + '> <span><b>' + esc(v[0]) + '</b><br><span class="dim">' + esc(v[1]) + '</span></span></label>').join('') + '</div></div>' +
     '<div id="liveBits"' + (kind === 'party' ? ' hidden' : '') + '>' +
@@ -653,7 +661,7 @@ function drawRounds() {
   const rows = ROUNDS.map(r => '<tr><td><b>' + esc(r.name) + '</b>' + (cup && r.stage ? '<div class="dim">Stage ' + esc(r.stage) + '</div>' : '') + '</td>' +
     '<td>' + esc(lagos(r.startsAt)) + '<div class="dim">lobby from ' + esc(lagos(r.lobbyOpensAt).split(', ').pop()) + '</div></td>' +
     '<td>' + rpill(r.status) + (r.failReason ? '<div class="dim">' + esc(r.failReason) + '</div>' : '') + (r.openDisputes ? '<div><span class="pill coral">' + esc(r.openDisputes) + ' dispute' + (r.openDisputes === 1 ? '' : 's') + '</span></div>' : '') + '</td>' +
-    '<td class="num">' + esc(r.questions) + '</td>' +
+    '<td class="num">' + esc(r.questions) + '<div class="dim">' + (r.style === 'race' ? 'Race' : 'Standard') + '</div></td>' +
     '<td class="num">' + (r.players ? esc(r.rankedPlayers) + ' / ' + esc(r.players) + '<div class="dim">on ' + esc(r.rooms) + ' TV' + (r.rooms === 1 ? '' : 's') + '</div>' : '—') + '</td>' +
     '<td>' + (cup && (r.throughCount || r.stateQuota) ? (r.stateQuota ? 'Top ' + esc(r.stateQuota) + ' per state' : 'Top ' + esc(r.throughCount)) + (r.reserves ? ' + ' + esc(r.reserves) + ' reserves' : '') : '') +
       ((r.prizeRanks || []).length ? '<div class="dim">' + esc(r.prizeRanks.length) + ' prize place' + (r.prizeRanks.length === 1 ? '' : 's') + '</div>' : '') + '</td>' +
@@ -681,6 +689,8 @@ function roundForm(r) {
     field('Name', '<input type="text" id="rName" maxlength="60" placeholder="' + (cup ? 'e.g. Qualifier 1' : 'e.g. Sunday round') + '" value="' + esc(v.name || '') + '">') +
     field('Starts (Lagos time)', '<input type="datetime-local" id="rStart" value="' + esc(lagosInput(v.startsAt)) + '">', 'At least 20 minutes from now, and an hour from the campaign\'s other rounds.') +
     field('Questions', '<input type="number" id="rQs" min="10" max="30" value="' + esc(v.questions || 15) + '">', '10 to 30. 15 is about 8 minutes.') +
+    field('Style', '<select id="rStyle">' + [['standard', 'Standard'], ['race', 'Race']].map(o => '<option value="' + o[0] + '"' + ((v.style || 'standard') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>',
+      'Shown on every TV and phone before the round starts. Race: buttons open after a moment to read, and each wrong answer takes a point off a player\'s right answers across the area.') +
     '</div>' +
     (cup ? '<div class="grid3" style="margin-top:10px">' +
       field('Stage', '<input type="number" id="rStage" min="1" max="8" value="' + esc(v.stage || '') + '">', '1 for the qualifiers, 2 for the next, and so on. The highest is the final.') +
@@ -734,7 +744,7 @@ function wireRounds() {
     const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
     const num = id => { const x = val(id); return x === undefined ? undefined : (x === '' ? null : Number(x)); };
     const body = {
-      name: val('rName'), startsAt: val('rStart'), questions: num('rQs'), tiebreakText: val('rTbq'), tiebreakAnswer: val('rTba'),
+      name: val('rName'), startsAt: val('rStart'), questions: num('rQs'), style: val('rStyle'), tiebreakText: val('rTbq'), tiebreakAnswer: val('rTba'),
       prizeRanks: [...form.querySelectorAll('[data-rank]')].map(row => {
         const amount = row.querySelector('[data-rk="amount"]').value.trim();
         const item = row.querySelector('[data-rk="item"]').value.trim();
@@ -773,8 +783,8 @@ async function loadRoundDetail(id) {
       (e.steppedIn ? ' <span class="pill venue">stepped in</span>' : '') + '</td>' +
     '<td>' + (e.ranked ? '<span class="pill ok">Ranked</span>' : '<span class="pill draft" title="' + esc(j.why[e.whyUnranked] || '') + '">' + esc(WHY_SHORT[e.whyUnranked] || e.whyUnranked) + '</span>') +
       (e.disqualifiedReason ? '<div class="dim">' + esc(e.disqualifiedReason) + ' (' + esc(e.disqualifiedBy) + ')</div>' : '') + '</td>' +
-    '<td class="num">' + esc(e.correct == null ? '' : e.correct) + '</td><td class="num">' + esc(e.totalMs == null ? '' : (e.totalMs / 1000).toFixed(1) + ' s') + '</td>' +
-    '<td class="dim">' + esc([e.city, e.state, e.country].filter(Boolean).join(', ') || '—') + '<br>TV: ' + esc(e.tvPlace || 'unknown') + '</td>' +
+    '<td class="num">' + esc(e.correct == null ? '' : e.correct) + (r.style === 'race' && e.wrong ? '<div class="dim">' + esc(e.wrong) + ' wrong</div>' : '') + '</td><td class="num">' + esc(e.totalMs == null ? '' : (e.totalMs / 1000).toFixed(1) + ' s') + '</td>' +
+    '<td class="dim">' + esc([e.city, e.state, e.country].filter(Boolean).join(', ') || '—') + '<br>Phone: ' + esc(e.phoneState || 'not shared') + '<br>TV: ' + esc(e.tvState || e.tvPlace || 'unknown') + '</td>' +
     '<td>' + (canChange && e.ranked ? '<button class="btn danger" data-dq="' + esc(e.userId) + '">Take off</button>' : '') +
       (canChange && e.whyUnranked === 'disqualified' ? '<button class="btn" data-rs="' + esc(e.userId) + '">Put back</button>' : '') + '</td></tr>').join('');
   const disputes = j.disputes.map(d => '<div class="roundform" style="margin-top:8px"><b>' + esc(d.username) + '</b> <span class="dim">' + esc(lagos(d.createdAt)) + '</span>' +
@@ -792,7 +802,7 @@ async function loadRoundDetail(id) {
     (r.status === 'ranked' ? '<div class="banner info">Not final yet. Players can question the results until <b>' + esc(lagos(j.closesAt)) + '</b>. The results become final, and the prizes are made, once that has passed and every dispute below has an answer. Taking a player off works out the places again.</div>' : '') +
     (r.status === 'final' ? '<div class="banner info">Final since ' + esc(lagos(r.finalAt)) + '. Its prizes are in <b>Prizes won</b> below.</div>' : '') +
     (j.disputes.length ? '<h2 style="font-size:16px;margin-top:6px">Disputes</h2>' + disputes : '') +
-    (j.entries.length ? '<h2 style="font-size:16px;margin-top:14px">Players</h2><div class="scroll"><table><thead><tr><th class="num">#</th><th>Player</th><th>Ranked</th><th class="num">Right</th><th class="num">Time</th><th>Typed place / TV</th><th></th></tr></thead><tbody>' + ent + '</tbody></table></div>'
+    (j.entries.length ? '<h2 style="font-size:16px;margin-top:14px">Players</h2><div class="scroll"><table><thead><tr><th class="num">#</th><th>Player</th><th>Ranked</th><th class="num">Right</th><th class="num">Time</th><th>Typed / phone / TV</th><th></th></tr></thead><tbody>' + ent + '</tbody></table></div>'
       : '<div class="empty">Nobody played this round.</div>') +
     '<span class="err" id="rdErr"></span></div>';
   const err = document.getElementById('rdErr');

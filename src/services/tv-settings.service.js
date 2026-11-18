@@ -31,6 +31,15 @@
 //     Set by hand when a new build has passed on a TV: the server cannot know
 //     which build that is, and a test build must never send every TV a notice.
 //
+// AND TWO FOR THE TV HOME SCREEN (Nov 18, app 1.0.0 build 26):
+//   * app.latest_build — the newest Android TV build on GitHub (the APK people
+//     install with Downloader), e.g. 26. An Android TV with an older build from
+//     GitHub shows "A newer version is available. Update the app." Only that
+//     build ever shows it: the Play Store and LG Content Store builds never do,
+//     because their stores update them. Empty (the default) tells nobody.
+//   * home.message — a line every TV shows on its home screen, set on the
+//     admin page: { text, from, until }, in Lagos time; either end may be open.
+//
 // AND THE PRIZES (phase 5), one setting with three parts:
 //   * prizes.config — { on, min, max }: whether a host can put a prize on a
 //     Party game, and the smallest and largest prize in naira. OFF by default:
@@ -43,7 +52,11 @@ const pool = require('../config/database');
 const { logger } = require('../utils/logger');
 const tvAuth = require('./tv-auth.service');
 
+const { parseAdminTime } = require('../utils/lagos-time');
+
 const REFRESH_MS = 15000;
+const MAX_BUILD = 99999;
+const MESSAGE_MAX = 120;
 
 /**
  * Every setting the TV admin page can change. min/max are inclusive; step
@@ -119,6 +132,8 @@ const LISTS = Object.freeze({
     'party.categories_off': { def: [] },
     'solo.play_now_source': { def: { bank: 'practice', categories: [] } },
     'app.latest_version': { def: '' },
+    'app.latest_build': { def: null },
+    'home.message': { def: null },
     'prizes.config': { def: { on: false, min: 500, max: 50000 } }
 });
 
@@ -166,6 +181,8 @@ class TvSettingsService {
         out['party.categories_off'] = this._categoriesOff(stored.get('party.categories_off'));
         out['solo.play_now_source'] = this._source(stored.get('solo.play_now_source'));
         out['app.latest_version'] = this._version(stored.get('app.latest_version'));
+        out['app.latest_build'] = this._build(stored.get('app.latest_build'));
+        out['home.message'] = this._message(stored.get('home.message'));
         out['prizes.config'] = this._prizes(stored.get('prizes.config'));
         return out;
     }
@@ -201,6 +218,27 @@ class TvSettingsService {
     _version(row) {
         const v = row && typeof row.value === 'string' ? row.value : '';
         return VERSION_RE.test(v) ? v : '';
+    }
+
+    _build(row) {
+        const v = Number(row && row.value);
+        return Number.isInteger(v) && v >= 1 && v <= MAX_BUILD ? v : null;
+    }
+
+    _message(row) {
+        const v = row && row.value;
+        if (!v || typeof v !== 'object' || typeof v.text !== 'string' || !v.text.trim()) return null;
+        const at = x => (x && !Number.isNaN(new Date(x).getTime()) ? new Date(x).toISOString() : null);
+        return { text: v.text.slice(0, MESSAGE_MAX), from: at(v.from), until: at(v.until) };
+    }
+
+    /** The home-screen line to show now, or null: set, and between its from and until. */
+    messageNow(values, now = Date.now()) {
+        const m = values && values['home.message'];
+        if (!m) return null;
+        if (m.from && now < new Date(m.from).getTime()) return null;
+        if (m.until && now >= new Date(m.until).getTime()) return null;
+        return m.text;
     }
 
     _categoriesOff(row) {
@@ -282,6 +320,42 @@ class TvSettingsService {
         return { ok: true, version: v };
     }
 
+    /**
+     * The newest Android TV build on GitHub, e.g. 26. Empty clears it, so no
+     * TV shows the update line. Only GitHub builds compare it (see the top).
+     */
+    async setLatestBuild(raw, admin) {
+        const s = String(raw == null ? '' : raw).trim();
+        if (!s) return this.reset('app.latest_build', admin).then(() => ({ ok: true, build: null }));
+        const v = Number(s);
+        if (!Number.isInteger(v) || v < 1 || v > MAX_BUILD) return { ok: false, error: 'The build is a whole number, like 26' };
+        await this._write('app.latest_build', v, admin);
+        return { ok: true, build: v };
+    }
+
+    /**
+     * The home-screen line. from and until are typed in Lagos time
+     * ("2026-11-20T18:00"), and either may be left empty. Empty text clears it.
+     */
+    async setHomeMessage({ text, from, until } = {}, admin) {
+        const t = String(text == null ? '' : text).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!t) return this.reset('home.message', admin).then(() => ({ ok: true, message: null }));
+        if (t.length < 2 || t.length > MESSAGE_MAX) return { ok: false, error: `The message is 2 to ${MESSAGE_MAX} characters` };
+        const when = (raw, what) => {
+            if (raw == null || String(raw).trim() === '') return { at: null };
+            const d = parseAdminTime(raw);
+            return d ? { at: d } : { error: `${what} is not a date and time` };
+        };
+        const f = when(from, 'The start'), u = when(until, 'The end');
+        if (f.error) return { ok: false, error: f.error };
+        if (u.error) return { ok: false, error: u.error };
+        if (u.at && u.at.getTime() <= Date.now()) return { ok: false, error: 'The end has already passed' };
+        if (f.at && u.at && u.at <= f.at) return { ok: false, error: 'The end must come after the start' };
+        const message = { text: t, from: f.at ? f.at.toISOString() : null, until: u.at ? u.at.toISOString() : null };
+        await this._write('home.message', message, admin);
+        return { ok: true, message };
+    }
+
     /** Everything the admin page shows: each setting, its limits, its value and who last changed it. */
     async describe() {
         const stored = await this._stored();
@@ -295,6 +369,8 @@ class TvSettingsService {
         });
         const src = stored.get('solo.play_now_source');
         const app = stored.get('app.latest_version');
+        const build = stored.get('app.latest_build');
+        const msg = stored.get('home.message');
         const prizes = stored.get('prizes.config');
         return {
             numbers,
@@ -310,7 +386,13 @@ class TvSettingsService {
             },
             app: {
                 latestVersion: values['app.latest_version'],
-                updatedAt: app ? app.updated_at : null, updatedBy: app ? app.updated_by : null
+                updatedAt: app ? app.updated_at : null, updatedBy: app ? app.updated_by : null,
+                latestBuild: values['app.latest_build'],
+                buildUpdatedAt: build ? build.updated_at : null, buildUpdatedBy: build ? build.updated_by : null
+            },
+            homeMessage: {
+                message: values['home.message'], showingNow: !!this.messageNow(values),
+                updatedAt: msg ? msg.updated_at : null, updatedBy: msg ? msg.updated_by : null
             },
             refreshSeconds: REFRESH_MS / 1000
         };
@@ -329,3 +411,4 @@ module.exports.VERSION_RE = VERSION_RE;
 module.exports.PRIZE_FLOOR = PRIZE_FLOOR;
 module.exports.PRIZE_CEILING = PRIZE_CEILING;
 module.exports.newer = newer;
+module.exports.MESSAGE_MAX = MESSAGE_MAX;

@@ -74,14 +74,17 @@
 //   * only signed-in players can join, and each must first have agreed to
 //     the campaign's current terms (tv_campaign_consents)
 //   * nobody is host until a player types the 4-digit code the TV shows: the
-//     co-host. The co-host chooses the style and starts the game, plays like
-//     everyone else, and can win. A new code is shown if they leave
+//     co-host. The co-host starts the game, plays like everyone else, and
+//     can win. A new code is shown if they leave. The style is the
+//     campaign's, set on the admin page and shown in the lobby: the co-host
+//     cannot change it (Nov 18)
 //   * nobody can be removed, so a co-host cannot clear away the competition
 //   * no prize can be added from a phone: the brand's prizes come from the
 //     money it paid in (step 4: tv-campaign-prize decides at the start
 //     whether a game is a prize game, and who won it at the end)
-//   * after every 3rd question the TV shows the brand's sponsor card for a
-//     few seconds, and the next question waits for it
+//   * after every 3rd question the TV shows the brand's sponsor card, for
+//     the campaign's sponsor time (3 to 30 seconds), and the next question
+//     waits for it. A brand with several cards has them shown in turn
 //   * a campaign that is paused or ends takes no new players and starts no
 //     new games; a game already running plays to the end
 // Today's Party is unchanged.
@@ -98,7 +101,11 @@
 //   * each room shows the four answers in its own order (g.perm), so a
 //     letter passed from one house to another is no help. Answers are stored
 //     in the bank's own letters, so the review and the ranking are unchanged
-//   * Standard style only
+//   * the round's own style, set by an admin per round. In Race the buttons
+//     open after the same moment to read in every room, but no question
+//     ends at the first right answer: everyone has the full clock, so a
+//     player is never shut out by whoever shares their TV. The TV still
+//     shows who took each question in the room
 //   * after the last question, if the round has one, a number question for
 //     exact ties (the tiebreak phase)
 //   * at the end, the round is told, and ranks everyone across the area
@@ -126,9 +133,10 @@ const QUESTION_MS = 10000;
 const FIFTY_FIFTY_BONUS_MS = 5000;
 const ANSWER_GRACE_MS = 1500;
 const REVEAL_PAUSE_MS = 4000;
-// Branded parties: the sponsor card, after every 3rd question but the last.
+// Campaigns: the sponsor card, after every 3rd question but the last, for the
+// campaign's time (031); SPONSOR_CARD_MS is for a room opened before it existed.
 const SPONSOR_EVERY = 3;
-const SPONSOR_CARD_MS = 5000;
+const SPONSOR_CARD_MS = 8000;
 const COHOST_TRIES = 5;             // wrong co-host codes per player per room, per 10 minutes
 const MIN_FINISHERS = 2;
 // 3, 2, 1, Go!: the first question appears this long after the host starts,
@@ -368,7 +376,8 @@ class TvPartyService {
 
     /** The sponsor card's time on the TV, after this reveal, or null. */
     _sponsorWindow(g) {
-        return g && g.sponsorFrom ? { from: g.sponsorFrom, until: g.nextAt } : null;
+        // n: which break this is (0 for the first), so the TV shows the brand's cards in turn.
+        return g && g.sponsorFrom ? { from: g.sponsorFrom, until: g.nextAt, n: Math.max(0, Math.floor(g.position / SPONSOR_EVERY) - 1) } : null;
     }
 
     /** How many questions this game has: 15, or a Live Round's own number. */
@@ -381,7 +390,8 @@ class TvPartyService {
         return {
             roundId: live.roundId, name: live.name, stage: live.stage || null, startsAt: live.startsAt,
             entryClosesAt: live.entryClosesAt, questions: live.questions, area: live.area || null, unit: live.unit || 'none',
-            kind: live.kind || 'live', resultsUrl: live.resultsUrl || null, started: !!live.started
+            kind: live.kind || 'live', resultsUrl: live.resultsUrl || null, started: !!live.started,
+            style: live.style || 'standard', goesThrough: !!live.goesThrough, confirmHours: live.confirmHours || 48
         };
     }
 
@@ -393,9 +403,17 @@ class TvPartyService {
      * the last. p = total + 1 is when the number question opens.
      */
     _liveAt(g, p) {
-        const step = this._rules(g).questionMs + ANSWER_GRACE_MS + REVEAL_PAUSE_MS;
+        const rules = this._rules(g);
+        // Race: the moment to read comes before the clock, in every room alike.
+        const step = (g.style === 'race' ? rules.raceLockMs : 0) + rules.questionMs + ANSWER_GRACE_MS + REVEAL_PAUSE_MS;
         const cards = Math.floor(Math.min(p - 1, this._total(g) - 1) / SPONSOR_EVERY);
-        return Number(g.goAt) + (p - 1) * step + cards * SPONSOR_CARD_MS;
+        return Number(g.goAt) + (p - 1) * step + cards * this._sponsorMs(g);
+    }
+
+    /** How long this game's sponsor cards show: the campaign's, fixed when the game started. */
+    _sponsorMs(g) {
+        const v = Number(g && g.sponsorMs);
+        return Number.isInteger(v) && v >= 3000 && v <= 30000 ? v : SPONSOR_CARD_MS;
     }
 
     playerSnapshot(state, pid) {
@@ -562,10 +580,11 @@ class TvPartyService {
             try {
                 const r = campaign
                     ? await pool.query(
-                        `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at, campaign_id, categories, live_round_id)
-                         VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes', $4, $5, $6)
+                        `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at, campaign_id, categories, live_round_id, style)
+                         VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes', $4, $5, $6, $7)
                          RETURNING id, join_code, created_at, expires_at`,
-                        [device.id, this._newCode(), maxPlayers, campaign.id, [campaign.category], live ? live.roundId : null])
+                        [device.id, this._newCode(), maxPlayers, campaign.id, [campaign.category], live ? live.roundId : null,
+                         this._campaignStyle(campaign, live)])
                     : await pool.query(
                         `INSERT INTO tv_rooms (tv_device_id, join_code, max_players, expires_at)
                          VALUES ($1, $2, $3, NOW() + INTERVAL '60 minutes')
@@ -589,7 +608,8 @@ class TvPartyService {
             hostPlayerId: null,
             maxPlayers,
             categories: campaign ? [campaign.category] : [],
-            style: 'standard',
+            // A campaign's style is the admin's: the round's, else the campaign's.
+            style: this._campaignStyle(campaign, live),
             createdAt: now,
             expiresAt: now + LOBBY_TTL_MS,
             players: {},
@@ -606,6 +626,12 @@ class TvPartyService {
             campaignId: campaign ? campaign.id : null,
             liveRoundId: live ? live.roundId : null
         };
+    }
+
+    /** A campaign room's style: its Live Round's, else the campaign's (both set by an admin). */
+    _campaignStyle(campaign, live) {
+        const s = live ? live.style : (campaign && campaign.style);
+        return STYLES.includes(s) ? s : 'standard';
     }
 
     /** The 4 numbers a player types to become a branded party's co-host. */
@@ -1125,6 +1151,14 @@ class TvPartyService {
         };
     }
 
+    /** A signed-in player's phone shares where it is, for the Live Round behind this code (032). */
+    async savePhoneLocation(code, account, body, ip) {
+        const out = await this._findLive(code, ip);
+        if (!out.ok) return out;
+        if (!out.state.live) return { ok: false, reason: 'not_live' };
+        return liveRounds().savePhoneLocation(out.state.campaign.id, account, body, { deviceId: out.state.deviceId });
+    }
+
     /** A signed-in player says where they are, for the Live Round behind this code. */
     async saveLocation(code, account, body, ip) {
         const out = await this._findLive(code, ip);
@@ -1252,6 +1286,8 @@ class TvPartyService {
         return store.withRoom(roomId, async (state, tx) => {
             if (!state || state.status !== 'lobby') return { ok: false, reason: 'not_in_lobby' };
             if (state.live) return { ok: false, reason: 'set_by_round' };
+            // A campaign's style is set on the admin page, and the lobby says which.
+            if (state.campaign) return { ok: false, reason: 'set_by_brand' };
             if (actor.playerId && state.hostPlayerId !== actor.playerId) return { ok: false, reason: 'not_host' };
             if (state.style === wanted) return { ok: true, style: wanted };
 
@@ -1380,7 +1416,9 @@ class TvPartyService {
                 locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now(),
                 // The countdown: everyone sees 3, 2, 1, Go! and the first
                 // question lands at goAt, whatever else happens meanwhile.
-                goAt: Date.now() + this.countdownMs
+                goAt: Date.now() + this.countdownMs,
+                // A campaign: how long each sponsor card shows, fixed for the game.
+                ...(state.campaign ? { sponsorMs: (Number(state.campaign.sponsorSeconds) || SPONSOR_CARD_MS / 1000) * 1000 } : {})
             };
             // A branded party (step 4): is this a prize game? If it is, the
             // brand's prize is reserved now, so the money is held while the
@@ -1425,22 +1463,26 @@ class TvPartyService {
             const players = this._activeIds(state);
             if (!players.length) return { ok: false, reason: 'not_enough_players' };
 
+            // The round's style, the same in every room (set by an admin per round).
+            const style = STYLES.includes(plan.style) ? plan.style : 'standard';
             state.status = 'playing';
-            state.style = 'standard';
+            state.style = style;
             state.expiresAt = Date.now() + PLAYING_TTL_MS;
             state.live = { ...state.live, started: true, unranked: { ...unranked } };
             state.game = {
-                style: 'standard',
-                rules: { questionMs: plan.questionMs, fiftyBonusMs: 0, raceLockMs: RACE_LOCK_MS, raceWrong: RACE_WRONG },
+                style,
+                rules: { questionMs: plan.questionMs, fiftyBonusMs: 0,
+                         raceLockMs: plan.raceLockMs || RACE_LOCK_MS, raceWrong: plan.raceWrong || RACE_WRONG },
                 phase: 'starting', position: 0, total: plan.total, enrolled: players,
                 locked: {}, fifty: {}, results: {}, board: [], startedAt: Date.now(),
                 goAt: plan.goAt,
+                sponsorMs: plan.sponsorMs || SPONSOR_CARD_MS,
                 live: { roundId: plan.roundId, tiebreak: plan.tiebreak || null }
             };
             await pool.query(
-                `UPDATE tv_rooms SET status = 'playing', started_at = NOW(), style = 'standard',
+                `UPDATE tv_rooms SET status = 'playing', started_at = NOW(), style = $2,
                         expires_at = NOW() + INTERVAL '2 hours'
-                 WHERE id = $1 AND status = 'lobby'`, [state.id]);
+                 WHERE id = $1 AND status = 'lobby'`, [state.id, style]);
             const ids = (plan.questionIds || []).map(Number);
             if (ids.length) {
                 await pool.query(
@@ -1448,7 +1490,7 @@ class TvPartyService {
                      SELECT $1, ord::smallint, qid FROM unnest($2::int[]) WITH ORDINALITY AS t(qid, ord)
                      ON CONFLICT (tv_room_id, position) DO NOTHING`, [state.id, ids]);
             }
-            tx.tv('game.starting', { players: players.length, categories: state.categories, style: 'standard', goAt: plan.goAt,
+            tx.tv('game.starting', { players: players.length, categories: state.categories, style, goAt: plan.goAt,
                                      live: this._liveView(state.live), roster: this._roster(state) });
             for (const p of players) tx.player(p, 'player.room', this.playerSnapshot(state, p).room);
             return { ok: true, players: players.length, goAt: plan.goAt };
@@ -1726,8 +1768,9 @@ class TvPartyService {
 
             // Race: the first correct answer starts the settle window. The
             // answer is checked here, on the server, and goes nowhere.
+            // A Live Round never ends a question early, so it has no settle window.
             let settleAt = null;
-            if (race && !g.raceFirstAt && letter === await this._raceKey(state.id, g)) {
+            if (race && !g.live && !g.raceFirstAt && stored === await this._raceKey(state.id, g)) {
                 g.raceFirstAt = now;
                 settleAt = now + RACE_SETTLE_MS;
             }
@@ -1976,13 +2019,13 @@ class TvPartyService {
                 g.sponsorFrom = null;
                 if (state.campaign && g.position % SPONSOR_EVERY === 0 && g.position < this._total(g)) {
                     g.sponsorFrom = g.nextAt;
-                    g.nextAt += SPONSOR_CARD_MS;
+                    g.nextAt += this._sponsorMs(g);
                 }
                 // A Live Round: the next question (or the number question, or
                 // the end) at the round's time, the same in every room.
                 if (g.live) {
                     g.nextAt = this._liveAt(g, g.position + 1);
-                    if (g.sponsorFrom) g.sponsorFrom = g.nextAt - SPONSOR_CARD_MS;
+                    if (g.sponsorFrom) g.sponsorFrom = g.nextAt - this._sponsorMs(g);
                 }
 
                 tx.tv('game.reveal', {
@@ -2091,6 +2134,7 @@ class TvPartyService {
         let prizeToSettle = false;
         let brandToSettle = false;
         let liveRound = null;
+        let ticker = null;
         try {
             await store.withRoom(id, async (state, tx) => {
                 if (!state || state.status !== 'playing' || !state.game) return;
@@ -2127,6 +2171,13 @@ class TvPartyService {
                 g.finalByPlayer = {};
 
                 const race = g.style === 'race';
+                // The website's ticker: the winner, if signed in. A Live
+                // Round's places are told once its results are final instead.
+                const wp = winner && state.players[winner.id];
+                if (wp && wp.userId && !g.live) {
+                    ticker = { userId: wp.userId, extra: { kind: 'party', campaign: state.campaign ? state.campaign.name : null,
+                                                           race, correct: winner.c, total: this._total(g) } };
+                }
                 tx.tv('game.finished', { board, counted, winnerPlayerId: winner ? winner.id : null, style: g.style || 'standard',
                                          ...(state.live ? { live: this._liveView(state.live) } : {}) });
                 for (const b of board) {
@@ -2151,6 +2202,7 @@ class TvPartyService {
         if (prizeToSettle) this._settlePrize(id);
         if (brandToSettle) this._queue(id, () => this._settleBrandPrize(id));
         if (liveRound) this._queue(id, () => liveRounds().roomFinished(liveRound));
+        if (ticker) require('./activity.service').record('tv_game', ticker.userId, ticker.extra);
     }
 
     /**

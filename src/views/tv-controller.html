@@ -25,7 +25,7 @@
   A BRAND'S PARTY (phase 7): the page asks the server first whether the code
   is a brand's party. If it is, the player signs in, agrees to the brand's
   terms, and joins as their account; nobody plays as a guest. A player becomes
-  co-host by typing the 4 numbers on the TV, then picks the style and starts.
+  co-host by typing the 4 numbers on the TV, then starts (the style is the campaign's).
   The category is the brand's, and there is no prize to add from here.
 -->
 <style>
@@ -210,6 +210,14 @@ function now(){ return Date.now() + S.offset; }
 function done(){ return !!(S.game && S.game.phase === 'done'); }
 function buzz(ms){ try { if (navigator.vibrate) navigator.vibrate(ms); } catch(e){} }
 
+// The sign-in of the play page on this phone, if any. Sending it to /web/auth/me
+// also renews the sign-in cookie the game's own calls use, so a player who is
+// signed in on the play page is signed in here too, straight away.
+function whoAmI(){
+  var headers = {};
+  try { var t = localStorage.getItem('wut_token'); if (t) headers.Authorization = 'Bearer ' + t; } catch(e){}
+  return fetch('/web/auth/me', { headers: headers, credentials: 'same-origin' }).then(function(r){ return r.json(); });
+}
 function api(path, body){
   var headers = { 'Content-Type': 'application/json' };
   if (S.token) headers.Authorization = 'Bearer ' + S.token;
@@ -268,6 +276,7 @@ var WHY = {
   location_required: 'Say where you are first.',
   already_in_round: 'You\u2019re already in this round on another TV. Leave that one first.',
   set_by_round: 'The round sets that: it starts by itself at its time.',
+  set_by_brand: 'The style is set for this campaign.',
   not_in_live: 'There\u2019s no 50:50 in a Live Round.',
   location_locked: 'You\u2019ve played a ranked round in this campaign, so where you are stays as it was.',
   pick_state: 'Choose your state.',
@@ -283,8 +292,7 @@ function why(reason){ return WHY[reason] || 'That did not work. Try again.'; }
 // ---------- joining ----------
 function boot(){
   if (!CODE){ S.screen = 'ended'; S.ended = 'no_room'; return render(); }
-  fetch('/web/auth/me', { credentials: 'same-origin' })
-    .then(function(r){ return r.json(); })
+  whoAmI()
     .then(function(j){ S.account = j && j.authenticated && j.user ? j.user : null; })
     .catch(function(){ S.account = null; })
     .then(loadInfo)
@@ -432,7 +440,7 @@ document.addEventListener('visibilitychange', function(){
   if (document.visibilityState !== 'visible') return;
   if (S.screen === 'play' && !done() && (!S.es || S.es.readyState === 2)) rejoin();
   if ((S.screen === 'join' || S.screen === 'brand' || done()) && !S.account){
-    fetch('/web/auth/me', { credentials: 'same-origin' }).then(function(r){ return r.json(); })
+    whoAmI()
       .then(function(j){ if (j && j.authenticated){ S.account = j.user; return S.screen === 'brand' ? loadInfo() : null; } })
       .then(function(){ render(); }).catch(function(){});
   }
@@ -521,8 +529,8 @@ function left(ms){
   return m + ':' + (s < 10 ? '0' : '') + s;
 }
 var UNRANKED = {
-  outside_area: 'This TV, or the place you gave, is outside the area for this round.',
-  no_location: 'You did not say where you are.',
+  outside_area: 'Where your phone is, or the place you gave, is outside the area for this round, or the two do not match.',
+  no_location: 'You did not say where you are, or your phone did not share its location for this round.',
   tv_unknown: 'We couldn\u2019t tell where this TV is.',
   already_through: 'You\u2019re already through to the next stage.',
   not_through: 'This stage is for the players who went through from the last one.',
@@ -548,7 +556,7 @@ function roundPanel(r){
     h('span', { class: 'mute small', text: stage + 'Live Round \u00b7 ' + (r.area || '') }),
     h('b', { style: 'font-size:18px', text: r.name || 'Live Round' }),
     h('div', { class: 'when', text: day(r.startsAt) + ', ' + clock(r.startsAt) }),
-    h('span', { class: 'mute small', text: (r.questions || 15) + ' questions on every TV at once. Entry closes a minute before the start.' })
+    h('span', { class: 'mute small', text: (r.questions || 15) + ' questions on every TV at once \u00b7 ' + (r.style === 'race' ? 'Race' : 'Standard') + ' style. Entry closes a minute before the start.' })
   ]);
 }
 // Where the player is: the campaign asks for a state, a city and state, or a country.
@@ -558,9 +566,66 @@ function needsPlace(){
   var l = r.location;
   return !(l && (r.unit === 'country' ? l.country : (r.unit === 'city' ? (l.state && l.city) : l.state)));
 }
+// Where this phone is, for this round (032): asked once per round when the
+// round checks places. Only the state is kept on our side.
+function needsHere(){
+  var r = S.info && S.info.round;
+  return !!(r && r.needsHere && !r.hereFresh && !S.hereSkipped);
+}
+var HERE_WHY = {
+  denied: 'Location is off for this site, so you\u2019ll play for fun. To be ranked, allow location for play.whatsuptrivia.com.ng in your browser\u2019s settings, then try again.',
+  unavailable: 'Your phone could not find where it is. Turn on Location (GPS) and try again.',
+  timeout: 'Finding your location took too long. Try again, near a window if you can.',
+  location_too_rough: 'Your phone could only tell roughly where it is. Turn on Location (GPS) and try again.',
+  unsupported: 'This browser cannot share a location, so you\u2019ll play for fun.'
+};
+function shareHere(){
+  if (S.busy) return;
+  if (!navigator.geolocation){ S.hereError = HERE_WHY.unsupported; return render(); }
+  S.busy = true; S.hereError = ''; render();
+  navigator.geolocation.getCurrentPosition(function(pos){
+    fetch('/tv/rooms/' + CODE + '/here', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy }) })
+      .then(function(x){ return x.json().catch(function(){ return { success: false, reason: 'server_error' }; }); })
+      .catch(function(){ return { success: false, reason: 'offline' }; })
+      .then(function(j){
+        S.busy = false;
+        if (!j.success){ S.hereError = HERE_WHY[j.reason] || why(j.reason); return render(); }
+        var r = S.info.round;
+        r.hereFresh = true; r.phoneState = j.phoneState;
+        if (!j.matches){ S.hereMismatch = j; return render(); }
+        join('', { asAccount: true });
+      });
+  }, function(err){
+    S.busy = false;
+    S.hereError = err && err.code === 1 ? HERE_WHY.denied : err && err.code === 3 ? HERE_WHY.timeout : HERE_WHY.unavailable;
+    render();
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 5 * 60 * 1000 });
+}
+function herePanel(){
+  var r = S.info.round, m = S.hereMismatch;
+  if (m){
+    return h('div', { class: 'panel' }, [
+      h('b', { style: 'font-size:17px', text: 'Your phone is in ' + m.phoneState }),
+      h('span', { class: 'mute', text: 'You said ' + (m.typedState || 'somewhere else') + '. To be ranked they must match, so you\u2019ll play for fun this round.' +
+                                     (r.locationLocked ? '' : ' If you typed the wrong state, change it first.') }),
+      r.locationLocked ? null : h('button', { class: 'quiet', text: 'Change my state', on: { click: function(){
+        S.hereMismatch = null; r.location = null; r.hereFresh = false; render(); } } }),
+      h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Joining\u2026' : 'Join for fun', on: { click: function(){ join('', { asAccount: true }); } } })
+    ]);
+  }
+  return h('div', { class: 'panel' }, [
+    h('b', { style: 'font-size:17px', text: 'Share where you are' }),
+    h('span', { class: 'mute', text: 'To be ranked in this round, your phone shares its location once. We keep only your state, never where exactly you are.' }),
+    h('button', { class: 'go', disabled: S.busy, text: S.busy ? 'Finding you\u2026' : 'Share my location', on: { click: shareHere } }),
+    S.hereError ? h('p', { class: 'err', role: 'alert', text: S.hereError }) : null,
+    h('button', { class: 'quiet', text: 'Play for fun instead', on: { click: function(){ S.hereSkipped = true; join('', { asAccount: true }); } } }),
+    h('a', { class: 'mute small', href: 'https://whatsuptrivia.com.ng/privacy#tv-campaigns', target: '_blank', rel: 'noopener', text: 'Privacy policy' })
+  ]);
+}
 function placeForm(){
   var r = S.info.round, kids = [ h('b', { style: 'font-size:17px', text: 'Where are you playing from?' }),
-    h('span', { class: 'mute small', text: 'Asked once for this campaign. To be ranked, it must match where this TV is. Winners show ID to claim a prize.' }) ];
+    h('span', { class: 'mute small', text: 'Asked once for this campaign. To be ranked, it must match where your phone is. Winners show ID to claim a prize.' }) ];
   var send = function(){
     S.busy = true; S.error = ''; render();
     fetch('/tv/rooms/' + CODE + '/location', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -569,7 +634,7 @@ function placeForm(){
       .catch(function(){ return { success: false, reason: 'offline' }; })
       .then(function(j){
         S.busy = false;
-        if (j.success){ S.info.round.location = j.location; return join('', { asAccount: true }); }
+        if (j.success){ S.info.round.location = j.location; if (needsHere()) return render(); return join('', { asAccount: true }); }
         S.error = why(j.reason); render();
       });
   };
@@ -603,7 +668,7 @@ function brandScreen(){
   }
   if (!S.account){
     out.push(h('h1', { text: 'Sign in to play' }));
-    out.push(h('p', { class: 'mute', text: 'Brand parties are for signed-in players, so prizes go to the right person. It takes a minute, and you stay signed in.' }));
+    out.push(h('p', { class: 'mute', text: 'This campaign is for signed-in players, so prizes go to the right person. It takes a minute, and you stay signed in.' }));
     out.push(prizeLine(c));
     out.push(h('a', { class: 'go', href: '/', target: '_blank', rel: 'noopener', text: 'Sign in or make an account' }));
     out.push(h('p', { class: 'mute small', text: 'Then come back to this page. It notices by itself.' }));
@@ -625,6 +690,9 @@ function brandScreen(){
   } else if (needsPlace()){
     out.push(h('h1', { text: 'One more thing' }));
     out.push(placeForm());
+  } else if (needsHere() || S.hereMismatch){
+    out.push(h('h1', { text: 'One more thing' }));
+    out.push(herePanel());
   } else {
     out.push(h('h1', { text: 'Ready to play' }));
     out.push(prizeLine(c));
@@ -647,7 +715,7 @@ function agreeAndJoin(){
     .catch(function(){ return { success: false, reason: 'offline' }; })
     .then(function(j){
       S.busy = false;
-      if (j.success){ S.agreed = true; if (needsPlace()) return render(); return join('', { asAccount: true }); }
+      if (j.success){ S.agreed = true; if (needsPlace() || needsHere()) return render(); return join('', { asAccount: true }); }
       if (j.reason === 'campaign_over'){ S.screen = 'ended'; S.ended = 'campaign_over'; return render(); }
       if (j.reason === 'not_signed_in') S.account = null;
       return loadInfo().then(function(){ S.error = why(j.reason); render(); });
@@ -667,14 +735,14 @@ function cohostAsk(){
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter') send(); });
   return h('div', { class: 'panel' }, [
     h('b', { style: 'font-size:17px', text: 'Run this game?' }),
-    h('span', { class: 'mute small', text: 'Enter the 4 numbers shown on the TV. The first person to enter them is the co-host: they choose the style and start the game. The co-host plays too, and can win.' }),
+    h('span', { class: 'mute small', text: 'Enter the 4 numbers shown on the TV. The first person to enter them is the co-host: they start the game. The co-host plays too, and can win.' }),
     input,
     h('button', { class: 'go', disabled: S.busy, text: 'Become co-host', on: { click: send } })
   ]);
 }
 function liveLobby(r){
   var lr = r.live, c = campaign() || {};
-  var out = [ brandBar(), meBlock(), h('h1', { text: 'You\u2019re in' }), roundPanel(lr) ];
+  var out = [ brandBar(), meBlock(), h('h1', { text: 'You\u2019re in' }), roundPanel(lr), styleNote(r) ];
   var cd = h('p', { id: 'liveleft', class: 'banner', text: 'Starts in ' + left(new Date(lr.startsAt).getTime() - now()) });
   out.push(cd);
   clearInterval(S.liveT);
@@ -697,17 +765,8 @@ function liveLobby(r){
 function brandLobby(r){
   if (r.live) return liveLobby(r);
   var c = campaign() || {};
-  var out = [ brandBar(), meBlock(), h('h1', { text: r.youAreHost ? 'You are the co-host' : 'You\u2019re in' }), styleNote(r) ];
+  var out = [ brandBar(), meBlock(), h('h1', { text: r.youAreHost ? 'You are the co-host' : 'You\u2019re in' }), gameLine(r, c), styleNote(r) ];
   if (r.youAreHost){
-    var style = r.style || 'standard';
-    out.push(h('div', { class: 'panel' }, [
-      h('b', { text: 'Style' }),
-      h('div', { class: 'styles', role: 'group', 'aria-label': 'Style' }, ['standard', 'race'].map(function(x){
-        return h('button', { class: style === x ? 'on' : '', 'aria-pressed': style === x ? 'true' : 'false', disabled: S.busy,
-                             text: x === 'race' ? 'Race' : 'Standard', on: { click: function(){ if (style !== x) act('/style', { style: x }); } } });
-      })),
-      h('span', { class: 'mute small', text: 'Category: ' + pretty(c.category || (r.categories || [])[0] || '') + ' (set by the brand)' })
-    ]));
     var list = (r.players || []).map(function(p){
       return h('li', {}, [ h('span', { class: 'dot', style: 'background:' + p.colour }),
         h('span', { 'aria-hidden': 'true', text: p.avatar }), h('span', { class: 'who', text: p.name + (p.host ? ' (co-host)' : '') }) ]);
@@ -808,7 +867,16 @@ function pickerScreen(){
 // Race style (fastest finger first): one line in the lobby says how it works.
 function styleNote(r){
   if (!r || r.style !== 'race') return null;
+  if (r.live) return h('p', { class: 'banner', text: 'Race: the buttons open after a moment to read. Every wrong answer takes a point off your right answers across the area, so read before you tap.' });
   return h('p', { class: 'banner', text: 'Race: the first right answer takes each question. A wrong answer costs a point, so read before you tap.' });
+}
+// A campaign's style and category, set by the brand before the game: said before it starts.
+function gameLine(r, c){
+  var cat = pretty((c && c.category) || (r.categories || [])[0] || '');
+  return h('div', { class: 'panel' }, [
+    h('span', {}, [ h('b', { text: 'Style: ' }), r.style === 'race' ? 'Race' : 'Standard' ]),
+    cat ? h('span', { class: 'mute small', text: 'Category: ' + cat + ' \u00b7 both set by the brand' }) : null
+  ]);
 }
 
 function lobbyScreen(){

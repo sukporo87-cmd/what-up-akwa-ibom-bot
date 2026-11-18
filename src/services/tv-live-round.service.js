@@ -63,13 +63,17 @@ const tvAuth = require('./tv-auth.service');
 const store = require('./tv-room-store.service');
 const tvSettings = require('./tv-settings.service');
 const { NIGERIAN_STATES } = require('../utils/ng-places');
-const { parseAdminTime } = require('../utils/lagos-time');
+const { parseAdminTime, formatLagos } = require('../utils/lagos-time');
 const QuestionService = require('./question.service');
 
 // Loaded when first used: these files load this one.
 const party = () => require('./tv-party.service');
 const campaigns = () => require('./tv-campaign.service');
 const prizes = () => require('./tv-campaign-prize.service');
+const mail = () => require('./email.service');
+const activity = () => require('./activity.service');
+const identity = () => require('./tv-identity.service');
+const geo = require('../utils/ng-geo');
 
 const questionService = new QuestionService();
 
@@ -88,14 +92,22 @@ const SET_SIZE = 15;                        // what the Challenge bank builds at
 const PUBLIC_CACHE_MS = 5000;               // the results page's shared part, kept this long
 
 const KINDS = ['party', 'live', 'cup'];
+// Each round's style, set by an admin and fixed once the lobby opens (Nov 18).
+// In Race, wrong answers count against a player across the area.
+const STYLES = ['standard', 'race'];
 const UNITS = ['none', 'city', 'state', 'country'];
 const WHERE_FINAL = ['home', 'venue'];
 const STATE_SET = new Map(NIGERIAN_STATES.map(s => [s.toLowerCase(), s]));
+// A phone's location (032): kept as a state, or this.
+const OUTSIDE_NIGERIA = 'Outside Nigeria';
+// Rougher than this and a phone is guessing from its network, which is no
+// better than the TV's address: the player is asked to switch location on.
+const PHONE_ROUGHEST_M = 10000;
 
 // Why a player is unranked, as their phone and the admin page say it.
 const WHY = Object.freeze({
-    outside_area: 'This TV, or the place you typed, is outside the area for this round',
-    no_location: 'You did not say where you are',
+    outside_area: 'Where your phone is, or the place you typed, is outside the area for this round, or the two do not match',
+    no_location: 'You did not say where you are, or your phone did not share its location for this round',
     tv_unknown: 'We could not tell where this TV is',
     already_through: 'You are already through to the next stage',
     not_through: 'This stage is for the players who went through from the last one',
@@ -106,6 +118,11 @@ const WHY = Object.freeze({
 });
 
 const naira = n => '₦' + Number(n || 0).toLocaleString('en-NG');
+const ordinalSuffix = n => {
+    const v = Number(n) % 100;
+    if (v >= 11 && v <= 13) return 'th';
+    return ({ 1: 'st', 2: 'nd', 3: 'rd' })[Number(n) % 10] || 'th';
+};
 const clean = (v, max) => {
     if (v === undefined) return undefined;
     if (v === null) return null;
@@ -181,12 +198,16 @@ class TvLiveRoundService {
         return { start, lobbyOpens: start - LOBBY_OPENS_MS, entryCloses: start - ENTRY_CLOSES_MS };
     }
 
-    /** How long a round runs from its first question to the end of the number question, in ms. */
-    lengthMs(round, questionMs) {
+    /**
+     * How long a round runs from its first question to the end of the number
+     * question, in ms. opts: the race lock and the sponsor card's time, as
+     * the round's rooms were given them (tv-party _liveAt does the same sum).
+     */
+    lengthMs(round, questionMs, { raceLockMs = 0, sponsorMs = null } = {}) {
         const P = party();
         const n = Number(round.questions) || SET_SIZE;
-        const step = questionMs + P.ANSWER_GRACE_MS + P.REVEAL_PAUSE_MS;
-        const cards = Math.floor((n - 1) / P.SPONSOR_EVERY) * P.SPONSOR_CARD_MS;
+        const step = (round.style === 'race' ? raceLockMs : 0) + questionMs + P.ANSWER_GRACE_MS + P.REVEAL_PAUSE_MS;
+        const cards = Math.floor((n - 1) / P.SPONSOR_EVERY) * (sponsorMs || P.SPONSOR_CARD_MS);
         return n * step + cards + (round.tiebreak_text ? TIEBREAK_MS + P.ANSWER_GRACE_MS : 0);
     }
 
@@ -196,7 +217,7 @@ class TvLiveRoundService {
         return {
             id: r.id, campaignId: r.campaign_id, name: r.name, stage: r.stage, startsAt: r.starts_at,
             lobbyOpensAt: new Date(t.lobbyOpens), entryClosesAt: new Date(t.entryCloses),
-            questions: r.questions, tiebreakText: r.tiebreak_text,
+            questions: r.questions, style: STYLES.includes(r.style) ? r.style : 'standard', tiebreakText: r.tiebreak_text,
             tiebreakAnswer: r.tiebreak_answer == null ? null : Number(r.tiebreak_answer),
             throughCount: r.through_count, stateQuota: r.state_quota, reserves: r.reserves,
             rankedPerTv: r.ranked_per_tv, venueTvs: r.venue_tvs || [],
@@ -264,6 +285,11 @@ class TvLiveRoundService {
             const v = intOrNull(body.questions);
             if (!Number.isInteger(v) || v < 10 || v > 30) return err('A round has between 10 and 30 questions');
             set.questions = v;
+        }
+        if (body.style !== undefined || !existing) {
+            const v = body.style === undefined ? 'standard' : body.style;
+            if (!STYLES.includes(v)) return err('Choose Standard or Race for the round');
+            set.style = v;
         }
         if (body.tiebreakText !== undefined || !existing) {
             const v = clean(body.tiebreakText, 200);
@@ -425,7 +451,8 @@ class TvLiveRoundService {
             entries: entries.rows.map(e => ({
                 userId: e.user_id, username: e.username, roomId: e.tv_room_id, tvId: e.tv_device_id, tvPlace: e.approx_location || null,
                 ranked: e.ranked, whyUnranked: e.why_unranked, city: e.city, state: e.state, country: e.country,
-                correct: e.correct, totalMs: e.total_ms, tiebreak: e.tiebreak_value == null ? null : Number(e.tiebreak_value),
+                phoneState: e.phone_state || null, tvState: e.tv_state || null,
+                correct: e.correct, wrong: e.wrong == null ? null : e.wrong, totalMs: e.total_ms, tiebreak: e.tiebreak_value == null ? null : Number(e.tiebreak_value),
                 place: e.place, outcome: e.outcome, reserveOrder: e.reserve_order, steppedIn: e.stepped_in,
                 disqualifiedBy: e.disqualified_by, disqualifiedReason: e.disqualified_reason
             })),
@@ -505,14 +532,14 @@ class TvLiveRoundService {
             return /[",\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
         };
         const head = ['place', 'username', 'ranked', 'why_unranked', 'outcome', 'reserve_order', 'stepped_in', 'correct', 'total_ms',
-                      'tiebreak', 'tiebreak_ms', 'room', 'tv', 'tv_place', 'venue', 'typed_city', 'typed_state', 'typed_country', 'tv_state'];
+                      'tiebreak', 'tiebreak_ms', 'room', 'tv', 'tv_place', 'venue', 'typed_city', 'typed_state', 'typed_country', 'tv_state', 'phone_state'];
         for (let i = 1; i <= n; i++) head.push(`q${i}_answer`, `q${i}_right`, `q${i}_ms`);
         const lines = [head.join(',')];
         for (const e of rows.rows) {
             const mine = by.get(e.tv_player_id) || {};
             const cells = [e.place, e.username, e.ranked ? 'yes' : 'no', e.why_unranked, e.outcome, e.reserve_order, e.stepped_in ? 'yes' : '',
                            e.correct, e.total_ms, e.tiebreak_value, e.tiebreak_ms, e.tv_room_id, e.tv_device_id, e.approx_location,
-                           e.venue ? 'yes' : '', e.city, e.state, e.country, e.tv_state];
+                           e.venue ? 'yes' : '', e.city, e.state, e.country, e.tv_state, e.phone_state];
             for (let i = 1; i <= n; i++) {
                 const a = mine[i];
                 // The letter is the bank's (A to D as stored), not the shuffled one the room showed.
@@ -578,7 +605,7 @@ class TvLiveRoundService {
                 const v = this.view(x, now);
                 out.set(Number(x.campaign_id), {
                     id: v.id, name: v.name, stage: v.stage, startsAt: v.startsAt, lobbyOpensAt: v.lobbyOpensAt,
-                    entryClosesAt: v.entryClosesAt, lobbyOpen: v.lobbyOpen, questions: v.questions
+                    entryClosesAt: v.entryClosesAt, lobbyOpen: v.lobbyOpen, questions: v.questions, style: v.style
                 });
             }
         } catch (e) { logger.error(`Live rounds: next rounds not read — ${e.message}`); }
@@ -609,7 +636,13 @@ class TvLiveRoundService {
             live: {
                 roundId: r.id, name: r.name, stage: r.stage, startsAt: new Date(t.start), entryClosesAt: new Date(t.entryCloses),
                 questions: r.questions, unit: c.area_unit, area: areaLabel(c), kind: c.kind,
-                resultsUrl: this.resultsUrl(r.id)
+                resultsUrl: this.resultsUrl(r.id),
+                style: STYLES.includes(r.style) ? r.style : 'standard',
+                // A cup stage with places to go through: the finish screen
+                // tells players to look out for the email, sent once the
+                // places are final (after the dispute window).
+                goesThrough: c.kind === 'cup' && !!(r.through_count || r.state_quota),
+                confirmHours: Number(c.dispute_hours) || 48
             }
         };
     }
@@ -639,15 +672,55 @@ class TvLiveRoundService {
         const out = {
             roundId: live.roundId, name: live.name, stage: live.stage, startsAt: live.startsAt, entryClosesAt: live.entryClosesAt,
             questions: live.questions, unit, area: areaLabel(c), kind: c ? c.kind : 'live', resultsUrl: this.resultsUrl(live.roundId),
+            style: live.style === 'race' ? 'race' : 'standard',
             states: unit === 'state' || unit === 'city' ? NIGERIAN_STATES : undefined,
             cities: unit === 'city' && c && (c.area_cities || []).length ? c.area_cities : undefined,
             countries: unit === 'country' && c && (c.area_countries || []).length ? c.area_countries : undefined
         };
+        // The phone is asked where it is when the round checks places at all.
+        out.needsHere = !!c && (unit !== 'none' || c.audience !== 'all');
         if (account) {
             out.location = await this._location(campaignId, account.id);
             out.locationLocked = await this._locationLocked(campaignId, account.id);
+            const ph = await this._phone(campaignId, account.id);
+            const since = new Date(live.startsAt).getTime() - LOBBY_OPENS_MS;
+            out.hereFresh = !!(ph && ph.phone_state && new Date(ph.phone_at).getTime() >= since);
+            out.phoneState = out.hereFresh ? ph.phone_state : null;
         }
         return out;
+    }
+
+    async _phone(campaignId, userId) {
+        const r = await pool.query(`SELECT phone_state, phone_at FROM tv_live_locations WHERE campaign_id = $1 AND user_id = $2`,
+            [Number(campaignId), Number(userId)]);
+        return r.rows[0] || null;
+    }
+
+    /**
+     * A signed-in player's phone says where it is, for the round behind the
+     * code (032, Nov 18). Only the state is kept (or "Outside Nigeria"),
+     * never the point itself. It counts for this round's ranking; the next
+     * round asks again. The TV learns its own state from it too.
+     */
+    async savePhoneLocation(campaignId, account, body = {}, { deviceId = null } = {}) {
+        await tvAuth.ensureSchema();
+        const c = await this._campaign(campaignId);
+        if (!c || c.kind === 'party') return { ok: false, reason: 'not_live' };
+        const lat = Number(body.lat), lon = Number(body.lon), acc = Number(body.accuracy);
+        if (!geo.valid(lat, lon)) return { ok: false, reason: 'bad_location' };
+        if (!Number.isFinite(acc) || acc < 0 || acc > PHONE_ROUGHEST_M) return { ok: false, reason: 'location_too_rough' };
+        const state = geo.stateAt(lat, lon) || OUTSIDE_NIGERIA;
+        await pool.query(
+            `INSERT INTO tv_live_locations (campaign_id, user_id, phone_state, phone_at, phone_accuracy_m) VALUES ($1, $2, $3, NOW(), $4)
+             ON CONFLICT (campaign_id, user_id) DO UPDATE SET phone_state = $3, phone_at = NOW(), phone_accuracy_m = $4`,
+            [c.id, account.id, state, Math.round(acc)]);
+        if (deviceId && state !== OUTSIDE_NIGERIA) {
+            await identity().learnPlace(deviceId, state).catch(e => logger.warn(`TV ${deviceId}: place not learned — ${e.message}`));
+        }
+        const loc = await this._location(c.id, account.id);
+        const typed = loc ? loc.state : null;
+        return { ok: true, phoneState: state, typedState: typed,
+                 matches: c.area_unit === 'state' || c.area_unit === 'city' ? (!typed || typed === state) : true };
     }
 
     /** A signed-in player says where they are, for this campaign. */
@@ -763,8 +836,11 @@ class TvLiveRoundService {
                     }
                 } else if (round.status === 'playing') {
                     const goAt = Math.max(t.start, new Date(round.started_at || round.starts_at).getTime());
-                    const questionMs = (await tvSettings.values())['party.question_seconds'] * 1000;
-                    if (now > goAt + this.lengthMs(round, questionMs) + RANK_AFTER_MS) await this.rank(round.id);
+                    const set = await tvSettings.values();
+                    const c = await this._campaign(round.campaign_id);
+                    const len = this.lengthMs(round, set['party.question_seconds'] * 1000,
+                        { raceLockMs: set['race.lock_ms'], sponsorMs: campaigns().sponsorSeconds(c) * 1000 });
+                    if (now > goAt + len + RANK_AFTER_MS) await this.rank(round.id);
                 } else if (round.status === 'ranked') {
                     await this.finalise(round);
                 }
@@ -871,7 +947,7 @@ class TvLiveRoundService {
 
         // Every room still in its lobby, and everyone in it.
         const rooms = await pool.query(
-            `SELECT r.id, r.tv_device_id, d.approx_location, d.venue
+            `SELECT r.id, r.tv_device_id, d.approx_location, d.place_state, d.place_source, d.venue
              FROM tv_rooms r JOIN tv_devices d ON d.id = r.tv_device_id
              WHERE r.live_round_id = $1 AND r.status = 'lobby' ORDER BY r.id`, [id]);
         const candidates = [];
@@ -891,32 +967,35 @@ class TvLiveRoundService {
                 if (seen.has(p.userId)) continue;              // one entry per account (canJoinRoom stops this before it happens)
                 seen.add(p.userId);
                 candidates.push({ roomId: room.id, deviceId: room.tv_device_id, place: room.approx_location || null,
+                                  placeState: room.place_state || null, placeSource: room.place_source || null,
                                   venue: !!room.venue, pid, userId: p.userId, joinedAt: p.joinedAt || 0 });
             }
         }
 
         const userIds = candidates.map(x => x.userId);
         const locs = userIds.length ? await pool.query(
-            `SELECT user_id, city, state, country FROM tv_live_locations WHERE campaign_id = $1 AND user_id = ANY($2::int[])`,
+            `SELECT user_id, city, state, country, phone_state, phone_at FROM tv_live_locations WHERE campaign_id = $1 AND user_id = ANY($2::int[])`,
             [c.id, userIds]) : { rows: [] };
         const prev = await this._previous(c, round);
-        const decided = this.decide({ c, round, candidates, locations: new Map(locs.rows.map(x => [x.user_id, x])), prev });
+        // A phone's location counts for this round if shared once its lobby was open.
+        const decided = this.decide({ c, round, candidates, locations: new Map(locs.rows.map(x => [x.user_id, x])), prev,
+                                      since: this.times(round).lobbyOpens });
 
         if (decided.length) {
-            const cols = { round: [], user: [], room: [], player: [], device: [], ranked: [], why: [], city: [], state: [], country: [], tvs: [], seed: [], stepped: [] };
+            const cols = { round: [], user: [], room: [], player: [], device: [], ranked: [], why: [], city: [], state: [], country: [], tvs: [], seed: [], stepped: [], phone: [] };
             for (const d of decided) {
                 cols.round.push(id); cols.user.push(d.userId); cols.room.push(d.roomId); cols.player.push(d.pid); cols.device.push(d.deviceId);
                 cols.ranked.push(d.ranked); cols.why.push(d.why); cols.city.push(d.city); cols.state.push(d.state); cols.country.push(d.country);
-                cols.tvs.push(d.tvState); cols.seed.push(d.seed); cols.stepped.push(!!d.steppedIn);
+                cols.tvs.push(d.tvState); cols.seed.push(d.seed); cols.stepped.push(!!d.steppedIn); cols.phone.push(d.phoneState || null);
             }
             await pool.query(
                 `INSERT INTO tv_live_entries (round_id, user_id, tv_room_id, tv_player_id, tv_device_id, ranked, why_unranked,
-                                              city, state, country, tv_state, seed, stepped_in)
+                                              city, state, country, tv_state, seed, stepped_in, phone_state)
                  SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[], $6::boolean[], $7::text[],
-                                      $8::text[], $9::text[], $10::text[], $11::text[], $12::int[], $13::boolean[])
+                                      $8::text[], $9::text[], $10::text[], $11::text[], $12::int[], $13::boolean[], $14::text[])
                  ON CONFLICT (round_id, user_id) DO NOTHING`,
                 [cols.round, cols.user, cols.room, cols.player, cols.device, cols.ranked, cols.why,
-                 cols.city, cols.state, cols.country, cols.tvs, cols.seed, cols.stepped]);
+                 cols.city, cols.state, cols.country, cols.tvs, cols.seed, cols.stepped, cols.phone]);
         }
 
         const set = await tvSettings.values();
@@ -926,6 +1005,12 @@ class TvLiveRoundService {
             // Late (a restart, a slow start): every room still starts together, a few seconds from now.
             goAt: Math.max(t.start, Date.now() + 8000),
             questionMs: set['party.question_seconds'] * 1000,
+            // The round's style, the same in every room, with Race's values
+            // and the sponsor card's time fixed now for all of them.
+            style: STYLES.includes(round.style) ? round.style : 'standard',
+            raceLockMs: set['race.lock_ms'],
+            raceWrong: set['race.wrong_penalty'],
+            sponsorMs: campaigns().sponsorSeconds(c) * 1000,
             total: round.question_ids.length,
             questionIds: round.question_ids.map(Number),
             tiebreak: round.tiebreak_text ? { text: round.tiebreak_text } : null
@@ -985,7 +1070,7 @@ class TvLiveRoundService {
      * Who is ranked. Pure: everything it needs is passed in, so it can be
      * tested on its own. Returns one decision per candidate.
      */
-    decide({ c, round, candidates, locations, prev }) {
+    decide({ c, round, candidates, locations, prev, since = 0 }) {
         const { stateFromPlace } = require('./tv-campaign.service');
         const areaStates = (c.regions || []).length && c.audience === 'chosen' ? new Set(c.regions) : null;
         const unit = c.area_unit || 'none';
@@ -993,29 +1078,39 @@ class TvLiveRoundService {
 
         const out = candidates.map(x => {
             const loc = locations.get(x.userId) || null;
-            const tvState = stateFromPlace(x.place);
-            const d = { ...x, ranked: true, why: null, tvState, city: loc ? loc.city : null, state: loc ? loc.state : null,
+            // The TV's state for the record: an admin's, its players' phones', else its address's.
+            const tvState = x.placeState || stateFromPlace(x.place);
+            // WHERE THE PLAYER IS (032, Nov 18): what their phone shared for
+            // this round (since the lobby opened), else, on a TV whose place
+            // an admin has set (a venue), that. A TV's internet address is
+            // never enough: Nigerian mobile networks use the same addresses
+            // across the country.
+            const fresh = !!(loc && loc.phone_state && (!since || new Date(loc.phone_at).getTime() >= since));
+            const here = fresh
+                ? (loc.phone_state === OUTSIDE_NIGERIA ? { abroad: true } : { state: loc.phone_state })
+                : (x.placeSource === 'admin' && x.placeState ? { state: x.placeState } : null);
+            const d = { ...x, ranked: true, why: null, tvState, phoneState: fresh ? loc.phone_state : null,
+                        city: loc ? loc.city : null, state: loc ? loc.state : null,
                         country: loc ? loc.country : null, seed: null, steppedIn: false };
             const no = why => { if (d.ranked) { d.ranked = false; d.why = why; } };
 
             // 1. where
-            const tvKnown = !!x.place;
             if (unit === 'none') {
                 if (c.audience !== 'all') {
-                    if (!tvKnown) no('tv_unknown');
-                    else if (!tvState || (areaStates && !areaStates.has(tvState))) no('outside_area');
+                    if (!here) no('no_location');
+                    else if (here.abroad || (areaStates && !areaStates.has(here.state))) no('outside_area');
                 }
             } else if (unit === 'state' || unit === 'city') {
                 if (!loc || !loc.state || (unit === 'city' && !loc.city)) no('no_location');
-                else if (!tvKnown) no('tv_unknown');
-                else if (tvState !== loc.state) no('outside_area');
+                else if (!here) no('no_location');
+                else if (here.abroad || here.state !== loc.state) no('outside_area');
                 else if (areaStates && !areaStates.has(loc.state)) no('outside_area');
                 else if (unit === 'city' && (c.area_cities || []).length && !(c.area_cities || []).some(k => same(k, loc.city))) no('outside_area');
             } else if (unit === 'country') {
                 if (!loc || !loc.country) no('no_location');
                 else if ((c.area_countries || []).length && !(c.area_countries || []).some(k => same(k, loc.country))) no('outside_area');
-                else if (!tvKnown) no('tv_unknown');
-                else if (isNigeria(loc.country) ? (!tvState || (areaStates && !areaStates.has(tvState))) : !!tvState) no('outside_area');
+                else if (!here) no('no_location');
+                else if (isNigeria(loc.country) ? (here.abroad || (areaStates && !areaStates.has(here.state))) : !here.abroad) no('outside_area');
             }
 
             // 2. the cup
@@ -1072,7 +1167,7 @@ class TvLiveRoundService {
                 }
             }
         }
-        return out.map(({ reserve, group, place, venue, ...rest }) => rest);
+        return out.map(({ reserve, group, place, venue, placeState, placeSource, ...rest }) => rest);
     }
 
     // ============================================
@@ -1112,20 +1207,24 @@ class TvLiveRoundService {
             const clockMs = (await tvSettings.values())['party.question_seconds'] * 1000;
 
             await pool.query(
-                `UPDATE tv_live_entries e SET correct = s.c, total_ms = s.t
+                `UPDATE tv_live_entries e SET correct = s.c, wrong = s.w, total_ms = s.t
                  FROM (SELECT e2.user_id,
                               COUNT(a.id) FILTER (WHERE a.is_correct = true)::int AS c,
+                              COUNT(a.id) FILTER (WHERE a.chosen IS NOT NULL AND a.is_correct = false)::int AS w,
                               (COALESCE(SUM(a.answer_ms), 0) + ($2::int - COUNT(a.id)) * $3::int)::int AS t
                        FROM tv_live_entries e2 LEFT JOIN tv_answers a ON a.tv_player_id = e2.tv_player_id AND a.position <= $2
                        WHERE e2.round_id = $1 GROUP BY e2.user_id) s
                  WHERE e.round_id = $1 AND e.user_id = s.user_id`, [id, n, clockMs]);
 
+            // Race: each wrong answer takes off the penalty (a point, unless
+            // the TV admin page says otherwise). Standard: wrong answers cost nothing.
+            const penalty = round.style === 'race' ? Number((await tvSettings.values())['race.wrong_penalty']) || 1 : 0;
             const ranked = await pool.query(
                 `SELECT user_id, COALESCE(state, tv_state, 'Unknown') AS grp FROM tv_live_entries
                  WHERE round_id = $1 AND ranked
-                 ORDER BY correct DESC, total_ms ASC,
+                 ORDER BY correct - $3::int * wrong DESC, correct DESC, total_ms ASC,
                           ABS(tiebreak_value - $2::numeric) ASC NULLS LAST, tiebreak_ms ASC NULLS LAST, created_at, user_id`,
-                [id, round.tiebreak_answer == null ? 0 : round.tiebreak_answer]);
+                [id, round.tiebreak_answer == null ? 0 : round.tiebreak_answer, penalty]);
 
             const c = await this._campaign(round.campaign_id);
             const cut = c.kind === 'cup' && (round.through_count || round.state_quota);
@@ -1188,8 +1287,80 @@ class TvLiveRoundService {
                 board.rows.map(x => ({ userId: x.user_id, playerId: x.tv_player_id })));
         }
         this._forget(round.id);
-        logger.info(`📣 Live round ${round.id} final${made ? `: ${made} prize place(s)` : ''}`);
-        return { ok: true, prizes: made };
+        // A cup stage: everyone who went through, and the reserves, get an
+        // email with the next stage (the finish screen told them to look).
+        const told = c.kind === 'cup' ? await this._tellQualifiers(round, c).catch(e => {
+            logger.error(`Live round ${round.id}: qualifier emails failed — ${e.message}`);
+            return 0;
+        }) : 0;
+        // The website's ticker: the top 3 across the area, now the places are final.
+        try {
+            const top = await pool.query(
+                `SELECT user_id, place, outcome FROM tv_live_entries
+                 WHERE round_id = $1 AND ranked AND place BETWEEN 1 AND 3 ORDER BY place`, [round.id]);
+            // One after another: record() never throws, and a burst on a fresh
+            // server would race the ticker table's first set-up.
+            for (const x of top.rows) {
+                await activity().record('tv_game', x.user_id, { kind: 'live', campaign: c.name, place: x.place,
+                                                          cup: c.kind === 'cup', through: x.outcome === 'through' });
+            }
+        } catch (e) { logger.warn(`Live round ${round.id}: ticker not told — ${e.message}`); }
+        logger.info(`📣 Live round ${round.id} final${made ? `: ${made} prize place(s)` : ''}${told ? `, ${told} email(s) to qualifiers` : ''}`);
+        return { ok: true, prizes: made, emailed: told };
+    }
+
+    /**
+     * The players who went through (and the reserves), once the places are
+     * final: where they came, and when and where the next stage is. Sent once,
+     * when the round becomes final. Only the email on the account is used,
+     * never a made-up one. Returns how many were sent.
+     */
+    async _tellQualifiers(round, c) {
+        const who = await pool.query(
+            `SELECT e.outcome, e.place, e.reserve_order, u.email, u.username
+             FROM tv_live_entries e JOIN users u ON u.id = e.user_id
+             WHERE e.round_id = $1 AND e.outcome IN ('through','reserve') ORDER BY e.place`, [round.id]);
+        if (!who.rows.length) return 0;
+        const next = (await pool.query(
+            `SELECT name, stage, starts_at FROM tv_live_rounds
+             WHERE campaign_id = $1 AND status IN ('scheduled','open') AND starts_at > $2
+               AND ($3::int IS NULL OR stage > $3::int)
+             ORDER BY starts_at, id LIMIT 1`, [c.id, round.starts_at, round.stage || null])).rows[0] || null;
+        const finalAtVenue = next && c.final_where === 'venue' &&
+            !(await pool.query(`SELECT 1 FROM tv_live_rounds WHERE campaign_id = $1 AND status IN ('scheduled','open')
+                                 AND stage > $2 LIMIT 1`, [c.id, next.stage || 0])).rows.length;
+        const when = next
+            ? `${next.name}${next.stage ? ` (stage ${next.stage})` : ''} is on ${formatLagos(next.starts_at)} Lagos time.`
+            : 'We will email you the date and time of the next stage as soon as it is set.';
+        const where = finalAtVenue
+            ? 'It is played at a venue. We will contact you with the address and what to bring.'
+            : `Play it on any TV showing ${c.name} in the What's Up Trivia TV app, signed in to this account. The lobby opens 15 minutes before; entry closes a minute before the start.`;
+        const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+        let sent = 0;
+        for (const x of who.rows) {
+            const email = String(x.email || '').trim();
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || /@whatsuptrivia\.com$/i.test(email)) continue;
+            const through = x.outcome === 'through';
+            const subject = through ? `You're through: ${c.name}` : `You're a reserve: ${c.name}`;
+            const lines = [
+                `Hi ${x.username || 'there'},`,
+                through
+                    ? `You came ${x.place}${ordinalSuffix(x.place)} in ${round.name} and you're through to the next stage of ${c.name}.`
+                    : `You came ${x.place}${ordinalSuffix(x.place)} in ${round.name}. You're reserve number ${x.reserve_order}: if a player who went through doesn't play the next stage, you take their place.`,
+                when,
+                where,
+                `Your results: ${this.resultsUrl(round.id)}`,
+                'Good luck!',
+                "What's Up Trivia"
+            ];
+            const ok = await mail().send({
+                to: email, subject,
+                text: lines.join('\n\n'),
+                html: lines.map(l => `<p>${esc(l)}</p>`).join('')
+            });
+            if (ok) sent++;
+        }
+        return sent;
     }
 
     // ============================================
@@ -1243,6 +1414,7 @@ class TvLiveRoundService {
             ok: true,
             round: {
                 id: r.id, name: r.name, stage: r.stage, status: r.status, startsAt: r.starts_at, questions: r.questions,
+                style: r.style === 'race' ? 'race' : 'standard',
                 entryClosesAt: new Date(t.entryCloses), failReason: r.status === 'failed' ? r.fail_reason : null
             },
             campaign: {
@@ -1251,7 +1423,9 @@ class TvLiveRoundService {
             },
             rules: [
                 'Same questions, same order and same clock on every TV. Each TV shows the answers in its own order.',
-                'Places go by right answers, then total answer time as our server measured it. An exact tie goes to the closest answer to the number question at the end.',
+                r.style === 'race'
+                    ? 'Race: places go by right answers minus wrong ones, then right answers, then total answer time as our server measured it. An exact tie goes to the closest answer to the number question at the end.'
+                    : 'Places go by right answers, then total answer time as our server measured it. An exact tie goes to the closest answer to the number question at the end.',
                 'Only signed-in players whose TV and typed place are in the area are ranked. Everyone else plays for fun.',
                 `Results become final ${c.dispute_hours} hours after the round, once every question about them has an answer.`
             ]
@@ -1270,17 +1444,19 @@ class TvLiveRoundService {
         if (r.status === 'ranked' || r.status === 'final') {
             out.closesAt = new Date(new Date(r.ranked_at).getTime() + (Number(c.dispute_hours) || 48) * 3600e3);
             const board = await pool.query(
-                `SELECT e.place, e.correct, e.total_ms, e.outcome, e.reserve_order, e.state, e.tv_state, u.username
+                `SELECT e.place, e.correct, e.wrong, e.total_ms, e.outcome, e.reserve_order, e.state, e.tv_state, u.username
                  FROM tv_live_entries e JOIN users u ON u.id = e.user_id
                  WHERE e.round_id = $1 AND e.ranked AND e.place IS NOT NULL ORDER BY e.place LIMIT $2`, [r.id, BOARD_SHOWN]);
-            const row = x => ({ place: x.place, username: x.username, correct: x.correct, seconds: Math.round((x.total_ms || 0) / 100) / 10,
+            const row = x => ({ place: x.place, username: x.username, correct: x.correct,
+                                ...(r.style === 'race' ? { wrong: x.wrong || 0 } : {}),
+                                seconds: Math.round((x.total_ms || 0) / 100) / 10,
                                 outcome: x.outcome, reserveOrder: x.reserve_order, state: showState ? (x.state || x.tv_state || null) : null });
             out.board = board.rows.map(row);
             out.cut = c.kind === 'cup' && (r.through_count || r.state_quota)
                 ? (r.state_quota ? { perState: r.state_quota, reserves: r.reserves } : { top: r.through_count, reserves: r.reserves }) : null;
             if (words) {
                 const f = await pool.query(
-                    `SELECT e.place, e.correct, e.total_ms, e.outcome, e.reserve_order, e.state, e.tv_state, u.username
+                    `SELECT e.place, e.correct, e.wrong, e.total_ms, e.outcome, e.reserve_order, e.state, e.tv_state, u.username
                      FROM tv_live_entries e JOIN users u ON u.id = e.user_id
                      WHERE e.round_id = $1 AND e.ranked AND e.place IS NOT NULL AND LOWER(u.username) = LOWER($2)`, [r.id, words]);
                 out.found = f.rows[0] ? row(f.rows[0]) : null;

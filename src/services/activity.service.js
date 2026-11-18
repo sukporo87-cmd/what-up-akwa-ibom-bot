@@ -3,7 +3,7 @@
 // LIVE ACTIVITY FEED — social proof for the marketing site
 //
 // Records small, privacy-safe events (purchase, tournament join,
-// game completion, reward claim) and serves the most recent ones
+// game completion, reward claim, WUT TV games) and serves the most recent ones
 // to GET /api/public/activity/recent, which powers the toast
 // ticker on the website.
 //
@@ -48,7 +48,7 @@ class ActivityService {
       CREATE TABLE IF NOT EXISTS activity_events (
         id BIGSERIAL PRIMARY KEY,
         event_type TEXT NOT NULL CHECK (event_type IN
-          ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete')),
+          ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete','tv_game')),
         actor TEXT NOT NULL,
         event_text TEXT NOT NULL,
         badge TEXT,
@@ -68,14 +68,15 @@ class ActivityService {
       ALTER TABLE activity_events ADD COLUMN IF NOT EXISTS badge TEXT
     `);
     // 'user_join' was added after the first release, so the original
-    // CHECK constraint would reject it. Rebuild the constraint.
+    // CHECK constraint would reject it. Rebuild the constraint. ('tv_game',
+    // WUT TV, was added on 18 Nov 2026 the same way.)
     await pool.query(`
       ALTER TABLE activity_events DROP CONSTRAINT IF EXISTS activity_events_event_type_check
     `);
     await pool.query(`
       ALTER TABLE activity_events ADD CONSTRAINT activity_events_event_type_check
       CHECK (event_type IN
-        ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete'))
+        ('purchase','tournament_join','game_complete','reward_claim','user_join','tournament_rebuy','challenge_complete','tv_game'))
     `);
 
     this._schemaReady = true;
@@ -220,6 +221,27 @@ class ActivityService {
             : `played a ${size}-player Challenge${cats}`,
           badge: 'Challenge'
         };
+      }
+      case 'tv_game': {
+        // WUT TV (18 Nov 2026), signed-in players only (no username, no
+        // event). One line per game at most: the Party winner, a Solo round,
+        // or a top-3 place in a brand's Live Round once its results are final.
+        const campaign = extra.campaign ? String(extra.campaign).slice(0, 60) : null;
+        if (extra.kind === 'solo') {
+          const q = Math.min(Math.max(parseInt(extra.reached) || 1, 1), 15);
+          return { text: 'played Solo on WUT TV',
+                   badge: extra.complete ? 'All 15 \uD83C\uDFC6' : `Question ${q}` };
+        }
+        if (extra.kind === 'live') {
+          const n = parseInt(extra.place) || 0;
+          const ord = n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+          return { text: campaign ? `placed ${ord} in ${campaign} on WUT TV` : `placed ${ord} in a Live Round on WUT TV`,
+                   badge: extra.through ? 'Through \u2705' : (extra.cup ? 'Brand Cup' : 'Live Round') };
+        }
+        // A Party game: the winner.
+        return { text: campaign ? `won a ${campaign} game on WUT TV` : 'won a Party game on WUT TV',
+                 badge: extra.race ? 'Race \uD83C\uDFC1'
+                      : (extra.correct != null && extra.total ? `${extra.correct}/${extra.total}` : 'Party') };
       }
       case 'reward_claim':
         return { text: 'claimed a leaderboard reward' };

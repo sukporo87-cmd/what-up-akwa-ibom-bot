@@ -216,9 +216,16 @@ router.post('/complete-profile', requireWebAuth, async (req, res) => {
 
 router.get('/me', async (req, res) => {
     try {
-        const user = await webAuthService.getSessionUser(getToken(req));
-        if (!user) return res.json({ success: true, authenticated: false, user: null });
-        res.json({ success: true, authenticated: true, user: webAuthService.publicUser(user) });
+        const token = getToken(req);
+        const ctx = await webAuthService.getSessionContext(token);
+        if (!ctx) return res.json({ success: true, authenticated: false, user: null });
+        // A full sign-in renews the cookie each time it is checked. The play
+        // page keeps its sign-in in the browser and only renews the session on
+        // the server, so the cookie set at sign-in used to lapse after 30 days
+        // and the TV game page (which reads the cookie) treated a signed-in
+        // player as signed out. A Challenge-link session is never made a cookie.
+        if (!ctx.scope) setSessionCookie(res, token);
+        res.json({ success: true, authenticated: true, user: webAuthService.publicUser(ctx.user) });
     } catch (error) {
         fail(res, error);
     }

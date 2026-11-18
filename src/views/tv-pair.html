@@ -100,11 +100,15 @@ function api(method, path){
     .catch(function(){ return { success: false, reason: 'offline' }; });
 }
 
+function savedSignIn(){
+  try { var t = localStorage.getItem('wut_token'); return t ? { Authorization: 'Bearer ' + t } : {}; } catch(e){ return {}; }
+}
 function load(){
   if (!/^[A-Z0-9]{8}$/.test(CODE)){ S.screen = 'gone'; S.error = why('pair_expired'); return render(); }
   return Promise.all([
     api('GET', '/tv/pair/' + CODE),
-    fetch('/web/auth/me', { credentials: 'same-origin' }).then(function(r){ return r.json(); }).catch(function(){ return null; })
+    // The play page's sign-in on this phone, if any; it also renews the sign-in cookie.
+    fetch('/web/auth/me', { headers: savedSignIn(), credentials: 'same-origin' }).then(function(r){ return r.json(); }).catch(function(){ return null; })
   ]).then(function(out){
     var p = out[0], me = out[1];
     S.account = me && me.authenticated && me.user ? me.user : null;

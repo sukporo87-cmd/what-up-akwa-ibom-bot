@@ -107,7 +107,10 @@ var STATUS = {
 };
 
 function load(){
-  get('/web/auth/me').then(function(j){
+  // The play page's sign-in on this phone, if any; it also renews the sign-in cookie.
+  var signIn = {};
+  try { var t = localStorage.getItem('wut_token'); if (t) signIn.Authorization = 'Bearer ' + t; } catch(e){}
+  fetch('/web/auth/me', { headers: signIn, credentials: 'same-origin' }).then(json).catch(function(){ return { success: false, reason: 'offline' }; }).then(function(j){
     S.account = j && j.authenticated && j.user ? j.user : null;
     if (!S.account) return render();
     return get('/tv/payouts').then(function(p){

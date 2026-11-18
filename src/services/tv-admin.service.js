@@ -57,9 +57,9 @@ class TvAdminService {
         );
         const devices = await pool.query(
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
-                    d.tv_name, d.admin_name, d.approx_location, d.venue,
+                    d.tv_name, d.admin_name, d.approx_location, d.place_state, d.place_source, d.place_set_at, d.place_set_by, d.venue,
                     d.details->>'manufacturer' AS maker, d.details->>'model' AS model, d.details->>'deviceName' AS own_name,
-                    d.details->>'ownName' AS own_label,
+                    d.details->>'ownName' AS own_label, d.details->>'appBuild' AS app_build, d.details->>'channel' AS channel,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.created_at > NOW() - INTERVAL '7 days')::int AS rooms_7d,
                     (SELECT COUNT(*) FROM tv_solo_rounds s WHERE s.tv_device_id = d.id AND s.started_at > NOW() - INTERVAL '7 days')::int AS solo_7d
              FROM tv_devices d
@@ -75,10 +75,13 @@ class TvAdminService {
              ORDER BY s.last_active_at DESC`
         );
         const live = rooms.rows.filter(r => r.status === 'lobby' || r.status === 'playing');
-        const latestVersion = (await tvSettings.values())['app.latest_version'] || null;
+        const set = await tvSettings.values();
+        const latestVersion = set['app.latest_version'] || null;
         return {
             ok: true,
             latestVersion,
+            // The newest GitHub Android build: the TVs table marks the ones behind it.
+            latestBuild: set['app.latest_build'] || null,
             counts: {
                 liveRooms: live.length,
                 playersInLiveRooms: live.reduce((a, r) => a + Number(r.players || 0), 0),
@@ -121,7 +124,8 @@ class TvAdminService {
         await tvAuth.ensureSchema();
         const r = await pool.query(
             `SELECT d.id, d.label, d.platform, d.app_version, d.first_seen, d.last_seen, d.blocked, d.blocked_reason,
-                    d.tv_name, d.admin_name, d.admin_notes, d.details, d.details_at, d.approx_location, d.venue,
+                    d.tv_name, d.admin_name, d.admin_notes, d.details, d.details_at, d.approx_location,
+                    d.place_state, d.place_source, d.place_set_at, d.place_set_by, d.venue,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id)::int AS rooms_total,
                     (SELECT COUNT(*) FROM tv_rooms r WHERE r.tv_device_id = d.id AND r.status = 'finished')::int AS games_finished,
                     (SELECT COUNT(*) FROM tv_players p JOIN tv_rooms r ON r.id = p.tv_room_id

@@ -350,11 +350,17 @@ class TvSoloService {
         state.status = 'finished';
         state.phase = 'done';
         state.endReason = reason;
-        await pool.query(
+        const r = await pool.query(
             `UPDATE tv_solo_rounds SET status = 'finished', end_reason = $2, finished_at = NOW()
-             WHERE id = $1 AND status = 'playing'`,
+             WHERE id = $1 AND status = 'playing' RETURNING id`,
             [state.id, reason]
         );
+        // The website's ticker (Nov 18): a round a signed-in player played to
+        // its end (not one they quit or that never started). Never awaited.
+        if (r.rows[0] && state.userId && ['complete', 'wrong', 'timeout'].includes(reason)) {
+            require('./activity.service').record('tv_game', state.userId,
+                { kind: 'solo', reached: state.position, complete: reason === 'complete' });
+        }
     }
 
     /**

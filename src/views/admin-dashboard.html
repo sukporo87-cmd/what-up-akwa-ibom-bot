@@ -127,6 +127,9 @@
         .platform-card.web::before {
             background: var(--web-color);
         }
+        .platform-card.tv::before {
+            background: #f59e0b;
+        }
         .platform-card.telegram::before {
             background: var(--telegram-color);
         }
@@ -735,6 +738,35 @@
                 <div class="stat-item">
                     <span class="stat-value" id="web-revenue">₦0</span>
                     <span class="stat-label">Revenue</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- WUT TV Card (Nov 18, 2026): Party and Solo on TVs -->
+        <div class="platform-card tv">
+            <div class="platform-card-header">
+                <div>
+                    <div class="platform-icon" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">📺</div>
+                    <h3 style="margin-top: 10px;">WUT TV</h3>
+                    <div class="health-indicator" style="margin-top: 5px;" id="tv-split">Party and Solo</div>
+                </div>
+            </div>
+            <div class="platform-stats">
+                <div class="stat-item" title="Accounts that have played on a TV, signed in. Already counted on their own platform.">
+                    <span class="stat-value" id="tv-users">0</span>
+                    <span class="stat-label">Players</span>
+                </div>
+                <div class="stat-item" title="One per player who finished a Party game, guests included, plus each Solo round">
+                    <span class="stat-value" id="tv-games">0</span>
+                    <span class="stat-label">Games</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="tv-active">0%</span>
+                    <span class="stat-label">Active Rate</span>
+                </div>
+                <div class="stat-item" title="TVs seen in the last 7 days. TV money is on the Financials page.">
+                    <span class="stat-value" id="tv-tvs">0</span>
+                    <span class="stat-label">TVs (7 days)</span>
                 </div>
             </div>
         </div>
@@ -1614,6 +1646,14 @@
         document.getElementById('telegram-active').textContent = stats.telegram.active_rate + '%';
         document.getElementById('telegram-revenue').textContent = formatCurrency(stats.telegram.revenue);
         
+        // WUT TV
+        const tv = stats.tv || { users: 0, games: 0, active_rate: 0, tvs: 0, partyGames: 0, soloRounds: 0 };
+        document.getElementById('tv-users').textContent = tv.users;
+        document.getElementById('tv-games').textContent = (tv.games || 0).toLocaleString();
+        document.getElementById('tv-active').textContent = (tv.active_rate || 0) + '%';
+        document.getElementById('tv-tvs').textContent = tv.tvs || 0;
+        document.getElementById('tv-split').textContent = (tv.partyGames || 0).toLocaleString() + ' Party games · ' + (tv.soloRounds || 0).toLocaleString() + ' Solo rounds';
+
         // Total stats
         document.getElementById('total-users').textContent = stats.total.users;
         document.getElementById('total-games').textContent = stats.total.games.toLocaleString();

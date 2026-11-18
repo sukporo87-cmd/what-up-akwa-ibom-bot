@@ -29,7 +29,7 @@ const pool = require('../config/database');
 const tvAuth = require('./tv-auth.service');
 const tvCampaigns = require('./tv-campaign.service');
 const campaignPrizes = require('./tv-campaign-prize.service');
-const { stateFromPlace } = require('./tv-campaign.service');
+const { stateFromPlace, tvState } = require('./tv-campaign.service');
 
 const SPONSOR_AFTER = [3, 6, 9, 12];
 const MAX_PLAYERS_LISTED = 2000;
@@ -126,7 +126,7 @@ class TvCampaignReportService {
 
         // Where: TVs, by state and the busiest ones.
         const tvRows = (await pool.query(
-            `SELECT d.id, d.tv_name, d.admin_name, d.details->>'ownName' AS own_name, d.label, d.approx_location, d.venue,
+            `SELECT d.id, d.tv_name, d.admin_name, d.details->>'ownName' AS own_name, d.label, d.approx_location, d.place_state, d.venue,
                     COUNT(DISTINCT r.id) FILTER (WHERE r.started_at IS NOT NULL)::int AS games,
                     COUNT(DISTINCT p.user_id) FILTER (WHERE r.started_at IS NOT NULL)::int AS players
              FROM tv_rooms r
@@ -136,7 +136,7 @@ class TvCampaignReportService {
              GROUP BY d.id`, P)).rows;
         const states = new Map();
         for (const t of tvRows) {
-            const s = stateFromPlace(t.approx_location) || (t.approx_location ? 'Outside Nigeria' : 'Not known');
+            const s = tvState(t) || (t.approx_location ? 'Outside Nigeria' : 'Not known');
             if (!states.has(s)) states.set(s, { state: s, tvs: 0, games: 0 });
             const x = states.get(s);
             x.tvs++;
@@ -148,7 +148,7 @@ class TvCampaignReportService {
         const topTvs = tvRows.slice().sort((a, b) => b.games - a.games || b.players - a.players).slice(0, MAX_TVS_LISTED)
             .map(t => ({
                 name: t.venue ? tvName(t) : 'A home TV',
-                place: t.venue ? (t.approx_location || null) : (stateFromPlace(t.approx_location) || (t.approx_location ? 'Outside Nigeria' : null)),
+                place: t.venue ? (t.approx_location || null) : (tvState(t) || (t.approx_location ? 'Outside Nigeria' : null)),
                 venue: !!t.venue, games: Number(t.games) || 0, players: Number(t.players) || 0
             }));
 

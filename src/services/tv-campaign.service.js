@@ -104,6 +104,13 @@ const ACTIVE_TV_DAYS = 30;
 const KINDS = ['party', 'live', 'cup'];
 const AREA_UNITS = ['none', 'city', 'state', 'country'];
 const FINAL_WHERE = ['home', 'venue'];
+// Set by an admin, never by a player (Nov 18): the style of a campaign's
+// everyday party (a Live Round has its own, per round), and how long each
+// sponsor card stays on the TV.
+const STYLES = ['standard', 'race'];
+const SPONSOR_SECONDS_MIN = 3;
+const SPONSOR_SECONDS_MAX = 30;
+const SPONSOR_SECONDS_DEFAULT = 8;
 const liveRounds = () => require('./tv-live-round.service');
 
 // The artwork. Every picture but the logo is 16:9 and drawn full width, so it
@@ -114,11 +121,19 @@ const ART = Object.freeze({
     logo:  { label: 'Logo', required: true, formats: ['png'], minW: 400, minH: 100, ratio: null,
              help: 'PNG with a see-through background, at least 400 pixels wide.' },
     tile:  { label: 'Home-screen tile', required: true, formats: ['png', 'jpg'], minW: 960, minH: 540, ratio: 16 / 9,
-             help: '16:9, at least 960 × 540. Shown in the branded parties row on the TV home screen.' },
+             help: '16:9, at least 960 × 540. Shown in the campaigns row on the TV home screen.' },
     lobby: { label: 'Lobby background', required: true, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
              help: '16:9, at least 1920 × 1080. Behind the join code while players arrive.' },
     card:  { label: 'Sponsor card', required: true, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
-             help: '16:9, at least 1920 × 1080. Shown for a few seconds after every 3rd question.' },
+             help: '16:9, at least 1920 × 1080. Shown after every 3rd question, for the time set under Game.' },
+    // Up to three more, shown in turn with the first (Nov 18): a brand can say
+    // something different at each break. With fewer cards than breaks, they repeat.
+    card2: { label: 'Sponsor card 2', required: false, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
+             help: 'Optional. Shown at the 2nd break, then the cards take turns.' },
+    card3: { label: 'Sponsor card 3', required: false, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
+             help: 'Optional. Shown at the 3rd break.' },
+    card4: { label: 'Sponsor card 4', required: false, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
+             help: 'Optional. Shown at the 4th break.' },
     slide: { label: 'Leaderboard slide', required: false, formats: ['png', 'jpg'], minW: 1920, minH: 1080, ratio: 16 / 9,
              help: '16:9, at least 1920 × 1080. Optional: without it the lobby background is used.' }
 });
@@ -127,7 +142,7 @@ const MAX_ART_BYTES = 8 * 1024 * 1024;
 // What the TVs are sent: each picture resized by Cloudinary to the most a TV
 // draws it at, as a JPEG or PNG (a TV's browser may be years old), and kept in
 // this server's memory once fetched.
-const ART_WIDTH = Object.freeze({ logo: 800, tile: 960, lobby: 1920, card: 1920, slide: 1920 });
+const ART_WIDTH = Object.freeze({ logo: 800, tile: 960, lobby: 1920, card: 1920, card2: 1920, card3: 1920, card4: 1920, slide: 1920 });
 const ART_CACHE_BYTES = 40 * 1024 * 1024;
 const ART_FETCH_TIMEOUT_MS = 10000;
 
@@ -152,6 +167,18 @@ function stateFromPlace(place) {
     let s = parts[parts.length - 1].replace(/\(.*?\)/g, '').replace(/\bstate\b/i, '').trim().toLowerCase();
     if (s === 'abuja' || s === 'federal capital territory') s = 'fct';
     return STATE_SET.get(s) || null;
+}
+
+/**
+ * A TV's state, from the best source there is (032, Nov 18): an admin's
+ * setting, else the last player's phone there, else its internet address.
+ * The address alone is often wrong in Nigeria (mobile networks use the same
+ * addresses across the country), so it is only the last resort.
+ */
+function tvState(row) {
+    if (!row) return null;
+    if (row.place_state && STATE_SET.has(String(row.place_state).toLowerCase())) return STATE_SET.get(String(row.place_state).toLowerCase());
+    return stateFromPlace(row.approx_location);
 }
 
 const clean = (v, max) => {
@@ -246,7 +273,7 @@ class TvCampaignService {
         const [tvs, art, funds] = await Promise.all([
             pool.query(
                 `SELECT d.id, d.tv_name, d.admin_name, d.details->>'ownName' AS own_name, d.label,
-                        d.approx_location, d.venue, d.last_seen, d.blocked
+                        d.approx_location, d.place_state, d.place_source, d.venue, d.last_seen, d.blocked
                  FROM tv_campaign_tvs t JOIN tv_devices d ON d.id = t.tv_device_id
                  WHERE t.campaign_id = $1 ORDER BY d.id`, [c.id]),
             pool.query(`SELECT * FROM tv_campaign_art WHERE campaign_id = $1`, [c.id]),
@@ -291,11 +318,12 @@ class TvCampaignService {
             approvalReference: c.approval_reference, notes: c.notes,
             kind: c.kind || 'party', areaUnit: c.area_unit || 'state', areaCities: c.area_cities || [], areaCountries: c.area_countries || [],
             disputeHours: c.dispute_hours || 48, finalWhere: c.final_where || 'home', featuredOrder: c.featured_order || null,
+            style: STYLES.includes(c.style) ? c.style : 'standard', sponsorSeconds: this.sponsorSeconds(c),
             createdBy: c.created_by, createdAt: c.created_at, updatedBy: c.updated_by, updatedAt: c.updated_at,
             publishedBy: c.published_by, publishedAt: c.published_at, endedAt: c.ended_at,
             tvs: tvs.map(t => ({
                 id: t.id, name: tvName(t), serverName: t.tv_name || null, place: t.approx_location || null,
-                state: stateFromPlace(t.approx_location), venue: !!t.venue, lastSeen: t.last_seen, blocked: !!t.blocked
+                state: tvState(t), placeSource: t.place_source || null, venue: !!t.venue, lastSeen: t.last_seen, blocked: !!t.blocked
             })),
             art: artBySlot,
             funds: funds.map(f => ({
@@ -316,7 +344,7 @@ class TvCampaignService {
      */
     async _reach(c, chosenIds) {
         const r = await pool.query(
-            `SELECT id, approx_location, last_seen, blocked FROM tv_devices
+            `SELECT id, approx_location, place_state, last_seen, blocked FROM tv_devices
              WHERE blocked = false AND last_seen > NOW() - ($1 || ' days')::interval`,
             [String(ACTIVE_TV_DAYS)]
         );
@@ -326,7 +354,7 @@ class TvCampaignService {
         let inRegions = 0;
         const all = new Set();
         for (const d of r.rows) {
-            const st = stateFromPlace(d.approx_location);
+            const st = tvState(d);
             const inArea = audience === 'all' || (st && (audience === 'nigeria' || states.has(st)));
             if (inArea) { inRegions++; all.add(d.id); }
             if (chosen.has(Number(d.id))) all.add(d.id);
@@ -651,6 +679,19 @@ class TvCampaignService {
             const v = intOrNull(body.featuredOrder);
             if (v !== null && (!Number.isInteger(v) || v < 1 || v > 99)) return err('The place in the carousel is a number from 1 to 99, or blank');
             set.featured_order = v;
+        }
+
+        // The game (031): the everyday party's style, and the sponsor card's time.
+        if (body.style !== undefined) {
+            if (!STYLES.includes(body.style)) return err('Choose Standard or Race');
+            set.style = body.style;
+        }
+        if (body.sponsorSeconds !== undefined) {
+            const v = intOrNull(body.sponsorSeconds);
+            if (!Number.isInteger(v) || v < SPONSOR_SECONDS_MIN || v > SPONSOR_SECONDS_MAX) {
+                return err(`A sponsor card shows for ${SPONSOR_SECONDS_MIN} to ${SPONSOR_SECONDS_MAX} seconds`);
+            }
+            set.sponsor_seconds = v;
         }
 
         // Only what really changes is written (and logged): the page sends a whole section at a time.
@@ -978,18 +1019,19 @@ class TvCampaignService {
     async options() {
         await tvAuth.ensureSchema();
         const r = await pool.query(
-            `SELECT id, tv_name, admin_name, details->>'ownName' AS own_name, label, approx_location, venue, platform, last_seen, blocked
+            `SELECT id, tv_name, admin_name, details->>'ownName' AS own_name, label, approx_location, place_state, place_source,
+                    venue, platform, last_seen, blocked
              FROM tv_devices ORDER BY last_seen DESC LIMIT 2000`
         );
         const active = Date.now() - ACTIVE_TV_DAYS * 864e5;
         const perState = new Map(NIGERIAN_STATES.map(s => [s, 0]));
         const tvs = r.rows.map(d => {
-            const st = stateFromPlace(d.approx_location);
+            const st = tvState(d);
             const recent = !d.blocked && d.last_seen && new Date(d.last_seen).getTime() > active;
             if (st && recent) perState.set(st, perState.get(st) + 1);
             return {
                 id: d.id, name: tvName(d), tvName: d.tv_name, adminName: d.admin_name, ownName: d.own_name || null,
-                place: d.approx_location || null, state: st, venue: !!d.venue, platform: d.platform,
+                place: d.approx_location || null, state: st, placeSource: d.place_source || null, venue: !!d.venue, platform: d.platform,
                 lastSeen: d.last_seen, blocked: !!d.blocked, recent
             };
         });
@@ -1030,9 +1072,9 @@ class TvCampaignService {
     async availableFor(deviceId, { q } = {}) {
         try {
             await tvAuth.ensureSchema();
-            const d = await pool.query(`SELECT id, approx_location FROM tv_devices WHERE id = $1`, [Number(deviceId)]);
+            const d = await pool.query(`SELECT id, approx_location, place_state FROM tv_devices WHERE id = $1`, [Number(deviceId)]);
             if (!d.rows[0]) return [];
-            const state = stateFromPlace(d.rows[0].approx_location);
+            const state = tvState(d.rows[0]);
             const r = await pool.query(
                 `SELECT c.* FROM tv_campaigns c
                  WHERE c.status = 'published' AND c.starts_at <= NOW() AND c.ends_at > NOW()
@@ -1157,6 +1199,9 @@ class TvCampaignService {
             pinned: !!c.pinned, endsAt: c.ends_at,
             // Live Rounds and the Brand Cup: the kind, the carousel place, and the next round.
             kind: c.kind || 'party', featuredOrder: c.featured_order || null,
+            // Set on the admin page, never by a player: the everyday party's
+            // style, and how long each sponsor card shows.
+            style: STYLES.includes(c.style) ? c.style : 'standard', sponsorSeconds: this.sponsorSeconds(c),
             live: c.kind && c.kind !== 'party' ? {
                 area: liveRounds().areaLabel(c), unit: c.area_unit || 'state', next: (live && live.next) || null
             } : null,
@@ -1169,9 +1214,17 @@ class TvCampaignService {
             termsVersion: c.terms_version,
             art: {
                 logo: art.logo || null, tile: art.tile || null, lobby: art.lobby || null,
-                card: art.card || null, slide: art.slide || art.lobby || null
+                card: art.card || null, slide: art.slide || art.lobby || null,
+                // More sponsor cards, shown in turn with the first.
+                card2: art.card2 || null, card3: art.card3 || null, card4: art.card4 || null
             }
         };
+    }
+
+    /** How long each sponsor card shows, in seconds (031). */
+    sponsorSeconds(c) {
+        const v = Number(c && c.sponsor_seconds);
+        return Number.isInteger(v) && v >= SPONSOR_SECONDS_MIN && v <= SPONSOR_SECONDS_MAX ? v : SPONSOR_SECONDS_DEFAULT;
     }
 
     /** What a phone shows, from the TV view a room carries. */
@@ -1184,7 +1237,7 @@ class TvCampaignService {
             prizeText: v.prize && v.prize.text, prizeShort: v.prize && v.prize.short,
             rules: v.rules, category: v.category, offerText: v.offerText,
             offerUrl: v.offerUrl ? v.offerUrl + (v.offerUrl.includes('?') ? '&' : '?') + 'from=phone' : null, endsAt: v.endsAt,
-            kind: v.kind || 'party'
+            kind: v.kind || 'party', style: v.style || 'standard'
         };
     }
 
@@ -1404,5 +1457,6 @@ class TvCampaignService {
 module.exports = new TvCampaignService();
 module.exports.TvCampaignService = TvCampaignService;
 module.exports.stateFromPlace = stateFromPlace;
+module.exports.tvState = tvState;
 module.exports.ART = ART;
 module.exports.FINDER_TTL_SECONDS = FINDER_TTL_SECONDS;

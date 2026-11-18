@@ -346,9 +346,48 @@ router.get('/api/stats/platform-overview', authenticateAdmin, async (req, res) =
       };
     });
     
+    // WUT TV (Nov 18, 2026). TV play is kept in the TV tables, not in each
+    // player's total_games_played (that counter drives the Classic figures:
+    // activated users, power users, by city), so it is counted here on its own.
+    //   games    one per player who finished a Party game (guests too, as a
+    //            Classic game is one per player), plus each Solo round played
+    //   users    accounts that have played on a TV, signed in. They are
+    //            already counted on their own platform, so the total does
+    //            not add them again
+    //   tvs      TVs seen in the last 7 days (in the revenue slot: TV money is
+    //            on the Financials page)
+    stats.tv = { users: 0, games: 0, active_rate: 0, tvs: 0, partyGames: 0, soloRounds: 0 };
+    try {
+      const tv = (await pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM tv_players p JOIN tv_rooms r ON r.id = p.tv_room_id
+             WHERE r.status = 'finished' AND p.final_rank IS NOT NULL) AS party_player_games,
+          (SELECT COUNT(*) FROM tv_rooms WHERE status = 'finished') AS party_games,
+          (SELECT COUNT(*) FROM tv_solo_rounds WHERE status = 'finished'
+             AND COALESCE(end_reason, '') NOT IN ('replaced', 'no_questions')) AS solo_rounds,
+          (SELECT COUNT(*) FROM (SELECT user_id FROM tv_players WHERE user_id IS NOT NULL
+                                 UNION SELECT user_id FROM tv_solo_rounds WHERE user_id IS NOT NULL) a) AS accounts,
+          (SELECT COUNT(*) FROM (SELECT user_id FROM tv_players WHERE user_id IS NOT NULL AND joined_at >= NOW() - INTERVAL '7 days'
+                                 UNION SELECT user_id FROM tv_solo_rounds WHERE user_id IS NOT NULL AND started_at >= NOW() - INTERVAL '7 days') b) AS active_accounts,
+          (SELECT COUNT(*) FROM tv_devices WHERE last_seen >= NOW() - INTERVAL '7 days') AS tvs_7d
+      `)).rows[0];
+      const accounts = parseInt(tv.accounts) || 0;
+      stats.tv = {
+        users: accounts,
+        games: (parseInt(tv.party_player_games) || 0) + (parseInt(tv.solo_rounds) || 0),
+        active_rate: accounts > 0 ? Math.round(((parseInt(tv.active_accounts) || 0) / accounts) * 100) : 0,
+        tvs: parseInt(tv.tvs_7d) || 0,
+        partyGames: parseInt(tv.party_games) || 0,
+        soloRounds: parseInt(tv.solo_rounds) || 0
+      };
+    } catch (e) {
+      // No TV tables yet (a fresh database): the TV card shows nothing.
+      logger.warn('Platform overview: TV numbers not read: ' + e.message);
+    }
+
     // Calculate totals
     stats.total.users = stats.whatsapp.users + stats.telegram.users + stats.web.users;
-    stats.total.games = stats.whatsapp.games + stats.telegram.games + stats.web.games;
+    stats.total.games = stats.whatsapp.games + stats.telegram.games + stats.web.games + stats.tv.games;
     stats.total.revenue = stats.whatsapp.revenue + stats.telegram.revenue + stats.web.revenue;
     stats.total.active_rate = stats.total.users > 0
       ? Math.round(((stats.whatsapp.users * stats.whatsapp.active_rate / 100 + 

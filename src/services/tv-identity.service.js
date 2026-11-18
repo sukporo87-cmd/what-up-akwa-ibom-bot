@@ -58,10 +58,12 @@ const GENERIC_NAMES = Object.freeze([
 // Strings only, each capped; anything not listed is dropped.
 const DETAIL_FIELDS = Object.freeze({
     manufacturer: 60, brand: 60, model: 60, device: 60, product: 60,
-    androidVersion: 20, sdk: 6, deviceName: 60, screen: 30, appBuild: 20
+    androidVersion: 20, sdk: 6, deviceName: 60, screen: 30, appBuild: 20, channel: 20
 });
 
 const PLACES_FILE = path.join(__dirname, '..', 'data', 'tv-ng-ip-places.json');
+const { NIGERIAN_STATES } = require('../utils/ng-places');
+const STATE_SET = new Map(NIGERIAN_STATES.map(x => [x.toLowerCase(), x]));
 
 function clean(v, max) {
     if (v == null) return null;
@@ -247,7 +249,8 @@ class TvIdentityService {
      * What the TV's home screen needs to know, asked each time the TV comes
      * back to it (batch 3): when to show the attract screen, whether this is
      * a venue TV, and whether a newer app is out. The version compared is
-     * the one the TV reported when the app started.
+     * the one the TV reported when the app started. Also the admin's
+     * home-screen message, when one is showing (Nov 18).
      */
     async home(deviceId) {
         await tvAuth.ensureSchema();
@@ -256,12 +259,55 @@ class TvIdentityService {
         if (!row) return { ok: false, reason: 'unknown_device' };
         const set = await tvSettings.values();
         const latest = set['app.latest_version'] || null;
+        const text = tvSettings.messageNow(set);
         return {
             ok: true,
             attract: { idleSeconds: set['attract.idle_seconds'], venue: row.venue === true },
             latestVersion: latest,
-            update: latest && tvSettings.newer(latest, row.app_version) ? latest : null
+            update: latest && tvSettings.newer(latest, row.app_version) ? latest : null,
+            // App 1.0.0 build 26 on: the newest GitHub build, which only a
+            // GitHub build of the app compares with its own; and the admin's
+            // home-screen line, if one is showing now.
+            latestBuild: set['app.latest_build'] || null,
+            message: text ? { text } : null
         };
+    }
+
+    /**
+     * A player's phone in this TV's room shared its location (032, Nov 18):
+     * the TV is in that state. The last phone wins. A place an admin set is
+     * never changed this way.
+     */
+    async learnPlace(deviceId, state) {
+        const st = STATE_SET.get(String(state || '').toLowerCase());
+        if (!st) return { ok: false };
+        await pool.query(
+            `UPDATE tv_devices SET place_state = $2, place_source = 'phones', place_set_at = NOW(), place_set_by = NULL
+             WHERE id = $1 AND place_source IS DISTINCT FROM 'admin'`, [Number(deviceId), st]);
+        return { ok: true, state: st };
+    }
+
+    /**
+     * An admin sets the TV's state, for a venue or a TV the team knows
+     * (032). Empty clears it: players' phones (and then the TV's internet
+     * address) decide again. A Live Round trusts a state set here for a
+     * player whose phone did not share its location.
+     */
+    async setPlace(deviceId, state, admin) {
+        await tvAuth.ensureSchema();
+        const id = Number(deviceId);
+        const r = await pool.query(`SELECT id FROM tv_devices WHERE id = $1`, [id]);
+        if (!r.rows[0]) return { ok: false, error: 'No such TV' };
+        if (state == null || String(state).trim() === '') {
+            await pool.query(`UPDATE tv_devices SET place_state = NULL, place_source = NULL, place_set_at = NOW(), place_set_by = $2 WHERE id = $1`,
+                [id, admin || 'admin']);
+            return { ok: true, state: null };
+        }
+        const st = STATE_SET.get(String(state).trim().toLowerCase());
+        if (!st) return { ok: false, error: 'Choose a Nigerian state' };
+        await pool.query(`UPDATE tv_devices SET place_state = $2, place_source = 'admin', place_set_at = NOW(), place_set_by = $3 WHERE id = $1`,
+            [id, st, admin || 'admin']);
+        return { ok: true, state: st };
     }
 
     /** What the admin page calls a TV: the admin's name, else its own, else the server's, else its number. */

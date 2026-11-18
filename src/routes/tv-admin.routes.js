@@ -192,6 +192,34 @@ router.put('/api/app-version', requireAdmin, async (req, res) => {
     } catch (e) { return fail(res, 'app version', e); }
 });
 
+// A TV's state, set by an admin (032): for a venue, or a TV the team knows.
+router.put('/api/devices/:id(\\d+)/place', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const out = await require('../services/tv-identity.service').setPlace(id, (req.body || {}).state, who(req));
+        if (out.ok) await log(req, 'tv_device_place_set', { deviceId: id, state: out.state });
+        return send(res, out);
+    } catch (e) { return fail(res, 'place', e); }
+});
+
+router.put('/api/app-build', requireAdmin, async (req, res) => {
+    try {
+        const out = await tvSettings.setLatestBuild((req.body || {}).build, who(req));
+        if (out.ok) await log(req, 'tv_app_build_set', { build: out.build });
+        return send(res, out);
+    } catch (e) { return fail(res, 'app build', e); }
+});
+
+// The line every TV shows on its home screen (Nov 18).
+router.put('/api/home-message', requireAdmin, async (req, res) => {
+    try {
+        const b = req.body || {};
+        const out = await tvSettings.setHomeMessage({ text: b.text, from: b.from, until: b.until }, who(req));
+        if (out.ok) await log(req, 'tv_home_message_set', { message: out.message });
+        return send(res, out);
+    } catch (e) { return fail(res, 'home message', e); }
+});
+
 router.post('/api/rooms/:id(\\d+)/close', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -333,7 +361,7 @@ router.post('/api/payouts/:id(\\d+)/release', requireAdmin, requireFinance, asyn
 // is recorded by a Super Admin or Finance Officer only, as on Financials.
 // ============================================
 const tvCampaigns = require('../services/tv-campaign.service');
-const CAMPAIGN_ART = /^(logo|tile|lobby|card|slide)$/;
+const CAMPAIGN_ART = /^(logo|tile|lobby|card|card2|card3|card4|slide)$/;
 
 router.get('/campaigns', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

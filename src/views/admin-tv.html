@@ -91,6 +91,10 @@
   .verrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .verrow input { width: 120px; background: #fff; color: var(--text); border: 1px solid var(--border);
     border-radius: 9px; padding: 7px 10px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+  .msgrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .msgrow input { flex: 1 1 320px; min-width: 0; background: #fff; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font: inherit; }
+  .msgrow input:focus { outline: none; border-color: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
+  .verrow input[type="datetime-local"] { width: auto; }
   .verrow input:focus { outline: none; border-color: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
   .players-row td { background: var(--surface2); }
   .players-row table td { padding: 6px 8px; font-size: 12.5px; }
@@ -200,7 +204,7 @@
     <button class="tab" data-tab="categories">Party categories</button>
     <button class="tab" data-tab="playnow">Solo Mode questions</button>
     <button class="tab" data-tab="prizes">Prizes</button>
-    <a class="tab" href="/admin/tv/campaigns" style="text-decoration:none">Branded parties →</a>
+    <a class="tab" href="/admin/tv/campaigns" style="text-decoration:none">Campaigns →</a>
   </div>
 
   <!-- ===== Rooms and TVs ===== -->
@@ -230,8 +234,13 @@
       <div id="numbers"><div class="loading">Loading…</div></div>
     </div>
     <div class="card">
+      <h2>Home screen message</h2>
+      <div class="hint">One line on every TV's home screen, under the logo: an upcoming Live Round, a holiday greeting, planned maintenance. Up to 120 characters. Leave the start or the end empty to show it now, or until you clear it. Times are <b>Lagos time</b>. TVs pick it up when they next show the home screen. Needs TV app 1.0.0 build 26 or newer.</div>
+      <div id="homemsg"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
       <h2>Newest TV app</h2>
-      <div class="hint">When a new build has passed on a TV, write its version here. Every TV with an older app then shows <b>“A new version is available”</b> on its home screen, until it is updated. Leave it empty and no TV is told anything. The TVs table marks the ones that are behind.</div>
+      <div class="hint">For Android TVs that installed the app from our GitHub link (Downloader code 6314501). After you put a new APK on GitHub, write its build number here, for example <b>26</b>. Those TVs then show <b>“A newer version is available. Update the app.”</b> on their home screen until they are updated. TVs from the Play Store or the LG Content Store never show it: their stores update them. Leave it empty and no TV is told anything. The TVs table marks the ones that are behind.</div>
       <div id="appver"><div class="loading">Loading…</div></div>
     </div>
   </section>
@@ -272,7 +281,7 @@
       <div class="scroll" id="prizeList"><div class="loading">Loading…</div></div>
     </div>
   </section>
-  <div class="credit">Approximate places: <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a></div>
+  <div class="credit">Approximate places: <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a> · State boundaries: <a href="https://data.grid3.org" target="_blank" rel="noopener">GRID3 Nigeria</a> via <a href="https://www.geoboundaries.org" target="_blank" rel="noopener">geoBoundaries</a> (CC BY 4.0)</div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -336,7 +345,7 @@ async function loadOverview() {
   document.getElementById('sPlayers').textContent = j.counts.playersInLiveRooms;
   document.getElementById('sTvs').textContent = j.counts.tvsSeenToday;
   document.getElementById('sSigned').textContent = j.counts.signedIn;
-  latestVersion = j.latestVersion || null;
+  latestBuild = j.latestBuild || null;
   renderRooms(j.rooms); renderSessions(j.sessions); renderDevices(j.devices);
 }
 
@@ -417,7 +426,7 @@ function maker(d) {
 }
 
 // The newest app version an admin has set (Settings), and whether a TV is behind it.
-let latestVersion = null;
+let latestBuild = null;
 function newer(a, b) {
   const re = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
   if (!re.test(String(a || '')) || !re.test(String(b || ''))) return false;
@@ -425,19 +434,29 @@ function newer(a, b) {
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
   return false;
 }
-function behind(v) { return !!latestVersion && newer(latestVersion, v); }
+// Behind: a GitHub Android build older than the newest one set on the Settings tab.
+function behind(d) { return !!latestBuild && d.channel === 'github' && Number(d.app_build) > 0 && Number(d.app_build) < latestBuild; }
+function appText(d) { const parts = [d.app_build, CHANNEL[d.channel] || d.channel].filter(Boolean); return (d.app_version || '—') + (parts.length ? ' (' + parts.join(', ') + ')' : ''); }
+const CHANNEL = { github: 'GitHub', play: 'Play Store' };
+// Where a TV is (032): set by an admin, else from its players' phones, else
+// its internet address, which is often wrong in Nigeria.
+const NG_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","FCT","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara"];
+function placeText(d) {
+  if (d.place_state) return d.place_state + (d.place_source === 'admin' ? ' (set by an admin)' : ' (from players\u2019 phones)');
+  return d.approx_location ? d.approx_location + ' (from its internet address, often wrong)' : '';
+}
 
 function renderDevices(rows) {
   const el = document.getElementById('devices');
   if (!rows.length) { el.innerHTML = '<div class="empty">No TV has registered yet.</div>'; return; }
-  el.innerHTML = '<table><thead><tr><th>TV</th><th>Model</th><th>Approximate place</th><th>App</th><th>Last seen</th><th class="num">Rooms 7d</th><th class="num">Solo 7d</th><th>Allowed</th></tr></thead><tbody>' +
+  el.innerHTML = '<table><thead><tr><th>TV</th><th>Model</th><th>Place</th><th>App</th><th>Last seen</th><th class="num">Rooms 7d</th><th class="num">Solo 7d</th><th>Allowed</th></tr></thead><tbody>' +
     rows.map(d => '<tr><td><span class="tvname" data-tv="' + esc(d.id) + '">' + esc(tvName(d)) + '</span> <span class="dim">#' + esc(d.id) + '</span>' +
       (d.admin_name && screenName(d) ? '<div class="dim">shows on screen as ' + esc(screenName(d)) + '</div>' : '') +
       (d.venue ? ' <span class="pill venue">Venue</span>' : '') +
       (d.blocked ? '<div><span class="pill warn">Blocked</span> <span class="dim">' + esc(d.blocked_reason || '') + '</span></div>' : '') + '</td>' +
       '<td>' + (maker(d) ? esc(maker(d)) : '<span class="dim">not reported yet</span>') + '</td>' +
-      '<td>' + (d.approx_location ? esc(d.approx_location) : '<span class="dim">—</span>') + '</td>' +
-      '<td class="mono dim">' + esc(d.app_version || '—') + (behind(d.app_version) ? ' <span class="pill update">update</span>' : '') + '</td><td>' + esc(ago(d.last_seen)) + '</td>' +
+      '<td>' + (placeText(d) ? esc(placeText(d)) : '<span class="dim">—</span>') + '</td>' +
+      '<td class="mono dim">' + esc(appText(d)) + (behind(d) ? ' <span class="pill update">update</span>' : '') + '</td><td>' + esc(ago(d.last_seen)) + '</td>' +
       '<td class="num">' + esc(d.rooms_7d) + '</td><td class="num">' + esc(d.solo_7d) + '</td>' +
       '<td><label class="sw" title="' + (d.blocked ? 'Blocked: switch on to allow' : 'Allowed: switch off to block') + '"><input type="checkbox" data-dev="' + esc(d.id) + '" data-name="' + esc(tvName(d)) + '" ' + (d.blocked ? '' : 'checked') + '><span class="track"></span></label></td></tr>').join('') +
     '</tbody></table>';
@@ -481,10 +500,17 @@ async function openTv(id) {
       '<div class="facts">' +
         fact('Maker', x.manufacturer) + fact('Brand', x.brand && x.brand !== x.manufacturer ? x.brand : null) + fact('Model', x.model) +
         fact('Its own name', x.deviceName) + fact('Backup name', d.tv_name) + fact('Android', x.androidVersion ? x.androidVersion + (x.sdk ? ' (API ' + x.sdk + ')' : '') : null) +
-        fact('Screen', x.screen) + fact('Platform', PLATFORM[d.platform] || d.platform) + fact('App', d.app_version ? d.app_version + (behind(d.app_version) ? ' (update to ' + latestVersion + ')' : '') : null) +
-        fact('Approximate place', d.approx_location) + fact('First seen', when(d.first_seen)) + fact('Last seen', ago(d.last_seen)) +
+        fact('Screen', x.screen) + fact('Platform', PLATFORM[d.platform] || d.platform) + fact('App', d.app_version ? appText({ ...d, app_build: x.appBuild, channel: x.channel }) + (behind({ app_build: x.appBuild, channel: x.channel }) ? ' (update to build ' + latestBuild + ')' : '') : null) +
+        fact('Place', placeText(d) || null) + fact('Internet address says', d.approx_location) + fact('First seen', when(d.first_seen)) + fact('Last seen', ago(d.last_seen)) +
         fact('Details reported', d.details_at ? when(d.details_at) : 'not yet: needs app 0.7.0') +
       '</div>' +
+      '<div class="section-title">Where this TV is</div>' +
+      '<div class="field"><label for="tvPlace">State</label><div class="verrow"><select id="tvPlace"><option value="">Not set: from players\u2019 phones, else the internet address</option>' +
+        NG_STATES.map(x => '<option value="' + esc(x) + '"' + (d.place_source === 'admin' && d.place_state === x ? ' selected' : '') + '>' + esc(x) + '</option>').join('') +
+        '</select><button class="btn primary" id="tvPlaceSave">Save</button></div>' +
+        '<div class="dim" style="margin-top:6px">Set it for a venue, or a TV you know. Campaigns for a state reach this TV by it, and in a Live Round a player here whose phone did not share its location is placed by it. ' +
+        (d.place_source === 'admin' ? 'Set by ' + esc(d.place_set_by || 'admin') + ', ' + esc(when(d.place_set_at)) + '.' :
+         d.place_source === 'phones' ? 'Last found from a player\u2019s phone ' + esc(when(d.place_set_at)) + '.' : '') + '</div></div>' +
       '<div class="section-title">Venue TV</div>' +
       '<div class="venuebox"><label class="sw"><input type="checkbox" id="tvVenue" ' + (d.venue ? 'checked' : '') + '><span class="track"></span></label>' +
         '<div class="txt"><b>For a TV in a bar, lounge or shop, left on for anyone to walk up to.</b> When nobody is using it, its attract screen shows a live Party code that anyone can scan to start a game, and the screen stays on. ' +
@@ -515,6 +541,11 @@ async function openTv(id) {
     toast(r && r.success ? 'Saved' : (r && r.error) || 'Could not save', !!(r && r.success));
     if (r && r.success) { close(); loadOverview(); }
   });
+  o.querySelector('#tvPlaceSave').addEventListener('click', async () => {
+    const r = await api(`/devices/${Number(d.id)}/place`, { method: 'PUT', body: JSON.stringify({ state: o.querySelector('#tvPlace').value }) });
+    toast(r && r.success ? (r.state ? 'Saved: ' + r.state : 'Cleared: players\u2019 phones decide again') : (r && r.error) || 'Could not save', !!(r && r.success));
+    if (r && r.success) { close(); loadOverview(); }
+  });
   o.querySelector('#tvVenue').addEventListener('change', async e => {
     const on = e.target.checked;
     const r = await api('/devices/' + encodeURIComponent(d.id) + '/venue', { method: 'PUT', body: JSON.stringify({ venue: on }) });
@@ -541,20 +572,53 @@ async function loadSettings() {
   const j = await api('/settings');
   if (!j || !j.success) { toast((j && j.error) || 'Could not load the settings', false); return; }
   settings = j;
-  renderNumbers(); renderCats(); renderPlayNow(); renderAppVersion();
+  renderNumbers(); renderCats(); renderPlayNow(); renderAppVersion(); renderHomeMessage();
+}
+
+// Lagos time (UTC+1 all year) for a datetime-local box, and back.
+function lagosInput(iso) {
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() + 3600e3);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 16);
+}
+
+function renderHomeMessage() {
+  const el = document.getElementById('homemsg');
+  const h = settings.homeMessage || {};
+  const m = h.message;
+  const status = !m ? 'No message: the TVs show none.'
+    : h.showingNow ? 'Showing now on every TV' + (m.until ? ', until ' + esc(when(m.until)) : '') + '.'
+    : (m.from && new Date(m.from).getTime() > Date.now() ? 'Set. It starts showing ' + esc(when(m.from)) + '.' : 'Its end has passed: no TV shows it.');
+  el.innerHTML = '<div class="msgrow"><input id="msgText" maxlength="120" placeholder="e.g. Sunny Sunday Live Round, this Sunday at 8pm" value="' + esc(m ? m.text : '') + '">' +
+      '<span class="dim" id="msgLeft"></span></div>' +
+    '<div class="verrow" style="margin-top:10px"><label class="dim">From <input type="datetime-local" id="msgFrom" value="' + esc(lagosInput(m && m.from)) + '"></label>' +
+      '<label class="dim">Until <input type="datetime-local" id="msgUntil" value="' + esc(lagosInput(m && m.until)) + '"></label>' +
+      '<button class="btn primary" id="msgSave">Save</button><button class="btn" id="msgClear"' + (m ? '' : ' disabled') + '>Clear</button></div>' +
+    '<div class="dim" style="margin-top:8px">' + status + (m ? ' Set by ' + esc(h.updatedBy || 'admin') + ', ' + esc(when(h.updatedAt)) + '.' : '') + '</div>';
+  const text = document.getElementById('msgText'), left = document.getElementById('msgLeft');
+  const count = () => { left.textContent = (120 - text.value.length) + ' left'; };
+  text.addEventListener('input', count); count();
+  const save = async body => {
+    const j = await api('/home-message', { method: 'PUT', body: JSON.stringify(body) });
+    toast(j && j.success ? (j.message ? 'Saved. TVs show it when they next show the home screen.' : 'Cleared. No TV shows a message.') : (j && j.error) || 'Could not save', !!(j && j.success));
+    if (j && j.success) loadSettings();
+  };
+  document.getElementById('msgSave').addEventListener('click', () => save({
+    text: text.value, from: document.getElementById('msgFrom').value, until: document.getElementById('msgUntil').value }));
+  document.getElementById('msgClear').addEventListener('click', () => save({ text: '' }));
 }
 
 function renderAppVersion() {
   const el = document.getElementById('appver');
-  const a = settings.app || { latestVersion: '' };
-  el.innerHTML = '<div class="verrow"><input id="verIn" maxlength="11" placeholder="e.g. 0.9.0" value="' + esc(a.latestVersion || '') + '">' +
-    '<button class="btn primary" id="verSave">Save</button><button class="btn" id="verClear"' + (a.latestVersion ? '' : ' disabled') + '>Clear</button></div>' +
-    '<div class="dim" style="margin-top:8px">' + (a.latestVersion
-      ? 'TVs older than <b>' + esc(a.latestVersion) + '</b> show the notice. Set by ' + esc(a.updatedBy || 'admin') + ', ' + esc(when(a.updatedAt)) + '.'
+  const a = settings.app || {};
+  el.innerHTML = '<div class="verrow"><input id="verIn" type="number" min="1" max="99999" placeholder="e.g. 26" value="' + esc(a.latestBuild || '') + '">' +
+    '<button class="btn primary" id="verSave">Save</button><button class="btn" id="verClear"' + (a.latestBuild ? '' : ' disabled') + '>Clear</button></div>' +
+    '<div class="dim" style="margin-top:8px">' + (a.latestBuild
+      ? 'GitHub Android TVs older than build <b>' + esc(a.latestBuild) + '</b> show the notice. Set by ' + esc(a.buildUpdatedBy || 'admin') + ', ' + esc(when(a.buildUpdatedAt)) + '.'
       : 'Not set: no TV shows an update notice.') + '</div>';
   const save = async v => {
-    const j = await api('/app-version', { method: 'PUT', body: JSON.stringify({ version: v }) });
-    toast(j && j.success ? (j.version ? 'Saved. Older TVs show the notice on their home screen.' : 'Cleared. No TV shows the notice.') : (j && j.error) || 'Could not save', !!(j && j.success));
+    const j = await api('/app-build', { method: 'PUT', body: JSON.stringify({ build: v }) });
+    toast(j && j.success ? (j.build ? 'Saved. Older GitHub Android TVs show the notice on their home screen.' : 'Cleared. No TV shows the notice.') : (j && j.error) || 'Could not save', !!(j && j.success));
     loadSettings(); loadOverview();
   };
   document.getElementById('verSave').addEventListener('click', () => save(document.getElementById('verIn').value));

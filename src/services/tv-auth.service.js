@@ -29,8 +29,10 @@
 // The ensureSchema() statements are GENERATED from migrations/018-tv.sql,
 // 019-tv-solo.sql, 020-tv-signin.sql, 021-tv-race.sql, 022-tv-admin.sql,
 // 023-tv-identity.sql, 024-tv-venue.sql, 025-tv-prizes.sql,
-// 026-tv-prize-claims.sql, 027-tv-campaigns.sql, 028-tv-branded-rooms.sql and
-// 029-tv-campaign-awards.sql and are byte-identical to them; a test checks they
+// 026-tv-prize-claims.sql, 027-tv-campaigns.sql, 028-tv-branded-rooms.sql,
+// 029-tv-campaign-awards.sql, 030-tv-live-rounds.sql,
+// 031-tv-campaign-style-cards.sql and 032-tv-places.sql and are
+// byte-identical to them; a test checks they
 // have not drifted.
 // ============================================
 
@@ -76,14 +78,17 @@ class TvAuthService {
         // then 028 (branded rooms, consents), which refers to 027, then 029
         // (a brand's prizes), which refers to 028's rooms and alters 025's
         // payouts, then 030 (Live Rounds and the Brand Cup), which refers to
-        // 027's campaigns and 018's rooms and players.
+        // 027's campaigns and 018's rooms and players, then 031 (style and
+        // sponsor cards), which alters 027's and 030's tables, then 032 (where
+        // TVs and players are), which alters 018's, 023's and 030's.
         for (const sql of [...TvAuthService.SCHEMA_STATEMENTS, ...TvAuthService.SOLO_SCHEMA_STATEMENTS,
                            ...TvAuthService.SIGNIN_SCHEMA_STATEMENTS, ...TvAuthService.RACE_SCHEMA_STATEMENTS,
                            ...TvAuthService.ADMIN_SCHEMA_STATEMENTS, ...TvAuthService.IDENTITY_SCHEMA_STATEMENTS,
                            ...TvAuthService.VENUE_SCHEMA_STATEMENTS, ...TvAuthService.PRIZE_SCHEMA_STATEMENTS,
                            ...TvAuthService.CLAIM_SCHEMA_STATEMENTS, ...TvAuthService.CAMPAIGN_SCHEMA_STATEMENTS,
                            ...TvAuthService.BRANDED_SCHEMA_STATEMENTS, ...TvAuthService.AWARD_SCHEMA_STATEMENTS,
-                           ...TvAuthService.LIVE_SCHEMA_STATEMENTS]) {
+                           ...TvAuthService.LIVE_SCHEMA_STATEMENTS, ...TvAuthService.STYLE_SCHEMA_STATEMENTS,
+                           ...TvAuthService.PLACE_SCHEMA_STATEMENTS]) {
             await pool.query(sql);
         }
         this._schemaReady = true;
@@ -860,6 +865,57 @@ TvAuthService.LIVE_SCHEMA_STATEMENTS = Object.freeze([
     `CREATE INDEX IF NOT EXISTS idx_tv_live_disputes_round
     ON tv_live_disputes (round_id, status)`
 ]);
+
+// Phase 7, campaigns set by the admin (031): the everyday party's style and
+// the sponsor card's time on the campaign, each round's own style, wrong
+// answers on a round entry (Race), and up to four sponsor cards. Alters only
+// TV tables.
+TvAuthService.STYLE_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS style TEXT NOT NULL DEFAULT 'standard'
+        CHECK (style IN ('standard','race'))`,
+    `ALTER TABLE tv_campaigns
+    ADD COLUMN IF NOT EXISTS sponsor_seconds SMALLINT NOT NULL DEFAULT 8
+        CHECK (sponsor_seconds BETWEEN 3 AND 30)`,
+    `ALTER TABLE tv_live_rounds
+    ADD COLUMN IF NOT EXISTS style TEXT NOT NULL DEFAULT 'standard'
+        CHECK (style IN ('standard','race'))`,
+    `ALTER TABLE tv_live_entries
+    ADD COLUMN IF NOT EXISTS wrong SMALLINT NOT NULL DEFAULT 0`,
+    `ALTER TABLE tv_campaign_art
+    DROP CONSTRAINT IF EXISTS tv_campaign_art_slot_check`,
+    `ALTER TABLE tv_campaign_art
+    ADD CONSTRAINT tv_campaign_art_slot_check
+        CHECK (slot IN ('logo','tile','lobby','card','card2','card3','card4','slide'))`
+]);
+
+// Phase 7, where TVs and players really are (032): what a player's phone
+// shared for a round (a state only), and each TV's state as an admin set it
+// or players' phones found it. Alters only TV tables.
+TvAuthService.PLACE_SCHEMA_STATEMENTS = Object.freeze([
+    `ALTER TABLE tv_live_locations
+    ADD COLUMN IF NOT EXISTS phone_state TEXT
+        CHECK (phone_state IS NULL OR char_length(phone_state) BETWEEN 2 AND 40)`,
+    `ALTER TABLE tv_live_locations
+    ADD COLUMN IF NOT EXISTS phone_at TIMESTAMPTZ`,
+    `ALTER TABLE tv_live_locations
+    ADD COLUMN IF NOT EXISTS phone_accuracy_m INTEGER
+        CHECK (phone_accuracy_m IS NULL OR phone_accuracy_m BETWEEN 0 AND 1000000)`,
+    `ALTER TABLE tv_live_entries
+    ADD COLUMN IF NOT EXISTS phone_state TEXT`,
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS place_state TEXT
+        CHECK (place_state IS NULL OR char_length(place_state) BETWEEN 2 AND 40)`,
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS place_source TEXT
+        CHECK (place_source IS NULL OR place_source IN ('admin','phones'))`,
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS place_set_at TIMESTAMPTZ`,
+    `ALTER TABLE tv_devices
+    ADD COLUMN IF NOT EXISTS place_set_by TEXT`
+]);
+
+
 
 module.exports = new TvAuthService();
 module.exports.PLATFORMS = PLATFORMS;
