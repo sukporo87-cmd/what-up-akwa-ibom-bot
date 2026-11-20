@@ -829,7 +829,7 @@ body .page-band .btn-ghost:hover{border-color:rgba(255,255,255,.6);color:#fff}
       <div class="demo-opts" id="demoOpts" role="group" aria-label="Answer options"></div>
       <div class="demo-foot">
         <button class="demo-5050" id="demo5050" type="button">50 : 50</button>
-        <span class="demo-progress mono" id="demoClock" aria-live="off">12.0s</span>
+        <span class="demo-progress mono" id="demoClock" aria-live="off">15.0s</span>
       </div>
     </div>
     <p class="demo-note" data-ck="home.demo.note">Demo questions only — the real game draws from a deep bank spanning history, science, geography, sports, entertainment and more.</p>
@@ -1687,11 +1687,11 @@ document.body.setAttribute('data-ticker', 'on');
 /* ---------------- DEMO GAME ---------------- */
 (function () {
   var QS = [
-    { q: "Which city is the capital of Nigeria?", opts: ["Lagos", "Abuja", "Kano", "Ibadan"], a: 1, tier: "₦200" },
-    { q: "The naira is divided into 100 …?", opts: ["Cents", "Pesewas", "Kobo", "Shillings"], a: 2, tier: "₦250" },
-    { q: "Which river gives Nigeria its name?", opts: ["River Benue", "River Niger", "River Kaduna", "River Ogun"], a: 1, tier: "₦300" }
+    { q: "Which city is the capital of Nigeria?", opts: ["Lagos", "Abuja", "Kano", "Ibadan"], a: 1, tier: "₦200", t: 15 },
+    { q: "The naira is divided into 100 …?", opts: ["Cents", "Pesewas", "Kobo", "Shillings"], a: 2, tier: "₦250", t: 13 },
+    { q: "Which river gives Nigeria its name?", opts: ["River Benue", "River Niger", "River Kaduna", "River Ogun"], a: 1, tier: "₦300", t: 11 }
   ];
-  var i = 0, timer = null, tLeft = 12, used5050 = false, reached = "₦0";
+  var i = 0, timer = null, tLeft = 15, tFull = 15, used5050 = false, reached = "₦0";
   var shell = $('#demoShell'); if (!shell) return;
   var qEl = $('#demoQ'), opts = $('#demoOpts'), bar = $('#demoTimer'),
       clock = $('#demoClock'), prog = $('#demoProgress'), tier = $('#demoTier'),
@@ -1716,11 +1716,11 @@ document.body.setAttribute('data-ticker', 'on');
     startTimer();
   }
   function startTimer() {
-    stopTimer(); tLeft = 12;
+    stopTimer(); tFull = QS[i].t || 15; tLeft = tFull;
     var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     timer = setInterval(function () {
       tLeft -= 0.1;
-      if (!reduce) bar.style.width = Math.max(0, (tLeft / 12) * 100) + '%';
+      if (!reduce) bar.style.width = Math.max(0, (tLeft / tFull) * 100) + '%';
       bar.classList.toggle('hot', tLeft <= 4);
       clock.textContent = Math.max(0, tLeft).toFixed(1) + 's';
       if (tLeft <= 0) { stopTimer(); timeout(); }
