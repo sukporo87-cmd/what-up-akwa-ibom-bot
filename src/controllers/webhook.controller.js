@@ -708,17 +708,23 @@ Thank you for your interest! 👋`
       phone,
       `Nice to meet you, ${name}! 👋
 
-Which city are you from?
+Which city or state do you live in?
 
 📍 Examples: Lagos, Abuja, Uyo, Port Harcourt, Kano, London, New York
 
-Type your city name:`
+Type your city or state:`
     );
   }
 
   async handleRegistrationCity(phone, city, stateData = {}) {
     if (!city || city.trim().length < 2) {
       await messagingService.sendMessage(phone, '❌ Please enter a valid city name.');
+      return;
+    }
+    // A country on its own ("Nigeria") is not a city (Nov 20, 2026).
+    if (require('../utils/ng-places').isCountryOnly(city)) {
+      await messagingService.sendMessage(phone,
+        '📍 Please type the city or state you live in, not your country.\n\nExamples: Lagos, Abuja, Uyo, Port Harcourt, Kano, London');
       return;
     }
 

@@ -14,6 +14,7 @@ const redis = require('../config/redis');
 const emailService = require('./email.service');
 const { logger } = require('../utils/logger');
 const activityService = require('./activity.service');
+const { isCountryOnly } = require('../utils/ng-places');
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
@@ -60,6 +61,8 @@ class WebAuthService {
         }
         if (!city || city.trim().length < 2 || city.trim().length > 100) {
             errors.push('Enter your city');
+        } else if (isCountryOnly(city)) {
+            errors.push('Enter the city or state you live in, not your country');
         }
         if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username.trim())) {
             errors.push('Username must be 3-20 characters — letters, numbers and underscores only');
@@ -608,6 +611,7 @@ class WebAuthService {
             errors.push('Username must be 3-20 characters — letters, numbers and underscores only');
         }
         if (!city || city.trim().length < 2) errors.push('Enter your city');
+        else if (isCountryOnly(city)) errors.push('Enter the city or state you live in, not your country');
         const parsedAge = parseInt(age, 10);
         if (isNaN(parsedAge) || parsedAge < MIN_AGE || parsedAge > 120) {
             errors.push(`You must be at least ${MIN_AGE} to play`);

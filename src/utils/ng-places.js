@@ -423,6 +423,17 @@ function resolvePlace(raw) {
   return out('unmatched', { method: 'unknown' });
 }
 
+/**
+ * True when the answer names a country and nothing else: "Nigeria",
+ * "Naija", "Ghana", "UK". Sign-up asks for a city or state instead
+ * (Nov 20, 2026). "Lagos, Nigeria", "London, UK" and "Texas, USA" are fine.
+ */
+function isCountryOnly(raw) {
+  const r = resolvePlace(raw);
+  if (r.status === 'country_only') return true;
+  return r.status === 'matched' && r.method === 'country' && !r.state && !r.city;
+}
+
 /** Closest known places, for the admin review screen. */
 function suggestPlaces(raw, limit = 3) {
   const ws = words(raw).filter(w => !FILLER.has(w) && w.length >= 4);
@@ -448,4 +459,4 @@ function suggestPlaces(raw, limit = 3) {
 
 const NIGERIAN_STATES = Object.keys(LGAS).sort((a, b) => stateLabel(a).localeCompare(stateLabel(b)));
 
-module.exports = { resolvePlace, suggestPlaces, squash, stateLabel, NIGERIAN_STATES, LGAS };
+module.exports = { resolvePlace, isCountryOnly, suggestPlaces, squash, stateLabel, NIGERIAN_STATES, LGAS };

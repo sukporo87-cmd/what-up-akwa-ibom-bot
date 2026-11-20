@@ -106,7 +106,7 @@ const PROMPTS = {
     //     never appear here. Mapped defensively rather than left to guesswork. ---
     REGISTRATION_NAME:     { expects: 'text', title: 'Your name',     field: { label: 'Full name', type: 'text' } },
     REGISTRATION_USERNAME: { expects: 'text', title: 'Pick a username', field: { label: 'Username', type: 'text' } },
-    REGISTRATION_CITY:     { expects: 'text', title: 'Your city',     field: { label: 'City', type: 'text' } },
+    REGISTRATION_CITY:     { expects: 'text', title: 'Your city or state', field: { label: 'City or state', type: 'text' } },
     REGISTRATION_AGE:      { expects: 'text', title: 'Your age',      field: { label: 'Age', type: 'number', inputmode: 'numeric' } },
     REGISTRATION_SOURCE:   { expects: 'choice', title: 'How did you hear about us?' },
     REGISTRATION_REFERRAL: { expects: 'text', title: 'Referral code', field: { label: 'Referral code', type: 'text' } }

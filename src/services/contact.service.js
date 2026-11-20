@@ -47,10 +47,11 @@ class ContactService {
     /**
      * Deliver one message.
      * @param {object} user  full users row
-     * @param {object} msg   { text, subject?, html?, kind? }  kind: 'transactional'|'marketing'
+     * @param {object} msg   { text, subject?, html?, kind?, inApp? }  kind: 'transactional'|'marketing'
+     *                       inApp: 'direct'|'broadcast' keeps a copy for web-play's lobby
      * @returns {Promise<{sent:boolean, channel:string, reason?:string}>}
      */
-    async send(user, { text, subject, html, kind = 'transactional' }) {
+    async send(user, { text, subject, html, kind = 'transactional', inApp = null }) {
         const channel = this.channelOf(user);
 
         if (channel === 'web') {
@@ -68,6 +69,13 @@ class ContactService {
                 text: this._strip(text),
                 html: html || this._html(text, kind === 'marketing' ? user.newsletter_token : null)
             });
+            // Admin messages (Nov 20, 2026): a copy for web-play's lobby, kept
+            // even when the email fails, so the player still sees it there.
+            if (inApp && user.id) {
+                await require('./web-notice.service').record(user.id, {
+                    subject: subject || "A message from What's Up Trivia", text, source: inApp
+                });
+            }
             return { sent: ok, channel, reason: ok ? undefined : (emailService.lastError || 'send failed') };
         }
 

@@ -460,6 +460,95 @@ router.post('/review-link', requireWebAuth, async (req, res) => {
 });
 
 // ============================================
+// LOBBY NOTICES  (Nov 20, 2026)
+// ============================================
+// What the lobby may show a signed-in player, never during a game:
+//   messages  new admin messages (also sent by email): subject and a preview;
+//             "Read" opens the whole message with GET /messages/:id
+//   review    true when it is time to ask for a review (3 finished games in
+//             any mode; 5 more after "Not now"; 3 asks at most). Asked only
+//             when there are no new messages, so one pop-up at a time.
+const webNotices = require('../services/web-notice.service');
+
+router.get('/notices', requireWebAuth, async (req, res) => {
+    try {
+        const user = req.webUser;
+        if (await gameService.getActiveSession(user.id)) {
+            return res.json({ success: true, messages: [], review: false });
+        }
+        const messages = await webNotices.unseen(user.id);
+        const review = messages.length ? false
+            : await webNotices.reviewAsk(user.id, id => reviewInvites.hasReviewed(id));
+        res.json({ success: true, messages, review, name: review ? (user.full_name || '').trim().split(/\s+/)[0] || user.username : undefined });
+    } catch (error) {
+        logger.error('Web notices error:', error);
+        res.json({ success: true, messages: [], review: false });
+    }
+});
+
+router.post('/messages/seen', requireWebAuth, async (req, res) => {
+    const n = await webNotices.markSeen(req.webUser.id, req.body && req.body.ids);
+    res.json({ success: true, seen: n });
+});
+
+router.get('/messages/:id', requireWebAuth, async (req, res) => {
+    const m = await webNotices.open(req.webUser.id, req.params.id);
+    if (!m) return res.status(404).json({ success: false, error: 'This message is no longer available.' });
+    res.json({ success: true, message: m });
+});
+
+// ============================================
+// REVIEW, IN WEB-PLAY  (Nov 20, 2026)
+// ============================================
+// The same review as the website's form, written without leaving web-play.
+// Signed in, so it is a verified review at once (the account is the
+// evidence, as with an invite link); it goes to the moderation queue like
+// every other. One per player.
+const ReviewsService = require('../services/reviews.service');
+const reviewsService = new ReviewsService();
+
+router.post('/review', requireWebAuth, async (req, res) => {
+    try {
+        const user = req.webUser;
+        if (await gameService.getActiveSession(user.id)) {
+            return res.status(409).json({ success: false, error: 'Finish your game first, then leave a review.' });
+        }
+        if (await reviewInvites.hasReviewed(user.id)) {
+            return res.json({ success: true, alreadyReviewed: true });
+        }
+        const ip = require('../utils/client-ip').clientIp(req);
+        const rate = await reviewsService.checkRateLimit(ip);
+        if (rate.limited) {
+            return res.status(429).json({ success: false, error: 'Too many reviews from this connection. Please try again in an hour.' });
+        }
+        const b = req.body || {};
+        const result = await reviewsService.submit({
+            display_name: b.display_name,
+            platform: ['whatsapp', 'telegram', 'web'].includes(b.platform) ? b.platform : 'web',
+            rating: b.rating,
+            title: b.title,
+            body: b.body,
+            contact_email: user.email || null
+        }, ip, req.headers['user-agent'], {
+            userId: user.id,
+            platform: 'web',
+            bestQ: parseInt(user.highest_question_reached, 10) || 0
+        });
+        if (!result.ok && result.code === 400) {
+            return res.status(400).json({ success: false, error: 'Please check the highlighted fields.', fields: result.fields });
+        }
+        if (!result.ok) {
+            return res.status(500).json({ success: false, error: "We couldn't send your review just now. Please try again shortly." });
+        }
+        logger.info(`Review #${result.id} written in web-play by user ${user.id}`);
+        res.status(201).json({ success: true, id: result.id });
+    } catch (error) {
+        logger.error('Web review error:', error);
+        res.status(500).json({ success: false, error: "We couldn't send your review just now. Please try again shortly." });
+    }
+});
+
+// ============================================
 // RECENT GAMES  (look back over a finished game)
 // ============================================
 // WhatsApp and Telegram players scroll up to see every question, their

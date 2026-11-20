@@ -8617,7 +8617,8 @@ router.post('/api/messaging/send-direct', authenticateAdmin, async (req, res) =>
     const outcome = await contact.send(ur.rows[0], {
       text: message,
       subject: subject || "A message from What's Up Trivia",
-      kind: kind === 'marketing' ? 'marketing' : 'transactional'
+      kind: kind === 'marketing' ? 'marketing' : 'transactional',
+      inApp: 'direct'
     });
     if (!outcome.sent) {
       return res.status(400).json({ error: outcome.reason || 'Could not deliver the message' });
@@ -8650,7 +8651,11 @@ router.post('/api/messaging/broadcast', authenticateAdmin, async (req, res) => {
     const { message, filter, sentBy } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
 
-    let query = 'SELECT phone_number FROM users WHERE phone_number IS NOT NULL';
+    // The columns the contact service needs (Nov 20, 2026). It was the phone
+    // number alone, so every web player looked as if they had no email and
+    // was skipped: broadcasts never reached web players at all.
+    let query = `SELECT id, phone_number, email, newsletter_opted_in, newsletter_unsubscribed_at, newsletter_token
+                 FROM users WHERE phone_number IS NOT NULL`;
     const params = [];
 
     if (filter) {
@@ -8678,7 +8683,8 @@ router.post('/api/messaging/broadcast', authenticateAdmin, async (req, res) => {
     const outcome = await contact.sendBulk(users.rows, {
       text: message,
       subject: req.body.subject || "What's Up Trivia",
-      kind: req.body.kind === 'transactional' ? 'transactional' : 'marketing'
+      kind: req.body.kind === 'transactional' ? 'transactional' : 'marketing',
+      inApp: 'broadcast'
     });
 
     const sent = outcome.sent, failed = outcome.failed;

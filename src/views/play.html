@@ -548,6 +548,35 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
   .verdict{margin-top:14px;padding:14px}
 }
 
+/* ---------- review form and messages (Nov 20, 2026) ---------- */
+.sheet.form{text-align:left}
+.sheet.form h2{text-align:center}
+.sheet.form .lede{text-align:center;color:var(--mute);font-size:14px;margin:0 0 18px}
+.sheet textarea{width:100%;min-height:120px;resize:vertical;background:var(--night);border:1.5px solid var(--line);
+  border-radius:11px;color:var(--paper);padding:12px 14px;font-family:inherit;font-size:15px;line-height:1.5;margin-bottom:4px}
+.sheet textarea:focus{outline:none;border-color:var(--brass)}
+.sheet.form input{background:var(--night);border-color:var(--line)}
+.sheet.form input:focus{border-color:var(--brass)}
+.stars{display:flex;justify-content:center;gap:6px;margin:0 0 6px}
+.stars button{font-size:34px;line-height:1;color:var(--line);padding:2px 4px}
+.stars button.on{color:var(--brass)}
+.starsNote{text-align:center;color:var(--mute);font-size:13px;min-height:19px;margin-bottom:12px}
+.plats{display:flex;gap:8px;margin-bottom:13px}
+.plats button{flex:1;padding:10px 6px;border-radius:10px;border:1.5px solid var(--line);color:var(--mute);font-size:14px}
+.plats button.on{border-color:var(--brass);color:var(--paper);background:var(--raise)}
+.fhint{font-size:12px;color:var(--mute);text-align:right;margin-bottom:12px}
+.fnote{font-size:12.5px;color:var(--mute);margin:4px 0 14px}
+.field.bad input,.field.bad textarea{border-color:var(--ember)}
+.ferr{font-size:12.5px;color:var(--ember);margin:-8px 0 10px;min-height:0}
+.msgItem{background:var(--night);border:1px solid var(--line);border-radius:13px;padding:14px;margin-bottom:10px;text-align:left}
+.msgItem b{display:block;font-size:15px;margin-bottom:4px}
+.msgItem p{margin:0 0 10px;font-size:13.5px}
+.msgItem .cta{padding:11px;font-size:14.5px}
+.msgRead{background:var(--slate);border:1px solid var(--line);border-radius:14px;padding:18px;
+  white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.65;margin-bottom:16px}
+.msgRead a{color:var(--brass)}
+.msgDate{color:var(--mute);font-size:13px;margin:0 0 14px}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -574,7 +603,7 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
         <div id="fSignup" style="display:none">
           <label>Full name</label><input id="fullName" autocomplete="name">
           <label>Username</label><input id="username" autocomplete="nickname">
-          <label>City</label><input id="city">
+          <label>City or state</label><input id="city" placeholder="e.g. Uyo or Akwa Ibom" autocomplete="address-level2">
           <label>Age</label><input id="age" type="number" inputmode="numeric" placeholder="18+">
           <label>How did you hear about us?</label><select id="src"></select>
           <label>Referral code <span style="opacity:.6">— optional</span></label><input id="ref">
@@ -771,6 +800,21 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
       <p class="note">Go back over any game from the last 72 hours.</p>
       <div id="recentList"></div>
     </div>
+  </section>
+
+  <!-- ============ MESSAGE (Nov 20, 2026) ============ -->
+  <section class="view" id="vMsg">
+    <div class="bar">
+      <button class="back" onclick="view('vLobby');refresh()">← Back</button>
+      <div class="icons"><button class="icon" onclick="toggleSound()" title="Sound">♪</button></div>
+    </div>
+    <div class="hero" style="padding:20px 0 6px">
+      <span class="fig" style="font-size:24px" id="msgSubject">Message</span>
+    </div>
+    <p class="msgDate" id="msgDate"></p>
+    <div class="spin" id="msgSpin">Loading…</div>
+    <div class="msgRead" id="msgBody" style="display:none"></div>
+    <button class="ghost" onclick="view('vLobby');refresh()">Back to menu</button>
   </section>
 
   <!-- ============ GAME REVIEW ============ -->
@@ -1244,6 +1288,61 @@ input:focus,select:focus{outline:none;border-color:var(--brass)}
 </div>
 
 <!-- ============ OVERLAY ============ -->
+<!-- Review form (Nov 20, 2026): the website's review, written here. -->
+<div class="over" id="rvAsk" role="dialog" aria-modal="true" aria-labelledby="rvaTitle">
+  <div class="sheet form">
+    <span class="fig" style="text-align:center">⭐</span>
+    <h2 id="rvaTitle">How are you finding What's Up Trivia?</h2>
+    <p class="lede">A short review helps other players decide whether to give us a try.</p>
+
+    <label id="rvaRateL" style="text-align:center">Your rating</label>
+    <div class="stars" id="rvaStars" role="radiogroup" aria-labelledby="rvaRateL">
+      <button type="button" data-v="1" aria-label="1 star">★</button><button type="button" data-v="2" aria-label="2 stars">★</button><button type="button" data-v="3" aria-label="3 stars">★</button><button type="button" data-v="4" aria-label="4 stars">★</button><button type="button" data-v="5" aria-label="5 stars">★</button>
+    </div>
+    <div class="starsNote" id="rvaStarsNote"></div>
+
+    <div class="field" id="rvaNameF">
+      <label for="rvaName">Your display name</label>
+      <input id="rvaName" maxlength="40" autocomplete="nickname" placeholder="e.g. Chidi from Enugu">
+    </div>
+    <div class="ferr" id="rvaNameE"></div>
+
+    <label>Where do you mostly play?</label>
+    <div class="plats" id="rvaPlat" role="radiogroup" aria-label="Where you mostly play">
+      <button type="button" data-v="whatsapp">WhatsApp</button><button type="button" data-v="telegram">Telegram</button><button type="button" data-v="web" class="on">Web</button>
+    </div>
+
+    <div class="field" id="rvaTitleF">
+      <label for="rvaTitleIn">Title <span style="opacity:.6">(optional)</span></label>
+      <input id="rvaTitleIn" maxlength="80" placeholder="Sum it up in a line">
+    </div>
+    <div class="ferr" id="rvaTitleE"></div>
+
+    <div class="field" id="rvaBodyF">
+      <label for="rvaBody">Your review</label>
+      <textarea id="rvaBody" maxlength="1000" placeholder="What is the game like? What should new players know?"></textarea>
+    </div>
+    <div class="fhint"><span id="rvaCount">0</span>/1000 · at least 20 characters</div>
+    <div class="ferr" id="rvaBodyE"></div>
+
+    <p class="fnote">Your review shows as a verified player once our team has checked it.</p>
+    <div class="msg" id="rvaMsg"></div>
+    <button class="cta" id="rvaSend" onclick="sendReviewForm()">Submit review</button>
+    <button class="link" onclick="closeReviewForm()">Not now</button>
+  </div>
+</div>
+
+<!-- New messages (Nov 20, 2026): a short notice; Read opens vMsg. -->
+<div class="over" id="msgAsk" role="dialog" aria-modal="true" aria-labelledby="msgAskTitle">
+  <div class="sheet">
+    <span class="fig">✉️</span>
+    <h2 id="msgAskTitle">You have a new message</h2>
+    <div id="msgAskList" style="margin-top:14px"></div>
+    <p class="fnote" style="text-align:center" id="msgAskMail">We also sent this to your email.</p>
+    <button class="link" onclick="closeMsgAsk()">Close</button>
+  </div>
+</div>
+
 <div class="over" id="over">
   <div class="sheet">
     <span class="fig" id="ovFig"></span>
@@ -3301,6 +3400,7 @@ async function refresh(){
     }
     if(d.game){ banked=d.game.currentScore||0; view('vGame'); }
     if(d.question&&!d.question.stale) paint(d.question);
+    if(!d.game) lobbyNotices();
   }catch(e){}
 }
 
@@ -4028,12 +4128,135 @@ function info(text){
   overlay('', (lines[0]||'Message').trim(), lines.slice(1).join('\n'));
 }
 
+
+/* ---------- lobby notices: new messages, and asking for a review ----------
+   Nov 20, 2026. Only on the lobby, never in a game (the server checks too),
+   and one pop-up at a time: new messages first; the review ask only when
+   there are none. A message's notice shows its subject and first lines;
+   "Read message" opens the whole message on its own screen. */
+let noticesAt=0, rvaRating=0, rvaPlatform='web';
+function anyPopup(){ return !!document.querySelector('.over.on'); }
+function onLobby(){ const l=$('vLobby'); return !!(l && l.classList.contains('on')); }
+async function lobbyNotices(){
+  if(!onLobby() || anyPopup() || Date.now()-noticesAt<30000) return;
+  noticesAt=Date.now();
+  try{
+    const d=await(await fetch('/web/game/notices',{headers:H()})).json();
+    if(!d.success) return;
+    // Let the lobby settle first, then check nothing else took the screen.
+    setTimeout(()=>{
+      if(!onLobby() || anyPopup()) return;
+      if(d.messages && d.messages.length) showMsgAsk(d.messages);
+      else if(d.review) openReviewForm(d.name);
+    },700);
+  }catch(e){}
+}
+function showMsgAsk(list){
+  $('msgAskTitle').textContent=list.length===1?'You have a new message':'You have '+list.length+' new messages';
+  $('msgAskMail').textContent=list.length===1?'We also sent this to your email.':'We also sent these to your email.';
+  const box=$('msgAskList'); box.innerHTML='';
+  list.forEach(m=>{
+    const it=document.createElement('div'); it.className='msgItem';
+    const b=document.createElement('b'); b.textContent=m.subject;
+    const p=document.createElement('p'); p.textContent=m.preview;
+    const btn=document.createElement('button'); btn.className='cta'; btn.textContent='Read message';
+    btn.onclick=()=>{ sfx.tap(); $('msgAsk').classList.remove('on'); openMessage(m.id); };
+    it.appendChild(b); it.appendChild(p); it.appendChild(btn); box.appendChild(it);
+  });
+  $('msgAsk').classList.add('on');
+  fetch('/web/game/messages/seen',{method:'POST',headers:H(),body:JSON.stringify({ids:list.map(m=>m.id)})}).catch(()=>{});
+}
+function closeMsgAsk(){ $('msgAsk').classList.remove('on'); }
+/* Plain text, with web addresses made into links. Never HTML. */
+function fillLinked(el,text){
+  el.textContent='';
+  const re=/https?:\/\/[^\s<>"]+/g; let at=0, m;
+  while((m=re.exec(text))){
+    let url=m[0]; const trail=(url.match(/[).,;:!?]+$/)||[''])[0];
+    if(trail) url=url.slice(0,-trail.length);
+    el.appendChild(document.createTextNode(text.slice(at,m.index)));
+    const a=document.createElement('a'); a.href=url; a.textContent=url; a.target='_blank'; a.rel='noopener noreferrer';
+    el.appendChild(a); at=m.index+url.length;
+  }
+  el.appendChild(document.createTextNode(text.slice(at)));
+}
+async function openMessage(id){
+  view('vMsg');
+  $('msgSubject').textContent='Message'; $('msgDate').textContent='';
+  $('msgBody').style.display='none'; $('msgSpin').style.display='block'; $('msgSpin').textContent='Loading…';
+  try{
+    const d=await(await fetch('/web/game/messages/'+encodeURIComponent(id),{headers:H()})).json();
+    if(!d.success){ $('msgSpin').textContent=d.error||'This message is no longer available.'; return; }
+    const m=d.message;
+    $('msgSubject').textContent=m.subject;
+    try{ $('msgDate').textContent=new Date(m.sentAt).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}); }catch(e){}
+    fillLinked($('msgBody'),m.body);
+    $('msgSpin').style.display='none'; $('msgBody').style.display='block';
+  }catch(e){ $('msgSpin').textContent='Could not load the message. Check your connection and try again.'; }
+}
+
+const RVA_WORDS=['','Poor','Fair','Good','Very good','Excellent'];
+function paintStars(){
+  document.querySelectorAll('#rvaStars button').forEach(b=>{
+    const on=+b.dataset.v<=rvaRating; b.classList.toggle('on',on); b.setAttribute('aria-checked',+b.dataset.v===rvaRating?'true':'false');
+  });
+  $('rvaStarsNote').textContent=RVA_WORDS[rvaRating]||'';
+}
+function rvaField(id,err){ $(id+'F') && $(id+'F').classList.toggle('bad',!!err); $(id+'E').textContent=err||''; }
+function openReviewForm(name){
+  rvaRating=0; rvaPlatform='web'; paintStars();
+  document.querySelectorAll('#rvaPlat button').forEach(b=>b.classList.toggle('on',b.dataset.v==='web'));
+  if(name && !$('rvaName').value) $('rvaName').value=name;
+  $('rvaMsg').textContent=''; ['rvaName','rvaTitle','rvaBody'].forEach(i=>rvaField(i,''));
+  $('rvaSend').disabled=false;
+  $('rvAsk').classList.add('on');
+  const sh=$('rvAsk').querySelector('.sheet'); if(sh) sh.scrollTop=0;
+}
+function closeReviewForm(){ $('rvAsk').classList.remove('on'); }
+function wireReviewForm(){
+  document.querySelectorAll('#rvaStars button').forEach(b=>b.onclick=()=>{ rvaRating=+b.dataset.v; paintStars(); $('rvaMsg').textContent=''; });
+  document.querySelectorAll('#rvaPlat button').forEach(b=>b.onclick=()=>{
+    rvaPlatform=b.dataset.v; document.querySelectorAll('#rvaPlat button').forEach(x=>x.classList.toggle('on',x===b));
+  });
+  const body=$('rvaBody'); if(body) body.addEventListener('input',()=>{ $('rvaCount').textContent=body.value.length; });
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wireReviewForm); else wireReviewForm();
+async function sendReviewForm(){
+  const name=$('rvaName').value.trim(), title=$('rvaTitleIn').value.trim(), body=$('rvaBody').value.trim();
+  $('rvaMsg').textContent='';
+  let bad=false;
+  if(!rvaRating){ $('rvaMsg').textContent='Choose a star rating.'; bad=true; }
+  rvaField('rvaName', name.length<2?'Enter a name of at least 2 characters.':''); bad=bad||name.length<2;
+  rvaField('rvaTitle','');
+  rvaField('rvaBody', body.length<20?'Write at least 20 characters.':''); bad=bad||body.length<20;
+  if(bad){ const sh=$('rvAsk').querySelector('.sheet'); if(sh && !rvaRating) sh.scrollTop=0; return; }
+  $('rvaSend').disabled=true;
+  try{
+    const r=await fetch('/web/game/review',{method:'POST',headers:H(),
+      body:JSON.stringify({display_name:name,platform:rvaPlatform,rating:rvaRating,title:title||null,body})});
+    const d=await r.json();
+    if(d.success){
+      closeReviewForm();
+      $('rvaBody').value=''; $('rvaTitleIn').value=''; $('rvaCount').textContent='0';
+      overlay('⭐','Thank you!',d.alreadyReviewed?'You have already left us a review. We really appreciate it.'
+        :'Your review is with our team. Once it has been checked, it appears on our reviews page.','OK',()=>{});
+      return;
+    }
+    const f=d.fields||{};
+    if(f.display_name) rvaField('rvaName','Enter a name of 2 to 40 characters.');
+    if(f.title) rvaField('rvaTitle','Keep the title to 80 characters or fewer.');
+    if(f.body) rvaField('rvaBody','Write between 20 and 1,000 characters.');
+    if(f.rating) $('rvaMsg').textContent='Choose a star rating.';
+    else $('rvaMsg').textContent=d.error||"We couldn't send your review just now. Please try again shortly.";
+  }catch(e){ $('rvaMsg').textContent='Could not reach the server. Check your connection and try again.'; }
+  finally{ $('rvaSend').disabled=false; }
+}
+
 /* ---------- stats ---------- */
 /* ---------- review & feedback ----------
-   Gets a single-use link tied to this account and opens the public reviews
-   page with it, so the review is verified. The link is fetched on the tap,
-   then opened from the overlay's button: browsers (iOS Safari especially)
-   block a new tab opened after an await, but not one opened by a tap. */
+   Nov 20, 2026: the review is written here, in the same form the lobby
+   offers after a few games, rather than on the website in a new tab. The
+   check below only answers "already reviewed?" and "in a game?". */
 async function openReview(){
   try{
     const d=await(await fetch('/web/game/review-link',{method:'POST',headers:H()})).json();
@@ -4041,25 +4264,13 @@ async function openReview(){
       overlay('⭐','Thank you!','You have already left us a review. We really appreciate it.','OK',()=>{});
       return;
     }
-    if(!d.success || !d.url){
-      overlay('⭐','Not just now',d.error||"We couldn't create your review link. Please try again shortly.",'OK',()=>{});
+    if(!d.success && d.error){
+      overlay('⭐','Not just now',d.error,'OK',()=>{});
       return;
     }
-    overlay('⭐','Leave a review',
-      'Your link is ready. Your review will show as a verified player, and our team checks every review before it goes public.',
-      'Write my review',
-      ()=>{
-        /* Not window.open(url,'_blank','noopener'): with that feature the
-           spec says it returns null even when the tab opened, which would
-           send web-play itself to the reviews page as well. Open normally,
-           then cut the link back to this page. Only a real block falls back
-           to navigating here. */
-        const w=window.open(d.url,'_blank');
-        if(w){ try{ w.opener=null; }catch(e){} }
-        else location.href=d.url;
-      });
+    openReviewForm();
   }catch(e){
-    overlay('⭐','Not just now',"We couldn't create your review link. Please check your connection and try again.",'OK',()=>{});
+    overlay('⭐','Not just now',"We couldn't open the review form. Please check your connection and try again.",'OK',()=>{});
   }
 }
 
