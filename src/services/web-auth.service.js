@@ -15,12 +15,14 @@ const emailService = require('./email.service');
 const { logger } = require('../utils/logger');
 const activityService = require('./activity.service');
 const { isCountryOnly } = require('../utils/ng-places');
+const reviewers = require('../utils/store-reviewers');
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;   // 30 days
 const OTP_PER_EMAIL_PER_HOUR = 5;
 const OTP_PER_IP_PER_HOUR = 15;
+const REVIEW_MAX_FAILS = 10; // wrong fixed codes per reviewer account per hour
 // 13 platform-wide, matching the chat registration flow
 // (webhook.controller.js) and the published legal pages. Web was the odd one
 // out at 18. Putting money UP for a sponsored challenge prize still requires
@@ -234,6 +236,13 @@ class WebAuthService {
             throw err;
         }
 
+        // A store reviewer's account (utils/store-reviewers) signs in with its
+        // fixed code, so no email is sent and nothing counts against the limit.
+        if (reviewers.isReviewer(email) && await this.isEmailTaken(email)) {
+            logger.info(`Store reviewer sign-in started for ${reviewers.mask(email)} (fixed code, no email sent)`);
+            return { expiresInMinutes: OTP_TTL_MINUTES };
+        }
+
         await this._checkRateLimit(email, ip);
 
         const exists = await this.isEmailTaken(email);
@@ -253,6 +262,10 @@ class WebAuthService {
             const err = new Error('Enter the 6-digit code from your email');
             err.userFacing = true;
             throw err;
+        }
+
+        if (purpose === 'login' && reviewers.isReviewer(email)) {
+            return this._reviewerLogin({ email, code, ip, userAgent });
         }
 
         // Fetch the latest code for this email+purpose regardless of state, so we
@@ -362,6 +375,49 @@ class WebAuthService {
             [user.id]
         );
 
+        const token = await this.createSession(user.id, ip, userAgent);
+        return { token, user: this.publicUser(user) };
+    }
+
+    /**
+     * Sign-in for a store reviewer's account with its fixed code (Nov 26, 2026).
+     * 10 wrong codes in an hour lock it for the rest of that hour.
+     */
+    async _reviewerLogin({ email, code, ip, userAgent }) {
+        const failKey = `review_login_fail:${email.trim().toLowerCase()}`;
+        let fails = 0;
+        try { fails = parseInt(await redis.get(failKey), 10) || 0; } catch (e) { /* no limit without redis */ }
+        if (fails >= REVIEW_MAX_FAILS) {
+            const err = new Error('Too many incorrect codes. Please try again in an hour.');
+            err.userFacing = true;
+            throw err;
+        }
+        if (!reviewers.codeMatches(email, code)) {
+            try {
+                const n = await redis.incr(failKey);
+                if (n === 1) await redis.expire(failKey, 3600);
+            } catch (e) { /* counted next time */ }
+            logger.warn(`Store reviewer sign-in failed [wrong_code] ${reviewers.mask(email)} ip=${ip || 'unknown'}`);
+            const err = new Error('Incorrect code.');
+            err.userFacing = true;
+            throw err;
+        }
+        const ur = await pool.query(
+            "SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND platform = 'web' LIMIT 1",
+            [email.trim()]
+        );
+        if (ur.rows.length === 0) {
+            const err = new Error('No account found for that email.');
+            err.userFacing = true;
+            throw err;
+        }
+        const user = ur.rows[0];
+        try { await redis.del(failKey); } catch (e) { /* expires anyway */ }
+        await pool.query(
+            'UPDATE users SET email_verified = true, web_last_login = NOW(), last_active = NOW() WHERE id = $1',
+            [user.id]
+        );
+        logger.info(`Store reviewer signed in: ${reviewers.mask(email)} user=${user.id} ip=${ip || 'unknown'}`);
         const token = await this.createSession(user.id, ip, userAgent);
         return { token, user: this.publicUser(user) };
     }

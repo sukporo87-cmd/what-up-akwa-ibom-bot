@@ -27,6 +27,7 @@
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
+const reviewers = require('../utils/store-reviewers');
 
 const CACHE_KEY = 'activity:recent';
 const CACHE_TTL = 20;          // seconds — spec says 15–30s
@@ -94,11 +95,13 @@ class ActivityService {
       await this.ensureSchema();
 
       const userResult = await pool.query(
-        'SELECT username, city FROM users WHERE id = $1', [userId]
+        'SELECT username, city, email FROM users WHERE id = $1', [userId]
       );
       // No username, no event. We never fall back to real names.
       const username = userResult.rows[0]?.username;
       if (!username) return;
+      // A store reviewer's account (utils/store-reviewers) never shows here.
+      if (reviewers.isReviewer(userResult.rows[0].email)) return;
 
       const composed = await this._composeText(type, {
         ...extra, city: extra.city || userResult.rows[0]?.city || null

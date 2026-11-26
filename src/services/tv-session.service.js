@@ -37,6 +37,7 @@
 // ============================================
 
 const crypto = require('crypto');
+const reviewers = require('../utils/store-reviewers');
 const pool = require('../config/database');
 const redis = require('../config/redis');
 const { logger } = require('../utils/logger');
@@ -492,9 +493,10 @@ class TvSessionService {
                  FROM (${this._totalsSql(period)}) t
                  JOIN users u ON u.id = t.user_id
                  WHERE u.is_suspended IS NOT TRUE
+                   AND LOWER(COALESCE(u.email, '')) <> ALL($2::text[])
                  ORDER BY t.points DESC, u.username ASC
                  LIMIT $1`,
-                [n]
+                [n, reviewers.emails()]  // store reviewers' accounts never show
             );
             entries = r.rows.map(x => ({ rank: Number(x.rank), username: x.username, points: Number(x.points) }));
             try { await redis.set(cacheKey, JSON.stringify(entries), 'EX', BOARD_CACHE_SECONDS); } catch (e) { /* uncached */ }

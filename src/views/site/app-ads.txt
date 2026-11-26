@@ -1,0 +1,3 @@
+# What's Up Trivia sells its in-app sponsor cards directly to brands.
+# No ad network or reseller is authorised to sell advertising in our apps.
+placeholder.example.com, placeholder, DIRECT, placeholder
